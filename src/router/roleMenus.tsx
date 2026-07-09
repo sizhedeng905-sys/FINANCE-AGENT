@@ -116,6 +116,7 @@ export function canAccess(pathname: string, role?: string) {
   if (role === 'boss') {
     return (
       ['/boss/home', '/boss/approval', '/boss/ai', '/boss/reports', '/boss/projects', '/boss/data/projects', '/boss/data/records'].includes(pathname) ||
+      /^\/boss\/data\/projects\/[^/]+\/structure$/.test(pathname) ||
       /^\/boss\/approval\/[^/]+$/.test(pathname)
     );
   }

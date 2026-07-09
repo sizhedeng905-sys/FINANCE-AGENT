@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { App, Button, Card, DatePicker, Form, Input, InputNumber, Select, Space, Steps, Upload } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Select, Space, Steps, Upload } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import { useAuthStore } from '@/store/authStore';
@@ -43,17 +44,27 @@ function renderField(item: TemplateField) {
 
 export default function DataManualRecordPage() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [form] = Form.useForm();
   const [projectId, setProjectId] = useState<string>();
   const [templateId, setTemplateId] = useState<string>();
   const user = useAuthStore((state) => state.user);
   const projects = useDataCenterStore((state) => state.projects);
   const templates = useDataCenterStore((state) => state.templates);
+  const projectTemplates = useDataCenterStore((state) => state.projectTemplates);
   const templateFields = useDataCenterStore((state) => state.templateFields);
   const createRecord = useDataCenterStore((state) => state.createRecord);
 
   const project = projects.find((item) => item.id === projectId);
   const template = templates.find((item) => item.id === templateId);
+  const enabledTemplateIds = useMemo(
+    () => projectTemplates.filter((item) => item.projectId === projectId && item.isActive).map((item) => item.templateId),
+    [projectId, projectTemplates],
+  );
+  const enabledTemplates = useMemo(
+    () => templates.filter((item) => enabledTemplateIds.includes(item.id)),
+    [enabledTemplateIds, templates],
+  );
   const fields = useMemo(
     () => templateFields.filter((item) => item.templateId === templateId).sort((a, b) => a.displayOrder - b.displayOrder),
     [templateFields, templateId],
@@ -100,6 +111,9 @@ export default function DataManualRecordPage() {
       });
       message.success(status === 'confirmed' ? '记录已确认入库' : '草稿已保存');
       form.resetFields();
+      if (status === 'confirmed') {
+        navigate(`/data/projects/${project.id}/structure`);
+      }
     });
   };
 
@@ -131,9 +145,19 @@ export default function DataManualRecordPage() {
                 setTemplateId(value);
                 form.resetFields();
               }}
-              options={templates.map((item) => ({ label: `${item.name}（${recordTypeMap[item.recordType]}）`, value: item.id }))}
+              disabled={!projectId || enabledTemplates.length === 0}
+              options={enabledTemplates.map((item) => ({ label: `${item.name}（${recordTypeMap[item.recordType]}）`, value: item.id }))}
             />
           </Form.Item>
+          {projectId && enabledTemplates.length === 0 ? (
+            <Alert
+              className="section-row"
+              type="warning"
+              showIcon
+              message="当前项目暂无启用模板，请先在项目结构中启用模板。"
+              action={<Button size="small" onClick={() => navigate(`/data/projects/${projectId}/structure`)}>查看项目结构</Button>}
+            />
+          ) : null}
           {fields.map(renderField)}
           {templateId ? (
             <Form.Item label="补录说明" name="remark">

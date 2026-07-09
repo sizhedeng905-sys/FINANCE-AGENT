@@ -24,15 +24,16 @@ export default function DataFieldSuggestionsPage() {
     { title: '样例值', dataIndex: 'sampleValues', render: (value: string[]) => value.join('、') },
     { title: '推荐类型', dataIndex: 'suggestedFieldType', render: (value) => fieldTypeMap[value as FieldSuggestion['suggestedFieldType']] },
     { title: '原因', dataIndex: 'reason' },
+    { title: '映射目标', render: (_, record) => record.mappedFieldName || '-' },
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{suggestionStatusMap[value as FieldSuggestion['status']]}</Tag> },
     {
       title: '操作',
       render: (_, record) =>
         record.status === 'pending' ? (
           <Space>
-            <Button type="link" onClick={() => { approveSuggestion(record.id, user?.name ?? '财务'); message.success('已批准为新字段，并加入模板'); }}>批准为新字段</Button>
+            <Button type="link" onClick={() => { approveSuggestion(record.id, user?.name ?? '财务'); message.success('字段已加入字段字典和模板，可在项目结构中查看。'); }}>批准为新字段</Button>
             <Button type="link" onClick={() => setMapping(record)}>映射到已有字段</Button>
-            <Button type="link" danger onClick={() => rejectSuggestion(record.id)}>拒绝</Button>
+            <Button type="link" danger onClick={() => { rejectSuggestion(record.id); message.success('已拒绝，该字段不会参与入库'); }}>拒绝</Button>
           </Space>
         ) : null,
     },
@@ -51,7 +52,7 @@ export default function DataFieldSuggestionsPage() {
         onOk={() => {
           if (mapping && fieldId) {
             mapSuggestion(mapping.id, fieldId);
-            message.success('已映射到已有字段');
+            message.success('未知字段已映射到已有字段。');
             setMapping(null);
             setFieldId(undefined);
           }
@@ -62,7 +63,7 @@ export default function DataFieldSuggestionsPage() {
           placeholder="选择字段"
           value={fieldId}
           onChange={setFieldId}
-          options={fields.map((item) => ({ label: item.fieldName, value: item.id }))}
+          options={fields.filter((item) => item.isActive).map((item) => ({ label: `${item.fieldName}（${fieldTypeMap[item.fieldType]}）`, value: item.id }))}
         />
       </Modal>
     </div>

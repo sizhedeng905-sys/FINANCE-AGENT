@@ -81,6 +81,7 @@ export default function CreateWorkOrderPage() {
     const base = {
       id,
       orderNo: `WO${date.replace(/-/g, '')}${String(Date.now()).slice(-4)}`,
+      projectId: project.id,
       projectName: project.projectName,
       customerName: project.customerName,
       creatorName: user.name,

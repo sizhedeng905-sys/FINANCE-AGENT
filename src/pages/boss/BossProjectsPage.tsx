@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Card, Descriptions, Drawer, Table, Typography } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { Button, Card, Descriptions, Drawer, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import { mockProjects } from '@/mock/mockProjects';
@@ -7,6 +8,7 @@ import type { Project } from '@/types/workOrder';
 import { formatMoney, formatPercent } from '@/utils/format';
 
 export default function BossProjectsPage() {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState<Project | null>(null);
   const columns: ColumnsType<Project> = [
     {
@@ -28,6 +30,14 @@ export default function BossProjectsPage() {
     },
     { title: '异常数量', dataIndex: 'anomalyCount' },
     { title: '状态', dataIndex: 'status', render: (value) => ({ normal: '正常', watch: '关注', risk: '风险' }[value as Project['status']]) },
+    {
+      title: '操作',
+      render: (_, record) => (
+        <Button type="link" onClick={(event) => { event.stopPropagation(); navigate(`/boss/data/projects/${record.id}/structure`); }}>
+          查看结构
+        </Button>
+      ),
+    },
   ];
 
   return (

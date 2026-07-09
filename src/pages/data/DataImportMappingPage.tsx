@@ -21,12 +21,37 @@ export default function DataImportMappingPage() {
   const [selectedFields, setSelectedFields] = useState<Record<string, string>>({});
   const importTasks = useDataCenterStore((state) => state.importTasks);
   const fields = useDataCenterStore((state) => state.fields);
+  const templateFields = useDataCenterStore((state) => state.templateFields);
+  const mappingRules = useDataCenterStore((state) => state.mappingRules);
   const excelColumns = useDataCenterStore((state) => state.excelColumns);
   const saveMappingRules = useDataCenterStore((state) => state.saveMappingRules);
+  const autoMatchColumns = useDataCenterStore((state) => state.autoMatchColumns);
   const generateFieldSuggestionsFromTask = useDataCenterStore((state) => state.generateFieldSuggestionsFromTask);
   const updateImportTask = useDataCenterStore((state) => state.updateImportTask);
   const task = importTasks.find((item) => item.id === id);
-  const knownNames = useMemo(() => fields.flatMap((item) => [item.fieldName, ...item.aliases]), [fields]);
+  const taskTemplateFieldIds = useMemo(
+    () => templateFields.filter((item) => item.templateId === task?.templateId).map((item) => item.fieldId),
+    [task?.templateId, templateFields],
+  );
+  const candidateFields = useMemo(
+    () => fields.filter((item) => item.isActive && taskTemplateFieldIds.includes(item.id)),
+    [fields, taskTemplateFieldIds],
+  );
+  const ruleByColumn = useMemo(() => {
+    const map = new Map<string, MappingRule>();
+    if (!task) return map;
+    mappingRules
+      .filter((item) => item.importTaskId === task.id || item.templateId === task.templateId)
+      .forEach((rule) => {
+        const current = map.get(rule.sourceColumnName);
+        if (!current || rule.importTaskId === task.id) {
+          map.set(rule.sourceColumnName, rule);
+        }
+      });
+    return map;
+  }, [mappingRules, task]);
+
+  const getSelectedField = (columnName: string) => selectedFields[columnName] ?? ruleByColumn.get(columnName)?.targetFieldId;
 
   const columns: ColumnsType<ColumnRow> = [
     { title: 'Excel列名', dataIndex: 'name' },
@@ -38,22 +63,28 @@ export default function DataImportMappingPage() {
           className="full-width"
           allowClear
           placeholder="选择字段"
-          value={selectedFields[record.name]}
+          value={getSelectedField(record.name)}
           onChange={(value) => setSelectedFields((state) => ({ ...state, [record.name]: value }))}
-          options={fields.filter((item) => item.isActive).map((item) => ({ label: `${item.fieldName}（${fieldTypeMap[item.fieldType]}）`, value: item.id }))}
+          options={candidateFields.map((item) => ({ label: `${item.fieldName}（${fieldTypeMap[item.fieldType]}）`, value: item.id }))}
         />
       ),
     },
     {
       title: '匹配方式',
-      render: (_, record) => (knownNames.includes(record.name) ? <Tag color="green">自动</Tag> : <Tag color="orange">未知字段</Tag>),
+      render: (_, record) => {
+        const selected = getSelectedField(record.name);
+        const rule = ruleByColumn.get(record.name);
+        if (selected === '') return <Tag color="default">忽略字段</Tag>;
+        if (selected || rule) return <Tag color="green">已映射：{rule?.targetFieldName ?? candidateFields.find((item) => item.id === selected)?.fieldName}</Tag>;
+        return <Tag color="orange">未知字段</Tag>;
+      },
     },
-    { title: '置信度', render: (_, record) => (knownNames.includes(record.name) ? '98%' : '42%') },
+    { title: '置信度', render: (_, record) => ruleByColumn.get(record.name) ? `${Math.round((ruleByColumn.get(record.name)?.confidence ?? 0) * 100)}%` : '42%' },
     {
       title: '操作',
       render: (_, record) => (
         <Space>
-          {!knownNames.includes(record.name) ? <Tag color="warning">建议人工确认</Tag> : null}
+          {!ruleByColumn.get(record.name) && getSelectedField(record.name) !== '' ? <Tag color="warning">建议人工确认</Tag> : null}
           <Button size="small" onClick={() => setSelectedFields((state) => ({ ...state, [record.name]: '' }))}>忽略</Button>
         </Space>
       ),
@@ -65,10 +96,12 @@ export default function DataImportMappingPage() {
   const save = () => {
     const rules: MappingRule[] = excelColumns
       .map((column) => {
-        const field = fields.find((item) => item.id === selectedFields[column.name] || item.fieldName === column.name || item.aliases.includes(column.name));
+        const field = candidateFields.find((item) => item.id === selectedFields[column.name] || item.fieldName === column.name || item.aliases.includes(column.name));
+        if (selectedFields[column.name] === '') return null;
         if (!field) return null;
         return {
           id: `mr-${Date.now()}-${column.name}`,
+          importTaskId: task.id,
           templateId: task.templateId,
           sourceColumnName: column.name,
           targetFieldId: field.id,
@@ -100,6 +133,14 @@ export default function DataImportMappingPage() {
         <Table rowKey="name" columns={columns} dataSource={excelColumns} pagination={false} scroll={{ x: 900 }} />
         <Space className="form-actions">
           <Button onClick={save}>保存映射</Button>
+          <Button
+            onClick={() => {
+              autoMatchColumns(task.id);
+              message.success('已重新自动匹配');
+            }}
+          >
+            重新自动匹配
+          </Button>
           <Button onClick={() => { generateFieldSuggestionsFromTask(task.id); message.success('字段建议已生成'); }}>生成字段建议</Button>
           <Button
             type="primary"

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App, Button, Card, Form, Select, Upload } from 'antd';
+import { Alert, App, Button, Card, Form, Select, Upload } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import { useAuthStore } from '@/store/authStore';
@@ -15,8 +15,18 @@ export default function DataImportPage() {
   const user = useAuthStore((state) => state.user);
   const projects = useDataCenterStore((state) => state.projects);
   const templates = useDataCenterStore((state) => state.templates);
+  const projectTemplates = useDataCenterStore((state) => state.projectTemplates);
   const createImportTask = useDataCenterStore((state) => state.createImportTask);
   const [fileName, setFileName] = useState('导入数据.xlsx');
+  const projectId = Form.useWatch('projectId', form);
+  const enabledTemplateIds = useMemo(
+    () => projectTemplates.filter((item) => item.projectId === projectId && item.isActive).map((item) => item.templateId),
+    [projectId, projectTemplates],
+  );
+  const enabledTemplates = useMemo(
+    () => templates.filter((item) => enabledTemplateIds.includes(item.id)),
+    [enabledTemplateIds, templates],
+  );
 
   const submit = () => {
     form.validateFields().then((values) => {
@@ -38,14 +48,29 @@ export default function DataImportPage() {
       <Card>
         <Form form={form} layout="vertical">
           <Form.Item label="项目" name="projectId" rules={[{ required: true }]}>
-            <Select options={projects.map((item) => ({ label: item.name, value: item.id }))} />
+            <Select
+              options={projects.map((item) => ({ label: item.name, value: item.id }))}
+              onChange={() => form.setFieldsValue({ templateId: undefined })}
+            />
           </Form.Item>
           <Form.Item label="数据类型" name="importType" rules={[{ required: true }]}>
             <Select options={Object.entries(recordTypeMap).filter(([value]) => value !== 'reimbursement').map(([value, label]) => ({ value, label }))} />
           </Form.Item>
           <Form.Item label="模板" name="templateId" rules={[{ required: true }]}>
-            <Select options={templates.map((item) => ({ label: item.name, value: item.id }))} />
+            <Select
+              disabled={!projectId || enabledTemplates.length === 0}
+              options={enabledTemplates.map((item) => ({ label: item.name, value: item.id }))}
+            />
           </Form.Item>
+          {projectId && enabledTemplates.length === 0 ? (
+            <Alert
+              className="section-row"
+              type="warning"
+              showIcon
+              message="当前项目暂无启用模板，请先在项目结构中启用模板。"
+              action={<Button size="small" onClick={() => navigate(`/data/projects/${projectId}/structure`)}>查看项目结构</Button>}
+            />
+          ) : null}
           <Form.Item label="上传Excel">
             <Upload.Dragger
               beforeUpload={(file) => {

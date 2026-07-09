@@ -48,14 +48,19 @@ function base(
   const income = type === 'transport' ? amount : 0;
   const cost = type === 'transport' ? Math.round(amount * 0.64) : amount;
   const profit = income - cost;
-  const projectNames = ['华东快消城配项目', '新能源零部件干线运输', '冷链医药配送项目', '跨省电商仓配项目'];
-  const customerNames = ['云泽商贸', '瑞辰新能源', '安康医药', '星河电商'];
+  const projects = [
+    { id: 'dp-001', name: '太和中转项目', customerName: '太和物流' },
+    { id: 'dp-002', name: '得物项目', customerName: '得物' },
+    { id: 'dp-003', name: '旧衣服项目', customerName: '旧衣回收' },
+  ];
+  const project = projects[(index - 1) % projects.length];
 
   return {
     id: `wo-${String(index).padStart(3, '0')}`,
     orderNo: `WO20260708${String(index).padStart(3, '0')}`,
-    projectName: projectNames[index % projectNames.length],
-    customerName: customerNames[index % customerNames.length],
+    projectId: project.id,
+    projectName: project.name,
+    customerName: project.customerName,
     creatorName: '陈明',
     creatorId: 'u-employee',
     amount,

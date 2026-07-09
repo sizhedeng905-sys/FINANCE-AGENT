@@ -74,8 +74,8 @@ export default function WorkOrderDetailPage() {
       patch,
     });
     if (user.role === 'boss' && payload.status === 'completed') {
-      await generateRecordFromWorkOrder(workOrder.id);
-      message.success('审批完成，已生成项目数据记录。');
+      await generateRecordFromWorkOrder({ ...workOrder, status: 'completed', bossOpinion: payload.comment });
+      message.success('审批完成，已生成项目数据记录，可在数据中心查看。');
       return;
     }
     message.success('操作成功');

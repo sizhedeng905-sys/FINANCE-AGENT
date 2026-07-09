@@ -31,6 +31,7 @@ import DataImportConfirmPage from '@/pages/data/DataImportConfirmPage';
 import DataImportTasksPage from '@/pages/data/DataImportTasksPage';
 import DataRecordsPage from '@/pages/data/DataRecordsPage';
 import DataFieldSuggestionsPage from '@/pages/data/DataFieldSuggestionsPage';
+import DataProjectStructurePage from '@/pages/data/DataProjectStructurePage';
 import { useAuthStore } from '@/store/authStore';
 import ProtectedRoute from './ProtectedRoute';
 import { getDefaultPath } from './roleMenus';
@@ -69,9 +70,11 @@ export default function AppRouter() {
           <Route path="/boss/reports" element={<BossReportsPage />} />
           <Route path="/boss/projects" element={<BossProjectsPage />} />
           <Route path="/boss/data/projects" element={<DataProjectsPage readOnly />} />
+          <Route path="/boss/data/projects/:id/structure" element={<DataProjectStructurePage readOnly />} />
           <Route path="/boss/data/records" element={<DataRecordsPage readOnly />} />
 
           <Route path="/data/projects" element={<DataProjectsPage />} />
+          <Route path="/data/projects/:id/structure" element={<DataProjectStructurePage />} />
           <Route path="/data/templates" element={<DataTemplatesPage />} />
           <Route path="/data/templates/:id" element={<DataTemplateEditPage />} />
           <Route path="/data/fields" element={<DataFieldsPage />} />

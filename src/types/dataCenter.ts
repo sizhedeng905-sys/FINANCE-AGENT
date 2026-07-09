@@ -64,6 +64,8 @@ export interface ProjectTemplate {
   templateId: string;
   customName: string;
   isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface RecordValue {
@@ -71,7 +73,7 @@ export interface RecordValue {
   recordId: string;
   fieldId: string;
   fieldName: string;
-  value: string | number | string[];
+  value: string | number | string[] | null;
 }
 
 export interface BusinessRecord {
@@ -94,6 +96,8 @@ export interface BusinessRecord {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  confirmedAt?: string;
+  confirmedBy?: string;
 }
 
 export interface RawFile {
@@ -104,6 +108,7 @@ export interface RawFile {
   uploadedBy: string;
   uploadedAt: string;
   relatedProjectId: string;
+  relatedImportTaskId?: string;
   status: 'uploaded' | 'parsed' | 'failed';
 }
 
@@ -134,6 +139,7 @@ export interface ImportRow {
 
 export interface MappingRule {
   id: string;
+  importTaskId?: string;
   templateId: string;
   sourceColumnName: string;
   targetFieldId: string;
@@ -148,6 +154,7 @@ export interface FieldSuggestion {
   id: string;
   projectId: string;
   templateId: string;
+  importTaskId?: string;
   sourceName: string;
   suggestedFieldName: string;
   suggestedFieldType: FieldType;
@@ -156,6 +163,8 @@ export interface FieldSuggestion {
   status: 'pending' | 'approved' | 'rejected' | 'mapped_to_existing';
   createdAt: string;
   approvedBy?: string;
+  mappedFieldId?: string;
+  mappedFieldName?: string;
 }
 
 export interface OCRTask {

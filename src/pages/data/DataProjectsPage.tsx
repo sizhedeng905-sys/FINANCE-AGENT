@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { App, Button, Card, Descriptions, Drawer, Form, Input, Modal, Space, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
@@ -8,6 +9,7 @@ import { projectStatusMap } from '@/utils/dataCenterMaps';
 
 export default function DataProjectsPage({ readOnly = false }: { readOnly?: boolean }) {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [form] = Form.useForm<Pick<Project, 'name' | 'customerName' | 'ownerName' | 'description'>>();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
@@ -70,6 +72,12 @@ export default function DataProjectsPage({ readOnly = false }: { readOnly?: bool
         <Space>
           {!readOnly ? <Button type="link" onClick={() => openEdit(record)}>编辑</Button> : null}
           <Button type="link" onClick={() => setTemplateProject(record)}>查看模板</Button>
+          <Button
+            type="link"
+            onClick={() => navigate(readOnly ? `/boss/data/projects/${record.id}/structure` : `/data/projects/${record.id}/structure`)}
+          >
+            查看结构
+          </Button>
           {!readOnly && record.status === 'active' ? (
             <Button type="link" danger onClick={() => { archiveProject(record.id); message.success('项目已归档'); }}>归档</Button>
           ) : null}
@@ -106,7 +114,22 @@ export default function DataProjectsPage({ readOnly = false }: { readOnly?: bool
         </Form>
       </Modal>
 
-      <Drawer title="项目已启用模板" width={520} open={Boolean(templateProject)} onClose={() => setTemplateProject(null)}>
+      <Drawer
+        title="项目已启用模板"
+        width={520}
+        open={Boolean(templateProject)}
+        onClose={() => setTemplateProject(null)}
+        extra={
+          templateProject ? (
+            <Button
+              type="primary"
+              onClick={() => navigate(readOnly ? `/boss/data/projects/${templateProject.id}/structure` : `/data/projects/${templateProject.id}/structure`)}
+            >
+              进入结构视图
+            </Button>
+          ) : null
+        }
+      >
         {templateProject ? (
           <Descriptions bordered column={1}>
             <Descriptions.Item label="项目">{templateProject.name}</Descriptions.Item>

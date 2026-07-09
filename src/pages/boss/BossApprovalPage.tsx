@@ -32,8 +32,8 @@ export default function BossApprovalPage() {
       comment: '同意通过，归档完成。',
       patch: { bossOpinion: '同意通过，归档完成。' },
     });
-    await generateRecordFromWorkOrder(item.id);
-    message.success('审批完成，已生成项目数据记录。');
+    await generateRecordFromWorkOrder({ ...item, status: 'completed', bossOpinion: '同意通过，归档完成。' });
+    message.success('审批完成，已生成项目数据记录，可在数据中心查看。');
   };
 
   const reject = (item: WorkOrder) => {

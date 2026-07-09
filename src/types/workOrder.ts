@@ -34,6 +34,7 @@ export interface BaseWorkOrder {
   id: string;
   orderNo: string;
   type: WorkOrderType;
+  projectId: string;
   projectName: string;
   customerName: string;
   creatorName: string;
