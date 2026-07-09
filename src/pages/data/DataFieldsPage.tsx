@@ -5,6 +5,7 @@ import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import type { FieldDefinition } from '@/types/dataCenter';
 import { fieldTypeMap, semanticTypeMap } from '@/utils/dataCenterMaps';
+import { createSystemFieldName } from '@/utils/fieldName';
 
 export default function DataFieldsPage() {
   const { message } = App.useApp();
@@ -28,7 +29,11 @@ export default function DataFieldsPage() {
   };
   const submit = () => {
     form.validateFields().then((values) => {
-      const payload = { ...values, aliases: values.aliases ?? [] };
+      const payload = {
+        ...values,
+        fieldKey: values.fieldKey || createSystemFieldName(values.fieldName),
+        aliases: values.aliases ?? [],
+      };
       if (editing) {
         updateField(editing.id, payload);
         message.success('字段已更新');
@@ -42,8 +47,8 @@ export default function DataFieldsPage() {
 
   const columns: ColumnsType<FieldDefinition> = [
     { title: '字段名', dataIndex: 'fieldName' },
-    { title: '字段key', dataIndex: 'fieldKey' },
-    { title: '类型', dataIndex: 'fieldType', render: (value) => fieldTypeMap[value as FieldDefinition['fieldType']] },
+    { title: '系统识别名', dataIndex: 'fieldKey' },
+    { title: '字段类型', dataIndex: 'fieldType', render: (value) => fieldTypeMap[value as FieldDefinition['fieldType']] },
     { title: '单位', dataIndex: 'unit' },
     { title: '语义类型', dataIndex: 'semanticType', render: (value) => semanticTypeMap[value as FieldDefinition['semanticType']] },
     { title: '别名', dataIndex: 'aliases', render: (value: string[]) => value.join('、') },
@@ -61,14 +66,20 @@ export default function DataFieldsPage() {
 
   return (
     <div>
-      <PageHeader title="字段字典" description="新增字段是新增 FieldDefinition，不是修改数据库列" extra={<Button type="primary" onClick={openCreate}>新建字段</Button>} />
+      <PageHeader title="字段字典" description="新增字段是新增字段定义，不是修改数据库列。系统识别名用于系统内部识别字段，通常不需要手动填写。" extra={<Button type="primary" onClick={openCreate}>新建字段</Button>} />
       <Card>
         <Table rowKey="id" columns={columns} dataSource={fields} scroll={{ x: 1100 }} />
       </Card>
       <Modal title={editing ? '编辑字段' : '新建字段'} open={open} onCancel={() => setOpen(false)} onOk={submit}>
         <Form form={form} layout="vertical">
           <Form.Item label="字段名" name="fieldName" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item label="字段key" name="fieldKey" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item
+            label="系统识别名（自动生成，可选）"
+            name="fieldKey"
+            tooltip="用于系统内部识别字段，通常不需要手动填写。"
+          >
+            <Input placeholder="不填则自动生成" />
+          </Form.Item>
           <Form.Item label="字段类型" name="fieldType" rules={[{ required: true }]}>
             <Select options={Object.entries(fieldTypeMap).map(([value, label]) => ({ value, label }))} />
           </Form.Item>

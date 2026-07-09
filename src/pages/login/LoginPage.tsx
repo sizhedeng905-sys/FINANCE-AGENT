@@ -17,18 +17,19 @@ const accounts: { label: string; value: Role; desc: string }[] = [
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
-  const [form] = Form.useForm<{ username: Role; password: string }>();
+  const [form] = Form.useForm<{ username: string; password: string }>();
   const { message } = App.useApp();
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
-  const selectedRole = Form.useWatch('username', form) ?? 'employee';
+  const username = Form.useWatch('username', form) ?? 'employee';
+  const selectedRole = accounts.find((item) => item.value === username)?.value;
 
-  const submit = async (values: { username: Role; password: string }) => {
+  const submit = async (values: { username: string; password: string }) => {
     setLoading(true);
     try {
-      await login(values.username, values.password);
+      const user = await login(values.username, values.password);
       message.success('登录成功');
-      navigate(getDefaultPath(values.username), { replace: true });
+      navigate(getDefaultPath(user.role), { replace: true });
     } catch (error) {
       message.error(error instanceof Error ? error.message : '登录失败');
     } finally {
@@ -71,9 +72,11 @@ export default function LoginPage() {
           initialValues={{ username: 'employee', password: '123456' }}
           onFinish={submit}
         >
-          <Form.Item label="测试账号" name="username" rules={[{ required: true }]}>
+          <Form.Item label="测试账号">
             <Segmented
               block
+              value={selectedRole}
+              onChange={(value) => form.setFieldsValue({ username: String(value), password: '123456' })}
               options={accounts.map((item) => ({ label: item.label, value: item.value }))}
             />
           </Form.Item>
@@ -86,14 +89,19 @@ export default function LoginPage() {
                 onClick={() => form.setFieldsValue({ username: item.value, password: '123456' })}
               >
                 <span>{item.label}</span>
-                <small>账号：{item.label} · 密码：123456</small>
+                <small>账号：{item.value} · 密码：123456</small>
               </button>
             ))}
           </div>
 
-          <Form.Item label="账号">
-            <Input size="large" prefix={<UserOutlined />} value={roleLabelMap[selectedRole]} readOnly />
+          <Form.Item label="登录账号" name="username" rules={[{ required: true, message: '请输入登录账号' }]}>
+            <Input size="large" prefix={<UserOutlined />} placeholder="请输入登录账号，例如 employee" />
           </Form.Item>
+          {selectedRole ? (
+            <Typography.Text type="secondary">当前角色：{roleLabelMap[selectedRole]}</Typography.Text>
+          ) : (
+            <Typography.Text type="secondary">新增账号将按员工管理中配置的角色进入系统</Typography.Text>
+          )}
           <Form.Item label="密码" name="password" rules={[{ required: true }]}>
             <Input.Password size="large" prefix={<LockOutlined />} />
           </Form.Item>

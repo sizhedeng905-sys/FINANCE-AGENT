@@ -42,8 +42,8 @@ function createFieldKey(name: string) {
   const ascii = name
     .trim()
     .replace(/\s+/g, '_')
-    .replace(/[^\w]/g, '');
-  return ascii || `custom_${Date.now()}`;
+    .replace(/[^\w\u4e00-\u9fa5]/g, '');
+  return ascii ? `field_${ascii}` : `field_${Date.now()}`;
 }
 
 function normalizeValue(value: string | number | string[] | null | undefined): string | number | string[] | null {
@@ -283,6 +283,7 @@ export const useDataCenterStore = create<DataCenterState>()(
           createdAt: now(),
           updatedAt: now(),
           ...payload,
+          fieldKey: payload.fieldKey || createFieldKey(payload.fieldName),
         };
         set((state) => ({ fields: [field, ...state.fields] }));
         return field;

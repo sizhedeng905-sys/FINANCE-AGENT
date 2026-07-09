@@ -32,6 +32,7 @@ import DataImportTasksPage from '@/pages/data/DataImportTasksPage';
 import DataRecordsPage from '@/pages/data/DataRecordsPage';
 import DataFieldSuggestionsPage from '@/pages/data/DataFieldSuggestionsPage';
 import DataProjectStructurePage from '@/pages/data/DataProjectStructurePage';
+import UserManagementPage from '@/pages/system/UserManagementPage';
 import { useAuthStore } from '@/store/authStore';
 import ProtectedRoute from './ProtectedRoute';
 import { getDefaultPath } from './roleMenus';
@@ -57,6 +58,7 @@ export default function AppRouter() {
           <Route path="/finance/audit" element={<FinanceAuditPage />} />
           <Route path="/finance/anomalies" element={<FinanceAnomaliesPage />} />
           <Route path="/finance/reports" element={<FinanceReportsPage />} />
+          <Route path="/system/users" element={<UserManagementPage />} />
 
           <Route path="/reviewer/home" element={<ReviewerHome />} />
           <Route path="/reviewer/tasks" element={<ReviewerTasksPage />} />
@@ -69,6 +71,7 @@ export default function AppRouter() {
           <Route path="/boss/ai" element={<BossAIPage />} />
           <Route path="/boss/reports" element={<BossReportsPage />} />
           <Route path="/boss/projects" element={<BossProjectsPage />} />
+          <Route path="/boss/system/users" element={<UserManagementPage />} />
           <Route path="/boss/data/projects" element={<DataProjectsPage readOnly />} />
           <Route path="/boss/data/projects/:id/structure" element={<DataProjectStructurePage readOnly />} />
           <Route path="/boss/data/records" element={<DataRecordsPage readOnly />} />

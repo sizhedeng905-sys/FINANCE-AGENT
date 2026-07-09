@@ -164,7 +164,7 @@ export function getLogicalTablesSummary(projectId: string, input: ProjectStructu
   return [
     { tableName: 'projects', description: '项目主表', relatedCount: input.projects.some((item) => item.id === projectId) ? 1 : 0, keyFields: ['id', 'name', 'customerName', 'status'] },
     { tableName: 'templates', description: '数据模板表', relatedCount: enabledTemplates.length, keyFields: ['id', 'name', 'recordType', 'isSystem'] },
-    { tableName: 'field_definitions', description: '字段字典表', relatedCount: fieldIds.size, keyFields: ['id', 'fieldKey', 'fieldName', 'fieldType', 'semanticType'] },
+    { tableName: 'field_definitions', description: '字段字典表', relatedCount: fieldIds.size, keyFields: ['id', '系统识别名', '字段名称', '字段类型', '语义类型'] },
     { tableName: 'template_fields', description: '模板字段关系表', relatedCount: enabledTemplates.flatMap((item) => item.fields).length, keyFields: ['templateId', 'fieldId', 'isRequired', 'displayOrder'] },
     { tableName: 'project_templates', description: '项目启用模板关系表', relatedCount: input.projectTemplates.filter((item) => item.projectId === projectId).length, keyFields: ['projectId', 'templateId', 'customName', 'isActive'] },
     { tableName: 'business_records', description: '业务数据记录主表', relatedCount: records.length, keyFields: ['id', 'projectId', 'templateId', 'recordType', 'sourceType'] },

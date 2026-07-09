@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import type { FieldDefinition, TemplateField } from '@/types/dataCenter';
 import { fieldTypeMap, recordTypeMap, semanticTypeMap } from '@/utils/dataCenterMaps';
+import { createSystemFieldName } from '@/utils/fieldName';
 
 export default function DataTemplateEditPage() {
   const { id } = useParams();
@@ -33,6 +34,7 @@ export default function DataTemplateEditPage() {
 
   const columns: ColumnsType<TemplateField> = [
     { title: '字段名称', render: (_, record) => record.field.fieldName },
+    { title: '系统识别名', render: (_, record) => record.field.fieldKey },
     { title: '字段类型', render: (_, record) => fieldTypeMap[record.field.fieldType] },
     { title: '是否必填', dataIndex: 'isRequired', render: (value, record) => <Switch checked={value} onChange={(checked) => updateTemplateField(record.id, { isRequired: checked })} /> },
     { title: '是否显示', dataIndex: 'isVisible', render: (value, record) => <Switch checked={value} onChange={(checked) => updateTemplateField(record.id, { isVisible: checked })} /> },
@@ -110,7 +112,11 @@ export default function DataTemplateEditPage() {
         onCancel={() => setNewOpen(false)}
         onOk={() => {
           fieldForm.validateFields().then((values) => {
-            const field = createField({ ...values, aliases: values.aliases ?? [] });
+            const field = createField({
+              ...values,
+              fieldKey: values.fieldKey || createSystemFieldName(values.fieldName),
+              aliases: values.aliases ?? [],
+            });
             addExistingFieldToTemplate(id!, field.id);
             message.success('字段已创建并加入模板');
             setNewOpen(false);
@@ -120,7 +126,13 @@ export default function DataTemplateEditPage() {
       >
         <Form form={fieldForm} layout="vertical">
           <Form.Item label="字段名" name="fieldName" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item label="字段key" name="fieldKey" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item
+            label="系统识别名（自动生成，可选）"
+            name="fieldKey"
+            tooltip="用于系统内部识别字段，通常不需要手动填写。"
+          >
+            <Input placeholder="不填则自动生成" />
+          </Form.Item>
           <Form.Item label="字段类型" name="fieldType" rules={[{ required: true }]}>
             <Select options={Object.entries(fieldTypeMap).map(([value, label]) => ({ value, label }))} />
           </Form.Item>

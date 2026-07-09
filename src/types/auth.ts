@@ -2,7 +2,7 @@ export type Role = 'employee' | 'finance' | 'reviewer' | 'boss';
 
 export interface User {
   id: string;
-  username: Role;
+  username: string;
   password: string;
   name: string;
   role: Role;

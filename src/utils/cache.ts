@@ -1,4 +1,4 @@
-const APP_STORAGE_VERSION = '2026-07-09-v4';
+const APP_STORAGE_VERSION = '2026-07-09-v5';
 const VERSION_KEY = 'financial-agent-storage-version';
 
 const APP_KEYS = [
@@ -13,6 +13,7 @@ const APP_KEYS = [
   'audit-notification-store-v3',
   'audit-data-center-store-v1',
   'audit-data-center-store-v2',
+  'audit-user-store-v1',
 ];
 
 export function clearAppStorage() {

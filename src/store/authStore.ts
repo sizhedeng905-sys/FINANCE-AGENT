@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { loginApi } from '@/api/authApi';
-import type { Role, User } from '@/types/auth';
+import type { User } from '@/types/auth';
 
 interface AuthState {
   user: User | null;
-  login: (username: Role, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<User>;
   logout: () => void;
 }
 
@@ -16,6 +16,7 @@ export const useAuthStore = create<AuthState>()(
       login: async (username, password) => {
         const user = await loginApi(username, password);
         set({ user });
+        return user;
       },
       logout: () => set({ user: null }),
     }),

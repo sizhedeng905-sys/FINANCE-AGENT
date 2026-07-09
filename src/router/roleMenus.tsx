@@ -9,6 +9,7 @@ import {
   FolderOpenOutlined,
   HomeOutlined,
   MessageOutlined,
+  TeamOutlined,
   UnorderedListOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
@@ -32,6 +33,7 @@ export const roleMenus: Record<Role, RoleMenuItem[]> = {
     { path: '/finance/audit', label: '财务审核', icon: <AuditOutlined /> },
     { path: '/finance/anomalies', label: 'AI异常提示', icon: <WarningOutlined /> },
     { path: '/finance/reports', label: '财务日报', icon: <FileTextOutlined /> },
+    { path: '/system/users', label: '员工管理', icon: <TeamOutlined /> },
     {
       path: '/data',
       label: '数据中心',
@@ -57,6 +59,7 @@ export const roleMenus: Record<Role, RoleMenuItem[]> = {
     { path: '/boss/home', label: '首页', icon: <HomeOutlined /> },
     { path: '/boss/approval', label: '最终审批', icon: <CheckCircleOutlined /> },
     { path: '/boss/ai', label: 'AI助手', icon: <MessageOutlined /> },
+    { path: '/boss/system/users', label: '员工管理', icon: <TeamOutlined /> },
     {
       path: '/boss/data',
       label: '数据查看',
@@ -101,7 +104,7 @@ export function canAccess(pathname: string, role?: string) {
 
   if (role === 'finance') {
     return (
-      ['/finance/home', '/finance/audit', '/finance/anomalies', '/finance/reports'].includes(pathname) ||
+      ['/finance/home', '/finance/audit', '/finance/anomalies', '/finance/reports', '/system/users'].includes(pathname) ||
       pathname.startsWith('/data/')
     );
   }
@@ -115,7 +118,7 @@ export function canAccess(pathname: string, role?: string) {
 
   if (role === 'boss') {
     return (
-      ['/boss/home', '/boss/approval', '/boss/ai', '/boss/reports', '/boss/projects', '/boss/data/projects', '/boss/data/records'].includes(pathname) ||
+      ['/boss/home', '/boss/approval', '/boss/ai', '/boss/reports', '/boss/projects', '/boss/system/users', '/boss/data/projects', '/boss/data/records'].includes(pathname) ||
       /^\/boss\/data\/projects\/[^/]+\/structure$/.test(pathname) ||
       /^\/boss\/approval\/[^/]+$/.test(pathname)
     );

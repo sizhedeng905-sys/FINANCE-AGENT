@@ -153,7 +153,7 @@ export default function WorkOrderDetailPage() {
       </Card>
 
       <Row gutter={[16, 16]} className="section-row">
-        <Col xs={24} xl={16}>
+        <Col xs={24} xl={user.role === 'employee' ? 24 : 16}>
           <Card title="工单信息">
             <Descriptions bordered column={2} size="small">
               <Descriptions.Item label="工单编号">{workOrder.orderNo}</Descriptions.Item>
@@ -161,6 +161,7 @@ export default function WorkOrderDetailPage() {
               <Descriptions.Item label="项目">{workOrder.projectName}</Descriptions.Item>
               <Descriptions.Item label="客户">{workOrder.customerName}</Descriptions.Item>
               <Descriptions.Item label="提交人">{workOrder.creatorName}</Descriptions.Item>
+              <Descriptions.Item label="申请金额">{formatMoney(workOrder.amount)}</Descriptions.Item>
               <Descriptions.Item label="创建时间">{workOrder.createdAt}</Descriptions.Item>
               <Descriptions.Item label="状态">
                 <StatusTag status={workOrder.status} urgent={workOrder.urgent} />
@@ -171,15 +172,19 @@ export default function WorkOrderDetailPage() {
               <Descriptions.Item label="说明" span={2}>
                 {workOrder.description}
               </Descriptions.Item>
-              <Descriptions.Item label="财务意见" span={2}>
-                {workOrder.financeOpinion || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="复核意见" span={2}>
-                {workOrder.reviewerOpinion || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="老板意见" span={2}>
-                {workOrder.bossOpinion || '-'}
-              </Descriptions.Item>
+              {user.role !== 'employee' ? (
+                <>
+                  <Descriptions.Item label="财务意见" span={2}>
+                    {workOrder.financeOpinion || '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="复核意见" span={2}>
+                    {workOrder.reviewerOpinion || '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="老板意见" span={2}>
+                    {workOrder.bossOpinion || '-'}
+                  </Descriptions.Item>
+                </>
+              ) : null}
               {workOrder.urgent ? (
                 <Descriptions.Item label="加急原因" span={2}>
                   {workOrder.urgentReason}（{workOrder.urgentTime}）
@@ -188,21 +193,23 @@ export default function WorkOrderDetailPage() {
             </Descriptions>
           </Card>
         </Col>
-        <Col xs={24} xl={8}>
-          <Card title="收入/成本/利润">
-            <Row gutter={[12, 12]}>
-              <Col span={24}>
-                <Statistic title="收入" value={workOrder.income} formatter={(value) => formatMoney(Number(value))} />
-              </Col>
-              <Col span={12}>
-                <Statistic title="成本" value={workOrder.cost} formatter={(value) => formatMoney(Number(value))} />
-              </Col>
-              <Col span={12}>
-                <Statistic title="利润" value={workOrder.profit} formatter={(value) => formatMoney(Number(value))} />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
+        {user.role !== 'employee' ? (
+          <Col xs={24} xl={8}>
+            <Card title="收入/成本/利润">
+              <Row gutter={[12, 12]}>
+                <Col span={24}>
+                  <Statistic title="收入" value={workOrder.income} formatter={(value) => formatMoney(Number(value))} />
+                </Col>
+                <Col span={12}>
+                  <Statistic title="成本" value={workOrder.cost} formatter={(value) => formatMoney(Number(value))} />
+                </Col>
+                <Col span={12}>
+                  <Statistic title="利润" value={workOrder.profit} formatter={(value) => formatMoney(Number(value))} />
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        ) : null}
       </Row>
 
       <Row gutter={[16, 16]} className="section-row">

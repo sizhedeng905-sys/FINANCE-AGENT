@@ -30,6 +30,7 @@ import MoneyText from '@/components/MoneyText';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import type { BusinessRecord, FieldDefinition, ProjectTemplate, TemplateField } from '@/types/dataCenter';
 import { fieldTypeMap, importStatusMap, projectStatusMap, recordStatusMap, recordTypeMap, semanticTypeMap, sourceTypeMap } from '@/utils/dataCenterMaps';
+import { createSystemFieldName } from '@/utils/fieldName';
 import { getProjectStructure, type FieldUsageStat, type LogicalTableSummary } from '@/utils/projectStructure';
 
 interface StructureNode {
@@ -215,7 +216,11 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   const submitNewField = () => {
     if (!newTemplateId) return;
     fieldForm.validateFields().then((values) => {
-      const field = createField({ ...values, aliases: values.aliases ?? [] });
+      const field = createField({
+        ...values,
+        fieldKey: values.fieldKey || createSystemFieldName(values.fieldName),
+        aliases: values.aliases ?? [],
+      });
       addExistingFieldToTemplate(newTemplateId, field.id);
       message.success('新字段已加入字段字典和模板，项目结构已更新');
       setNewTemplateId(undefined);
@@ -241,7 +246,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
 
   const fieldColumns = (templateId: string): ColumnsType<TemplateField> => [
     { title: '字段名称', render: (_, record) => record.field.fieldName },
-    { title: '字段key', render: (_, record) => record.field.fieldKey },
+    { title: '系统识别名', render: (_, record) => record.field.fieldKey },
     { title: '字段类型', render: (_, record) => fieldTypeMap[record.field.fieldType] },
     { title: '语义类型', render: (_, record) => semanticTypeMap[record.field.semanticType] },
     { title: '是否必填', dataIndex: 'isRequired', render: (value) => <Tag color={value ? 'red' : 'default'}>{value ? '必填' : '选填'}</Tag> },
@@ -448,7 +453,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
         {selectedDetail?.type === 'field' && selectedDetail.field ? (
           <Descriptions bordered column={1}>
             <Descriptions.Item label="字段名称">{selectedDetail.field.field.fieldName}</Descriptions.Item>
-            <Descriptions.Item label="fieldKey">{selectedDetail.field.field.fieldKey}</Descriptions.Item>
+            <Descriptions.Item label="系统识别名">{selectedDetail.field.field.fieldKey}</Descriptions.Item>
             <Descriptions.Item label="字段类型">{fieldTypeMap[selectedDetail.field.field.fieldType]}</Descriptions.Item>
             <Descriptions.Item label="语义类型">{semanticTypeMap[selectedDetail.field.field.semanticType]}</Descriptions.Item>
             <Descriptions.Item label="单位">{selectedDetail.field.field.unit || '-'}</Descriptions.Item>
@@ -545,7 +550,13 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       <Modal title="新建字段并加入模板" open={Boolean(newTemplateId)} onCancel={() => setNewTemplateId(undefined)} onOk={submitNewField}>
         <Form form={fieldForm} layout="vertical">
           <Form.Item label="字段名" name="fieldName" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item label="字段key" name="fieldKey" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item
+            label="系统识别名（自动生成，可选）"
+            name="fieldKey"
+            tooltip="用于系统内部识别字段，通常不需要手动填写。"
+          >
+            <Input placeholder="不填则自动生成" />
+          </Form.Item>
           <Form.Item label="字段类型" name="fieldType" rules={[{ required: true }]}>
             <Select options={Object.entries(fieldTypeMap).map(([value, label]) => ({ value, label }))} />
           </Form.Item>
