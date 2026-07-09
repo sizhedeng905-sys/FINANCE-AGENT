@@ -1,0 +1,339 @@
+import type {
+  BusinessRecord,
+  DataTemplate,
+  FieldDefinition,
+  FieldSuggestion,
+  ImportRow,
+  ImportTask,
+  MappingRule,
+  Project,
+  ProjectTemplate,
+  RawFile,
+  TemplateField,
+} from '@/types/dataCenter';
+
+const now = '2026-07-09 09:00';
+
+export const mockDataProjects: Project[] = [
+  {
+    id: 'dp-001',
+    name: '太和中转项目',
+    customerName: '太和物流',
+    description: '中转场地、车辆、人工和杂费综合项目。',
+    ownerName: '林雪',
+    status: 'active',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+  {
+    id: 'dp-002',
+    name: '得物项目',
+    customerName: '得物',
+    description: '电商仓配和运输收入记录项目。',
+    ownerName: '陈明',
+    status: 'active',
+    createdAt: '2026-06-08',
+    updatedAt: now,
+  },
+  {
+    id: 'dp-003',
+    name: '旧衣服项目',
+    customerName: '旧衣回收',
+    description: '回收运输、分拣人工、场地费用项目。',
+    ownerName: '赵复核',
+    status: 'active',
+    createdAt: '2026-06-16',
+    updatedAt: now,
+  },
+];
+
+export const mockDataTemplates: DataTemplate[] = [
+  {
+    id: 'dt-transport',
+    name: '运输费用模板',
+    recordType: 'transport',
+    description: '记录车辆、司机、线路和运输成本。',
+    isSystem: true,
+    createdBy: '系统',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+  {
+    id: 'dt-labor',
+    name: '人工劳务费用模板',
+    recordType: 'labor',
+    description: '记录人员、岗位、工时和单价。',
+    isSystem: true,
+    createdBy: '系统',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+  {
+    id: 'dt-site',
+    name: '场地费用模板',
+    recordType: 'cost',
+    description: '记录场地、水电和固定成本。',
+    isSystem: true,
+    createdBy: '系统',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+  {
+    id: 'dt-revenue',
+    name: '收入记录模板',
+    recordType: 'revenue',
+    description: '记录票数、吨数和收入金额。',
+    isSystem: true,
+    createdBy: '系统',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+  {
+    id: 'dt-reimbursement',
+    name: '报销工单模板',
+    recordType: 'reimbursement',
+    description: '记录报销事由、成本分类和凭证。',
+    isSystem: true,
+    createdBy: '系统',
+    createdAt: '2026-06-01',
+    updatedAt: now,
+  },
+];
+
+export const mockFieldDefinitions: FieldDefinition[] = [
+  ['f-date', 'date', '日期', 'date', '', 'date', ['发生日期', '业务日期']],
+  ['f-amount', 'amount', '金额', 'money', '元', 'amount', ['费用金额', '总金额']],
+  ['f-plate', 'vehiclePlate', '车牌号', 'text', '', 'vehicle', ['车牌', '车辆']],
+  ['f-driver', 'driverName', '司机', 'text', '', 'person', ['驾驶员']],
+  ['f-start', 'startLocation', '起点', 'text', '', 'location', ['始发地']],
+  ['f-end', 'endLocation', '终点', 'text', '', 'location', ['目的地']],
+  ['f-hours', 'workHours', '工时', 'number', '小时', 'amount', ['小时数']],
+  ['f-person', 'personName', '人员姓名', 'text', '', 'person', ['员工姓名']],
+  ['f-position', 'position', '岗位', 'select', '', 'category', ['工种']],
+  ['f-utility', 'utilityType', '水电类型', 'select', '', 'category', ['水费电费']],
+  ['f-site', 'siteName', '场地名称', 'text', '', 'location', ['仓库', '场地']],
+  ['f-attachment', 'attachment', '附件', 'file', '', 'file', ['凭证', '发票']],
+  ['f-remark', 'remark', '备注', 'textarea', '', 'remark', ['说明']],
+  ['f-ticket', 'ticketCount', '票数', 'number', '票', 'amount', ['单量']],
+  ['f-ton', 'tonnage', '吨数', 'number', '吨', 'amount', ['重量']],
+  ['f-income', 'incomeAmount', '收入金额', 'money', '元', 'amount', ['营收']],
+  ['f-cost-category', 'costCategory', '成本分类', 'select', '', 'category', ['费用分类']],
+  ['f-reason', 'expenseReason', '费用事由', 'textarea', '', 'remark', ['报销原因']],
+  ['f-payee', 'payee', '付款对象', 'text', '', 'person', ['收款方']],
+  ['f-unit-price', 'unitPrice', '单价', 'money', '元', 'amount', ['价格']],
+].map(([id, fieldKey, fieldName, fieldType, unit, semanticType, aliases]) => ({
+  id: String(id),
+  fieldKey: String(fieldKey),
+  fieldName: String(fieldName),
+  fieldType: fieldType as FieldDefinition['fieldType'],
+  unit: String(unit),
+  semanticType: semanticType as FieldDefinition['semanticType'],
+  aliases: aliases as string[],
+  description: `${fieldName}字段定义`,
+  isActive: true,
+  createdAt: '2026-06-01',
+  updatedAt: now,
+}));
+
+function field(id: string) {
+  const found = mockFieldDefinitions.find((item) => item.id === id);
+  if (!found) throw new Error(`Missing mock field ${id}`);
+  return found;
+}
+
+function templateFields(templateId: string, ids: string[]): TemplateField[] {
+  return ids.map((fieldId, index) => ({
+    id: `tf-${templateId}-${fieldId}`,
+    templateId,
+    fieldId,
+    field: field(fieldId),
+    isRequired: index < 3,
+    isVisible: true,
+    displayOrder: index + 1,
+    defaultValue: '',
+  }));
+}
+
+export const mockTemplateFields: TemplateField[] = [
+  ...templateFields('dt-transport', ['f-date', 'f-plate', 'f-driver', 'f-start', 'f-end', 'f-amount', 'f-remark', 'f-attachment']),
+  ...templateFields('dt-labor', ['f-date', 'f-person', 'f-position', 'f-hours', 'f-unit-price', 'f-amount', 'f-remark']),
+  ...templateFields('dt-site', ['f-date', 'f-site', 'f-utility', 'f-amount', 'f-remark', 'f-attachment']),
+  ...templateFields('dt-revenue', ['f-date', 'f-site', 'f-ticket', 'f-ton', 'f-income', 'f-remark']),
+  ...templateFields('dt-reimbursement', ['f-date', 'f-reason', 'f-cost-category', 'f-amount', 'f-attachment', 'f-remark']),
+];
+
+export const mockProjectTemplates: ProjectTemplate[] = [
+  { id: 'pt-001', projectId: 'dp-001', templateId: 'dt-transport', customName: '太和运输费用', isActive: true },
+  { id: 'pt-002', projectId: 'dp-001', templateId: 'dt-labor', customName: '太和劳务费用', isActive: true },
+  { id: 'pt-003', projectId: 'dp-002', templateId: 'dt-revenue', customName: '得物收入记录', isActive: true },
+  { id: 'pt-004', projectId: 'dp-003', templateId: 'dt-site', customName: '旧衣场地费用', isActive: true },
+];
+
+export const mockRawFiles: RawFile[] = [
+  {
+    id: 'rf-001',
+    fileName: '太和运输费用7月.xlsx',
+    fileType: 'excel',
+    storagePath: '/mock/太和运输费用7月.xlsx',
+    uploadedBy: '林雪',
+    uploadedAt: '2026-07-08',
+    relatedProjectId: 'dp-001',
+    status: 'parsed',
+  },
+  {
+    id: 'rf-002',
+    fileName: '得物收入明细.xlsx',
+    fileType: 'excel',
+    storagePath: '/mock/得物收入明细.xlsx',
+    uploadedBy: '林雪',
+    uploadedAt: '2026-07-08',
+    relatedProjectId: 'dp-002',
+    status: 'uploaded',
+  },
+];
+
+export const mockBusinessRecords: BusinessRecord[] = Array.from({ length: 10 }).map((_, index) => {
+  const project = mockDataProjects[index % mockDataProjects.length];
+  const template = mockDataTemplates[index % mockDataTemplates.length];
+  const amount = [8200, 12600, 4500, 21000, 6800, 9300, 15800, 3900, 27500, 6400][index];
+  const sourceType = ['manual', 'excel', 'ocr', 'work_order'][index % 4] as BusinessRecord['sourceType'];
+  return {
+    id: `br-${String(index + 1).padStart(3, '0')}`,
+    projectId: project.id,
+    projectName: project.name,
+    templateId: template.id,
+    templateName: template.name,
+    recordType: template.recordType,
+    recordDate: `2026-07-${String(index + 1).padStart(2, '0')}`,
+    amount,
+    category: template.recordType === 'revenue' ? '收入' : '成本',
+    subCategory: template.name,
+    description: `${project.name} ${template.name} mock记录`,
+    sourceType,
+    sourceId: `${sourceType}-${index + 1}`,
+    status: index % 3 === 0 ? 'pending_confirm' : 'confirmed',
+    values: [
+      { id: `rv-${index}-date`, recordId: `br-${String(index + 1).padStart(3, '0')}`, fieldId: 'f-date', fieldName: '日期', value: `2026-07-${String(index + 1).padStart(2, '0')}` },
+      { id: `rv-${index}-amount`, recordId: `br-${String(index + 1).padStart(3, '0')}`, fieldId: 'f-amount', fieldName: '金额', value: amount },
+    ],
+    attachments: index % 2 ? ['凭证.pdf'] : [],
+    createdBy: ['林雪', '陈明', '系统'][index % 3],
+    createdAt: `2026-07-${String(index + 1).padStart(2, '0')} 10:00`,
+    updatedAt: now,
+  };
+});
+
+export const mockImportTasks: ImportTask[] = [
+  {
+    id: 'it-001',
+    projectId: 'dp-002',
+    projectName: '得物项目',
+    rawFileId: 'rf-002',
+    fileName: '得物收入明细.xlsx',
+    templateId: 'dt-revenue',
+    templateName: '收入记录模板',
+    importType: 'revenue',
+    status: 'uploaded',
+    uploadedBy: '林雪',
+    createdAt: '2026-07-08 10:00',
+  },
+  {
+    id: 'it-002',
+    projectId: 'dp-001',
+    projectName: '太和中转项目',
+    rawFileId: 'rf-001',
+    fileName: '太和运输费用7月.xlsx',
+    templateId: 'dt-transport',
+    templateName: '运输费用模板',
+    importType: 'transport',
+    status: 'mapping',
+    uploadedBy: '林雪',
+    createdAt: '2026-07-08 11:00',
+  },
+  {
+    id: 'it-003',
+    projectId: 'dp-003',
+    projectName: '旧衣服项目',
+    rawFileId: 'rf-003',
+    fileName: '旧衣场地费用.xlsx',
+    templateId: 'dt-site',
+    templateName: '场地费用模板',
+    importType: 'cost',
+    status: 'confirmed',
+    uploadedBy: '林雪',
+    createdAt: '2026-07-08 13:00',
+    confirmedAt: '2026-07-08 13:20',
+  },
+];
+
+export const mockImportRows: ImportRow[] = [
+  {
+    id: 'ir-001',
+    importTaskId: 'it-002',
+    rowNumber: 1,
+    rawData: { 日期: '2026-07-01', 车牌号: '沪A12345', 司机: '王师傅', 金额: 8200, 夜班补贴: 300 },
+    mappedData: { 日期: '2026-07-01', 车牌号: '沪A12345', 司机: '王师傅', 金额: 8200 },
+    status: 'mapped',
+  },
+  {
+    id: 'ir-002',
+    importTaskId: 'it-002',
+    rowNumber: 2,
+    rawData: { 日期: '2026-07-02', 车牌号: '沪B77889', 司机: '刘师傅', 金额: 9100, 上楼费: 500 },
+    mappedData: { 日期: '2026-07-02', 车牌号: '沪B77889', 司机: '刘师傅', 金额: 9100 },
+    status: 'pending',
+  },
+];
+
+export const mockMappingRules: MappingRule[] = [
+  {
+    id: 'mr-001',
+    templateId: 'dt-transport',
+    sourceColumnName: '车牌号',
+    targetFieldId: 'f-plate',
+    targetFieldName: '车牌号',
+    mappingType: 'auto',
+    confidence: 0.98,
+    createdBy: '系统',
+    createdAt: now,
+  },
+  {
+    id: 'mr-002',
+    templateId: 'dt-transport',
+    sourceColumnName: '金额',
+    targetFieldId: 'f-amount',
+    targetFieldName: '金额',
+    mappingType: 'auto',
+    confidence: 0.99,
+    createdBy: '系统',
+    createdAt: now,
+  },
+];
+
+export const mockFieldSuggestions: FieldSuggestion[] = [
+  ['fs-001', '夜班补贴', 'money', ['300', '500'], 'Excel出现新费用列，建议加入字段字典。'],
+  ['fs-002', '上楼费', 'money', ['100', '500'], '客户现场产生额外搬运费用。'],
+  ['fs-003', '临时仓储费', 'money', ['1200'], '项目存在临时仓储成本。'],
+  ['fs-004', '装卸次数', 'number', ['3', '5'], '可用于分析装卸效率。'],
+  ['fs-005', '异常扣款', 'money', ['200'], '收入明细中出现扣款字段。'],
+].map(([id, name, type, sampleValues, reason]) => ({
+  id: String(id),
+  projectId: 'dp-001',
+  templateId: 'dt-transport',
+  sourceName: String(name),
+  suggestedFieldName: String(name),
+  suggestedFieldType: type as FieldDefinition['fieldType'],
+  sampleValues: sampleValues as string[],
+  reason: String(reason),
+  status: 'pending',
+  createdAt: now,
+}));
+
+export const mockExcelColumns = [
+  { name: '日期', sample: '2026-07-01' },
+  { name: '车牌号', sample: '沪A12345' },
+  { name: '司机', sample: '王师傅' },
+  { name: '金额', sample: '8200' },
+  { name: '夜班补贴', sample: '300' },
+  { name: '上楼费', sample: '500' },
+];

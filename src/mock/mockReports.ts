@@ -1,0 +1,88 @@
+import type { AIAnomaly, BossReport, FinanceReport } from '@/types/report';
+
+export const mockFinanceReport: FinanceReport = {
+  id: 'fr-001',
+  date: '2026-07-08',
+  newWorkOrders: 8,
+  approvedCount: 5,
+  rejectedCount: 2,
+  totalIncome: 126800,
+  totalExpense: 84200,
+  estimatedProfit: 42600,
+  aiSummary: '今日费用集中在新能源和电商仓配项目，高风险报销需优先核对附件与费用发生原因。',
+};
+
+export const mockBossReports: BossReport[] = [
+  {
+    id: 'br-daily',
+    period: 'daily',
+    title: '经营日报',
+    income: 126800,
+    expense: 84200,
+    profit: 42600,
+    anomalies: ['高额装卸费报销', '项目暂停后维修支出'],
+    pendingApprovals: 3,
+    aiSummary: '今天整体利润为正，但两笔异常费用会影响本周利润。',
+    aiSuggestion: '建议优先审批低风险运输单，高风险报销先让负责人补充说明。',
+  },
+  {
+    id: 'br-weekly',
+    period: 'weekly',
+    title: '经营周报',
+    income: 684000,
+    expense: 492000,
+    profit: 192000,
+    anomalies: ['外包车费用上升', '油费波动偏高'],
+    pendingApprovals: 6,
+    aiSummary: '本周收入稳定，利润主要由冷链医药和华东城配贡献。',
+    aiSuggestion: '建议和新能源客户重新确认夜间装卸费结算口径。',
+  },
+  {
+    id: 'br-monthly',
+    period: 'monthly',
+    title: '经营月报',
+    income: 3329000,
+    expense: 2534900,
+    profit: 794100,
+    anomalies: ['跨省电商项目暂停后仍有成本', '报销附件不完整'],
+    pendingApprovals: 11,
+    aiSummary: '本月总体盈利，但成本压力集中在新能源和电商项目。',
+    aiSuggestion: '建议老板重点关注外包承运单价、临时费用和低毛利客户。',
+  },
+];
+
+export const mockAnomalies: AIAnomaly[] = [
+  {
+    id: 'a-001',
+    workOrderId: 'wo-007',
+    orderNo: 'WO20260708007',
+    projectName: '跨省电商仓配项目',
+    type: '费用报销',
+    amount: 24800,
+    riskLevel: 'high',
+    reason: '报销金额高于同类费用均值，附件说明不足。',
+    statusText: '等待老板审批',
+  },
+  {
+    id: 'a-002',
+    workOrderId: 'wo-012',
+    orderNo: 'WO20260708012',
+    projectName: '新能源零部件干线运输',
+    type: '费用报销',
+    amount: 38800,
+    riskLevel: 'high',
+    reason: '单笔金额较高，疑似与外包承运费用重复。',
+    statusText: '财务审核中',
+  },
+  {
+    id: 'a-003',
+    workOrderId: 'wo-011',
+    orderNo: 'WO20260708011',
+    projectName: '冷链医药配送项目',
+    type: '运输订单',
+    amount: 14200,
+    riskLevel: 'medium',
+    reason: '缺少温控附件，需要员工补充材料。',
+    statusText: '待补充材料',
+  },
+];

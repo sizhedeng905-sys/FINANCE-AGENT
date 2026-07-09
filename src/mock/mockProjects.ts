@@ -1,0 +1,48 @@
+import type { Project } from '@/types/workOrder';
+
+export const mockProjects: Project[] = [
+  {
+    id: 'p-001',
+    projectName: '华东快消城配项目',
+    customerName: '云泽商贸',
+    ownerName: '陈明',
+    monthIncome: 865000,
+    monthCost: 612400,
+    anomalyCount: 1,
+    status: 'normal',
+    aiSummary: '客户回款稳定，城配线路利润率健康，油费波动在可接受范围内。',
+  },
+  {
+    id: 'p-002',
+    projectName: '新能源零部件干线运输',
+    customerName: '瑞辰新能源',
+    ownerName: '陈明',
+    monthIncome: 1186000,
+    monthCost: 1015000,
+    anomalyCount: 3,
+    status: 'watch',
+    aiSummary: '收入规模较大，但外包承运与夜间装卸费用上升，需要重点压降成本。',
+  },
+  {
+    id: 'p-003',
+    projectName: '冷链医药配送项目',
+    customerName: '安康医药',
+    ownerName: '陈明',
+    monthIncome: 742000,
+    monthCost: 486000,
+    anomalyCount: 0,
+    status: 'normal',
+    aiSummary: '温控附件齐全，签收稳定，是本月利润表现较好的客户项目。',
+  },
+  {
+    id: 'p-004',
+    projectName: '跨省电商仓配项目',
+    customerName: '星河电商',
+    ownerName: '陈明',
+    monthIncome: 536000,
+    monthCost: 421500,
+    anomalyCount: 2,
+    status: 'risk',
+    aiSummary: '项目暂停后仍有支出发生，建议老板审批时关注费用归属。',
+  },
+];

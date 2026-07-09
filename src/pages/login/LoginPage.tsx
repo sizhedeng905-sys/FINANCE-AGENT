@@ -1,0 +1,117 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { LoginOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
+import { App, Button, Card, Form, Input, Segmented, Space, Typography } from 'antd';
+import type { Role } from '@/types/auth';
+import { useAuthStore } from '@/store/authStore';
+import { getDefaultPath } from '@/router/roleMenus';
+import { roleLabelMap } from '@/utils/statusMap';
+import { clearAppStorage } from '@/utils/cache';
+
+const accounts: { label: string; value: Role; desc: string }[] = [
+  { label: '员工', value: 'employee', desc: '提交工单、查看进度、催办' },
+  { label: '财务', value: 'finance', desc: '财务审核、异常提示、日报' },
+  { label: '复核员', value: 'reviewer', desc: '复核任务、审核历史' },
+  { label: '老板', value: 'boss', desc: '最终审批、AI助手、经营日报' },
+];
+
+export default function LoginPage() {
+  const [loading, setLoading] = useState(false);
+  const [form] = Form.useForm<{ username: Role; password: string }>();
+  const { message } = App.useApp();
+  const login = useAuthStore((state) => state.login);
+  const navigate = useNavigate();
+  const selectedRole = Form.useWatch('username', form) ?? 'employee';
+
+  const submit = async (values: { username: Role; password: string }) => {
+    setLoading(true);
+    try {
+      await login(values.username, values.password);
+      message.success('登录成功');
+      navigate(getDefaultPath(values.username), { replace: true });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '登录失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-page audit-login">
+      <section className="login-intro">
+        <Typography.Title className="login-title">物流企业 AI 财务运营审核系统</Typography.Title>
+        <Typography.Paragraph className="login-desc">
+          员工提交工单，财务初审，复核员二次确认，AI 自动复核，老板最终审批。
+        </Typography.Paragraph>
+        <div className="login-metrics">
+          <div>
+            <strong>4</strong>
+            <span>登录角色</span>
+          </div>
+          <div>
+            <strong>6</strong>
+            <span>审批步骤</span>
+          </div>
+          <div>
+            <strong>Mock</strong>
+            <span>前端原型</span>
+          </div>
+        </div>
+      </section>
+
+      <Card className="login-card">
+        <Space direction="vertical" size={4} className="login-card-head">
+          <Typography.Title level={3}>账号登录</Typography.Title>
+          <Typography.Text type="secondary">统一密码：123456</Typography.Text>
+        </Space>
+
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ username: 'employee', password: '123456' }}
+          onFinish={submit}
+        >
+          <Form.Item label="测试账号" name="username" rules={[{ required: true }]}>
+            <Segmented
+              block
+              options={accounts.map((item) => ({ label: item.label, value: item.value }))}
+            />
+          </Form.Item>
+
+          <div className="account-hints">
+            {accounts.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => form.setFieldsValue({ username: item.value, password: '123456' })}
+              >
+                <span>{item.label}</span>
+                <small>账号：{item.label} · 密码：123456</small>
+              </button>
+            ))}
+          </div>
+
+          <Form.Item label="账号">
+            <Input size="large" prefix={<UserOutlined />} value={roleLabelMap[selectedRole]} readOnly />
+          </Form.Item>
+          <Form.Item label="密码" name="password" rules={[{ required: true }]}>
+            <Input.Password size="large" prefix={<LockOutlined />} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block size="large" loading={loading} icon={<LoginOutlined />}>
+            进入系统
+          </Button>
+          <Button
+            type="link"
+            block
+            onClick={() => {
+              clearAppStorage();
+              window.location.href = '/login';
+            }}
+          >
+            清空缓存并重新登录
+          </Button>
+        </Form>
+      </Card>
+    </div>
+  );
+}
