@@ -84,14 +84,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return '资源不存在';
     }
 
-    if (status === HttpStatus.FORBIDDEN) {
-      return '无权限';
-    }
-
-    if (status === HttpStatus.UNAUTHORIZED) {
-      return '未登录';
-    }
-
     if (typeof responseBody === 'string') {
       return responseBody;
     }
@@ -99,6 +91,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const body = responseBody as ExceptionBody;
     if (typeof body.message === 'string') {
       return body.message;
+    }
+
+    if (status === HttpStatus.FORBIDDEN) {
+      return '无权限';
+    }
+
+    if (status === HttpStatus.UNAUTHORIZED) {
+      return '未登录';
     }
 
     return fallback || '服务端错误';

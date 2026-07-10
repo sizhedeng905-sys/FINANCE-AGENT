@@ -6,3 +6,52 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserRole {
+  employee
+  finance
+  reviewer
+  boss
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+model User {
+  id           String     @id @default(cuid())
+  username     String     @unique
+  passwordHash String     @map("password_hash")
+  name         String
+  role         UserRole
+  department   String?
+  phone        String?
+  status       UserStatus @default(active)
+  createdBy    String?    @map("created_by")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorUserId   String?  @map("actor_user_id")
+  actorUsername String?  @map("actor_username")
+  action        String
+  resourceType  String   @map("resource_type")
+  resourceId    String?  @map("resource_id")
+  metadata      Json?
+  ip            String?
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
