@@ -19,6 +19,42 @@ enum UserStatus {
   disabled
 }
 
+enum ProjectStatus {
+  active
+  archived
+}
+
+enum DataRecordType {
+  cost
+  revenue
+  reimbursement
+  transport
+  labor
+  other
+}
+
+enum FieldType {
+  text
+  number
+  money
+  date
+  select
+  file
+  textarea
+}
+
+enum SemanticType {
+  amount
+  date
+  person
+  vehicle
+  project
+  location
+  category
+  remark
+  file
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -54,4 +90,93 @@ model AuditLog {
   @@index([actorUserId])
   @@index([resourceType, resourceId])
   @@map("audit_logs")
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  name         String
+  customerName String        @map("customer_name")
+  description  String?
+  ownerName    String        @map("owner_name")
+  status       ProjectStatus @default(active)
+  createdBy    String?       @map("created_by")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  projectTemplates ProjectTemplate[]
+
+  @@index([status])
+  @@map("projects")
+}
+
+model Template {
+  id          String         @id @default(cuid())
+  name        String
+  recordType  DataRecordType @map("record_type")
+  description String?
+  isSystem    Boolean        @default(false) @map("is_system")
+  createdBy   String?        @map("created_by")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  templateFields  TemplateField[]
+  projectTemplates ProjectTemplate[]
+
+  @@index([recordType])
+  @@map("templates")
+}
+
+model FieldDefinition {
+  id           String       @id @default(cuid())
+  fieldKey     String       @unique @map("field_key")
+  fieldName    String       @map("field_name")
+  fieldType    FieldType    @map("field_type")
+  unit         String?
+  semanticType SemanticType @map("semantic_type")
+  aliases      Json?
+  description  String?
+  isActive     Boolean      @default(true) @map("is_active")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  templateFields TemplateField[]
+
+  @@index([isActive])
+  @@map("field_definitions")
+}
+
+model TemplateField {
+  id           String   @id @default(cuid())
+  templateId   String   @map("template_id")
+  fieldId      String   @map("field_id")
+  isRequired   Boolean  @default(false) @map("is_required")
+  isVisible    Boolean  @default(true) @map("is_visible")
+  displayOrder Int      @default(0) @map("display_order")
+  defaultValue String?  @map("default_value")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  template Template        @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  field    FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, fieldId])
+  @@index([fieldId])
+  @@map("template_fields")
+}
+
+model ProjectTemplate {
+  id         String   @id @default(cuid())
+  projectId  String   @map("project_id")
+  templateId String   @map("template_id")
+  customName String?  @map("custom_name")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, templateId])
+  @@index([templateId])
+  @@map("project_templates")
 }

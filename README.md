@@ -5,7 +5,7 @@
 当前仓库包含前端原型和分阶段后端实现：
 
 - 前端页面仍默认使用 `src/mock` 数据
-- 后端已新增 `backend/`，完成阶段 0 项目骨架和阶段 1 登录/用户权限
+- 后端已新增 `backend/`，完成阶段 0 项目骨架、阶段 1 登录/用户权限、阶段 2 数据中心基础
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - 不调用真实 AI API
 - 工单、项目、附件、报表、AI 助手等业务接口仍待后续阶段实现
@@ -128,7 +128,7 @@ http://localhost:3001/api/health
 | --- | --- | --- |
 | 阶段 0 | 已完成 | NestJS、TypeScript、Prisma、PostgreSQL、统一响应、统一错误、Swagger、健康检查 |
 | 阶段 1 | 已完成 | 用户表、审计日志、JWT 登录、当前用户、退出、用户管理、finance/boss 权限 |
-| 阶段 2 | 待实现 | 项目管理基础数据 |
+| 阶段 2 | 已完成 | 项目、模板、字段、项目启用模板、项目结构可视化 |
 | 阶段 3 | 待实现 | 工单主流程 |
 | 阶段 4+ | 待实现 | 附件、通知、规则审核、报表、AI 助手 |
 
@@ -153,6 +153,33 @@ http://localhost:3001/api/health
 - `PATCH /api/users/:id/password`
 - `PATCH /api/users/:id/status`
 - `DELETE /api/users/:id`
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:id`
+- `PATCH /api/projects/:id`
+- `DELETE /api/projects/:id`
+- `GET /api/projects/:id/structure`
+- `GET /api/projects/:id/summary`
+- `GET /api/projects/:projectId/templates`
+- `POST /api/projects/:projectId/templates`
+- `PATCH /api/project-templates/:id`
+- `PATCH /api/project-templates/:id/disable`
+- `GET /api/templates`
+- `POST /api/templates`
+- `GET /api/templates/:id`
+- `PATCH /api/templates/:id`
+- `DELETE /api/templates/:id`
+- `POST /api/templates/:id/clone`
+- `GET /api/templates/:id/fields`
+- `POST /api/templates/:id/fields`
+- `PATCH /api/template-fields/:id`
+- `DELETE /api/template-fields/:id`
+- `GET /api/fields`
+- `POST /api/fields`
+- `GET /api/fields/:id`
+- `PATCH /api/fields/:id`
+- `PATCH /api/fields/:id/disable`
+- `GET /api/fields/:id/usage`
 
 ## 构建
 

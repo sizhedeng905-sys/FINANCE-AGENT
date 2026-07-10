@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole, UserStatus } from '@prisma/client';
+import { DataRecordType, FieldType, ProjectStatus, SemanticType, UserRole, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 
@@ -23,10 +23,79 @@ interface UserRecord {
   updatedAt: Date;
 }
 
+interface ProjectRecord {
+  id: string;
+  name: string;
+  customerName: string;
+  description: string | null;
+  ownerName: string;
+  status: ProjectStatus;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface TemplateRecord {
+  id: string;
+  name: string;
+  recordType: DataRecordType;
+  description: string | null;
+  isSystem: boolean;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface FieldRecord {
+  id: string;
+  fieldKey: string;
+  fieldName: string;
+  fieldType: FieldType;
+  unit: string | null;
+  semanticType: SemanticType;
+  aliases: string[];
+  description: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface TemplateFieldRecord {
+  id: string;
+  templateId: string;
+  fieldId: string;
+  isRequired: boolean;
+  isVisible: boolean;
+  displayOrder: number;
+  defaultValue: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface ProjectTemplateRecord {
+  id: string;
+  projectId: string;
+  templateId: string;
+  customName: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 class InMemoryPrisma {
   users: UserRecord[] = [];
+  projects: ProjectRecord[] = [];
+  templates: TemplateRecord[] = [];
+  fieldDefinitions: FieldRecord[] = [];
+  templateFields: TemplateFieldRecord[] = [];
+  projectTemplates: ProjectTemplateRecord[] = [];
   auditLogs: Array<Record<string, unknown>> = [];
   private userCounter = 0;
+  private projectCounter = 0;
+  private templateCounter = 0;
+  private fieldCounter = 0;
+  private templateFieldCounter = 0;
+  private projectTemplateCounter = 0;
   private auditCounter = 0;
 
   user = {
@@ -84,6 +153,232 @@ class InMemoryPrisma {
     }
   };
 
+  project = {
+    findUnique: async ({ where }: { where: { id: string } }) => this.projects.find((project) => project.id === where.id) ?? null,
+    findMany: async ({ where, skip = 0, take = 20 }: { where?: Record<string, unknown>; skip?: number; take?: number }) =>
+      this.applyProjectWhere(where)
+        .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
+        .slice(skip, skip + take),
+    count: async ({ where }: { where?: Record<string, unknown> }) => this.applyProjectWhere(where).length,
+    create: async ({ data }: { data: Partial<ProjectRecord> & Pick<ProjectRecord, 'name' | 'customerName' | 'ownerName'> }) => {
+      const now = new Date();
+      const project: ProjectRecord = {
+        id: data.id ?? `project_${++this.projectCounter}`,
+        name: data.name,
+        customerName: data.customerName,
+        description: data.description ?? null,
+        ownerName: data.ownerName,
+        status: data.status ?? ProjectStatus.active,
+        createdBy: data.createdBy ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.projects.push(project);
+      return project;
+    },
+    update: async ({ where, data }: { where: { id: string }; data: Partial<ProjectRecord> }) => {
+      const project = this.projects.find((item) => item.id === where.id);
+      if (!project) throw new Error('Project not found');
+      Object.assign(project, data, { updatedAt: new Date() });
+      return project;
+    }
+  };
+
+  template = {
+    findUnique: async ({ where, include }: { where: { id: string }; include?: Record<string, unknown> }) => {
+      const template = this.templates.find((item) => item.id === where.id);
+      return template ? this.withTemplateInclude(template, include) : null;
+    },
+    findMany: async ({ where, skip = 0, take = 20 }: { where?: Record<string, unknown>; skip?: number; take?: number }) =>
+      this.applyTemplateWhere(where)
+        .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
+        .slice(skip, skip + take),
+    count: async ({ where }: { where?: Record<string, unknown> }) => this.applyTemplateWhere(where).length,
+    create: async ({ data }: { data: any }) => {
+      const now = new Date();
+      const template: TemplateRecord = {
+        id: data.id ?? `template_${++this.templateCounter}`,
+        name: data.name,
+        recordType: data.recordType,
+        description: data.description ?? null,
+        isSystem: data.isSystem ?? false,
+        createdBy: data.createdBy ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.templates.push(template);
+
+      const nestedFields = data.templateFields?.create as Array<Partial<TemplateFieldRecord> & { fieldId: string }> | undefined;
+      if (nestedFields) {
+        for (const nestedField of nestedFields) {
+          await this.templateField.create({
+            data: {
+              ...nestedField,
+              templateId: template.id
+            }
+          });
+        }
+      }
+
+      return template;
+    },
+    update: async ({ where, data }: { where: { id: string }; data: Partial<TemplateRecord> }) => {
+      const template = this.templates.find((item) => item.id === where.id);
+      if (!template) throw new Error('Template not found');
+      Object.assign(template, data, { updatedAt: new Date() });
+      return template;
+    },
+    delete: async ({ where }: { where: { id: string } }) => {
+      const index = this.templates.findIndex((item) => item.id === where.id);
+      if (index < 0) throw new Error('Template not found');
+      const [deleted] = this.templates.splice(index, 1);
+      this.templateFields = this.templateFields.filter((item) => item.templateId !== where.id);
+      this.projectTemplates = this.projectTemplates.filter((item) => item.templateId !== where.id);
+      return deleted;
+    }
+  };
+
+  fieldDefinition = {
+    findUnique: async ({ where }: { where: { id?: string; fieldKey?: string } }) =>
+      this.fieldDefinitions.find((field) => field.id === where.id || field.fieldKey === where.fieldKey) ?? null,
+    findMany: async ({ where, skip = 0, take = 20 }: { where?: Record<string, unknown>; skip?: number; take?: number }) =>
+      this.applyFieldWhere(where)
+        .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
+        .slice(skip, skip + take),
+    count: async ({ where }: { where?: Record<string, unknown> }) => this.applyFieldWhere(where).length,
+    create: async ({ data }: { data: Partial<FieldRecord> & Pick<FieldRecord, 'fieldKey' | 'fieldName' | 'fieldType' | 'semanticType'> }) => {
+      if (this.fieldDefinitions.some((field) => field.fieldKey === data.fieldKey)) {
+        throw { code: 'P2002', meta: { target: ['field_key'] } };
+      }
+      const now = new Date();
+      const field: FieldRecord = {
+        id: data.id ?? `field_${++this.fieldCounter}`,
+        fieldKey: data.fieldKey,
+        fieldName: data.fieldName,
+        fieldType: data.fieldType,
+        unit: data.unit ?? null,
+        semanticType: data.semanticType,
+        aliases: data.aliases ?? [],
+        description: data.description ?? null,
+        isActive: data.isActive ?? true,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.fieldDefinitions.push(field);
+      return field;
+    },
+    update: async ({ where, data }: { where: { id: string }; data: Partial<FieldRecord> }) => {
+      const field = this.fieldDefinitions.find((item) => item.id === where.id);
+      if (!field) throw new Error('Field not found');
+      Object.assign(field, data, { updatedAt: new Date() });
+      return field;
+    }
+  };
+
+  templateField = {
+    findUnique: async ({ where, include }: { where: { id: string }; include?: Record<string, unknown> }) => {
+      const templateField = this.templateFields.find((item) => item.id === where.id);
+      return templateField ? this.withTemplateFieldInclude(templateField, include) : null;
+    },
+    findMany: async ({ where, include, orderBy }: { where?: Record<string, unknown>; include?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
+      let items = this.templateFields.filter((item) => {
+        if (where?.templateId && item.templateId !== where.templateId) return false;
+        if (where?.fieldId && item.fieldId !== where.fieldId) return false;
+        return true;
+      });
+      if (orderBy?.displayOrder === 'asc') {
+        items = items.sort((first, second) => first.displayOrder - second.displayOrder);
+      }
+      if (orderBy?.displayOrder === 'desc') {
+        items = items.sort((first, second) => second.displayOrder - first.displayOrder);
+      }
+      return items.map((item) => this.withTemplateFieldInclude(item, include));
+    },
+    findFirst: async ({ where, orderBy }: { where?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
+      const items = await this.templateField.findMany({ where, orderBy });
+      return items[0] ?? null;
+    },
+    create: async ({ data, include }: { data: Partial<TemplateFieldRecord> & Pick<TemplateFieldRecord, 'templateId' | 'fieldId'>; include?: Record<string, unknown> }) => {
+      if (this.templateFields.some((item) => item.templateId === data.templateId && item.fieldId === data.fieldId)) {
+        throw { code: 'P2002', meta: { target: ['template_id', 'field_id'] } };
+      }
+      const now = new Date();
+      const templateField: TemplateFieldRecord = {
+        id: data.id ?? `template_field_${++this.templateFieldCounter}`,
+        templateId: data.templateId,
+        fieldId: data.fieldId,
+        isRequired: data.isRequired ?? false,
+        isVisible: data.isVisible ?? true,
+        displayOrder: data.displayOrder ?? 0,
+        defaultValue: data.defaultValue ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.templateFields.push(templateField);
+      return this.withTemplateFieldInclude(templateField, include);
+    },
+    update: async ({ where, data, include }: { where: { id: string }; data: Partial<TemplateFieldRecord>; include?: Record<string, unknown> }) => {
+      const templateField = this.templateFields.find((item) => item.id === where.id);
+      if (!templateField) throw new Error('Template field not found');
+      Object.assign(templateField, data, { updatedAt: new Date() });
+      return this.withTemplateFieldInclude(templateField, include);
+    },
+    delete: async ({ where }: { where: { id: string } }) => {
+      const index = this.templateFields.findIndex((item) => item.id === where.id);
+      if (index < 0) throw new Error('Template field not found');
+      const [deleted] = this.templateFields.splice(index, 1);
+      return deleted;
+    }
+  };
+
+  projectTemplate = {
+    findUnique: async ({ where }: { where: { id: string } }) => this.projectTemplates.find((item) => item.id === where.id) ?? null,
+    findMany: async ({ where, include, orderBy }: { where?: Record<string, unknown>; include?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
+      let items = this.projectTemplates.filter((item) => {
+        if (where?.projectId && item.projectId !== where.projectId) return false;
+        if (where?.templateId && item.templateId !== where.templateId) return false;
+        if (typeof where?.isActive === 'boolean' && item.isActive !== where.isActive) return false;
+        return true;
+      });
+      if (orderBy?.createdAt === 'asc') {
+        items = items.sort((first, second) => first.createdAt.getTime() - second.createdAt.getTime());
+      }
+      if (orderBy?.createdAt === 'desc') {
+        items = items.sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
+      }
+      return items.map((item) => this.withProjectTemplateInclude(item, include));
+    },
+    upsert: async ({ where, create, update }: { where: { projectId_templateId: { projectId: string; templateId: string } }; create: Partial<ProjectTemplateRecord> & Pick<ProjectTemplateRecord, 'projectId' | 'templateId'>; update: Partial<ProjectTemplateRecord> }) => {
+      const existing = this.projectTemplates.find(
+        (item) =>
+          item.projectId === where.projectId_templateId.projectId && item.templateId === where.projectId_templateId.templateId
+      );
+      if (existing) {
+        Object.assign(existing, update, { updatedAt: new Date() });
+        return existing;
+      }
+
+      const now = new Date();
+      const projectTemplate: ProjectTemplateRecord = {
+        id: create.id ?? `project_template_${++this.projectTemplateCounter}`,
+        projectId: create.projectId,
+        templateId: create.templateId,
+        customName: create.customName ?? null,
+        isActive: create.isActive ?? true,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.projectTemplates.push(projectTemplate);
+      return projectTemplate;
+    },
+    update: async ({ where, data }: { where: { id: string }; data: Partial<ProjectTemplateRecord> }) => {
+      const projectTemplate = this.projectTemplates.find((item) => item.id === where.id);
+      if (!projectTemplate) throw new Error('Project template not found');
+      Object.assign(projectTemplate, data, { updatedAt: new Date() });
+      return projectTemplate;
+    }
+  };
+
   auditLog = {
     create: async ({ data }: { data: Record<string, unknown> }) => {
       const log = {
@@ -129,6 +424,143 @@ class InMemoryPrisma {
     }
   }
 
+  private applyProjectWhere(where?: Record<string, unknown>) {
+    let projects = [...this.projects];
+
+    if (!where) return projects;
+
+    if (where.status) {
+      projects = projects.filter((project) => project.status === where.status);
+    }
+
+    const or = where.OR as Array<Record<string, { contains: string }>> | undefined;
+    if (or?.length) {
+      projects = projects.filter((project) =>
+        or.some((condition) =>
+          Object.entries(condition).some(([key, value]) => {
+            const source = String(project[key as keyof ProjectRecord] ?? '').toLowerCase();
+            return source.includes(value.contains.toLowerCase());
+          })
+        )
+      );
+    }
+
+    return projects;
+  }
+
+  private applyTemplateWhere(where?: Record<string, unknown>) {
+    let templates = [...this.templates];
+
+    if (!where) return templates;
+
+    if (where.recordType) {
+      templates = templates.filter((template) => template.recordType === where.recordType);
+    }
+
+    const or = where.OR as Array<Record<string, { contains: string }>> | undefined;
+    if (or?.length) {
+      templates = templates.filter((template) =>
+        or.some((condition) =>
+          Object.entries(condition).some(([key, value]) => {
+            const source = String(template[key as keyof TemplateRecord] ?? '').toLowerCase();
+            return source.includes(value.contains.toLowerCase());
+          })
+        )
+      );
+    }
+
+    return templates;
+  }
+
+  private applyFieldWhere(where?: Record<string, unknown>) {
+    let fields = [...this.fieldDefinitions];
+
+    if (!where) return fields;
+
+    if (where.fieldType) {
+      fields = fields.filter((field) => field.fieldType === where.fieldType);
+    }
+
+    if (where.semanticType) {
+      fields = fields.filter((field) => field.semanticType === where.semanticType);
+    }
+
+    if (typeof where.isActive === 'boolean') {
+      fields = fields.filter((field) => field.isActive === where.isActive);
+    }
+
+    const or = where.OR as Array<Record<string, { contains: string }>> | undefined;
+    if (or?.length) {
+      fields = fields.filter((field) =>
+        or.some((condition) =>
+          Object.entries(condition).some(([key, value]) => {
+            const source = String(field[key as keyof FieldRecord] ?? '').toLowerCase();
+            return source.includes(value.contains.toLowerCase());
+          })
+        )
+      );
+    }
+
+    return fields;
+  }
+
+  private withTemplateFieldInclude(templateField: TemplateFieldRecord, include?: Record<string, unknown>) {
+    const result: Record<string, unknown> = { ...templateField };
+
+    if (include?.field) {
+      result.field = this.fieldDefinitions.find((field) => field.id === templateField.fieldId);
+    }
+
+    if (include?.template) {
+      const templateInclude = typeof include.template === 'object' ? (include.template as { include?: Record<string, unknown> }).include : undefined;
+      const template = this.templates.find((item) => item.id === templateField.templateId);
+      result.template = template ? this.withTemplateInclude(template, templateInclude) : null;
+    }
+
+    return result;
+  }
+
+  private withTemplateInclude(template: TemplateRecord, include?: Record<string, unknown>) {
+    const result: Record<string, unknown> = { ...template };
+
+    if (include?.templateFields) {
+      const templateFieldsConfig = include.templateFields as { include?: Record<string, unknown>; orderBy?: Record<string, string> };
+      let fields = this.templateFields.filter((templateField) => templateField.templateId === template.id);
+      if (templateFieldsConfig.orderBy?.displayOrder === 'asc') {
+        fields = fields.sort((first, second) => first.displayOrder - second.displayOrder);
+      }
+      result.templateFields = fields.map((templateField) =>
+        this.withTemplateFieldInclude(templateField, templateFieldsConfig.include)
+      );
+    }
+
+    if (include?.projectTemplates) {
+      const projectTemplateConfig = include.projectTemplates as { include?: Record<string, unknown> };
+      result.projectTemplates = this.projectTemplates
+        .filter((projectTemplate) => projectTemplate.templateId === template.id)
+        .map((projectTemplate) => this.withProjectTemplateInclude(projectTemplate, projectTemplateConfig.include));
+    }
+
+    return result;
+  }
+
+  private withProjectTemplateInclude(projectTemplate: ProjectTemplateRecord, include?: Record<string, unknown>) {
+    const result: Record<string, unknown> = { ...projectTemplate };
+
+    if (include?.template) {
+      const templateConfig = include.template as true | { include?: Record<string, unknown> };
+      const templateInclude = typeof templateConfig === 'object' ? templateConfig.include : undefined;
+      const template = this.templates.find((item) => item.id === projectTemplate.templateId);
+      result.template = template ? this.withTemplateInclude(template, templateInclude) : null;
+    }
+
+    if (include?.project) {
+      result.project = this.projects.find((project) => project.id === projectTemplate.projectId) ?? null;
+    }
+
+    return result;
+  }
+
   private applyUserWhere(where?: Record<string, unknown>) {
     let users = [...this.users];
 
@@ -160,7 +592,7 @@ class InMemoryPrisma {
   }
 }
 
-describe('FINANCE-AGENT backend phase 1', () => {
+describe('FINANCE-AGENT backend phases 1 and 2', () => {
   let app: INestApplication;
   let prisma: InMemoryPrisma;
 
@@ -354,5 +786,211 @@ describe('FINANCE-AGENT backend phase 1', () => {
     });
     expect(response.body.data.items).toHaveLength(5);
     expect(response.body.data.total).toBeGreaterThanOrEqual(8);
+  });
+
+  it('allows finance to manage projects, templates, fields, and project structure', async () => {
+    const financeToken = await login('finance');
+    const bossToken = await login('boss');
+
+    const projectResponse = await request(app.getHttpServer())
+      .post('/api/projects')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        name: '阶段二项目',
+        customerName: '阶段二客户',
+        ownerName: '林雪',
+        description: '阶段二验收项目'
+      })
+      .expect(201);
+    const projectId = projectResponse.body.data.id as string;
+
+    const templateResponse = await request(app.getHttpServer())
+      .post('/api/templates')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        name: '阶段二模板',
+        recordType: DataRecordType.transport,
+        description: '阶段二验收模板'
+      })
+      .expect(201);
+    const templateId = templateResponse.body.data.id as string;
+
+    const fieldCountBefore = prisma.fieldDefinitions.length;
+    const fieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '夜班补贴',
+        fieldType: FieldType.money,
+        unit: '元',
+        semanticType: SemanticType.amount,
+        aliases: ['夜补'],
+        description: '夜班额外补贴'
+      })
+      .expect(201);
+    const fieldId = fieldResponse.body.data.id as string;
+
+    expect(prisma.fieldDefinitions).toHaveLength(fieldCountBefore + 1);
+    expect(fieldResponse.body.data.fieldKey).toMatch(/^field_[a-f0-9]{8}$|^夜班补贴$/);
+    expect(prisma.projects[0]).not.toHaveProperty('夜班补贴');
+
+    const templateFieldResponse = await request(app.getHttpServer())
+      .post(`/api/templates/${templateId}/fields`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldId,
+        isRequired: true,
+        isVisible: true,
+        displayOrder: 1
+      })
+      .expect(201);
+    const templateFieldId = templateFieldResponse.body.data.id as string;
+
+    const projectTemplateResponse = await request(app.getHttpServer())
+      .post(`/api/projects/${projectId}/templates`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        templateId,
+        customName: '阶段二项目运输费用'
+      })
+      .expect(201);
+    const projectTemplateId = projectTemplateResponse.body.data.id as string;
+
+    const structureResponse = await request(app.getHttpServer())
+      .get(`/api/projects/${projectId}/structure`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+
+    expect(structureResponse.body.data).toMatchObject({
+      project: {
+        id: projectId,
+        name: '阶段二项目'
+      },
+      records: [],
+      rawFiles: [],
+      importTasks: []
+    });
+    expect(structureResponse.body.data.enabledTemplates).toHaveLength(1);
+    expect(structureResponse.body.data.fieldUsageStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fieldId,
+          fieldName: '夜班补贴',
+          usageCount: 0
+        })
+      ])
+    );
+
+    await request(app.getHttpServer())
+      .get(`/api/projects/${projectId}/structure`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/api/projects')
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({
+        name: '老板不能写',
+        customerName: '客户',
+        ownerName: '老板'
+      })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/api/projects/${projectId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ownerName: '陈明' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/templates/${templateId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ name: '阶段二模板已更新' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/fields/${fieldId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ description: '夜班补贴已更新' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/template-fields/${templateFieldId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ displayOrder: 2 })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/project-templates/${projectTemplateId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ customName: '阶段二运输费用已更新' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/fields/${fieldId}/disable`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/project-templates/${projectTemplateId}/disable`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+
+    const actions = prisma.auditLogs.map((log) => log.action);
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        'project.create',
+        'project.update',
+        'template.create',
+        'template.update',
+        'field_definition.create',
+        'field_definition.update',
+        'field_definition.disable',
+        'template_field.add',
+        'template_field.update',
+        'project_template.enable',
+        'project_template.update',
+        'project_template.disable'
+      ])
+    );
+  });
+
+  it('enforces data center read/write permissions by role', async () => {
+    const employeeToken = await login('employee');
+    const reviewerToken = await login('reviewer');
+
+    await request(app.getHttpServer())
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/api/templates')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({
+        name: '员工不能创建模板',
+        recordType: DataRecordType.cost
+      })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({
+        fieldName: '员工字段',
+        fieldType: FieldType.text,
+        semanticType: SemanticType.remark
+      })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get('/api/fields')
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .expect(403);
   });
 });

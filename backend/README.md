@@ -1,6 +1,6 @@
 # FINANCE-AGENT Backend
 
-Phase 0 and phase 1 backend for the logistics AI finance operations system.
+Phase 0, phase 1, and phase 2 backend for the logistics AI finance operations system.
 
 ## Tech Stack
 
@@ -41,13 +41,19 @@ npm run prisma:seed
 - Login: `POST /api/auth/login`
 - Current user: `GET /api/auth/me`
 - Logout: `POST /api/auth/logout`
-- Users: `GET /api/users`
-- Create user: `POST /api/users`
-- User detail: `GET /api/users/:id`
-- Update user: `PATCH /api/users/:id`
-- Reset password: `PATCH /api/users/:id/password`
-- Update status: `PATCH /api/users/:id/status`
-- Delete user: `DELETE /api/users/:id`
+- User management: `GET/POST/PATCH/DELETE /api/users`
+- Projects: `GET/POST/PATCH/DELETE /api/projects`
+- Project structure: `GET /api/projects/:id/structure`
+- Project summary: `GET /api/projects/:id/summary`
+- Project templates: `GET/POST /api/projects/:projectId/templates`
+- Project template management: `PATCH /api/project-templates/:id`, `PATCH /api/project-templates/:id/disable`
+- Templates: `GET/POST/PATCH/DELETE /api/templates`
+- Template clone: `POST /api/templates/:id/clone`
+- Template fields: `GET/POST /api/templates/:id/fields`
+- Template field management: `PATCH/DELETE /api/template-fields/:id`
+- Fields: `GET/POST/PATCH /api/fields`
+- Field disable: `PATCH /api/fields/:id/disable`
+- Field usage: `GET /api/fields/:id/usage`
 - Swagger UI: `/api/docs`
 
 Successful responses use:
@@ -97,10 +103,10 @@ Completed:
 
 - Phase 0: runnable NestJS/Prisma backend foundation.
 - Phase 1: users, roles, login, JWT current user, finance/boss user management, and audit logs.
+- Phase 2: projects, templates, field definitions, template fields, project-enabled templates, project structure, and data center audit logs.
 
 Not implemented yet:
 
-- Projects
 - Work orders
 - Attachments
 - Approval workflow
