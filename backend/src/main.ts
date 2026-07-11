@@ -30,8 +30,8 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('FINANCE-AGENT Backend API')
-    .setDescription('Phase 0 backend skeleton for the logistics AI finance operations system.')
-    .setVersion('0.1.0')
+    .setDescription('Phase 0-8 backend for the logistics AI finance operations system.')
+    .setVersion('0.8.0')
     .addBearerAuth()
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
