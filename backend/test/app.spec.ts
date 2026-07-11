@@ -955,6 +955,17 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     await request(app.getHttpServer()).get('/api/users').set('Authorization', `Bearer ${reviewerToken}`).expect(403);
   });
 
+  it('allows only boss to access the full AI chat endpoint', async () => {
+    for (const username of ['employee', 'finance', 'reviewer']) {
+      const token = await login(username);
+      await request(app.getHttpServer())
+        .post('/api/ai/chat')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ message: '今天经营情况', history: [] })
+        .expect(403);
+    }
+  });
+
   it('allows finance and boss to manage users and writes audit logs', async () => {
     const financeToken = await login('finance');
     const bossToken = await login('boss');

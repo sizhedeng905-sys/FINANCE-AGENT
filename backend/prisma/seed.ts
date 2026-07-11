@@ -6,7 +6,9 @@ import {
   PrismaClient,
   RecordSourceType,
   RiskLevel,
-  SemanticType
+  SemanticType,
+  WorkOrderStatus,
+  WorkOrderType
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
@@ -456,7 +458,124 @@ async function main() {
     });
   }
 
-  console.log('Phase 6 seed complete: users, data center defaults, demo records, and risk rules are ready.');
+  const employee = await prisma.user.findUniqueOrThrow({ where: { username: 'employee' } });
+  const pendingWorkOrder = await prisma.workOrder.upsert({
+    where: { id: 'wo-seed-boss-pending' },
+    create: {
+      id: 'wo-seed-boss-pending',
+      orderNo: 'WO202607110001',
+      type: WorkOrderType.expense,
+      projectId: 'dp-001',
+      projectName: '太和中转项目',
+      customerName: '太和物流',
+      creatorId: employee.id,
+      creatorName: employee.name,
+      amount: new Prisma.Decimal(26000),
+      cost: new Prisma.Decimal(26000),
+      profit: new Prisma.Decimal(-26000),
+      status: WorkOrderStatus.boss_pending,
+      riskLevel: RiskLevel.high,
+      description: '高额临时人工费用，等待老板审批',
+      occurredDate: new Date('2026-07-11'),
+      extraValues: { expenseType: '人工' },
+      financeOpinion: '凭证基本完整',
+      reviewerOpinion: '金额较高，提交规则复核',
+      aiSummary: '规则复核发现高额工单异常，建议核对合同与付款依据'
+    },
+    update: {
+      projectId: 'dp-001',
+      projectName: '太和中转项目',
+      customerName: '太和物流',
+      creatorId: employee.id,
+      creatorName: employee.name,
+      amount: new Prisma.Decimal(26000),
+      cost: new Prisma.Decimal(26000),
+      profit: new Prisma.Decimal(-26000),
+      status: WorkOrderStatus.boss_pending,
+      riskLevel: RiskLevel.high,
+      description: '高额临时人工费用，等待老板审批',
+      occurredDate: new Date('2026-07-11'),
+      extraValues: { expenseType: '人工' },
+      financeOpinion: '凭证基本完整',
+      reviewerOpinion: '金额较高，提交规则复核',
+      aiSummary: '规则复核发现高额工单异常，建议核对合同与付款依据',
+      generatedRecordId: null,
+      completedAt: null
+    }
+  });
+
+  await prisma.aiAnomaly.upsert({
+    where: {
+      workOrderId_ruleId: {
+        workOrderId: pendingWorkOrder.id,
+        ruleId: 'rr-amount-high'
+      }
+    },
+    create: {
+      anomalyType: 'amount_threshold',
+      ruleId: 'rr-amount-high',
+      projectId: pendingWorkOrder.projectId,
+      workOrderId: pendingWorkOrder.id,
+      riskLevel: RiskLevel.high,
+      reason: '工单金额26000元超过阈值20000元',
+      suggestion: '请核对合同、凭证和付款依据。',
+      evidence: { amount: 26000, threshold: 20000 },
+      status: 'open'
+    },
+    update: {
+      riskLevel: RiskLevel.high,
+      reason: '工单金额26000元超过阈值20000元',
+      suggestion: '请核对合同、凭证和付款依据。',
+      evidence: { amount: 26000, threshold: 20000 },
+      status: 'open',
+      resolvedAt: null
+    }
+  });
+
+  await prisma.aiModelConfig.upsert({
+    where: { id: 'ai-model-mock-default' },
+    create: {
+      id: 'ai-model-mock-default',
+      provider: 'mock',
+      modelName: 'mock-structured-v1',
+      displayName: '结构化数据 Mock Provider',
+      isLocal: true,
+      supportsToolCall: false,
+      isActive: true,
+      createdBy: 'system'
+    },
+    update: {
+      modelName: 'mock-structured-v1',
+      displayName: '结构化数据 Mock Provider',
+      isLocal: true,
+      supportsToolCall: false,
+      isActive: true
+    }
+  });
+
+  await prisma.aiPromptVersion.upsert({
+    where: { promptKey_versionNo: { promptKey: 'boss_chat', versionNo: 1 } },
+    create: {
+      id: 'ai-prompt-boss-chat-v1',
+      promptKey: 'boss_chat',
+      versionNo: 1,
+      title: '老板经营问答 V1',
+      systemPrompt:
+        '你是物流企业老板的财务运营助手。只能依据工具返回的结构化上下文回答，不得编造金额、项目、工单或人员。工具没有提供答案时回答“需要人工确认”。',
+      userPromptTemplate: '用户问题：{{question}}\n工具上下文：{{tool_context}}',
+      isActive: true,
+      createdBy: 'system'
+    },
+    update: {
+      title: '老板经营问答 V1',
+      systemPrompt:
+        '你是物流企业老板的财务运营助手。只能依据工具返回的结构化上下文回答，不得编造金额、项目、工单或人员。工具没有提供答案时回答“需要人工确认”。',
+      userPromptTemplate: '用户问题：{{question}}\n工具上下文：{{tool_context}}',
+      isActive: true
+    }
+  });
+
+  console.log('Phase 8 seed complete: core users, data defaults, risk demo, and mock AI configuration are ready.');
 }
 
 main()

@@ -68,8 +68,8 @@ describe('phase 5 files and notifications', () => {
       originalname: '凭证.pdf',
       encoding: '7bit',
       mimetype: 'application/pdf',
-      size: 7,
-      buffer: Buffer.from('pdf-test'),
+      size: 9,
+      buffer: Buffer.from('%PDF-test'),
       stream: undefined,
       destination: '',
       filename: '',
@@ -78,12 +78,12 @@ describe('phase 5 files and notifications', () => {
 
     const uploaded = await service.upload(file, { relatedProjectId: 'project_1' }, actor(UserRole.employee, 'employee_1'), {});
     expect(uploaded.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(uploaded.fileSize).toBe(7);
+    expect(uploaded.fileSize).toBe(9);
     expect(auditLogs.write).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'file.upload', 'raw_file', uploaded.id, expect.anything(), {});
     expect(ledgerEvents.write).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'raw_file_uploaded', 'raw_file', uploaded.id, expect.anything());
 
     const downloaded = await service.read(uploaded.id, actor(UserRole.employee, 'employee_1'), {}, 'download');
-    expect(downloaded.buffer.toString()).toBe('pdf-test');
+    expect(downloaded.buffer.toString()).toBe('%PDF-test');
     await expect(service.get(uploaded.id, actor(UserRole.employee, 'employee_2'))).rejects.toBeInstanceOf(ForbiddenException);
 
     const voided = await service.void(uploaded.id, { reason: '重复上传' }, actor(UserRole.employee, 'employee_1'), {});

@@ -123,6 +123,11 @@ enum AnomalyStatus {
   ignored
 }
 
+enum AiMessageRole {
+  user
+  assistant
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -141,6 +146,7 @@ model User {
   approvals         Approval[]
   timelineEntries   WorkOrderTimeline[]
   uploadedFiles     RawFile[]
+  aiConversations   AiConversation[]
 
   @@map("users")
 }
@@ -520,6 +526,101 @@ model AiAnomaly {
   @@index([status, riskLevel])
   @@index([projectId])
   @@map("ai_anomalies")
+}
+
+model AiConversation {
+  id          String   @id @default(cuid())
+  ownerUserId String   @map("owner_user_id")
+  title       String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+  callLogs AiCallLog[]
+
+  @@index([ownerUserId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String        @id @default(cuid())
+  conversationId String        @map("conversation_id")
+  role           AiMessageRole
+  content        String
+  toolContext    Json?         @map("tool_context")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiModelConfig {
+  id               String   @id @default(cuid())
+  provider         String
+  modelName        String   @map("model_name")
+  displayName      String?  @map("display_name")
+  baseUrl          String?  @map("base_url")
+  apiKeySecretName String?  @map("api_key_secret_name")
+  isLocal          Boolean  @default(false) @map("is_local")
+  supportsToolCall Boolean  @default(false) @map("supports_tool_call")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdBy        String?  @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  callLogs AiCallLog[]
+
+  @@index([provider, isActive])
+  @@map("ai_model_configs")
+}
+
+model AiPromptVersion {
+  id                 String   @id @default(cuid())
+  promptKey          String   @map("prompt_key")
+  versionNo          Int      @map("version_no")
+  title              String?
+  systemPrompt       String   @map("system_prompt")
+  userPromptTemplate String?  @map("user_prompt_template")
+  outputSchemaJson   Json?    @map("output_schema_json")
+  isActive           Boolean  @default(false) @map("is_active")
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  callLogs AiCallLog[]
+
+  @@unique([promptKey, versionNo])
+  @@index([promptKey, isActive])
+  @@map("ai_prompt_versions")
+}
+
+model AiCallLog {
+  id              String   @id @default(cuid())
+  conversationId  String?  @map("conversation_id")
+  modelConfigId   String?  @map("model_config_id")
+  promptVersionId String?  @map("prompt_version_id")
+  provider        String
+  modelName       String   @map("model_name")
+  requestPayload  Json     @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  inputTokens     Int      @default(0) @map("input_tokens")
+  outputTokens    Int      @default(0) @map("output_tokens")
+  latencyMs       Int      @default(0) @map("latency_ms")
+  success         Boolean  @default(true)
+  errorMessage    String?  @map("error_message")
+  createdBy       String?  @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  conversation  AiConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  modelConfig   AiModelConfig?   @relation(fields: [modelConfigId], references: [id], onDelete: SetNull)
+  promptVersion AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([modelName, createdAt])
+  @@index([createdAt])
+  @@map("ai_call_logs")
 }
 
 model RecordValue {

@@ -5,11 +5,10 @@
 当前仓库包含前端原型和分阶段后端实现：
 
 - 前端页面仍默认使用 `src/mock` 数据
-- 后端已新增 `backend/`，完成阶段 0 项目骨架、阶段 1 登录/用户权限、阶段 2 数据中心基础、阶段 3 业务记录手工补录
+- 后端已完成阶段 0–8：基础骨架、权限、数据中心、业务记录、工单审批、附件通知、规则异常、实时报表和老板 AI 助手
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
-- 不调用真实 AI API
-- 工单、项目、附件、报表、AI 助手等业务接口仍待后续阶段实现
-- 所有未来接口统一预留在 `src/api`
+- AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
+- 前端仍默认使用 mock，真实接口已统一预留在 `src/api`，下一步是前后端联调
 
 ## 技术栈
 
@@ -130,7 +129,11 @@ http://localhost:3001/api/health
 | 阶段 1 | 已完成 | 用户表、审计日志、JWT 登录、当前用户、退出、用户管理、finance/boss 权限 |
 | 阶段 2 | 已完成 | 项目、模板、字段、项目启用模板、项目结构可视化 |
 | 阶段 3 | 已完成 | 业务记录、动态字段值、手工补录、记录确认、ledger_events 简化事件 |
-| 阶段 4+ | 待实现 | 工单主流程、附件、通知、规则审核、报表、AI 助手 |
+| 阶段 4 | 已完成 | 工单主流程、角色数据范围、审批状态机、时间线、催办 |
+| 阶段 5 | 已完成 | 本地附件上传、预览下载、SHA-256、软删除、通知未读闭环 |
+| 阶段 6 | 已完成 | 可配置规则审核、自动风险检查、异常记录与追溯 |
+| 阶段 7 | 已完成 | 老板审批幂等生成经营记录、财务/老板/项目实时报表 |
+| 阶段 8 | 已完成 | 老板 AI 助手、六个结构化工具、mock/OpenAI-compatible provider、AI 调用日志 |
 
 阶段 1 后端测试账号：
 
@@ -187,6 +190,36 @@ http://localhost:3001/api/health
 - `DELETE /api/records/:id`
 - `POST /api/records/:id/confirm`
 - `GET /api/projects/:projectId/records`
+- `GET /api/work-orders`
+- `POST /api/work-orders`
+- `GET /api/work-orders/:id`
+- `PATCH /api/work-orders/:id`
+- `POST /api/work-orders/:id/submit`
+- `POST /api/work-orders/:id/finance-review`
+- `POST /api/work-orders/:id/reviewer-review`
+- `POST /api/work-orders/:id/run-rules`
+- `POST /api/work-orders/:id/boss-approve`
+- `POST /api/work-orders/:id/urge`
+- `GET /api/work-orders/:id/timeline`
+- `POST /api/work-orders/:id/generate-record`
+- `POST /api/files/upload`
+- `GET /api/files/:id`
+- `GET /api/files/:id/preview`
+- `GET /api/files/:id/download`
+- `DELETE /api/files/:id`
+- `GET /api/notifications`
+- `PATCH /api/notifications/:id/read`
+- `PATCH /api/notifications/read-all`
+- `GET /api/risk-rules`
+- `POST /api/risk-rules`
+- `PATCH /api/risk-rules/:id`
+- `GET /api/reports/anomalies`
+- `GET /api/reports/finance`
+- `GET /api/reports/boss`
+- `GET /api/reports/projects/:projectId/daily`
+- `GET /api/reports/projects/:projectId/monthly`
+- `POST /api/ai/chat`
+- `GET /api/ai/call-logs`
 
 ## 构建
 
@@ -324,20 +357,20 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 ## 当前限制
 
 - 当前前端仍默认使用 mock 数据，刷新页面后部分状态依赖 localStorage。
-- AI、OCR、Excel 文件解析均为前端 mock，不代表真实识别能力。
-- 权限由前端路由控制，真实上线必须由后端再次校验。
-- 文件上传当前只是原型交互，不会真正存储到对象存储。
-- 报表数据来自 mock 汇总，不是实时财务数据。
+- 前端 AI、OCR、Excel 页面仍默认调用 mock；后端阶段 0–8 接口需要单独联调到 `src/api`。
+- 后端权限已经按 JWT 角色和数据归属强制校验，前端路由仅用于界面体验。
+- 文件当前真实存储在 `backend/uploads`，生产环境仍需替换为对象存储并接入病毒扫描与备份。
+- 后端报表来自 PostgreSQL 实时聚合；前端报表页面尚未切换到真实接口。
+- AI 默认使用结构化 mock provider；真实模型需要配置 API，阶段 8 不要求训练或部署本地模型。
+- Excel 导入和 OCR 分别属于阶段 9、阶段 10，尚未实现。
 
 ## 推荐后续开发顺序
 
-1. 后端基础：用户、登录、权限、JWT、审计日志。
-2. 数据中心基础：项目、模板、字段、项目启用模板。
-3. 文件上传和追加式账本：`raw_files` + 完整 `ledger_events`。
-4. Excel 导入：导入任务、原始行、字段映射、确认入库事务。
-5. 工单审批：员工提交、财务审核、复核、AI复核、老板终审、催办。
-6. 通知、日报、AI基础。
-7. OCR 图片/PDF 识别和人工确认入库。
+1. 将 `src/api` 的登录、工单、文件、通知、报表和 AI 模块逐步切换到真实后端，并保留 mock fallback。
+2. 使用真实 PostgreSQL 执行全部 migration、seed 和端到端业务验收。
+3. 阶段 9：Excel 导入、字段映射、预览和幂等确认。
+4. 阶段 10：OCR provider、低置信度标记和人工确认入库。
+5. 上线前替换对象存储、接入病毒扫描、密钥托管、监控和备份。
 
 ## GitHub
 

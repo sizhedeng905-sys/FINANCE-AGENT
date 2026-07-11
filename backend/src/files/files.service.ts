@@ -158,9 +158,25 @@ export class FilesService {
     if (file.size > this.maxFileSize) throw new BadRequestException(`文件大小不能超过 ${this.maxFileSize / 1024 / 1024}MB`);
     const extension = extname(file.originalname).toLowerCase();
     const mimeTypes = ALLOWED_MIME_TYPES[extension];
-    if (!mimeTypes || !mimeTypes.includes(file.mimetype.toLowerCase())) {
+    if (!mimeTypes || !mimeTypes.includes(file.mimetype.toLowerCase()) || !this.hasExpectedSignature(extension, file.buffer)) {
       throw new BadRequestException('不支持的文件类型');
     }
+  }
+
+  private hasExpectedSignature(extension: string, buffer: Buffer) {
+    const startsWith = (...bytes: number[]) => bytes.every((byte, index) => buffer[index] === byte);
+    if (extension === '.png') return startsWith(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+    if (extension === '.jpg' || extension === '.jpeg') return startsWith(0xff, 0xd8, 0xff);
+    if (extension === '.pdf') return buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+    if (extension === '.webp') {
+      return buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+    }
+    if (extension === '.xlsx' || extension === '.docx') return startsWith(0x50, 0x4b);
+    if (extension === '.xls' || extension === '.doc') {
+      return startsWith(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
+    }
+    if (extension === '.csv') return !buffer.subarray(0, Math.min(buffer.length, 4096)).includes(0);
+    return false;
   }
 
   private resolveFileType(fileName: string) {

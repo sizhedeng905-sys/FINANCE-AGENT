@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { AuthModule } from './auth/auth.module';
+import { AiModule } from './ai/ai.module';
 import configuration from './config/configuration';
 import { FieldsModule } from './fields/fields.module';
 import { FilesModule } from './files/files.module';
@@ -35,7 +36,8 @@ import { WorkOrdersModule } from './work-orders/work-orders.module';
     FilesModule,
     NotificationsModule,
     RiskRulesModule,
-    ReportsModule
+    ReportsModule,
+    AiModule
   ]
 })
 export class AppModule {}
