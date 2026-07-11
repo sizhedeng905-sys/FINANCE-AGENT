@@ -5,6 +5,7 @@ import {
   Prisma,
   PrismaClient,
   RecordSourceType,
+  RiskLevel,
   SemanticType
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -367,7 +368,80 @@ async function main() {
     });
   }
 
-  console.log('Phase 3 seed complete: auth users, templates, fields, demo projects, and demo records are ready.');
+  const riskRules = [
+    {
+      id: 'rr-amount-high',
+      ruleKey: 'amount_over_20000',
+      ruleName: '金额超过20000元',
+      ruleType: 'amount_threshold',
+      severity: RiskLevel.high,
+      conditionJson: { threshold: 20000 },
+      description: '单笔工单金额超过20000元时标记为高风险。'
+    },
+    {
+      id: 'rr-amount-medium',
+      ruleKey: 'amount_over_8000',
+      ruleName: '金额超过8000元',
+      ruleType: 'amount_threshold',
+      severity: RiskLevel.medium,
+      conditionJson: { threshold: 8000 },
+      description: '单笔工单金额超过8000元时标记为中风险。'
+    },
+    {
+      id: 'rr-missing-attachment',
+      ruleKey: 'expense_missing_attachment',
+      ruleName: '高额报销缺少附件',
+      ruleType: 'missing_attachment',
+      severity: RiskLevel.medium,
+      conditionJson: { threshold: 1000, workOrderType: 'expense' },
+      description: '报销金额超过1000元且没有附件时提示补充凭证。'
+    },
+    {
+      id: 'rr-duplicate',
+      ruleKey: 'duplicate_same_day',
+      ruleName: '同日同项目同金额疑似重复',
+      ruleType: 'duplicate_submission',
+      severity: RiskLevel.medium,
+      conditionJson: {},
+      description: '同一员工在同项目同一天提交相同金额时提示重复。'
+    },
+    {
+      id: 'rr-after-hours',
+      ruleKey: 'submitted_after_hours',
+      ruleName: '非工作时间提交',
+      ruleType: 'after_hours',
+      severity: RiskLevel.low,
+      conditionJson: { startHour: 8, endHour: 20, timeZone: 'Asia/Shanghai' },
+      description: '北京时间8点前或20点后提交时提示人工关注。'
+    },
+    {
+      id: 'rr-cost-trend',
+      ruleKey: 'cost_increasing_7d',
+      ruleName: '近7天成本连续升高',
+      ruleType: 'cost_trend',
+      severity: RiskLevel.medium,
+      conditionJson: { windowDays: 7, minimumSamples: 3 },
+      description: '同项目最近三笔及当前成本连续升高时提示。'
+    }
+  ];
+
+  for (const rule of riskRules) {
+    await prisma.riskRule.upsert({
+      where: { ruleKey: rule.ruleKey },
+      create: { ...rule, targetType: 'work_order', isActive: true, createdBy: 'system' },
+      update: {
+        ruleName: rule.ruleName,
+        ruleType: rule.ruleType,
+        targetType: 'work_order',
+        severity: rule.severity,
+        conditionJson: rule.conditionJson,
+        description: rule.description,
+        isActive: true
+      }
+    });
+  }
+
+  console.log('Phase 6 seed complete: users, data center defaults, demo records, and risk rules are ready.');
 }
 
 main()

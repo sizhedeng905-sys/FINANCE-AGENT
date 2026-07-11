@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RecordsModule } from './records/records.module';
+import { RiskRulesModule } from './risk-rules/risk-rules.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsersModule } from './users/users.module';
@@ -31,7 +32,8 @@ import { WorkOrdersModule } from './work-orders/work-orders.module';
     RecordsModule,
     WorkOrdersModule,
     FilesModule,
-    NotificationsModule
+    NotificationsModule,
+    RiskRulesModule
   ]
 })
 export class AppModule {}

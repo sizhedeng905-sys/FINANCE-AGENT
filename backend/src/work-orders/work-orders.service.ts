@@ -7,7 +7,6 @@ import {
 import {
   NotificationType,
   Prisma,
-  RiskLevel,
   UserRole,
   WorkOrderStatus
 } from '@prisma/client';
@@ -15,6 +14,7 @@ import {
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
+import { RiskRulesService } from '../risk-rules/risk-rules.service';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { BossApproveDto, FinanceReviewDto, ReviewerReviewDto, UrgeWorkOrderDto } from './dto/review-work-order.dto';
@@ -58,7 +58,8 @@ const BOSS_ACTIVE_STATUSES: WorkOrderStatus[] = [
 export class WorkOrdersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly auditLogs: AuditLogsService
+    private readonly auditLogs: AuditLogsService,
+    private readonly riskRules: RiskRulesService
   ) {}
 
   async findMany(query: QueryWorkOrdersDto, user: CurrentUser) {
@@ -233,46 +234,26 @@ export class WorkOrdersService {
       reject_to_finance: WorkOrderStatus.reviewer_rejected,
       supplement: WorkOrderStatus.returned_for_supplement
     }[dto.action];
-    return this.reviewTransition(id, actor, context, WorkOrderStatus.reviewer_reviewing, next, dto.action, dto.comment, 'reviewerOpinion');
+    const reviewed = await this.reviewTransition(
+      id,
+      actor,
+      context,
+      WorkOrderStatus.reviewer_reviewing,
+      next,
+      dto.action,
+      dto.comment,
+      'reviewerOpinion'
+    );
+    if (dto.action === 'approve') {
+      const ruleRun = await this.riskRules.runForWorkOrder(id, actor, context);
+      return ruleRun.workOrder;
+    }
+    return reviewed;
   }
 
   async aiReview(id: string, actor: CurrentUser, context: RequestContext) {
-    return this.prisma.$transaction(async (tx) => {
-      const before = await this.findByIdOrThrow(id, tx);
-      this.assertStatus(before.status, [WorkOrderStatus.ai_reviewing]);
-      await tx.workOrderTimeline.create({
-        data: {
-          workOrderId: id,
-          operatorName: '系统规则',
-          role: 'system',
-          action: '规则复核完成',
-          comment: '规则复核未发现明显异常',
-          fromStatus: before.status,
-          toStatus: WorkOrderStatus.boss_pending
-        }
-      });
-      const updated = await tx.workOrder.update({
-        where: { id },
-        data: {
-          status: WorkOrderStatus.boss_pending,
-          riskLevel: RiskLevel.low,
-          aiSummary: '规则复核未发现明显异常'
-        },
-        include: workOrderInclude
-      });
-      await tx.notification.create({
-        data: {
-          title: '工单待老板审批',
-          content: `工单 ${before.orderNo} 已完成规则复核`,
-          type: NotificationType.boss_approval,
-          senderName: '系统规则',
-          targetRole: UserRole.boss,
-          relatedWorkOrderId: id
-        }
-      });
-      await this.auditLogs.write(tx, actor, 'work_order.ai_review', 'work_order', id, { from: before.status, to: updated.status }, context);
-      return toWorkOrder(updated);
-    });
+    const result = await this.riskRules.runForWorkOrder(id, actor, context);
+    return result.workOrder;
   }
 
   async bossApprove(id: string, dto: BossApproveDto, actor: CurrentUser, context: RequestContext) {

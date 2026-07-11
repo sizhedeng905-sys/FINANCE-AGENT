@@ -2,6 +2,7 @@ import { UnprocessableEntityException } from '@nestjs/common';
 import { RiskLevel, UserRole, UserStatus, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 
 import { WorkOrdersService } from '../src/work-orders/work-orders.service';
+import { toWorkOrder } from '../src/work-orders/work-order.presenter';
 
 function createActor(role: UserRole, id: string = role) {
   return {
@@ -139,7 +140,32 @@ describe('WorkOrdersService phase 4 state machine', () => {
     };
     tx.$transaction = jest.fn(async (callback) => callback(tx));
     auditLogs = { write: jest.fn(async () => undefined) };
-    service = new WorkOrdersService(tx, auditLogs as any);
+    const riskRules = {
+      runForWorkOrder: jest.fn(async (id: string) => {
+        const item = workOrders.find((workOrder) => workOrder.id === id);
+        const now = new Date();
+        timeline.push({
+          id: `timeline_${timeline.length + 1}`,
+          workOrderId: id,
+          operatorId: null,
+          operatorName: '系统规则',
+          role: 'system',
+          action: '规则复核完成',
+          comment: '规则复核未发现明显异常',
+          fromStatus: WorkOrderStatus.ai_reviewing,
+          toStatus: WorkOrderStatus.boss_pending,
+          createdAt: now
+        });
+        Object.assign(item, {
+          status: WorkOrderStatus.boss_pending,
+          riskLevel: RiskLevel.low,
+          aiSummary: '规则复核未发现明显异常',
+          updatedAt: now
+        });
+        return { workOrder: toWorkOrder(includeRelations(item)) };
+      })
+    };
+    service = new WorkOrdersService(tx, auditLogs as any, riskRules as any);
   });
 
   async function createOrder(employeeId = 'employee') {
@@ -185,10 +211,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
       createActor(UserRole.reviewer),
       {}
     );
-    expect(reviewed.status).toBe(WorkOrderStatus.ai_reviewing);
-
-    const aiReviewed = await service.aiReview(created.id, createActor(UserRole.finance), {});
-    expect(aiReviewed.status).toBe(WorkOrderStatus.boss_pending);
+    expect(reviewed.status).toBe(WorkOrderStatus.boss_pending);
 
     const completed = await service.bossApprove(
       created.id,
@@ -199,7 +222,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
     expect(completed.status).toBe(WorkOrderStatus.completed);
     expect(approvals).toHaveLength(3);
     expect(timeline).toHaveLength(5);
-    expect(auditLogs.write).toHaveBeenCalledTimes(5);
+    expect(auditLogs.write).toHaveBeenCalledTimes(4);
   });
 
   it('rejects illegal transitions and limits urges to once per 30 minutes', async () => {
