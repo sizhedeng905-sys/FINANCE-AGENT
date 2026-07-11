@@ -1,6 +1,6 @@
 # FINANCE-AGENT Backend
 
-Phase 0, phase 1, and phase 2 backend for the logistics AI finance operations system.
+Phase 0 through phase 3 backend for the logistics AI finance operations system.
 
 ## Tech Stack
 
@@ -54,6 +54,9 @@ npm run prisma:seed
 - Fields: `GET/POST/PATCH /api/fields`
 - Field disable: `PATCH /api/fields/:id/disable`
 - Field usage: `GET /api/fields/:id/usage`
+- Business records: `GET/POST/PATCH/DELETE /api/records`
+- Record confirm: `POST /api/records/:id/confirm`
+- Project records: `GET /api/projects/:projectId/records`
 - Swagger UI: `/api/docs`
 
 Successful responses use:
@@ -104,6 +107,7 @@ Completed:
 - Phase 0: runnable NestJS/Prisma backend foundation.
 - Phase 1: users, roles, login, JWT current user, finance/boss user management, and audit logs.
 - Phase 2: projects, templates, field definitions, template fields, project-enabled templates, project structure, and data center audit logs.
+- Phase 3: business records, dynamic record values, manual entry, record confirmation/voiding, and simplified ledger events.
 
 Not implemented yet:
 
@@ -113,4 +117,4 @@ Not implemented yet:
 - Notifications
 - Reports
 - AI assistant
-- Ledger events beyond the phase 1 audit table
+- Full raw file ledger and import task event flow

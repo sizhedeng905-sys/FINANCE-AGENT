@@ -7,6 +7,7 @@ import { FieldsModule } from './fields/fields.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
+import { RecordsModule } from './records/records.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsersModule } from './users/users.module';
 
@@ -23,7 +24,8 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     ProjectsModule,
     TemplatesModule,
-    FieldsModule
+    FieldsModule,
+    RecordsModule
   ]
 })
 export class AppModule {}

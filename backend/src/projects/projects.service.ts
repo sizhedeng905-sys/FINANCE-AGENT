@@ -6,6 +6,7 @@ import {
   toProject,
   toProjectTemplate,
   toProjectTemplateWithTemplate,
+  toBusinessRecord,
   toTemplate,
   toTemplateField
 } from '../data-center/data-center.presenter';
@@ -22,12 +23,13 @@ type PresentedProject = ReturnType<typeof toProject>;
 type PresentedProjectTemplate = ReturnType<typeof toProjectTemplate>;
 type PresentedTemplate = ReturnType<typeof toTemplate>;
 type PresentedTemplateField = ReturnType<typeof toTemplateField>;
+type PresentedBusinessRecord = ReturnType<typeof toBusinessRecord>;
 
 export interface EnabledTemplateInfo {
   projectTemplate: PresentedProjectTemplate;
   template: PresentedTemplate;
   fields: PresentedTemplateField[];
-  records: never[];
+  records: PresentedBusinessRecord[];
 }
 
 export interface FieldUsageStat {
@@ -47,7 +49,7 @@ export interface ProjectStructure {
   project: PresentedProject;
   enabledTemplates: EnabledTemplateInfo[];
   templateFields: PresentedTemplateField[];
-  records: never[];
+  records: PresentedBusinessRecord[];
   rawFiles: never[];
   importTasks: never[];
   fieldUsageStats: FieldUsageStat[];
@@ -208,11 +210,34 @@ export class ProjectsService {
       }
     });
 
+    const records = (
+      await this.prisma.businessRecord.findMany({
+        where: {
+          projectId: id
+        },
+        include: {
+          project: true,
+          template: true,
+          values: {
+            include: {
+              field: true
+            },
+            orderBy: {
+              createdAt: 'asc'
+            }
+          }
+        },
+        orderBy: {
+          recordDate: 'desc'
+        }
+      })
+    ).map(toBusinessRecord);
+
     const enabledTemplates = projectTemplates.map((projectTemplate) => ({
       projectTemplate: toProjectTemplate(projectTemplate),
       template: toTemplate(projectTemplate.template),
       fields: projectTemplate.template.templateFields.map(toTemplateField),
-      records: []
+      records: records.filter((record) => record.templateId === projectTemplate.templateId)
     }));
     const templateFields = enabledTemplates.flatMap((item) => item.fields);
 
@@ -220,11 +245,11 @@ export class ProjectsService {
       project: toProject(project),
       enabledTemplates,
       templateFields,
-      records: [],
+      records,
       rawFiles: [],
       importTasks: [],
-      fieldUsageStats: this.getFieldUsageStats(enabledTemplates),
-      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates)
+      fieldUsageStats: this.getFieldUsageStats(enabledTemplates, records),
+      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates, records)
     };
   }
 
@@ -238,9 +263,19 @@ export class ProjectsService {
       recordCount: structure.records.length,
       rawFileCount: structure.rawFiles.length,
       importTaskCount: structure.importTasks.length,
-      totalIncome: 0,
-      totalCost: 0,
-      profit: 0
+      totalIncome: structure.records
+        .filter((record) => record.status !== 'rejected' && record.recordType === 'revenue')
+        .reduce((sum, record) => sum + record.amount, 0),
+      totalCost: structure.records
+        .filter((record) => record.status !== 'rejected' && record.recordType !== 'revenue')
+        .reduce((sum, record) => sum + record.amount, 0),
+      profit:
+        structure.records
+          .filter((record) => record.status !== 'rejected' && record.recordType === 'revenue')
+          .reduce((sum, record) => sum + record.amount, 0) -
+        structure.records
+          .filter((record) => record.status !== 'rejected' && record.recordType !== 'revenue')
+          .reduce((sum, record) => sum + record.amount, 0)
     };
   }
 
@@ -349,7 +384,7 @@ export class ProjectsService {
     });
   }
 
-  private getFieldUsageStats(enabledTemplates: EnabledTemplateInfo[]): FieldUsageStat[] {
+  private getFieldUsageStats(enabledTemplates: EnabledTemplateInfo[], records: PresentedBusinessRecord[]): FieldUsageStat[] {
     const stats = new Map<string, FieldUsageStat>();
 
     for (const templateInfo of enabledTemplates) {
@@ -378,11 +413,48 @@ export class ProjectsService {
       }
     }
 
-    return Array.from(stats.values()).sort((first, second) => first.fieldName.localeCompare(second.fieldName));
+    for (const record of records) {
+      for (const value of record.values) {
+        const field = enabledTemplates.flatMap((template) => template.fields).find((item) => item.fieldId === value.fieldId)?.field;
+        const existing = stats.get(value.fieldId);
+        const base =
+          existing ??
+          (field && {
+            fieldId: value.fieldId,
+            fieldName: value.fieldName,
+            fieldKey: field.fieldKey,
+            fieldType: field.fieldType,
+            semanticType: field.semanticType,
+            templateNames: [record.templateName],
+            usageCount: 0,
+            sourceTypes: [],
+            latestUsedAt: undefined,
+            isSuggestedField: false
+          });
+
+        if (!base) {
+          continue;
+        }
+
+        stats.set(value.fieldId, {
+          ...base,
+          usageCount: value.value === null || value.value === '' ? base.usageCount : base.usageCount + 1,
+          sourceTypes: Array.from(new Set([...base.sourceTypes, record.sourceType])),
+          latestUsedAt: !base.latestUsedAt || record.updatedAt > base.latestUsedAt ? record.updatedAt : base.latestUsedAt
+        });
+      }
+    }
+
+    return Array.from(stats.values()).sort((first, second) => second.usageCount - first.usageCount || first.fieldName.localeCompare(second.fieldName));
   }
 
-  private getLogicalTablesSummary(projectId: string, enabledTemplates: EnabledTemplateInfo[]) {
+  private getLogicalTablesSummary(
+    projectId: string,
+    enabledTemplates: EnabledTemplateInfo[],
+    records: PresentedBusinessRecord[]
+  ) {
     const fieldIds = new Set(enabledTemplates.flatMap((item) => item.fields.map((field) => field.fieldId)));
+    const recordValuesCount = records.flatMap((record) => record.values).length;
 
     return [
       {
@@ -418,13 +490,13 @@ export class ProjectsService {
       {
         tableName: 'business_records',
         description: '业务数据记录主表',
-        relatedCount: 0,
+        relatedCount: records.length,
         keyFields: ['id', 'projectId', 'templateId', 'recordType', 'sourceType']
       },
       {
         tableName: 'record_values',
         description: '动态字段值表',
-        relatedCount: 0,
+        relatedCount: recordValuesCount,
         keyFields: ['recordId', 'fieldId', 'fieldName', 'value']
       },
       {

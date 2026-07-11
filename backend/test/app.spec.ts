@@ -1,6 +1,15 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { DataRecordType, FieldType, ProjectStatus, SemanticType, UserRole, UserStatus } from '@prisma/client';
+import {
+  BusinessRecordStatus,
+  DataRecordType,
+  FieldType,
+  ProjectStatus,
+  RecordSourceType,
+  SemanticType,
+  UserRole,
+  UserStatus
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 
@@ -82,6 +91,42 @@ interface ProjectTemplateRecord {
   updatedAt: Date;
 }
 
+interface BusinessRecordRecord {
+  id: string;
+  projectId: string;
+  templateId: string;
+  recordType: DataRecordType;
+  recordDate: Date;
+  amount: number;
+  category: string | null;
+  subCategory: string | null;
+  description: string | null;
+  sourceType: RecordSourceType;
+  sourceId: string;
+  status: BusinessRecordStatus;
+  attachments: string[];
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  confirmedAt: Date | null;
+  confirmedBy: string | null;
+  voidedAt: Date | null;
+  voidedBy: string | null;
+}
+
+interface RecordValueRecord {
+  id: string;
+  recordId: string;
+  fieldId: string;
+  fieldName: string;
+  valueText: string | null;
+  valueNumber: number | null;
+  valueDate: Date | null;
+  valueJson: string[] | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 class InMemoryPrisma {
   users: UserRecord[] = [];
   projects: ProjectRecord[] = [];
@@ -89,6 +134,9 @@ class InMemoryPrisma {
   fieldDefinitions: FieldRecord[] = [];
   templateFields: TemplateFieldRecord[] = [];
   projectTemplates: ProjectTemplateRecord[] = [];
+  businessRecords: BusinessRecordRecord[] = [];
+  recordValues: RecordValueRecord[] = [];
+  ledgerEvents: Array<Record<string, unknown>> = [];
   auditLogs: Array<Record<string, unknown>> = [];
   private userCounter = 0;
   private projectCounter = 0;
@@ -96,6 +144,9 @@ class InMemoryPrisma {
   private fieldCounter = 0;
   private templateFieldCounter = 0;
   private projectTemplateCounter = 0;
+  private businessRecordCounter = 0;
+  private recordValueCounter = 0;
+  private ledgerEventCounter = 0;
   private auditCounter = 0;
 
   user = {
@@ -332,7 +383,18 @@ class InMemoryPrisma {
   };
 
   projectTemplate = {
-    findUnique: async ({ where }: { where: { id: string } }) => this.projectTemplates.find((item) => item.id === where.id) ?? null,
+    findUnique: async ({
+      where
+    }: {
+      where: { id?: string; projectId_templateId?: { projectId: string; templateId: string } };
+    }) =>
+      this.projectTemplates.find(
+        (item) =>
+          item.id === where.id ||
+          (where.projectId_templateId &&
+            item.projectId === where.projectId_templateId.projectId &&
+            item.templateId === where.projectId_templateId.templateId)
+      ) ?? null,
     findMany: async ({ where, include, orderBy }: { where?: Record<string, unknown>; include?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
       let items = this.projectTemplates.filter((item) => {
         if (where?.projectId && item.projectId !== where.projectId) return false;
@@ -376,6 +438,127 @@ class InMemoryPrisma {
       if (!projectTemplate) throw new Error('Project template not found');
       Object.assign(projectTemplate, data, { updatedAt: new Date() });
       return projectTemplate;
+    }
+  };
+
+  businessRecord = {
+    findUnique: async ({ where, include }: { where: { id: string }; include?: Record<string, unknown> }) => {
+      const record = this.businessRecords.find((item) => item.id === where.id);
+      return record ? this.withBusinessRecordInclude(record, include) : null;
+    },
+    findMany: async ({
+      where,
+      include,
+      orderBy,
+      skip = 0,
+      take = 20
+    }: {
+      where?: Record<string, unknown>;
+      include?: Record<string, unknown>;
+      orderBy?: Record<string, string>;
+      skip?: number;
+      take?: number;
+    }) => {
+      let records = this.applyBusinessRecordWhere(where);
+      if (orderBy?.createdAt === 'desc') {
+        records = records.sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
+      }
+      if (orderBy?.recordDate === 'desc') {
+        records = records.sort((first, second) => second.recordDate.getTime() - first.recordDate.getTime());
+      }
+      return records.slice(skip, skip + take).map((record) => this.withBusinessRecordInclude(record, include));
+    },
+    count: async ({ where }: { where?: Record<string, unknown> }) => this.applyBusinessRecordWhere(where).length,
+    create: async ({ data, include }: { data: any; include?: Record<string, unknown> }) => {
+      const now = new Date();
+      const record: BusinessRecordRecord = {
+        id: data.id ?? `business_record_${++this.businessRecordCounter}`,
+        projectId: data.projectId,
+        templateId: data.templateId,
+        recordType: data.recordType,
+        recordDate: new Date(data.recordDate),
+        amount: Number(data.amount),
+        category: data.category ?? null,
+        subCategory: data.subCategory ?? null,
+        description: data.description ?? null,
+        sourceType: data.sourceType ?? RecordSourceType.manual,
+        sourceId: data.sourceId ?? 'manual',
+        status: data.status ?? BusinessRecordStatus.pending_confirm,
+        attachments: data.attachments ?? [],
+        createdBy: data.createdBy ?? null,
+        createdAt: now,
+        updatedAt: now,
+        confirmedAt: data.confirmedAt ?? null,
+        confirmedBy: data.confirmedBy ?? null,
+        voidedAt: data.voidedAt ?? null,
+        voidedBy: data.voidedBy ?? null
+      };
+
+      this.businessRecords.push(record);
+
+      const nestedValues = data.values?.create as Array<Record<string, unknown>> | undefined;
+      if (nestedValues) {
+        for (const value of nestedValues) {
+          await this.recordValue.create({
+            data: {
+              ...value,
+              recordId: record.id
+            }
+          });
+        }
+      }
+
+      return this.withBusinessRecordInclude(record, include);
+    },
+    update: async ({ where, data, include }: { where: { id: string }; data: Partial<BusinessRecordRecord>; include?: Record<string, unknown> }) => {
+      const record = this.businessRecords.find((item) => item.id === where.id);
+      if (!record) throw new Error('Business record not found');
+
+      const cleanData = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+      if (cleanData.recordDate) cleanData.recordDate = new Date(cleanData.recordDate as string | Date);
+      if (cleanData.amount !== undefined) cleanData.amount = Number(cleanData.amount);
+      Object.assign(record, cleanData, { updatedAt: new Date() });
+
+      return this.withBusinessRecordInclude(record, include);
+    }
+  };
+
+  recordValue = {
+    deleteMany: async ({ where }: { where: { recordId?: string } }) => {
+      const before = this.recordValues.length;
+      this.recordValues = this.recordValues.filter((item) => item.recordId !== where.recordId);
+      return {
+        count: before - this.recordValues.length
+      };
+    },
+    create: async ({ data }: { data: any }) => {
+      const now = new Date();
+      const value: RecordValueRecord = {
+        id: data.id ?? `record_value_${++this.recordValueCounter}`,
+        recordId: data.recordId,
+        fieldId: data.fieldId,
+        fieldName: data.fieldName,
+        valueText: data.valueText ?? null,
+        valueNumber: data.valueNumber !== undefined && data.valueNumber !== null ? Number(data.valueNumber) : null,
+        valueDate: data.valueDate ? new Date(data.valueDate) : null,
+        valueJson: data.valueJson ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.recordValues.push(value);
+      return value;
+    }
+  };
+
+  ledgerEvent = {
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      const event = {
+        id: `ledger_event_${++this.ledgerEventCounter}`,
+        ...data,
+        createdAt: new Date()
+      };
+      this.ledgerEvents.push(event);
+      return event;
     }
   };
 
@@ -504,6 +687,42 @@ class InMemoryPrisma {
     return fields;
   }
 
+  private applyBusinessRecordWhere(where?: Record<string, unknown>) {
+    let records = [...this.businessRecords];
+
+    if (!where) return records;
+
+    if (where.projectId) {
+      records = records.filter((record) => record.projectId === where.projectId);
+    }
+
+    if (where.templateId) {
+      records = records.filter((record) => record.templateId === where.templateId);
+    }
+
+    if (where.recordType) {
+      records = records.filter((record) => record.recordType === where.recordType);
+    }
+
+    if (where.sourceType) {
+      records = records.filter((record) => record.sourceType === where.sourceType);
+    }
+
+    if (where.status) {
+      records = records.filter((record) => record.status === where.status);
+    }
+
+    const recordDate = where.recordDate as { gte?: Date; lte?: Date } | undefined;
+    if (recordDate?.gte) {
+      records = records.filter((record) => record.recordDate >= recordDate.gte!);
+    }
+    if (recordDate?.lte) {
+      records = records.filter((record) => record.recordDate <= recordDate.lte!);
+    }
+
+    return records;
+  }
+
   private withTemplateFieldInclude(templateField: TemplateFieldRecord, include?: Record<string, unknown>) {
     const result: Record<string, unknown> = { ...templateField };
 
@@ -556,6 +775,35 @@ class InMemoryPrisma {
 
     if (include?.project) {
       result.project = this.projects.find((project) => project.id === projectTemplate.projectId) ?? null;
+    }
+
+    return result;
+  }
+
+  private withBusinessRecordInclude(record: BusinessRecordRecord, include?: Record<string, unknown>) {
+    const result: Record<string, unknown> = { ...record };
+
+    if (include?.project) {
+      result.project = this.projects.find((project) => project.id === record.projectId) ?? null;
+    }
+
+    if (include?.template) {
+      result.template = this.templates.find((template) => template.id === record.templateId) ?? null;
+    }
+
+    if (include?.values) {
+      const valuesConfig = include.values as { include?: Record<string, unknown>; orderBy?: Record<string, string> };
+      let values = this.recordValues.filter((value) => value.recordId === record.id);
+      if (valuesConfig.orderBy?.createdAt === 'asc') {
+        values = values.sort((first, second) => first.createdAt.getTime() - second.createdAt.getTime());
+      }
+      result.values = values.map((value) => {
+        const output: Record<string, unknown> = { ...value };
+        if (valuesConfig.include?.field) {
+          output.field = this.fieldDefinitions.find((field) => field.id === value.fieldId) ?? null;
+        }
+        return output;
+      });
     }
 
     return result;
@@ -992,5 +1240,259 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .get('/api/fields')
       .set('Authorization', `Bearer ${reviewerToken}`)
       .expect(403);
+  });
+
+  it('allows finance to create manual business records and exposes them in project structure', async () => {
+    const financeToken = await login('finance');
+    const bossToken = await login('boss');
+    const employeeToken = await login('employee');
+    const reviewerToken = await login('reviewer');
+
+    const projectResponse = await request(app.getHttpServer())
+      .post('/api/projects')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        name: '阶段三项目',
+        customerName: '阶段三客户',
+        ownerName: '赵敏',
+        description: '阶段三手工补录验收'
+      })
+      .expect(201);
+    const projectId = projectResponse.body.data.id as string;
+
+    const templateResponse = await request(app.getHttpServer())
+      .post('/api/templates')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        name: '阶段三运输费用模板',
+        recordType: DataRecordType.transport,
+        description: '阶段三验收模板'
+      })
+      .expect(201);
+    const templateId = templateResponse.body.data.id as string;
+
+    const dateFieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '阶段三日期',
+        fieldType: FieldType.date,
+        semanticType: SemanticType.date
+      })
+      .expect(201);
+    const dateFieldId = dateFieldResponse.body.data.id as string;
+
+    const amountFieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '阶段三金额',
+        fieldType: FieldType.money,
+        unit: '元',
+        semanticType: SemanticType.amount
+      })
+      .expect(201);
+    const amountFieldId = amountFieldResponse.body.data.id as string;
+
+    const driverFieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '阶段三司机',
+        fieldType: FieldType.text,
+        semanticType: SemanticType.person
+      })
+      .expect(201);
+    const driverFieldId = driverFieldResponse.body.data.id as string;
+
+    const unrelatedFieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '阶段三未入模板字段',
+        fieldType: FieldType.text,
+        semanticType: SemanticType.remark
+      })
+      .expect(201);
+    const unrelatedFieldId = unrelatedFieldResponse.body.data.id as string;
+
+    for (const [index, fieldId] of [dateFieldId, amountFieldId, driverFieldId].entries()) {
+      await request(app.getHttpServer())
+        .post(`/api/templates/${templateId}/fields`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          fieldId,
+          isRequired: true,
+          isVisible: true,
+          displayOrder: index + 1
+        })
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post(`/api/projects/${projectId}/templates`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        templateId,
+        customName: '阶段三运输费用'
+      })
+      .expect(201);
+
+    const unenabledTemplateResponse = await request(app.getHttpServer())
+      .post('/api/templates')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        name: '阶段三未启用模板',
+        recordType: DataRecordType.transport
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        projectId,
+        templateId: unenabledTemplateResponse.body.data.id,
+        recordType: DataRecordType.transport,
+        recordDate: '2026-07-10',
+        amount: 99,
+        sourceType: RecordSourceType.manual,
+        values: []
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        projectId,
+        templateId,
+        recordType: DataRecordType.transport,
+        recordDate: '2026-07-10',
+        amount: 99,
+        sourceType: RecordSourceType.manual,
+        values: [{ fieldId: unrelatedFieldId, value: '不应入库' }]
+      })
+      .expect(400);
+
+    const recordResponse = await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        projectId,
+        templateId,
+        recordType: DataRecordType.transport,
+        recordDate: '2026-07-10',
+        amount: 1280.5,
+        category: '成本',
+        subCategory: '运输',
+        description: '阶段三手工补录',
+        sourceType: RecordSourceType.manual,
+        sourceId: 'manual',
+        status: BusinessRecordStatus.pending_confirm,
+        values: [
+          { fieldId: dateFieldId, value: '2026-07-10' },
+          { fieldId: amountFieldId, value: 1280.5 },
+          { fieldId: driverFieldId, value: '王师傅' }
+        ],
+        attachments: ['stage3-voucher.pdf']
+      })
+      .expect(201);
+    const recordId = recordResponse.body.data.id as string;
+
+    expect(prisma.businessRecords.find((record) => record.id === recordId)).toMatchObject({
+      projectId,
+      templateId,
+      amount: 1280.5,
+      sourceType: RecordSourceType.manual
+    });
+    expect(prisma.recordValues.filter((value) => value.recordId === recordId)).toHaveLength(3);
+    expect(prisma.recordValues.find((value) => value.recordId === recordId && value.fieldId === amountFieldId)?.valueNumber).toBe(
+      1280.5
+    );
+
+    const structureResponse = await request(app.getHttpServer())
+      .get(`/api/projects/${projectId}/structure`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+
+    expect(structureResponse.body.data.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: recordId,
+          amount: 1280.5,
+          sourceType: RecordSourceType.manual
+        })
+      ])
+    );
+    expect(structureResponse.body.data.fieldUsageStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fieldId: amountFieldId,
+          usageCount: 1,
+          sourceTypes: [RecordSourceType.manual]
+        })
+      ])
+    );
+    expect(structureResponse.body.data.logicalTablesSummary).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tableName: 'business_records',
+          relatedCount: 1
+        }),
+        expect.objectContaining({
+          tableName: 'record_values',
+          relatedCount: 3
+        })
+      ])
+    );
+
+    await request(app.getHttpServer())
+      .get(`/api/records/${recordId}`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/projects/${projectId}/records`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get('/api/records')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get('/api/records')
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/api/records/${recordId}/confirm`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/records/${recordId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ description: '已确认后不允许覆盖' })
+      .expect(400);
+
+    const voidResponse = await request(app.getHttpServer())
+      .delete(`/api/records/${recordId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+    expect(voidResponse.body.data).toMatchObject({
+      id: recordId,
+      status: BusinessRecordStatus.rejected
+    });
+
+    const actions = prisma.auditLogs.map((log) => log.action);
+    expect(actions).toEqual(
+      expect.arrayContaining(['business_record.create', 'business_record.confirm', 'business_record.void'])
+    );
+    expect(prisma.ledgerEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['business_record_created', 'business_record_confirmed', 'business_record_voided'])
+    );
   });
 });

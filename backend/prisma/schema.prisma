@@ -55,6 +55,20 @@ enum SemanticType {
   file
 }
 
+enum RecordSourceType {
+  manual
+  excel
+  ocr
+  work_order
+}
+
+enum BusinessRecordStatus {
+  draft
+  pending_confirm
+  confirmed
+  rejected
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -104,6 +118,7 @@ model Project {
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
   projectTemplates ProjectTemplate[]
+  businessRecords  BusinessRecord[]
 
   @@index([status])
   @@map("projects")
@@ -119,8 +134,9 @@ model Template {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 
-  templateFields  TemplateField[]
+  templateFields   TemplateField[]
   projectTemplates ProjectTemplate[]
+  businessRecords  BusinessRecord[]
 
   @@index([recordType])
   @@map("templates")
@@ -140,6 +156,7 @@ model FieldDefinition {
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   templateFields TemplateField[]
+  recordValues   RecordValue[]
 
   @@index([isActive])
   @@map("field_definitions")
@@ -179,4 +196,72 @@ model ProjectTemplate {
   @@unique([projectId, templateId])
   @@index([templateId])
   @@map("project_templates")
+}
+
+model BusinessRecord {
+  id          String               @id @default(cuid())
+  projectId   String               @map("project_id")
+  templateId  String               @map("template_id")
+  recordType  DataRecordType       @map("record_type")
+  recordDate  DateTime             @map("record_date")
+  amount      Decimal              @default(0) @db.Decimal(18, 2)
+  category    String?
+  subCategory String?              @map("sub_category")
+  description String?
+  sourceType  RecordSourceType     @default(manual) @map("source_type")
+  sourceId    String               @default("manual") @map("source_id")
+  status      BusinessRecordStatus @default(pending_confirm)
+  attachments Json?
+  createdBy   String?              @map("created_by")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  confirmedAt DateTime?            @map("confirmed_at")
+  confirmedBy String?              @map("confirmed_by")
+  voidedAt    DateTime?            @map("voided_at")
+  voidedBy    String?              @map("voided_by")
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  values   RecordValue[]
+
+  @@index([projectId])
+  @@index([templateId])
+  @@index([status])
+  @@index([recordDate])
+  @@map("business_records")
+}
+
+model RecordValue {
+  id          String    @id @default(cuid())
+  recordId    String    @map("record_id")
+  fieldId     String    @map("field_id")
+  fieldName   String    @map("field_name")
+  valueText   String?   @map("value_text")
+  valueNumber Decimal?  @map("value_number") @db.Decimal(18, 4)
+  valueDate   DateTime? @map("value_date")
+  valueJson   Json?     @map("value_json")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  record BusinessRecord  @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  field  FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+
+  @@unique([recordId, fieldId])
+  @@index([fieldId])
+  @@map("record_values")
+}
+
+model LedgerEvent {
+  id            String   @id @default(cuid())
+  eventType     String   @map("event_type")
+  aggregateType String   @map("aggregate_type")
+  aggregateId   String   @map("aggregate_id")
+  actorUserId   String?  @map("actor_user_id")
+  actorUsername String?  @map("actor_username")
+  payload       Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([aggregateType, aggregateId])
+  @@index([eventType])
+  @@map("ledger_events")
 }

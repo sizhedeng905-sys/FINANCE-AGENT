@@ -1,8 +1,10 @@
 import {
+  BusinessRecord,
   FieldDefinition,
   Prisma,
   Project,
   ProjectTemplate,
+  RecordValue,
   Template,
   TemplateField
 } from '@prisma/client';
@@ -13,6 +15,11 @@ type TemplateFieldWithField = TemplateField & {
 
 type ProjectTemplateWithTemplate = ProjectTemplate & {
   template: Template;
+};
+type BusinessRecordWithRelations = BusinessRecord & {
+  project: Project;
+  template: Template;
+  values: Array<RecordValue & { field?: FieldDefinition }>;
 };
 
 export function toProject(project: Project) {
@@ -89,10 +96,82 @@ export function toProjectTemplateWithTemplate(projectTemplate: ProjectTemplateWi
   };
 }
 
+export function toRecordValue(recordValue: RecordValue & { field?: FieldDefinition }) {
+  return {
+    id: recordValue.id,
+    recordId: recordValue.recordId,
+    fieldId: recordValue.fieldId,
+    fieldName: recordValue.fieldName,
+    value: resolveRecordValue(recordValue)
+  };
+}
+
+export function toBusinessRecord(record: BusinessRecordWithRelations) {
+  return {
+    id: record.id,
+    projectId: record.projectId,
+    projectName: record.project.name,
+    templateId: record.templateId,
+    templateName: record.template.name,
+    recordType: record.recordType,
+    recordDate: record.recordDate.toISOString(),
+    amount: toNumber(record.amount),
+    category: record.category ?? '',
+    subCategory: record.subCategory ?? '',
+    description: record.description ?? '',
+    sourceType: record.sourceType,
+    sourceId: record.sourceId,
+    status: record.status,
+    values: record.values.map(toRecordValue),
+    attachments: normalizeStringArray(record.attachments),
+    createdBy: record.createdBy ?? '',
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    confirmedAt: record.confirmedAt?.toISOString(),
+    confirmedBy: record.confirmedBy ?? undefined
+  };
+}
+
 export function normalizeAliases(value: Prisma.JsonValue | null): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function resolveRecordValue(recordValue: RecordValue): string | number | string[] | null {
+  if (recordValue.valueJson !== null && recordValue.valueJson !== undefined) {
+    if (Array.isArray(recordValue.valueJson)) {
+      return recordValue.valueJson.filter((item): item is string => typeof item === 'string');
+    }
+
+    return JSON.stringify(recordValue.valueJson);
+  }
+
+  if (recordValue.valueNumber !== null && recordValue.valueNumber !== undefined) {
+    return toNumber(recordValue.valueNumber);
+  }
+
+  if (recordValue.valueDate) {
+    return recordValue.valueDate.toISOString();
+  }
+
+  return recordValue.valueText ?? null;
+}
+
+function normalizeStringArray(value: Prisma.JsonValue | null): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function toNumber(value: Prisma.Decimal | number | string): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  return Number(value);
 }

@@ -1,4 +1,12 @@
-import { DataRecordType, FieldType, PrismaClient, SemanticType } from '@prisma/client';
+import {
+  BusinessRecordStatus,
+  DataRecordType,
+  FieldType,
+  Prisma,
+  PrismaClient,
+  RecordSourceType,
+  SemanticType
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -300,7 +308,66 @@ async function main() {
     });
   }
 
-  console.log('Phase 2 seed complete: auth users, templates, fields, and demo projects are ready.');
+  const demoRecord = await prisma.businessRecord.upsert({
+    where: {
+      id: 'br-seed-transport-001'
+    },
+    create: {
+      id: 'br-seed-transport-001',
+      projectId: 'dp-001',
+      templateId: 'dt-transport',
+      recordType: DataRecordType.transport,
+      recordDate: new Date('2026-07-01'),
+      amount: new Prisma.Decimal(8200),
+      category: '成本',
+      subCategory: '运输费用模板',
+      description: '太和运输费用种子记录',
+      sourceType: RecordSourceType.manual,
+      sourceId: 'manual',
+      status: BusinessRecordStatus.pending_confirm,
+      attachments: [],
+      createdBy: '系统'
+    },
+    update: {
+      projectId: 'dp-001',
+      templateId: 'dt-transport',
+      recordType: DataRecordType.transport,
+      recordDate: new Date('2026-07-01'),
+      amount: new Prisma.Decimal(8200),
+      category: '成本',
+      subCategory: '运输费用模板',
+      description: '太和运输费用种子记录',
+      sourceType: RecordSourceType.manual,
+      sourceId: 'manual',
+      status: BusinessRecordStatus.pending_confirm,
+      attachments: [],
+      createdBy: '系统'
+    }
+  });
+
+  const demoValues = [
+    { fieldId: 'f-date', fieldName: '日期', valueDate: new Date('2026-07-01') },
+    { fieldId: 'f-amount', fieldName: '金额', valueNumber: new Prisma.Decimal(8200) },
+    { fieldId: 'f-driver', fieldName: '司机', valueText: '王师傅' }
+  ];
+
+  for (const value of demoValues) {
+    await prisma.recordValue.upsert({
+      where: {
+        recordId_fieldId: {
+          recordId: demoRecord.id,
+          fieldId: value.fieldId
+        }
+      },
+      create: {
+        recordId: demoRecord.id,
+        ...value
+      },
+      update: value
+    });
+  }
+
+  console.log('Phase 3 seed complete: auth users, templates, fields, demo projects, and demo records are ready.');
 }
 
 main()

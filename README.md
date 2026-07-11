@@ -5,7 +5,7 @@
 当前仓库包含前端原型和分阶段后端实现：
 
 - 前端页面仍默认使用 `src/mock` 数据
-- 后端已新增 `backend/`，完成阶段 0 项目骨架、阶段 1 登录/用户权限、阶段 2 数据中心基础
+- 后端已新增 `backend/`，完成阶段 0 项目骨架、阶段 1 登录/用户权限、阶段 2 数据中心基础、阶段 3 业务记录手工补录
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - 不调用真实 AI API
 - 工单、项目、附件、报表、AI 助手等业务接口仍待后续阶段实现
@@ -129,8 +129,8 @@ http://localhost:3001/api/health
 | 阶段 0 | 已完成 | NestJS、TypeScript、Prisma、PostgreSQL、统一响应、统一错误、Swagger、健康检查 |
 | 阶段 1 | 已完成 | 用户表、审计日志、JWT 登录、当前用户、退出、用户管理、finance/boss 权限 |
 | 阶段 2 | 已完成 | 项目、模板、字段、项目启用模板、项目结构可视化 |
-| 阶段 3 | 待实现 | 工单主流程 |
-| 阶段 4+ | 待实现 | 附件、通知、规则审核、报表、AI 助手 |
+| 阶段 3 | 已完成 | 业务记录、动态字段值、手工补录、记录确认、ledger_events 简化事件 |
+| 阶段 4+ | 待实现 | 工单主流程、附件、通知、规则审核、报表、AI 助手 |
 
 阶段 1 后端测试账号：
 
@@ -180,6 +180,13 @@ http://localhost:3001/api/health
 - `PATCH /api/fields/:id`
 - `PATCH /api/fields/:id/disable`
 - `GET /api/fields/:id/usage`
+- `GET /api/records`
+- `POST /api/records`
+- `GET /api/records/:id`
+- `PATCH /api/records/:id`
+- `DELETE /api/records/:id`
+- `POST /api/records/:id/confirm`
+- `GET /api/projects/:projectId/records`
 
 ## 构建
 
@@ -316,7 +323,7 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 
 ## 当前限制
 
-- 当前没有真实后端，刷新页面后部分状态依赖 localStorage。
+- 当前前端仍默认使用 mock 数据，刷新页面后部分状态依赖 localStorage。
 - AI、OCR、Excel 文件解析均为前端 mock，不代表真实识别能力。
 - 权限由前端路由控制，真实上线必须由后端再次校验。
 - 文件上传当前只是原型交互，不会真正存储到对象存储。
@@ -326,12 +333,11 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 
 1. 后端基础：用户、登录、权限、JWT、审计日志。
 2. 数据中心基础：项目、模板、字段、项目启用模板。
-3. 动态业务记录：`business_records` + `record_values`。
-4. 文件上传和追加式账本：`raw_files` + `ledger_events`。
-5. Excel 导入：导入任务、原始行、字段映射、确认入库事务。
-6. 工单审批：员工提交、财务审核、复核、AI复核、老板终审、催办。
-7. 通知、日报、AI基础。
-8. OCR 图片/PDF 识别和人工确认入库。
+3. 文件上传和追加式账本：`raw_files` + 完整 `ledger_events`。
+4. Excel 导入：导入任务、原始行、字段映射、确认入库事务。
+5. 工单审批：员工提交、财务审核、复核、AI复核、老板终审、催办。
+6. 通知、日报、AI基础。
+7. OCR 图片/PDF 识别和人工确认入库。
 
 ## GitHub
 
