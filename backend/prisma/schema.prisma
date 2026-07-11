@@ -69,6 +69,40 @@ enum BusinessRecordStatus {
   rejected
 }
 
+enum WorkOrderType {
+  transport
+  expense
+  other
+}
+
+enum WorkOrderStatus {
+  draft
+  finance_reviewing
+  finance_rejected
+  reviewer_reviewing
+  reviewer_rejected
+  ai_reviewing
+  ai_passed
+  ai_flagged
+  boss_pending
+  boss_rejected
+  completed
+  returned_for_supplement
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum NotificationType {
+  urgent
+  audit
+  system
+  boss_approval
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -82,7 +116,10 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  auditLogs AuditLog[]
+  auditLogs         AuditLog[]
+  createdWorkOrders WorkOrder[]         @relation("WorkOrderCreator")
+  approvals         Approval[]
+  timelineEntries   WorkOrderTimeline[]
 
   @@map("users")
 }
@@ -119,6 +156,7 @@ model Project {
 
   projectTemplates ProjectTemplate[]
   businessRecords  BusinessRecord[]
+  workOrders       WorkOrder[]
 
   @@index([status])
   @@map("projects")
@@ -223,12 +261,130 @@ model BusinessRecord {
   project  Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   template Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
   values   RecordValue[]
+  generatedFromWorkOrder WorkOrder? @relation("GeneratedRecord")
 
   @@index([projectId])
   @@index([templateId])
   @@index([status])
   @@index([recordDate])
   @@map("business_records")
+}
+
+model WorkOrder {
+  id                String          @id @default(cuid())
+  orderNo           String          @unique @map("order_no")
+  type              WorkOrderType
+  projectId         String          @map("project_id")
+  projectName       String          @map("project_name")
+  customerName      String?         @map("customer_name")
+  creatorId         String          @map("creator_id")
+  creatorName       String          @map("creator_name")
+  amount            Decimal         @default(0) @db.Decimal(14, 2)
+  income            Decimal         @default(0) @db.Decimal(14, 2)
+  cost              Decimal         @default(0) @db.Decimal(14, 2)
+  profit            Decimal         @default(0) @db.Decimal(14, 2)
+  status            WorkOrderStatus @default(finance_reviewing)
+  riskLevel         RiskLevel       @default(low) @map("risk_level")
+  description       String?
+  occurredDate      DateTime        @map("occurred_date")
+  extraValues       Json?           @map("extra_values")
+  financeOpinion    String?         @map("finance_opinion")
+  reviewerOpinion   String?         @map("reviewer_opinion")
+  aiSummary         String?         @map("ai_summary")
+  bossOpinion       String?         @map("boss_opinion")
+  urgent            Boolean         @default(false)
+  urgentReason      String?         @map("urgent_reason")
+  urgentTime        DateTime?       @map("urgent_time")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  completedAt       DateTime?       @map("completed_at")
+  generatedRecordId String?         @unique @map("generated_record_id")
+
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  creator         User                  @relation("WorkOrderCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  generatedRecord BusinessRecord?       @relation("GeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+  attachments     WorkOrderAttachment[]
+  timeline        WorkOrderTimeline[]
+  approvals       Approval[]
+  notifications   Notification[]
+
+  @@index([creatorId])
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("work_orders")
+}
+
+model WorkOrderAttachment {
+  id          String   @id @default(cuid())
+  workOrderId String   @map("work_order_id")
+  rawFileId   String   @map("raw_file_id")
+  uploadedBy  String?  @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([workOrderId, rawFileId])
+  @@index([rawFileId])
+  @@map("work_order_attachments")
+}
+
+model WorkOrderTimeline {
+  id           String           @id @default(cuid())
+  workOrderId  String           @map("work_order_id")
+  operatorId   String?          @map("operator_id")
+  operatorName String?          @map("operator_name")
+  role         String
+  action       String
+  comment      String?
+  fromStatus   WorkOrderStatus? @map("from_status")
+  toStatus     WorkOrderStatus? @map("to_status")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  operator  User?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId, createdAt])
+  @@map("work_order_timeline")
+}
+
+model Approval {
+  id           String   @id @default(cuid())
+  workOrderId  String   @map("work_order_id")
+  approverId   String?  @map("approver_id")
+  approverRole String   @map("approver_role")
+  action       String
+  comment      String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  approver  User?     @relation(fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@index([approverId])
+  @@map("approvals")
+}
+
+model Notification {
+  id                 String           @id @default(cuid())
+  title              String
+  content            String
+  type               NotificationType
+  senderId           String?          @map("sender_id")
+  senderName         String?          @map("sender_name")
+  targetRole         UserRole?        @map("target_role")
+  targetUserId       String?          @map("target_user_id")
+  relatedWorkOrderId String?          @map("related_work_order_id")
+  read               Boolean          @default(false)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  readAt             DateTime?        @map("read_at")
+
+  workOrder WorkOrder? @relation(fields: [relatedWorkOrderId], references: [id], onDelete: Cascade)
+
+  @@index([targetRole, read])
+  @@index([targetUserId, read])
+  @@index([relatedWorkOrderId])
+  @@map("notifications")
 }
 
 model RecordValue {
