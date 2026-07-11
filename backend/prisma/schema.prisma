@@ -69,6 +69,65 @@ enum BusinessRecordStatus {
   rejected
 }
 
+enum WorkOrderType {
+  transport
+  expense
+  other
+}
+
+enum WorkOrderStatus {
+  draft
+  finance_reviewing
+  finance_rejected
+  reviewer_reviewing
+  reviewer_rejected
+  ai_reviewing
+  ai_passed
+  ai_flagged
+  boss_pending
+  boss_rejected
+  completed
+  returned_for_supplement
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum NotificationType {
+  urgent
+  audit
+  system
+  boss_approval
+}
+
+enum RawFileStatus {
+  uploaded
+  parsed
+  failed
+  voided
+}
+
+enum FileScanStatus {
+  pending
+  clean
+  infected
+  failed
+}
+
+enum AnomalyStatus {
+  open
+  resolved
+  ignored
+}
+
+enum AiMessageRole {
+  user
+  assistant
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -82,7 +141,12 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  auditLogs AuditLog[]
+  auditLogs         AuditLog[]
+  createdWorkOrders WorkOrder[]         @relation("WorkOrderCreator")
+  approvals         Approval[]
+  timelineEntries   WorkOrderTimeline[]
+  uploadedFiles     RawFile[]
+  aiConversations   AiConversation[]
 
   @@map("users")
 }
@@ -119,6 +183,10 @@ model Project {
 
   projectTemplates ProjectTemplate[]
   businessRecords  BusinessRecord[]
+  workOrders       WorkOrder[]
+  rawFiles         RawFile[]
+  ruleRunResults   RuleRunResult[]
+  aiAnomalies      AiAnomaly[]
 
   @@index([status])
   @@map("projects")
@@ -223,12 +291,336 @@ model BusinessRecord {
   project  Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   template Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
   values   RecordValue[]
+  generatedFromWorkOrder WorkOrder? @relation("GeneratedRecord")
 
   @@index([projectId])
   @@index([templateId])
   @@index([status])
   @@index([recordDate])
   @@map("business_records")
+}
+
+model WorkOrder {
+  id                String          @id @default(cuid())
+  orderNo           String          @unique @map("order_no")
+  type              WorkOrderType
+  projectId         String          @map("project_id")
+  projectName       String          @map("project_name")
+  customerName      String?         @map("customer_name")
+  creatorId         String          @map("creator_id")
+  creatorName       String          @map("creator_name")
+  amount            Decimal         @default(0) @db.Decimal(14, 2)
+  income            Decimal         @default(0) @db.Decimal(14, 2)
+  cost              Decimal         @default(0) @db.Decimal(14, 2)
+  profit            Decimal         @default(0) @db.Decimal(14, 2)
+  status            WorkOrderStatus @default(finance_reviewing)
+  riskLevel         RiskLevel       @default(low) @map("risk_level")
+  description       String?
+  occurredDate      DateTime        @map("occurred_date")
+  extraValues       Json?           @map("extra_values")
+  financeOpinion    String?         @map("finance_opinion")
+  reviewerOpinion   String?         @map("reviewer_opinion")
+  aiSummary         String?         @map("ai_summary")
+  bossOpinion       String?         @map("boss_opinion")
+  urgent            Boolean         @default(false)
+  urgentReason      String?         @map("urgent_reason")
+  urgentTime        DateTime?       @map("urgent_time")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  completedAt       DateTime?       @map("completed_at")
+  generatedRecordId String?         @unique @map("generated_record_id")
+  idempotencyKey     String?         @unique @map("idempotency_key")
+
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  creator         User                  @relation("WorkOrderCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  generatedRecord BusinessRecord?       @relation("GeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+  attachments     WorkOrderAttachment[]
+  timeline        WorkOrderTimeline[]
+  approvals       Approval[]
+  notifications   Notification[]
+  rawFiles        RawFile[]             @relation("RelatedWorkOrderFiles")
+  ruleRunResults  RuleRunResult[]
+  aiAnomalies     AiAnomaly[]
+
+  @@index([creatorId])
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("work_orders")
+}
+
+model WorkOrderAttachment {
+  id          String   @id @default(cuid())
+  workOrderId String   @map("work_order_id")
+  rawFileId   String   @map("raw_file_id")
+  uploadedBy  String?  @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  rawFile   RawFile   @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
+
+  @@unique([workOrderId, rawFileId])
+  @@index([rawFileId])
+  @@map("work_order_attachments")
+}
+
+model RawFile {
+  id                 String         @id @default(cuid())
+  fileName           String         @map("file_name")
+  originalFileName   String         @map("original_file_name")
+  fileType           String         @map("file_type")
+  mimeType           String         @map("mime_type")
+  fileSize           BigInt         @map("file_size")
+  storagePath        String         @map("storage_path")
+  sha256             String
+  uploadedBy         String         @map("uploaded_by")
+  uploadedAt         DateTime       @default(now()) @map("uploaded_at")
+  relatedProjectId   String?        @map("related_project_id")
+  relatedWorkOrderId String?        @map("related_work_order_id")
+  status             RawFileStatus  @default(uploaded)
+  scanStatus         FileScanStatus @default(pending) @map("scan_status")
+  previewStatus      String         @default("original") @map("preview_status")
+  isVoided           Boolean        @default(false) @map("is_voided")
+  voidReason         String?        @map("void_reason")
+  voidedAt           DateTime?      @map("voided_at")
+  voidedBy           String?        @map("voided_by")
+
+  uploader        User                  @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
+  project         Project?              @relation(fields: [relatedProjectId], references: [id], onDelete: SetNull)
+  relatedWorkOrder WorkOrder?           @relation("RelatedWorkOrderFiles", fields: [relatedWorkOrderId], references: [id], onDelete: SetNull)
+  attachments     WorkOrderAttachment[]
+
+  @@index([sha256])
+  @@index([uploadedBy])
+  @@index([relatedProjectId])
+  @@index([relatedWorkOrderId])
+  @@index([scanStatus])
+  @@map("raw_files")
+}
+
+model WorkOrderTimeline {
+  id           String           @id @default(cuid())
+  workOrderId  String           @map("work_order_id")
+  operatorId   String?          @map("operator_id")
+  operatorName String?          @map("operator_name")
+  role         String
+  action       String
+  comment      String?
+  fromStatus   WorkOrderStatus? @map("from_status")
+  toStatus     WorkOrderStatus? @map("to_status")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  operator  User?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId, createdAt])
+  @@map("work_order_timeline")
+}
+
+model Approval {
+  id           String   @id @default(cuid())
+  workOrderId  String   @map("work_order_id")
+  approverId   String?  @map("approver_id")
+  approverRole String   @map("approver_role")
+  action       String
+  comment      String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  approver  User?     @relation(fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@index([approverId])
+  @@map("approvals")
+}
+
+model Notification {
+  id                 String           @id @default(cuid())
+  title              String
+  content            String
+  type               NotificationType
+  senderId           String?          @map("sender_id")
+  senderName         String?          @map("sender_name")
+  targetRole         UserRole?        @map("target_role")
+  targetUserId       String?          @map("target_user_id")
+  relatedWorkOrderId String?          @map("related_work_order_id")
+  read               Boolean          @default(false)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  readAt             DateTime?        @map("read_at")
+
+  workOrder WorkOrder? @relation(fields: [relatedWorkOrderId], references: [id], onDelete: Cascade)
+
+  @@index([targetRole, read])
+  @@index([targetUserId, read])
+  @@index([relatedWorkOrderId])
+  @@map("notifications")
+}
+
+model RiskRule {
+  id            String    @id @default(cuid())
+  ruleKey       String    @unique @map("rule_key")
+  ruleName      String    @map("rule_name")
+  ruleType      String    @map("rule_type")
+  targetType    String    @default("work_order") @map("target_type")
+  severity      RiskLevel @default(medium)
+  conditionJson Json      @map("condition_json")
+  description   String?
+  isActive      Boolean   @default(true) @map("is_active")
+  createdBy     String?   @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  runResults RuleRunResult[]
+  anomalies  AiAnomaly[]
+
+  @@index([isActive])
+  @@index([targetType])
+  @@map("risk_rules")
+}
+
+model RuleRunResult {
+  id          String    @id @default(cuid())
+  runId       String    @map("run_id")
+  ruleId      String    @map("rule_id")
+  targetType  String    @map("target_type")
+  targetId    String    @map("target_id")
+  projectId   String?   @map("project_id")
+  workOrderId String?   @map("work_order_id")
+  passed      Boolean
+  riskLevel   RiskLevel? @map("risk_level")
+  resultJson  Json      @default("{}") @map("result_json")
+  runBy       String    @default("system") @map("run_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  rule      RiskRule   @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([targetType, targetId])
+  @@index([projectId])
+  @@index([ruleId])
+  @@map("rule_run_results")
+}
+
+model AiAnomaly {
+  id          String        @id @default(cuid())
+  anomalyType String        @map("anomaly_type")
+  ruleId      String        @map("rule_id")
+  projectId   String?       @map("project_id")
+  workOrderId String        @map("work_order_id")
+  riskLevel   RiskLevel     @map("risk_level")
+  reason      String
+  suggestion  String?
+  evidence    Json?
+  status      AnomalyStatus @default(open)
+  detectedAt  DateTime      @default(now()) @map("detected_at")
+  resolvedAt  DateTime?     @map("resolved_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  rule      RiskRule  @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([workOrderId, ruleId])
+  @@index([status, riskLevel])
+  @@index([projectId])
+  @@map("ai_anomalies")
+}
+
+model AiConversation {
+  id          String   @id @default(cuid())
+  ownerUserId String   @map("owner_user_id")
+  title       String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+  callLogs AiCallLog[]
+
+  @@index([ownerUserId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String        @id @default(cuid())
+  conversationId String        @map("conversation_id")
+  role           AiMessageRole
+  content        String
+  toolContext    Json?         @map("tool_context")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiModelConfig {
+  id               String   @id @default(cuid())
+  provider         String
+  modelName        String   @map("model_name")
+  displayName      String?  @map("display_name")
+  baseUrl          String?  @map("base_url")
+  apiKeySecretName String?  @map("api_key_secret_name")
+  isLocal          Boolean  @default(false) @map("is_local")
+  supportsToolCall Boolean  @default(false) @map("supports_tool_call")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdBy        String?  @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  callLogs AiCallLog[]
+
+  @@index([provider, isActive])
+  @@map("ai_model_configs")
+}
+
+model AiPromptVersion {
+  id                 String   @id @default(cuid())
+  promptKey          String   @map("prompt_key")
+  versionNo          Int      @map("version_no")
+  title              String?
+  systemPrompt       String   @map("system_prompt")
+  userPromptTemplate String?  @map("user_prompt_template")
+  outputSchemaJson   Json?    @map("output_schema_json")
+  isActive           Boolean  @default(false) @map("is_active")
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  callLogs AiCallLog[]
+
+  @@unique([promptKey, versionNo])
+  @@index([promptKey, isActive])
+  @@map("ai_prompt_versions")
+}
+
+model AiCallLog {
+  id              String   @id @default(cuid())
+  conversationId  String?  @map("conversation_id")
+  modelConfigId   String?  @map("model_config_id")
+  promptVersionId String?  @map("prompt_version_id")
+  provider        String
+  modelName       String   @map("model_name")
+  requestPayload  Json     @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  inputTokens     Int      @default(0) @map("input_tokens")
+  outputTokens    Int      @default(0) @map("output_tokens")
+  latencyMs       Int      @default(0) @map("latency_ms")
+  success         Boolean  @default(true)
+  errorMessage    String?  @map("error_message")
+  createdBy       String?  @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  conversation  AiConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  modelConfig   AiModelConfig?   @relation(fields: [modelConfigId], references: [id], onDelete: SetNull)
+  promptVersion AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([modelName, createdAt])
+  @@index([createdAt])
+  @@map("ai_call_logs")
 }
 
 model RecordValue {

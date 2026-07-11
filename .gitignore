@@ -5,6 +5,7 @@ dist
 *.local
 *.log
 *.tsbuildinfo
+backend/uploads/
 financial-agent-frontend-package*.zip
 vite.config.js
 vite.config.d.ts

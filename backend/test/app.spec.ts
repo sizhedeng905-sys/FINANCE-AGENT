@@ -137,6 +137,7 @@ class InMemoryPrisma {
   businessRecords: BusinessRecordRecord[] = [];
   recordValues: RecordValueRecord[] = [];
   ledgerEvents: Array<Record<string, unknown>> = [];
+  rawFiles: Array<Record<string, unknown>> = [];
   auditLogs: Array<Record<string, unknown>> = [];
   private userCounter = 0;
   private projectCounter = 0;
@@ -439,6 +440,10 @@ class InMemoryPrisma {
       Object.assign(projectTemplate, data, { updatedAt: new Date() });
       return projectTemplate;
     }
+  };
+
+  rawFile = {
+    findMany: async () => this.rawFiles
   };
 
   businessRecord = {
@@ -948,6 +953,17 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
 
     const reviewerToken = await login('reviewer');
     await request(app.getHttpServer()).get('/api/users').set('Authorization', `Bearer ${reviewerToken}`).expect(403);
+  });
+
+  it('allows only boss to access the full AI chat endpoint', async () => {
+    for (const username of ['employee', 'finance', 'reviewer']) {
+      const token = await login(username);
+      await request(app.getHttpServer())
+        .post('/api/ai/chat')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ message: '今天经营情况', history: [] })
+        .expect(403);
+    }
   });
 
   it('allows finance and boss to manage users and writes audit logs', async () => {
