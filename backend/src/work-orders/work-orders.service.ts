@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -20,6 +21,7 @@ import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { BossApproveDto, FinanceReviewDto, ReviewerReviewDto, UrgeWorkOrderDto } from './dto/review-work-order.dto';
 import { UpdateWorkOrderDto } from './dto/update-work-order.dto';
 import { toTimelineItem, toWorkOrder, workOrderInclude } from './work-order.presenter';
+import { WorkOrderRecordsService } from './work-order-records.service';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 
@@ -59,7 +61,8 @@ export class WorkOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogs: AuditLogsService,
-    private readonly riskRules: RiskRulesService
+    private readonly riskRules: RiskRulesService,
+    private readonly workOrderRecords: WorkOrderRecordsService
   ) {}
 
   async findMany(query: QueryWorkOrdersDto, user: CurrentUser) {
@@ -256,36 +259,65 @@ export class WorkOrdersService {
     return result.workOrder;
   }
 
-  async bossApprove(id: string, dto: BossApproveDto, actor: CurrentUser, context: RequestContext) {
+  async bossApprove(
+    id: string,
+    dto: BossApproveDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    if (idempotencyKey && (idempotencyKey.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(idempotencyKey))) {
+      throw new BadRequestException('Idempotency-Key 格式不正确');
+    }
     const next = dto.action === 'approve' ? WorkOrderStatus.completed : WorkOrderStatus.boss_rejected;
-    return this.prisma.$transaction(async (tx) => {
-      const before = await this.findByIdOrThrow(id, tx);
-      this.assertStatus(before.status, [WorkOrderStatus.boss_pending]);
-      await this.writeApprovalAndTimeline(tx, before, actor, dto.action, dto.comment, next);
-      const updated = await tx.workOrder.update({
-        where: { id },
-        data: {
-          status: next,
-          bossOpinion: dto.comment,
-          completedAt: next === WorkOrderStatus.completed ? new Date() : undefined
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          const before = await this.findByIdOrThrow(id, tx);
+          if (before.status === WorkOrderStatus.completed && before.generatedRecordId) {
+            return toWorkOrder(before);
+          }
+          this.assertStatus(before.status, [WorkOrderStatus.boss_pending]);
+          await this.writeApprovalAndTimeline(tx, before, actor, dto.action, dto.comment, next);
+          const generatedRecord =
+            dto.action === 'approve'
+              ? await this.workOrderRecords.createWithinTransaction(tx, before, actor, context)
+              : undefined;
+          const updated = await tx.workOrder.update({
+            where: { id },
+            data: {
+              status: next,
+              bossOpinion: dto.comment,
+              completedAt: next === WorkOrderStatus.completed ? new Date() : undefined,
+              generatedRecordId: generatedRecord?.id,
+              idempotencyKey: idempotencyKey ?? undefined
+            },
+            include: workOrderInclude
+          });
+          await tx.notification.create({
+            data: {
+              title: dto.action === 'approve' ? '工单审批通过' : '工单被老板驳回',
+              content: `工单 ${before.orderNo} 已完成老板审批`,
+              type: NotificationType.system,
+              senderId: actor.id,
+              senderName: actor.name,
+              targetUserId: before.creatorId,
+              targetRole: UserRole.employee,
+              relatedWorkOrderId: id
+            }
+          });
+          await this.auditLogs.write(tx, actor, 'work_order.boss_approve', 'work_order', id, { action: dto.action, from: before.status, to: next }, context);
+          return toWorkOrder(updated);
         },
-        include: workOrderInclude
-      });
-      await tx.notification.create({
-        data: {
-          title: dto.action === 'approve' ? '工单审批通过' : '工单被老板驳回',
-          content: `工单 ${before.orderNo} 已完成老板审批`,
-          type: NotificationType.system,
-          senderId: actor.id,
-          senderName: actor.name,
-          targetUserId: before.creatorId,
-          targetRole: UserRole.employee,
-          relatedWorkOrderId: id
-        }
-      });
-      await this.auditLogs.write(tx, actor, 'work_order.boss_approve', 'work_order', id, { action: dto.action, from: before.status, to: next }, context);
-      return toWorkOrder(updated);
-    });
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      );
+    } catch (error) {
+      if (dto.action === 'approve' && this.isConcurrentWriteConflict(error)) {
+        const current = await this.findByIdOrThrow(id);
+        if (current.status === WorkOrderStatus.completed && current.generatedRecordId) return toWorkOrder(current);
+      }
+      throw error;
+    }
   }
 
   async urge(id: string, dto: UrgeWorkOrderDto, actor: CurrentUser, context: RequestContext) {
@@ -334,6 +366,10 @@ export class WorkOrdersService {
   async timeline(id: string, user: CurrentUser) {
     const workOrder = await this.findAccessibleOrThrow(id, user);
     return workOrder.timeline.map(toTimelineItem);
+  }
+
+  generateRecord(id: string, actor: CurrentUser, context: RequestContext) {
+    return this.workOrderRecords.generate(id, actor, context);
   }
 
   private async reviewTransition(
@@ -524,5 +560,10 @@ export class WorkOrdersService {
     const date = now.toISOString().slice(0, 10).replace(/-/g, '');
     const suffix = `${now.getTime()}`.slice(-7) + Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     return `WO${date}${suffix}`;
+  }
+
+  private isConcurrentWriteConflict(error: unknown) {
+    if (!error || typeof error !== 'object' || !('code' in error)) return false;
+    return ['P2002', 'P2034'].includes(String((error as { code: unknown }).code));
   }
 }

@@ -176,6 +176,12 @@ async function main() {
       name: '报销工单模板',
       recordType: DataRecordType.reimbursement,
       description: '记录报销事由、成本分类、付款对象和凭证。'
+    },
+    {
+      id: 'dt-other',
+      name: '其他支出模板',
+      recordType: DataRecordType.other,
+      description: '记录不属于标准报销分类的临时支出。'
     }
   ];
 
@@ -204,7 +210,8 @@ async function main() {
     'dt-labor': ['f-date', 'f-person', 'f-position', 'f-hours', 'f-unit-price', 'f-amount', 'f-remark'],
     'dt-site': ['f-date', 'f-site', 'f-utility', 'f-amount', 'f-remark', 'f-attachment'],
     'dt-revenue': ['f-date', 'f-site', 'f-ticket', 'f-ton', 'f-income', 'f-remark'],
-    'dt-reimbursement': ['f-date', 'f-reason', 'f-cost-category', 'f-amount', 'f-payee', 'f-attachment', 'f-remark']
+    'dt-reimbursement': ['f-date', 'f-reason', 'f-cost-category', 'f-amount', 'f-payee', 'f-attachment', 'f-remark'],
+    'dt-other': ['f-date', 'f-reason', 'f-cost-category', 'f-amount', 'f-payee', 'f-attachment', 'f-remark']
   };
 
   for (const [templateId, fieldIds] of Object.entries(templateFieldMap)) {
@@ -283,8 +290,16 @@ async function main() {
   const projectTemplates = [
     ['dp-001', 'dt-transport', '太和运输费用'],
     ['dp-001', 'dt-labor', '太和劳务费用'],
+    ['dp-001', 'dt-reimbursement', '太和报销费用'],
+    ['dp-001', 'dt-other', '太和其他支出'],
     ['dp-002', 'dt-revenue', '得物收入记录'],
-    ['dp-003', 'dt-site', '旧衣场地费用']
+    ['dp-002', 'dt-transport', '得物运输收入'],
+    ['dp-002', 'dt-reimbursement', '得物报销费用'],
+    ['dp-002', 'dt-other', '得物其他支出'],
+    ['dp-003', 'dt-site', '旧衣场地费用'],
+    ['dp-003', 'dt-transport', '旧衣运输收入'],
+    ['dp-003', 'dt-reimbursement', '旧衣报销费用'],
+    ['dp-003', 'dt-other', '旧衣其他支出']
   ] as const;
 
   for (const [projectId, templateId, customName] of projectTemplates) {

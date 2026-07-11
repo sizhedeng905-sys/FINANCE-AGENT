@@ -263,6 +263,15 @@ export class ProjectsService {
 
   async getSummary(id: string) {
     const structure = await this.getStructure(id);
+    const activeRecords = structure.records.filter((record) => record.status !== 'rejected');
+    const incomeRecords = activeRecords.filter(
+      (record) => record.recordType === 'revenue' || record.category === '收入'
+    );
+    const costRecords = activeRecords.filter(
+      (record) => record.recordType !== 'revenue' && record.category !== '收入'
+    );
+    const totalIncome = incomeRecords.reduce((sum, record) => sum + record.amount, 0);
+    const totalCost = costRecords.reduce((sum, record) => sum + record.amount, 0);
 
     return {
       project: structure.project,
@@ -271,19 +280,9 @@ export class ProjectsService {
       recordCount: structure.records.length,
       rawFileCount: structure.rawFiles.length,
       importTaskCount: structure.importTasks.length,
-      totalIncome: structure.records
-        .filter((record) => record.status !== 'rejected' && record.recordType === 'revenue')
-        .reduce((sum, record) => sum + record.amount, 0),
-      totalCost: structure.records
-        .filter((record) => record.status !== 'rejected' && record.recordType !== 'revenue')
-        .reduce((sum, record) => sum + record.amount, 0),
-      profit:
-        structure.records
-          .filter((record) => record.status !== 'rejected' && record.recordType === 'revenue')
-          .reduce((sum, record) => sum + record.amount, 0) -
-        structure.records
-          .filter((record) => record.status !== 'rejected' && record.recordType !== 'revenue')
-          .reduce((sum, record) => sum + record.amount, 0)
+      totalIncome,
+      totalCost,
+      profit: totalIncome - totalCost
     };
   }
 

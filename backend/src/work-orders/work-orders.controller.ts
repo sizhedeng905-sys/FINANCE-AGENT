@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -65,8 +65,24 @@ export class WorkOrdersController {
 
   @Post(':id/boss-approve')
   @Roles(UserRole.boss)
-  bossApprove(@Param('id') id: string, @Body() dto: BossApproveDto, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
-    return this.workOrders.bossApprove(id, dto, user, getRequestContext(request));
+  bossApprove(
+    @Param('id') id: string,
+    @Body() dto: BossApproveDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.workOrders.bossApprove(id, dto, user, getRequestContext(request), idempotencyKey);
+  }
+
+  @Post(':id/generate-record')
+  @Roles(UserRole.finance, UserRole.boss)
+  generateRecord(
+    @Param('id') id: string,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.workOrders.generateRecord(id, user, getRequestContext(request));
   }
 
   @Post(':id/urge')

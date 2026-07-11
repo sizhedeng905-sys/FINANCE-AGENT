@@ -165,7 +165,11 @@ describe('WorkOrdersService phase 4 state machine', () => {
         return { workOrder: toWorkOrder(includeRelations(item)) };
       })
     };
-    service = new WorkOrdersService(tx, auditLogs as any, riskRules as any);
+    const workOrderRecords = {
+      createWithinTransaction: jest.fn(async () => ({ id: 'business_record_1' })),
+      generate: jest.fn(async () => ({ id: 'business_record_1' }))
+    };
+    service = new WorkOrdersService(tx, auditLogs as any, riskRules as any, workOrderRecords as any);
   });
 
   async function createOrder(employeeId = 'employee') {
@@ -220,9 +224,19 @@ describe('WorkOrdersService phase 4 state machine', () => {
       {}
     );
     expect(completed.status).toBe(WorkOrderStatus.completed);
+    expect(completed.generatedRecordId).toBe('business_record_1');
     expect(approvals).toHaveLength(3);
     expect(timeline).toHaveLength(5);
     expect(auditLogs.write).toHaveBeenCalledTimes(4);
+
+    const repeated = await service.bossApprove(
+      created.id,
+      { action: 'approve', comment: '重复点击' },
+      createActor(UserRole.boss),
+      {}
+    );
+    expect(repeated.generatedRecordId).toBe('business_record_1');
+    expect(approvals).toHaveLength(3);
   });
 
   it('rejects illegal transitions and limits urges to once per 30 minutes', async () => {
