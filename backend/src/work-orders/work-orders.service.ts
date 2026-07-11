@@ -96,6 +96,7 @@ export class WorkOrdersService {
       if (!project || project.status !== 'active') {
         throw new UnprocessableEntityException('项目不存在或未启用');
       }
+      await this.validateAttachments(tx, dto.attachments, actor, project.id);
 
       const workOrder = await tx.workOrder.create({
         data: {
@@ -128,6 +129,13 @@ export class WorkOrdersService {
         include: workOrderInclude
       });
 
+      if (dto.attachments?.length) {
+        await tx.rawFile.updateMany({
+          where: { id: { in: dto.attachments } },
+          data: { relatedWorkOrderId: workOrder.id, relatedProjectId: project.id }
+        });
+      }
+
       await tx.notification.create({
         data: {
           title: '新工单待财务审核',
@@ -154,6 +162,8 @@ export class WorkOrdersService {
         if (!project || project.status !== 'active') throw new UnprocessableEntityException('项目不存在或未启用');
       }
       const project = dto.projectId ? await tx.project.findUnique({ where: { id: dto.projectId } }) : null;
+      const targetProjectId = dto.projectId ?? before.projectId;
+      await this.validateAttachments(tx, dto.attachments, actor, targetProjectId, id);
 
       const workOrder = await tx.workOrder.update({
         where: { id },
@@ -175,6 +185,23 @@ export class WorkOrdersService {
         },
         include: workOrderInclude
       });
+      if (dto.attachments) {
+        const removedFileIds = before.attachments
+          .map((item) => item.rawFileId)
+          .filter((fileId) => !dto.attachments!.includes(fileId));
+        if (removedFileIds.length) {
+          await tx.rawFile.updateMany({
+            where: { id: { in: removedFileIds }, relatedWorkOrderId: id },
+            data: { relatedWorkOrderId: null }
+          });
+        }
+        if (dto.attachments.length) {
+          await tx.rawFile.updateMany({
+            where: { id: { in: dto.attachments } },
+            data: { relatedWorkOrderId: id, relatedProjectId: targetProjectId }
+          });
+        }
+      }
       await this.auditLogs.write(tx, actor, 'work_order.update', 'work_order', id, { before: before.updatedAt, after: workOrder.updatedAt }, context);
       return toWorkOrder(workOrder);
     });
@@ -347,6 +374,7 @@ export class WorkOrdersService {
         data: { status: next, [opinionField]: comment },
         include: workOrderInclude
       });
+      await this.createReviewNotification(tx, before, actor, next);
       await this.auditLogs.write(tx, actor, `work_order.${actor.role}_review`, 'work_order', id, { action, from: expected, to: next }, context);
       return toWorkOrder(updated);
     });
@@ -422,6 +450,54 @@ export class WorkOrdersService {
         toStatus: next
       }
     });
+  }
+
+  private async createReviewNotification(
+    tx: Prisma.TransactionClient,
+    workOrder: Awaited<ReturnType<WorkOrdersService['findByIdOrThrow']>>,
+    actor: CurrentUser,
+    next: WorkOrderStatus
+  ) {
+    const data: Prisma.NotificationCreateInput = {
+      title: '工单流程更新',
+      content: `工单 ${workOrder.orderNo} 已由${actor.name}处理`,
+      type: NotificationType.audit,
+      senderId: actor.id,
+      senderName: actor.name,
+      workOrder: { connect: { id: workOrder.id } }
+    };
+    if (next === WorkOrderStatus.reviewer_reviewing) data.targetRole = UserRole.reviewer;
+    else if (next === WorkOrderStatus.ai_reviewing) data.targetRole = UserRole.boss;
+    else {
+      data.targetRole = UserRole.employee;
+      data.targetUserId = workOrder.creatorId;
+    }
+    await tx.notification.create({ data });
+  }
+
+  private async validateAttachments(
+    tx: Prisma.TransactionClient,
+    attachmentIds: string[] | undefined,
+    actor: CurrentUser,
+    projectId: string,
+    workOrderId?: string
+  ) {
+    if (!attachmentIds?.length) return;
+    const files = await tx.rawFile.findMany({
+      where: { id: { in: attachmentIds }, isVoided: false }
+    });
+    if (files.length !== attachmentIds.length) throw new UnprocessableEntityException('附件不存在或已作废');
+    for (const file of files) {
+      if (actor.role === UserRole.employee && file.uploadedBy !== actor.id) {
+        throw new ForbiddenException('只能使用自己上传的附件');
+      }
+      if (file.relatedProjectId && file.relatedProjectId !== projectId) {
+        throw new UnprocessableEntityException('附件不属于当前项目');
+      }
+      if (file.relatedWorkOrderId && file.relatedWorkOrderId !== workOrderId) {
+        throw new UnprocessableEntityException('附件已关联其他工单');
+      }
+    }
   }
 
   private applyRoleScope(where: Prisma.WorkOrderWhereInput, user: CurrentUser) {

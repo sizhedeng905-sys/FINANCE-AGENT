@@ -137,6 +137,7 @@ class InMemoryPrisma {
   businessRecords: BusinessRecordRecord[] = [];
   recordValues: RecordValueRecord[] = [];
   ledgerEvents: Array<Record<string, unknown>> = [];
+  rawFiles: Array<Record<string, unknown>> = [];
   auditLogs: Array<Record<string, unknown>> = [];
   private userCounter = 0;
   private projectCounter = 0;
@@ -439,6 +440,10 @@ class InMemoryPrisma {
       Object.assign(projectTemplate, data, { updatedAt: new Date() });
       return projectTemplate;
     }
+  };
+
+  rawFile = {
+    findMany: async () => this.rawFiles
   };
 
   businessRecord = {

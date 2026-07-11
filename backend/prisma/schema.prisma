@@ -103,6 +103,20 @@ enum NotificationType {
   boss_approval
 }
 
+enum RawFileStatus {
+  uploaded
+  parsed
+  failed
+  voided
+}
+
+enum FileScanStatus {
+  pending
+  clean
+  infected
+  failed
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -120,6 +134,7 @@ model User {
   createdWorkOrders WorkOrder[]         @relation("WorkOrderCreator")
   approvals         Approval[]
   timelineEntries   WorkOrderTimeline[]
+  uploadedFiles     RawFile[]
 
   @@map("users")
 }
@@ -157,6 +172,7 @@ model Project {
   projectTemplates ProjectTemplate[]
   businessRecords  BusinessRecord[]
   workOrders       WorkOrder[]
+  rawFiles         RawFile[]
 
   @@index([status])
   @@map("projects")
@@ -307,6 +323,7 @@ model WorkOrder {
   timeline        WorkOrderTimeline[]
   approvals       Approval[]
   notifications   Notification[]
+  rawFiles        RawFile[]             @relation("RelatedWorkOrderFiles")
 
   @@index([creatorId])
   @@index([projectId])
@@ -323,10 +340,45 @@ model WorkOrderAttachment {
   createdAt   DateTime @default(now()) @map("created_at")
 
   workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  rawFile   RawFile   @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
 
   @@unique([workOrderId, rawFileId])
   @@index([rawFileId])
   @@map("work_order_attachments")
+}
+
+model RawFile {
+  id                 String         @id @default(cuid())
+  fileName           String         @map("file_name")
+  originalFileName   String         @map("original_file_name")
+  fileType           String         @map("file_type")
+  mimeType           String         @map("mime_type")
+  fileSize           BigInt         @map("file_size")
+  storagePath        String         @map("storage_path")
+  sha256             String
+  uploadedBy         String         @map("uploaded_by")
+  uploadedAt         DateTime       @default(now()) @map("uploaded_at")
+  relatedProjectId   String?        @map("related_project_id")
+  relatedWorkOrderId String?        @map("related_work_order_id")
+  status             RawFileStatus  @default(uploaded)
+  scanStatus         FileScanStatus @default(pending) @map("scan_status")
+  previewStatus      String         @default("original") @map("preview_status")
+  isVoided           Boolean        @default(false) @map("is_voided")
+  voidReason         String?        @map("void_reason")
+  voidedAt           DateTime?      @map("voided_at")
+  voidedBy           String?        @map("voided_by")
+
+  uploader        User                  @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
+  project         Project?              @relation(fields: [relatedProjectId], references: [id], onDelete: SetNull)
+  relatedWorkOrder WorkOrder?           @relation("RelatedWorkOrderFiles", fields: [relatedWorkOrderId], references: [id], onDelete: SetNull)
+  attachments     WorkOrderAttachment[]
+
+  @@index([sha256])
+  @@index([uploadedBy])
+  @@index([relatedProjectId])
+  @@index([relatedWorkOrderId])
+  @@index([scanStatus])
+  @@map("raw_files")
 }
 
 model WorkOrderTimeline {

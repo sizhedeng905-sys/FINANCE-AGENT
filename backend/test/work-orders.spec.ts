@@ -149,8 +149,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
         projectId: project.id,
         amount: 1200,
         description: '测试报销',
-        occurredDate: '2026-07-11',
-        attachments: ['file_1']
+        occurredDate: '2026-07-11'
       },
       createActor(UserRole.employee, employeeId),
       {}

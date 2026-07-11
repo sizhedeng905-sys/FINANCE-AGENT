@@ -12,6 +12,7 @@ import {
 } from '../data-center/data-center.presenter';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
+import { toRawFile } from '../files/file.presenter';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateProjectTemplateDto } from './dto/create-project-template.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -24,6 +25,7 @@ type PresentedProjectTemplate = ReturnType<typeof toProjectTemplate>;
 type PresentedTemplate = ReturnType<typeof toTemplate>;
 type PresentedTemplateField = ReturnType<typeof toTemplateField>;
 type PresentedBusinessRecord = ReturnType<typeof toBusinessRecord>;
+type PresentedRawFile = ReturnType<typeof toRawFile>;
 
 export interface EnabledTemplateInfo {
   projectTemplate: PresentedProjectTemplate;
@@ -50,7 +52,7 @@ export interface ProjectStructure {
   enabledTemplates: EnabledTemplateInfo[];
   templateFields: PresentedTemplateField[];
   records: PresentedBusinessRecord[];
-  rawFiles: never[];
+  rawFiles: PresentedRawFile[];
   importTasks: never[];
   fieldUsageStats: FieldUsageStat[];
   logicalTablesSummary: Array<{
@@ -232,6 +234,12 @@ export class ProjectsService {
         }
       })
     ).map(toBusinessRecord);
+    const rawFiles = (
+      await this.prisma.rawFile.findMany({
+        where: { relatedProjectId: id },
+        orderBy: { uploadedAt: 'desc' }
+      })
+    ).map(toRawFile);
 
     const enabledTemplates = projectTemplates.map((projectTemplate) => ({
       projectTemplate: toProjectTemplate(projectTemplate),
@@ -246,10 +254,10 @@ export class ProjectsService {
       enabledTemplates,
       templateFields,
       records,
-      rawFiles: [],
+      rawFiles,
       importTasks: [],
       fieldUsageStats: this.getFieldUsageStats(enabledTemplates, records),
-      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates, records)
+      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates, records, rawFiles.length)
     };
   }
 
@@ -451,7 +459,8 @@ export class ProjectsService {
   private getLogicalTablesSummary(
     projectId: string,
     enabledTemplates: EnabledTemplateInfo[],
-    records: PresentedBusinessRecord[]
+    records: PresentedBusinessRecord[],
+    rawFileCount: number
   ) {
     const fieldIds = new Set(enabledTemplates.flatMap((item) => item.fields.map((field) => field.fieldId)));
     const recordValuesCount = records.flatMap((record) => record.values).length;
@@ -502,7 +511,7 @@ export class ProjectsService {
       {
         tableName: 'raw_files',
         description: '原始来源文件表',
-        relatedCount: 0,
+        relatedCount: rawFileCount,
         keyFields: ['id', 'fileName', 'fileType', 'relatedProjectId']
       },
       {
