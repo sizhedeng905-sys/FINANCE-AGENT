@@ -17,7 +17,7 @@ feat: complete real API migration and guarded local model runtime
 - PostgreSQL dev/test 可重复初始化，Prisma schema、14 个 migration、seed 和结构核对通过。
 - 前端所有 C-1 至 C-11 领域完成显式 Mock/API Repository，API 错误不回退 Mock。
 - 工单完整审批、文件、通知、规则、confirmed 经营记录、报表和老板结构化 AI 工具形成真实闭环。
-- 阶段 9 支持真实 `.xlsx` 上传、解析、映射、错误行隔离、字段建议和幂等事务确认。
+- 阶段 9/B2 支持真实 `.xlsx` 与隔离转换 `.xls` 上传、解析、映射、错误行隔离、字段建议和幂等事务确认。
 - 阶段 10 支持 OCR Task、Provider、证据/置信度、纠错、重试和幂等确认入库。
 - 模型运行时提供部署/路由登记、健康检查、Schema、超时、重试、熔断、并发和安全日志；真实模型默认 disabled。
 - 本地权重校验、PaddleOCR-VL 适配器、文本/OCR 常驻编排和 VL/Embedding 按需切换已实现；WSL 2/Docker 尚未安装，真实推理未验收。

@@ -27,7 +27,7 @@
 | C-10 报表 | `reportApi`、`reportStore` | `/api/reports` | 已对齐 | 已接通 | 四角色、confirmed 口径、时区边界和 AI 一致性已通过 | 真实闭环完成 |
 | C-11 AI | `aiApi`、`ChatBox` | `/api/ai/chat`、`/api/ai/call-logs` | 已对齐 | 已接通 | boss-only、会话归属、六工具和日志已通过 | 真实 API 闭环完成；默认 Mock |
 | D E2E | Playwright、真实 API、Mock 前端 | 阶段 0-10 核心接口 | 0 后端请求已验证 | 完整审批、Excel、OCR与安全运行验收 | 24 条 PostgreSQL + 12 条浏览器测试 | 批次 D 完成并持续扩展 |
-| E Excel | `importApi`、`importStore`、导入/映射/确认/任务/建议页 | `/import-tasks`、parse/mappings/preview/confirm/errors、`/field-suggestions`、records filter | 显式内存 Repository，无 API 回退 | 真实 `.xlsx` → BusinessRecord/RecordValue/audit/ledger | 3 个解析器测试 + PostgreSQL 真实文件用例 + Playwright 浏览器上传 | 批次 E 完成 |
+| E Excel | `importApi`、`importStore`、导入/映射/确认/任务/建议页 | `/import-tasks`、parse/mappings/preview/confirm/errors、`/field-suggestions`、records filter | 显式内存 Repository，无 API 回退 | 真实 `.xlsx` / 隔离转换 `.xls` → BusinessRecord/RecordValue/audit/ledger | 解析器与转换器单测 + PostgreSQL 原件/转换证据链 + Playwright 浏览器上传 | 批次 E 与 B2 适配完成 |
 | F OCR | `ocrApi`、`ocrStore`、上传/任务/详情纠错页 | `/ocr-tasks` 与 `/ocr/tasks` 兼容路由，run/corrections/confirm/retry/cancel | 显式内存 Repository，无 API 回退 | 合成 PDF → Provider → 人工纠错 → BusinessRecord/RecordValue | Provider/PDF 单测 + PostgreSQL 纠错重试并发 + Playwright | 批次 F 完成 |
 | G 模型运行时 | 无普通业务页面；受保护管理 API | `/model-runtime/deployments|routes|health` | Mock deployment 默认启用 | OpenAI-compatible/Local Paddle 适配、Schema、队列、重试、熔断 | 运行时单测 + PostgreSQL 权限/密钥边界/健康检查 | 框架完成；真实 GPU 待验收 |
 | H 工程化 | 无新增业务页面 | `/health/live|ready`、全局安全/日志中间件 | 不适用 | CORS、Helmet、限流、requestId、生产 Swagger 开关、CI | 62 单测 + 24 PostgreSQL + 12 Playwright + hygiene/audit | 工程化收尾完成 |

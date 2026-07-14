@@ -15,6 +15,8 @@ Phase 0 through phase 10 backend for the logistics AI finance operations system.
 
 ## Setup
 
+Use Node.js 22 or newer. Legacy `.xls` conversion relies on the stable Node permission model and refuses to run on older runtimes.
+
 ```bash
 cd backend
 npm install
@@ -43,6 +45,8 @@ npm run prisma:migrate
 npm run prisma:migrate:deploy
 npm run prisma:seed
 npm run db:verify
+npm run realdata:scan
+npm run realdata:xls-profile
 npm run model:routes -- list
 npm run model:check
 npm run model:services:init
@@ -60,12 +64,12 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-14):
+Current verification baseline (2026-07-15):
 
-- Backend build and Prisma validation pass with 15 applied migrations.
-- Jest: 14/14 suites and 84/84 tests.
-- Real PostgreSQL integration: 26/26 tests.
-- Root Playwright acceptance: 13/13 tests.
+- Backend build and Prisma validation pass with 16 applied migrations.
+- Jest: 15/15 suites and 94/94 tests.
+- Real PostgreSQL integration: 28/28 tests.
+- Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 
 ## API
@@ -225,18 +229,22 @@ Completed:
 - Realization batch B: token revocation, authentication audit/rate limiting, boss account protection, request IDs, and frontend real auth/user APIs.
 - Realization batch C: all ordered frontend domains through the boss AI assistant use explicit Mock/API repositories, with no API-to-Mock fallback.
 - Realization batch D: guarded PostgreSQL test initialization, 21 integration tests, 9 Playwright E2E tests, deterministic cleanup, and a PostgreSQL CI job.
-- Phase 9 / realization batch E: real `.xlsx` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, partial-row validation, and idempotent transactional import.
+- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, partial-row validation, and idempotent transactional import.
 - Phase 10 / realization batch F: provider-neutral OCR tasks, PDF preprocessing checks, field evidence/confidence, human corrections, retry, and idempotent record generation.
 - Realization batch G: model deployment/route registry, provider contracts, JSON Schema validation, health checks, timeout/retry/circuit breaker and bounded concurrency.
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
-- Real business data B0/B1 and the current B2 slice: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, and opt-in cached formula results with provenance, audit/ledger metadata, and mandatory review warnings.
+- Real business data B0/B1 and the current B2 slice: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, and resource-limited `.xls` sanitization with audit/ledger provenance.
 
 Explicitly deferred by the user:
 
 - Cross-source duplicate-posting policy and idempotency across separate Excel uploads, OCR tasks, and manual retries (audit P1-07).
-- Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001-row memory, latency, response-size, and recovery benchmarks (audit P1-08).
+
+Completed audit follow-up:
+
+- Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001/30,196-row memory, persistence, cancellation, lease recovery, and uniqueness benchmarks (audit P1-08).
+- Legacy `.xls` conversion in a Node.js 22+ permission-model child process; no Excel/COM dependency and no converted artifact at rest.
 
 Deployment or data work still required:
 
