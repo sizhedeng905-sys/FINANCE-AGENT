@@ -302,6 +302,14 @@ export interface ImportTask {
   confirmedAt?: string;
   confirmedBy?: string;
   errorMessage?: string;
+  progress?: {
+    executionMode?: 'synchronous' | 'background';
+    processingMode?: 'document' | 'streaming';
+    processed: number;
+    total: number;
+    percent: number;
+    attempts: number;
+  };
   counts: {
     total: number;
     valid: number;

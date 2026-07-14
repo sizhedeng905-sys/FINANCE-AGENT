@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PlayCircleOutlined } from '@ant-design/icons';
-import { Alert, App, Button, Card, Checkbox, Descriptions, Empty, InputNumber, Select, Space, Spin, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Checkbox, Descriptions, Empty, InputNumber, Progress, Select, Space, Spin, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
@@ -38,6 +38,7 @@ export default function DataImportMappingPage() {
   const fetchTask = useImportStore((state) => state.fetchTask);
   const inspectTask = useImportStore((state) => state.inspectTask);
   const parseTask = useImportStore((state) => state.parseTask);
+  const cancelTask = useImportStore((state) => state.cancelTask);
   const saveMappings = useImportStore((state) => state.saveMappings);
   const autoMatch = useImportStore((state) => state.autoMatch);
   const generateSuggestions = useImportStore((state) => state.generateSuggestions);
@@ -58,6 +59,12 @@ export default function DataImportMappingPage() {
   useEffect(() => {
     if (id && task?.status === 'uploaded' && !inspection) void inspectTask(id).catch(() => undefined);
   }, [id, inspectTask, inspection, task?.status]);
+
+  useEffect(() => {
+    if (!id || task?.status !== 'parsing') return;
+    const timer = window.setInterval(() => void fetchTask(id).catch(() => undefined), 1000);
+    return () => window.clearInterval(timer);
+  }, [fetchTask, id, task?.status]);
 
   useEffect(() => {
     if (!inspection) return;
@@ -166,14 +173,14 @@ export default function DataImportMappingPage() {
       message.warning('隐藏工作表必须显式确认');
       return;
     }
-    await parseTask(task.id, {
+    const parsed = await parseTask(task.id, {
       sheetIndex,
       headerStartRowIndex,
       headerRowIndex,
       allowHiddenSheet,
       allowCachedFormulaResults,
     });
-    message.success('工作表已解析，请确认字段映射');
+    message.success(parsed.status === 'parsing' ? '已进入后台解析，可在此查看进度' : '工作表已解析，请确认字段映射');
   };
 
   if (!id) return <Card><Empty description="导入任务不存在" /></Card>;
@@ -194,6 +201,33 @@ export default function DataImportMappingPage() {
                 <Descriptions.Item label="状态">{importStatusMap[task.status]}</Descriptions.Item>
               </Descriptions>
             </Card>
+            {task.status === 'parsing' ? (
+              <Alert
+                className="section-row"
+                type="info"
+                showIcon
+                message="工作簿正在后台分批解析"
+                description={(
+                  <Space direction="vertical" className="full-width">
+                    <Progress percent={task.progress?.percent ?? 0} />
+                    <span>
+                      已处理 {task.progress?.processed ?? 0} / {task.progress?.total ?? 0} 行，
+                      第 {task.progress?.attempts ?? 1} 次尝试
+                    </span>
+                  </Space>
+                )}
+                action={(
+                  <Button
+                    danger
+                    onClick={() => void cancelTask(task.id)
+                      .then(() => message.success('后台解析已取消'))
+                      .catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '取消失败'))}
+                  >
+                    取消解析
+                  </Button>
+                )}
+              />
+            ) : null}
             {task.status === 'uploaded' ? (
               <Card className="section-row" title="选择导入区域">
                 <Space direction="vertical" size="middle" className="full-width">

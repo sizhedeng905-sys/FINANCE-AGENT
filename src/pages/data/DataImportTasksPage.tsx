@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, App, Button, Card, Space, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Progress, Space, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import { useImportStore } from '@/store/importStore';
@@ -24,12 +24,25 @@ export default function DataImportTasksPage() {
     void fetchTasks().catch(() => undefined);
   }, [fetchTasks]);
 
+  useEffect(() => {
+    if (!tasks.some((task) => task.status === 'parsing')) return;
+    const timer = window.setInterval(() => void fetchTasks({ page, pageSize }).catch(() => undefined), 2000);
+    return () => window.clearInterval(timer);
+  }, [fetchTasks, page, pageSize, tasks]);
+
   const columns: ColumnsType<ImportTask> = [
     { title: '文件名', dataIndex: 'fileName' },
     { title: '项目', dataIndex: 'projectName' },
     { title: '模板', dataIndex: 'templateName' },
     { title: '上传人', dataIndex: 'uploadedBy' },
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{importStatusMap[value as ImportTask['status']]}</Tag> },
+    {
+      title: '解析进度',
+      width: 160,
+      render: (_, task) => task.status === 'parsing' ? (
+        <Progress percent={task.progress?.percent ?? 0} size="small" />
+      ) : task.progress?.total ? `${task.progress.processed} / ${task.progress.total}` : '-',
+    },
     { title: '导入/错误', render: (_, task) => `${task.counts.imported} / ${task.counts.errors}` },
     { title: '创建时间', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString('zh-CN') },
     {
@@ -60,7 +73,7 @@ export default function DataImportTasksPage() {
           columns={columns}
           dataSource={tasks}
           loading={loading}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1260 }}
           pagination={{
             current: page,
             pageSize,
