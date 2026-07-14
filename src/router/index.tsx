@@ -32,6 +32,9 @@ import DataImportTasksPage from '@/pages/data/DataImportTasksPage';
 import DataRecordsPage from '@/pages/data/DataRecordsPage';
 import DataFieldSuggestionsPage from '@/pages/data/DataFieldSuggestionsPage';
 import DataProjectStructurePage from '@/pages/data/DataProjectStructurePage';
+import DataOcrPage from '@/pages/data/DataOcrPage';
+import DataOcrTasksPage from '@/pages/data/DataOcrTasksPage';
+import DataOcrDetailPage from '@/pages/data/DataOcrDetailPage';
 import UserManagementPage from '@/pages/system/UserManagementPage';
 import { useAuthStore } from '@/store/authStore';
 import ProtectedRoute from './ProtectedRoute';
@@ -88,6 +91,9 @@ export default function AppRouter() {
           <Route path="/data/import-tasks" element={<DataImportTasksPage />} />
           <Route path="/data/records" element={<DataRecordsPage />} />
           <Route path="/data/field-suggestions" element={<DataFieldSuggestionsPage />} />
+          <Route path="/data/ocr" element={<DataOcrPage />} />
+          <Route path="/data/ocr-tasks" element={<DataOcrTasksPage />} />
+          <Route path="/data/ocr/:id" element={<DataOcrDetailPage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />
