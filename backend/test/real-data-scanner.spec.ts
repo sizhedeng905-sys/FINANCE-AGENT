@@ -89,6 +89,10 @@ describe('real business data B0 scanner', () => {
     await writeRealDataScanArtifacts(result, output, reportPath);
     expect(await readFile(join(output, 'inventory.local.json'), 'utf8')).toContain('customer-secret.xlsx');
     expect(await readFile(reportPath, 'utf8')).not.toContain('customer-secret.xlsx');
+
+    await writeFile(reportPath, `${await readFile(reportPath, 'utf8')}## Preserved validation\n\nSafe aggregate only.\n`);
+    await writeRealDataScanArtifacts(result, output, reportPath);
+    expect(await readFile(reportPath, 'utf8')).toContain('## Preserved validation');
   });
 
   it('passes only synthetic names to compatibility checks and records sanitized failures', async () => {

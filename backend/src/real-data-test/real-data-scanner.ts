@@ -351,7 +351,17 @@ export async function writeRealDataScanArtifacts(
 
   const manifestPath = resolve(output, 'inventory.local.json');
   const aggregatePath = resolve(output, 'aggregate.local.json');
-  const publicReport = renderPublicReport(result);
+  const renderedReport = renderPublicReport(result);
+  const existingReport = await readFile(report, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  const marker = '<!-- REAL_DATA_VALIDATION_HISTORY -->';
+  const markerIndex = existingReport.indexOf(marker);
+  const validationHistory = markerIndex >= 0
+    ? existingReport.slice(markerIndex + marker.length).trimStart()
+    : '';
+  const publicReport = validationHistory ? `${renderedReport}${validationHistory}` : renderedReport;
   assertPublicReportSafe(publicReport, result);
 
   await writeFile(manifestPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -480,7 +490,9 @@ ${reasonRows || '| `none` | 0 |'}
 2. 表格数据与内嵌凭证必须分层处理，避免一次性载入大量媒体对象。
 3. 超过 OCR 页数限制的 PDF 必须显式拆分或选择页范围，不能静默截断。
 4. 完全重复当前只做哈希提示与幂等验证，不自动判断业务近似重复。
-5. 下一批先补 B1 文件边界测试，再实现 B2 的 Sheet/表头选择和后台分块基线。
+5. B1 文件边界及 B2 的 Sheet、表头、公式、媒体、后台分块和旧 XLS 已完成；超过 50 MiB 的独立大文件通道仍保持关闭。
+
+<!-- REAL_DATA_VALIDATION_HISTORY -->
 `;
 }
 
