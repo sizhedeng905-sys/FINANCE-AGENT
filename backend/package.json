@@ -17,6 +17,7 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "db:verify": "tsx scripts/verify-database.ts",
     "realdata:scan": "tsx scripts/scan-real-business-data.ts",
+    "realdata:xlsx-profile": "tsx scripts/profile-real-xlsx.ts",
     "model:routes": "tsx scripts/configure-model-runtime.ts",
     "model:check": "node scripts/verify-model-assets.mjs resident",
     "model:check:all": "node scripts/verify-model-assets.mjs all",

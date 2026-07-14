@@ -139,4 +139,59 @@ describe('ExcelParserService phase 9', () => {
       allowHiddenSheet: true
     })).resolves.toMatchObject({ sheet: { sheetName: 'Archive', sheetIndex: 1 } });
   });
+
+  it('uses cached formula results only after an explicit opt-in and preserves formula provenance', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Formula');
+    sheet.addRow(['Date', 'Amount']);
+    const cached = sheet.addRow(['2026-07-01', null]);
+    cached.getCell(2).value = { formula: 'SUM(40,60)', result: 100 };
+    const missing = sheet.addRow(['2026-07-02', null]);
+    missing.getCell(2).value = { formula: 'SUM(50,50)' };
+    const invalid = sheet.addRow(['2026-07-03', null]);
+    invalid.getCell(2).value = { formula: '1/0', result: { error: '#DIV/0!' } };
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const rejected = await parser.parse(buffer);
+    expect(rejected.rows.map((row) => row.status)).toEqual(['error', 'error', 'error']);
+
+    const accepted = await parser.parse(buffer, { allowCachedFormulaResults: true });
+    expect(accepted.rows.map((row) => row.status)).toEqual(['pending', 'error', 'error']);
+    expect(accepted.rows[0].rawData.Amount).toEqual({ formula: 'SUM(40,60)', result: 100 });
+    expect(accepted.rows[0].warnings).toContain('Amount：使用公式缓存结果，确认前必须复核');
+    expect(accepted.rows[1].errors).toContain('公式单元格缺少可用缓存结果');
+    expect(accepted.rows[2].rawData.Amount).toEqual({ formula: '1/0', result: null });
+    expect(accepted.rows[2].errors).toContain('Amount：公式缓存结果不可用');
+  });
+
+  it('keeps only data-merge master values and defers importability to mapped-field validation', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Merged data');
+    sheet.addRow(['Category', 'Amount']);
+    sheet.addRow(['Transport', 100]);
+    sheet.addRow([null, 200]);
+    sheet.mergeCells('A2:A3');
+
+    const parsed = await parser.parse(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.rows.map((row) => row.status)).toEqual(['pending', 'pending']);
+    expect(parsed.rows[0].rawData.Category).toBe('Transport');
+    expect(parsed.rows[1].rawData.Category).toBeNull();
+    expect(parsed.rows.every((row) => row.warnings.includes('数据区包含合并单元格，确认前必须复核'))).toBe(true);
+  });
+
+  it('applies the explicit cached-result policy to formula headers', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Formula header');
+    const header = sheet.addRow(['Date', null]);
+    header.getCell(2).value = { formula: '"Amount"', result: 'Amount' };
+    sheet.addRow(['2026-07-01', 100]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    await expect(parser.parse(buffer)).rejects.toThrow('表头包含公式');
+    await expect(parser.parse(buffer, { allowCachedFormulaResults: true })).resolves.toMatchObject({
+      columns: [{ sourceName: 'Date' }, { sourceName: 'Amount' }],
+      rows: [{ status: 'pending' }]
+    });
+  });
 });

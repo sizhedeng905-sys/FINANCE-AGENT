@@ -273,7 +273,8 @@ export class ImportTasksService {
           sheetIndex: dto.sheetIndex,
           headerStartRowIndex: dto.headerStartRowIndex,
           headerRowIndex: dto.headerRowIndex,
-          allowHiddenSheet: dto.allowHiddenSheet ?? false
+          allowHiddenSheet: dto.allowHiddenSheet ?? false,
+          allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false
         },
         context
       );
@@ -390,12 +391,14 @@ export class ImportTasksService {
       await this.auditLogs.write(tx, actor, 'import_task.parse', 'import_task', id, {
         sheetIndex: parsed.sheet.sheetIndex,
         headerRowIndex: parsed.sheet.headerRowIndex,
+        allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         columns: columns.length,
         rows: parsed.rows.length,
         ...counts
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_parsed', 'import_task', id, {
         rawFileId: current.rawFileId,
+        allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         rowCount: parsed.rows.length,
         columnCount: columns.length
       });
@@ -1100,7 +1103,13 @@ export class ImportTasksService {
 
   private normalizeFieldValue(field: FieldDefinition, raw: unknown): { value?: string | string[]; error?: string } {
     if (raw === null || raw === undefined || raw === '') return {};
-    if (this.isFormulaValue(raw)) return { error: '公式单元格不能直接入库' };
+    if (this.isFormulaValue(raw)) {
+      const result = raw.result;
+      if (result === null || result === undefined || typeof result === 'object') {
+        return { error: '公式单元格缺少可用缓存结果' };
+      }
+      return this.normalizeFieldValue(field, result);
+    }
     if (field.fieldType === FieldType.money || field.fieldType === FieldType.number) {
       if (typeof raw !== 'string' && typeof raw !== 'number') return { error: '必须是数字' };
       const normalized = typeof raw === 'number'
@@ -1500,8 +1509,14 @@ export class ImportTasksService {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
   }
 
-  private isFormulaValue(value: unknown): value is { formula: string } {
-    return Boolean(value && typeof value === 'object' && !Array.isArray(value) && 'formula' in value);
+  private isFormulaValue(value: unknown): value is { formula: string; result?: unknown } {
+    return Boolean(
+      value
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && 'formula' in value
+      && typeof (value as { formula?: unknown }).formula === 'string'
+    );
   }
 
   private async findDetailOrThrow(id: string): Promise<ImportTaskDetail> {

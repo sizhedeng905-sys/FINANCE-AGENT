@@ -12,6 +12,7 @@
     "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
     "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
     "realdata:scan": "npm --prefix backend run realdata:scan --",
+    "realdata:xlsx-profile": "npm --prefix backend run realdata:xlsx-profile --",
     "model:init": "node backend/scripts/model-services.mjs init",
     "model:check": "node backend/scripts/model-services.mjs check resident",
     "model:check:all": "node backend/scripts/model-services.mjs check all",

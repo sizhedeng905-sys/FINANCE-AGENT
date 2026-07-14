@@ -63,9 +63,9 @@ The preparation and cleanup scripts reject database names that do not end in `_t
 Current verification baseline (2026-07-14):
 
 - Backend build and Prisma validation pass with 15 applied migrations.
-- Jest: 13/13 suites and 73/73 tests.
+- Jest: 14/14 suites and 84/84 tests.
 - Real PostgreSQL integration: 26/26 tests.
-- Root Playwright acceptance: 12/12 tests.
+- Root Playwright acceptance: 13/13 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 
 ## API
@@ -100,7 +100,7 @@ Current verification baseline (2026-07-14):
 - Boss AI assistant: `POST /api/ai/chat`
 - Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
 - AI call logs: `GET /api/ai/call-logs`
-- Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/parse`
+- Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/inspect`, `POST /api/import-tasks/:id/parse`
 - Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
 - Excel confirmation: `POST /api/import-tasks/:id/confirm`; field suggestions: `/api/field-suggestions`
 - OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
@@ -231,6 +231,7 @@ Completed:
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
+- Real business data B0/B1 and the current B2 slice: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, and opt-in cached formula results with provenance, audit/ledger metadata, and mandatory review warnings.
 
 Explicitly deferred by the user:
 

@@ -31,4 +31,12 @@ export class ParseImportTaskDto {
   @IsOptional()
   @IsBoolean()
   allowHiddenSheet?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Use workbook-cached formula results without evaluating formulas; requires manual review'
+  })
+  @IsOptional()
+  @IsBoolean()
+  allowCachedFormulaResults?: boolean;
 }

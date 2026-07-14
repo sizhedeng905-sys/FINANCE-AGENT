@@ -29,6 +29,15 @@ sheet.addRow([validDate, 8765.43, '粤A12345', '王师傅', 300]);
 await workbook.xlsx.writeFile(fixturePath);
 console.log(`Generated E2E Excel fixture: ${fixturePath}`);
 
+const formulaFixturePath = resolve(fixtureDirectory, 'E2E 公式缓存费用导入.xlsx');
+const formulaWorkbook = new ExcelJS.Workbook();
+const formulaSheet = formulaWorkbook.addWorksheet('费用明细');
+formulaSheet.addRow(['发生日期', '费用金额', '车牌', '司机']);
+const formulaDataRow = formulaSheet.addRow([validDate, null, '粤A54321', '公式测试司机']);
+formulaDataRow.getCell(2).value = { formula: 'SUM(8000,765.43)', result: 8765.43 };
+await formulaWorkbook.xlsx.writeFile(formulaFixturePath);
+console.log(`Generated E2E formula Excel fixture: ${formulaFixturePath}`);
+
 const ocrFixturePath = resolve(fixtureDirectory, 'E2E OCR 标准票据.pdf');
 const pdf = await PDFDocument.create();
 const page = pdf.addPage([420, 595]);

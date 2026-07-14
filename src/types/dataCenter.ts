@@ -361,6 +361,7 @@ export interface ParseImportTaskPayload {
   headerStartRowIndex?: number;
   headerRowIndex?: number;
   allowHiddenSheet?: boolean;
+  allowCachedFormulaResults?: boolean;
 }
 
 export type ImportMappingType = 'profile' | 'field_key' | 'exact_name' | 'alias' | 'normalized' | 'fuzzy' | 'manual' | 'ignored';

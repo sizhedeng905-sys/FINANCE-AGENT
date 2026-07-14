@@ -124,3 +124,34 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
   expect(moneyToCents(report.data.totalExpense) >= moneyToCents('8765.43')).toBeTruthy();
   expect(report.data.confirmedRecords).toBeGreaterThanOrEqual(1);
 });
+
+test('API mode: finance explicitly accepts cached formula results before parsing', async ({ page }) => {
+  test.setTimeout(120_000);
+  const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E 公式缓存费用导入.xlsx');
+
+  await login(page, 'finance', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/import`);
+  await selectOption(page, '项目', '太和中转项目');
+  await selectOption(page, '模板', '运输费用模板');
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+
+  const createdResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/import-tasks'));
+  await page.getByRole('button', { name: '上传并解析' }).click();
+  const created = await readEnvelope<ImportTaskDto>(await createdResponse);
+
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/mapping$`));
+  await expect(page.getByText('当前工作表包含 1 个公式单元格')).toBeVisible();
+  await page.getByRole('checkbox', { name: '允许使用公式缓存结果' }).check();
+
+  const parsedResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/import-tasks/${created.data.id}/parse`
+  ));
+  await page.getByRole('button', { name: '解析所选区域' }).click();
+  const response = await parsedResponse;
+  expect(response.request().postDataJSON()).toMatchObject({ allowCachedFormulaResults: true });
+  const parsed = await readEnvelope<ImportTaskDto>(response);
+  expect(parsed.data.status).toBe('pending_confirm');
+  expect(parsed.data.counts).toMatchObject({ total: 1, valid: 1, errors: 0 });
+  await expect(page.getByText('所有列均已有明确处理决定')).toBeVisible();
+});

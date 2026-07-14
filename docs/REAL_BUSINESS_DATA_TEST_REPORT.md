@@ -136,3 +136,38 @@
 3. 超过 OCR 页数限制的 PDF 必须显式拆分或选择页范围，不能静默截断。
 4. 完全重复当前只做哈希提示与幂等验证，不自动判断业务近似重复。
 5. 下一批先补 B1 文件边界测试，再实现 B2 的 Sheet/表头选择和后台分块基线。
+
+## B2 XLSX 匿名兼容性剖析
+
+2026-07-14 在 `--max-old-space-size=512` 限制下，对安全检查已接受且不超过 10 MiB 的 XLSX 运行两组只读对照。脚本在每份文件解析前后复核 SHA-256，本地详细结果仅写入 Git 忽略的 `.realdata-test/`。
+
+PowerShell 复现命令（需先生成 B0 本地清单）：
+
+```powershell
+$env:NODE_OPTIONS='--max-old-space-size=512'
+npm run realdata:xlsx-profile -- --mode parse --min-size-mb 0 --max-size-mb 10 --formula-results reject --output .realdata-test/xlsx-profile-reject.local.json
+npm run realdata:xlsx-profile -- --mode parse --min-size-mb 0 --max-size-mb 10 --formula-results cached --output .realdata-test/xlsx-profile-cached.local.json
+```
+
+脚本会拒绝将详细结果写到 `.realdata-test/` 之外。
+
+| 指标 | 默认拒绝公式缓存 | 显式允许公式缓存 |
+| --- | ---: | ---: |
+| 匿名样本 | 26 | 26 |
+| 检查通过 | 26 | 26 |
+| 解析通过 / 安全跳过 | 25 / 1 | 25 / 1 |
+| 解析行 | 4078 | 4078 |
+| `pending` | 2309 | 3926 |
+| `error` | 1759 | 142 |
+| `ignored` | 10 | 10 |
+| 公式复核警告行 | 0 | 1676 |
+| 合并数据复核警告行 | 1737 | 1737 |
+| 进程峰值 RSS | 323.48 MiB | 305.45 MiB |
+
+策略结论：
+
+1. 系统不执行任何 Excel 公式；默认路径继续拒绝公式行。
+2. 只有财务用户在工作簿检查页显式勾选后，才使用文件内已缓存的日期或有限标量结果。
+3. 公式原文和缓存结果一起保留在导入行，复核警告进入确认预览，选择记入 audit/ledger。
+4. 缺少缓存、Excel 错误值、非有限数字或对象结果仍不可入库。
+5. 数据区合并单元格仅保留主单元格；其他位置留空并进入人工复核，不自动填充。

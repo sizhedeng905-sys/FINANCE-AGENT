@@ -30,6 +30,7 @@ export default function DataImportMappingPage() {
   const [sheetIndex, setSheetIndex] = useState<number>();
   const [headerRange, setHeaderRange] = useState<string>();
   const [allowHiddenSheet, setAllowHiddenSheet] = useState(false);
+  const [allowCachedFormulaResults, setAllowCachedFormulaResults] = useState(false);
   const task = useImportStore((state) => state.currentTask?.id === id ? state.currentTask : undefined);
   const inspection = useImportStore((state) => state.inspectionTaskId === id ? state.inspection : undefined);
   const loading = useImportStore((state) => state.loading);
@@ -71,6 +72,7 @@ export default function DataImportMappingPage() {
     setSheetIndex(initialSheet);
     setHeaderRange(candidate ? `${candidate.startRowIndex}:${candidate.endRowIndex}` : undefined);
     setAllowHiddenSheet(false);
+    setAllowCachedFormulaResults(false);
   }, [inspection]);
 
   const taskFieldIds = useMemo(
@@ -169,6 +171,7 @@ export default function DataImportMappingPage() {
       headerStartRowIndex,
       headerRowIndex,
       allowHiddenSheet,
+      allowCachedFormulaResults,
     });
     message.success('工作表已解析，请确认字段映射');
   };
@@ -208,6 +211,7 @@ export default function DataImportMappingPage() {
                       setSheetIndex(value);
                       setHeaderRange(candidate ? `${candidate.startRowIndex}:${candidate.endRowIndex}` : undefined);
                       setAllowHiddenSheet(false);
+                      setAllowCachedFormulaResults(false);
                     }}
                     options={(inspection?.sheets ?? []).map((sheet) => ({
                       value: sheet.sheetIndex,
@@ -249,6 +253,22 @@ export default function DataImportMappingPage() {
                       <Alert type="warning" showIcon message="当前选择的是隐藏工作表" />
                       <Checkbox checked={allowHiddenSheet} onChange={(event) => setAllowHiddenSheet(event.target.checked)}>
                         确认导入隐藏工作表
+                      </Checkbox>
+                    </>
+                  ) : null}
+                  {selectedSheet && selectedSheet.formulaCellCount > 0 ? (
+                    <>
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={`当前工作表包含 ${selectedSheet.formulaCellCount} 个公式单元格`}
+                        description="系统不会执行公式；开启后仅使用文件中已缓存的结果，确认入账前必须人工复核。"
+                      />
+                      <Checkbox
+                        checked={allowCachedFormulaResults}
+                        onChange={(event) => setAllowCachedFormulaResults(event.target.checked)}
+                      >
+                        允许使用公式缓存结果
                       </Checkbox>
                     </>
                   ) : null}

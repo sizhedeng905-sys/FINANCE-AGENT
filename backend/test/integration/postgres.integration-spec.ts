@@ -2987,11 +2987,14 @@ describe('real PostgreSQL integration', () => {
       ['2026-07', 200]
     ]);
     const multiDetail = multiWorkbook.addWorksheet('费用明细');
-    multiDetail.addRow(['发生日期', '费用', null]);
-    multiDetail.addRow([null, '金额', '说明']);
-    multiDetail.addRow(['2026-07-01', 200, '合成明细']);
+    multiDetail.addRow(['发生日期', '费用', null, '车牌', '司机']);
+    multiDetail.addRow([null, '金额', '说明', null, null]);
+    const multiDetailRow = multiDetail.addRow(['2026-07-01', null, '合成明细', '粤A10001', '测试司机']);
+    multiDetailRow.getCell(2).value = { formula: 'SUM(120,80)', result: 200 };
     multiDetail.mergeCells('A1:A2');
     multiDetail.mergeCells('B1:C1');
+    multiDetail.mergeCells('D1:D2');
+    multiDetail.mergeCells('E1:E2');
     const hiddenArchive = multiWorkbook.addWorksheet('历史归档');
     hiddenArchive.state = 'hidden';
     hiddenArchive.addRows([
@@ -3119,7 +3122,12 @@ describe('real PostgreSQL integration', () => {
       const selectedParse = await request(app.getHttpServer())
         .post(`/api/import-tasks/${multiTaskId}/parse`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .send({ sheetIndex: 1, headerStartRowIndex: 1, headerRowIndex: 2 })
+        .send({
+          sheetIndex: 1,
+          headerStartRowIndex: 1,
+          headerRowIndex: 2,
+          allowCachedFormulaResults: true
+        })
         .expect(201);
       expect(selectedParse.body.data).toMatchObject({
         status: ImportTaskStatus.mapping,
@@ -3128,8 +3136,55 @@ describe('real PostgreSQL integration', () => {
       expect(selectedParse.body.data.columns.map((column: { sourceName: string }) => column.sourceName)).toEqual([
         '发生日期',
         '费用 / 金额',
-        '费用 / 说明'
+        '费用 / 说明',
+        '车牌',
+        '司机'
       ]);
+      const cachedFormulaRow = await prisma.importRow.findFirstOrThrow({ where: { importTaskId: multiTaskId } });
+      expect(cachedFormulaRow).toMatchObject({ status: ImportRowStatus.pending });
+      expect(cachedFormulaRow.rawData).toMatchObject({
+        '费用 / 金额': { formula: 'SUM(120,80)', result: 200 }
+      });
+      expect(cachedFormulaRow.warnings).toContain('费用 / 金额：使用公式缓存结果，确认前必须复核');
+      const cachedFormulaAudit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'import_task.parse', resourceId: multiTaskId },
+        orderBy: { createdAt: 'desc' }
+      });
+      expect(cachedFormulaAudit.metadata).toMatchObject({ allowCachedFormulaResults: true });
+      const cachedFormulaLedger = await prisma.ledgerEvent.findFirstOrThrow({
+        where: { eventType: 'import_task_parsed', aggregateId: multiTaskId },
+        orderBy: { createdAt: 'desc' }
+      });
+      expect(cachedFormulaLedger.payload).toMatchObject({ allowCachedFormulaResults: true });
+      const multiColumns = selectedParse.body.data.columns as Array<{ id: string; sourceName: string }>;
+      const multiDateColumn = multiColumns.find((column) => column.sourceName === '发生日期')!;
+      const multiAmountColumn = multiColumns.find((column) => column.sourceName === '费用 / 金额')!;
+      const multiDescriptionColumn = multiColumns.find((column) => column.sourceName === '费用 / 说明')!;
+      const multiVehicleColumn = multiColumns.find((column) => column.sourceName === '车牌')!;
+      const multiDriverColumn = multiColumns.find((column) => column.sourceName === '司机')!;
+      const vehicleField = standardFields.find((field) => field.fieldKey === 'vehiclePlate')!;
+      const driverField = standardFields.find((field) => field.fieldKey === 'driverName')!;
+      await request(app.getHttpServer())
+        .put(`/api/import-tasks/${multiTaskId}/mappings`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          mappings: [
+            { columnId: multiDateColumn.id, targetFieldId: dateField.id },
+            { columnId: multiAmountColumn.id, targetFieldId: amountField.id },
+            { columnId: multiDescriptionColumn.id, ignore: true },
+            { columnId: multiVehicleColumn.id, targetFieldId: vehicleField.id },
+            { columnId: multiDriverColumn.id, targetFieldId: driverField.id }
+          ]
+        })
+        .expect(200);
+      const cachedFormulaPreview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${multiTaskId}/preview`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
+      expect(cachedFormulaPreview.body.data).toMatchObject({
+        summary: { total: 1, valid: 1, errors: 0, duplicates: 0, ignored: 0 },
+        rows: [{ amount: '200', warnings: ['费用 / 金额：使用公式缓存结果，确认前必须复核'] }]
+      });
       await request(app.getHttpServer())
         .post(`/api/import-tasks/${multiTaskId}/cancel`)
         .set('Authorization', `Bearer ${tokens.finance}`)

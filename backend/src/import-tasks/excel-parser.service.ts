@@ -77,12 +77,14 @@ export interface ParseWorkbookOptions {
   headerStartRowIndex?: number;
   headerRowIndex?: number;
   allowHiddenSheet?: boolean;
+  allowCachedFormulaResults?: boolean;
 }
 
 interface NormalizedCell {
   value: ParsedCellValue;
   displayValue: string | number | boolean | null;
   formula: boolean;
+  formulaResultAvailable?: boolean;
   error?: string;
 }
 
@@ -139,6 +141,13 @@ export class ExcelParserService {
     const candidateForEnd = inspection.headerCandidates.find((candidate) => candidate.endRowIndex === headerRowIndex);
     const headerStartRowIndex = options.headerStartRowIndex ?? candidateForEnd?.startRowIndex ?? headerRowIndex;
     this.validateHeaderRange(worksheet, headerStartRowIndex, headerRowIndex);
+    this.validateHeaderFormulaResults(
+      worksheet,
+      headerStartRowIndex,
+      headerRowIndex,
+      columnCount,
+      options.allowCachedFormulaResults ?? false
+    );
 
     if (worksheet.actualRowCount - headerRowIndex > MAX_ROWS) {
       throw new BadRequestException(`Excel 数据行不能超过 ${MAX_ROWS}`);
@@ -154,7 +163,10 @@ export class ExcelParserService {
       const row = worksheet.getRow(rowNumber);
       const rawData: Record<string, ParsedCellValue> = {};
       const errors: string[] = [];
-      let hasFormula = false;
+      const warnings: string[] = [];
+      let hasRejectedFormula = false;
+      let hasFormulaWithoutResult = false;
+      let hasDataMerge = false;
       let hasValue = false;
 
       for (const column of columns) {
@@ -171,23 +183,31 @@ export class ExcelParserService {
           hasValue = true;
           if (column.sampleValues.length < 5) column.sampleValues.push(normalized.displayValue);
         }
-        if (normalized.formula) hasFormula = true;
+        if (normalized.formula) {
+          if (normalized.formulaResultAvailable && options.allowCachedFormulaResults) {
+            warnings.push(`${column.sourceName}：使用公式缓存结果，确认前必须复核`);
+          } else {
+            hasRejectedFormula = true;
+            hasFormulaWithoutResult ||= !normalized.formulaResultAvailable && !normalized.error;
+          }
+        }
         if (normalized.error) errors.push(`${column.sourceName}：${normalized.error}`);
-        if (merge) errors.push(`第 ${rowNumber} 行包含数据区合并单元格，必须人工处理`);
+        if (merge) hasDataMerge = true;
       }
+      if (hasDataMerge) warnings.push('数据区包含合并单元格，确认前必须复核');
 
       const rowHash = createHash('sha256')
         .update(JSON.stringify(columns.map((column) => [column.sourceKey, rawData[column.sourceKey]])))
         .digest('hex');
       let status: ParsedImportRow['status'] = 'pending';
-      const warnings: string[] = [];
 
       if (!hasValue) {
         status = 'ignored';
         warnings.push('空行已忽略');
-      } else if (hasFormula || errors.length > 0) {
+      } else if (hasRejectedFormula || errors.length > 0) {
         status = 'error';
-        if (hasFormula) errors.push('公式单元格不自动执行，请转换为静态值后重新上传');
+        if (hasFormulaWithoutResult) errors.push('公式单元格缺少可用缓存结果');
+        else if (hasRejectedFormula) errors.push('公式单元格不自动执行，请转换为静态值后重新上传');
       } else if (seenHashes.has(rowHash)) {
         status = 'duplicate';
         warnings.push('与本文件前一行内容重复，已跳过');
@@ -282,6 +302,32 @@ export class ExcelParserService {
       throw new WorkbookSelectionRequiredException('表头之后没有可导入的数据行');
     }
     if (end - start > 2) throw new WorkbookSelectionRequiredException('表头范围最多支持连续三行');
+  }
+
+  private validateHeaderFormulaResults(
+    worksheet: ExcelJS.Worksheet,
+    startRowIndex: number,
+    endRowIndex: number,
+    columnCount: number,
+    allowCachedFormulaResults: boolean
+  ) {
+    const visited = new Set<string>();
+    for (let rowIndex = startRowIndex; rowIndex <= endRowIndex; rowIndex += 1) {
+      for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
+        const cell = worksheet.getCell(rowIndex, columnIndex);
+        const sourceCell = cell.isMerged ? cell.master : cell;
+        if (visited.has(sourceCell.address)) continue;
+        visited.add(sourceCell.address);
+        const normalized = this.normalizeCell(sourceCell);
+        if (!normalized.formula) continue;
+        if (!allowCachedFormulaResults) {
+          throw new WorkbookSelectionRequiredException('表头包含公式，必须显式确认后才能使用缓存结果');
+        }
+        if (!normalized.formulaResultAvailable || normalized.error) {
+          throw new BadRequestException('表头公式缺少可用缓存结果');
+        }
+      }
+    }
   }
 
   private headerCandidates(worksheet: ExcelJS.Worksheet, ranges: CellRange[]): WorkbookHeaderCandidate[] {
@@ -409,7 +455,7 @@ export class ExcelParserService {
         if (range && range.left === 1 && range.right >= columnCount && rowIndex < endRowIndex) continue;
         const cell = worksheet.getRow(rowIndex).getCell(columnIndex);
         const normalized = this.normalizeCell(cell.isMerged ? cell.master : cell);
-        if (strict && (normalized.formula || normalized.error)) {
+        if (strict && normalized.error) {
           throw new BadRequestException(`第 ${columnIndex} 列表头不合法`);
         }
         const text = normalized.displayValue === null ? '' : String(normalized.displayValue).trim();
@@ -470,11 +516,15 @@ export class ExcelParserService {
     }
     if ('formula' in value || 'sharedFormula' in value) {
       const formula = 'formula' in value ? value.formula : value.sharedFormula;
-      const result = 'result' in value ? this.jsonSafe(value.result) : null;
+      const rawResult = 'result' in value ? value.result : undefined;
+      const result = this.jsonSafe(rawResult);
+      const invalidResult = rawResult !== null && rawResult !== undefined && result === null;
       return {
         value: { formula: String(formula ?? ''), result },
         displayValue: result === null ? `[公式] ${String(formula ?? '')}` : String(result),
-        formula: true
+        formula: true,
+        formulaResultAvailable: result !== null,
+        error: invalidResult ? '公式缓存结果不可用' : undefined
       };
     }
     if ('richText' in value) return this.normalizeTextCell(value.richText.map((part) => part.text).join(''));
@@ -528,7 +578,8 @@ export class ExcelParserService {
   private jsonSafe(value: unknown): string | number | boolean | null {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) return this.formatDate(value);
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
-    return String(value);
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string' || typeof value === 'boolean') return value;
+    return null;
   }
 }

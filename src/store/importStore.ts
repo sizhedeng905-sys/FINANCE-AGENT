@@ -120,6 +120,10 @@ export const useImportStore = create<ImportState>((set, get) => {
         const inspection = await inspectImportTask(created.id);
         set({ inspection, inspectionTaskId: created.id });
         if (inspection.requiresSheetSelection || !inspection.recommendedSelection) return created;
+        const recommendedSheet = inspection.sheets.find(
+          (sheet) => sheet.sheetIndex === inspection.recommendedSelection?.sheetIndex,
+        );
+        if ((recommendedSheet?.formulaCellCount ?? 0) > 0) return created;
         const parsed = upsertTask(await parseImportTask(created.id, inspection.recommendedSelection));
         set({ inspection: undefined, inspectionTaskId: undefined });
         return parsed;
