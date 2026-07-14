@@ -1,24 +1,50 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, App, Button, Card, Form, Select, Upload } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, Form, Select, Upload } from 'antd';
+import type { RcFile, UploadFile } from 'antd/es/upload/interface';
 import PageHeader from '@/components/PageHeader';
-import { useAuthStore } from '@/store/authStore';
 import { useDataCenterStore } from '@/store/dataCenterStore';
-import type { ImportTask } from '@/types/dataCenter';
+import { useImportStore } from '@/store/importStore';
 import { recordTypeMap } from '@/utils/dataCenterMaps';
+
+interface ImportFormValues {
+  projectId: string;
+  templateId: string;
+}
 
 export default function DataImportPage() {
   const { message } = App.useApp();
-  const [form] = Form.useForm();
+  const [form] = Form.useForm<ImportFormValues>();
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
   const navigate = useNavigate();
-  const user = useAuthStore((state) => state.user);
   const projects = useDataCenterStore((state) => state.projects);
+  const projectLoading = useDataCenterStore((state) => state.projectLoading);
+  const projectError = useDataCenterStore((state) => state.projectError);
+  const fetchProjects = useDataCenterStore((state) => state.fetchProjects);
   const templates = useDataCenterStore((state) => state.templates);
+  const templateLoading = useDataCenterStore((state) => state.templateLoading);
+  const templateError = useDataCenterStore((state) => state.templateError);
+  const fetchTemplates = useDataCenterStore((state) => state.fetchTemplates);
   const projectTemplates = useDataCenterStore((state) => state.projectTemplates);
-  const createImportTask = useDataCenterStore((state) => state.createImportTask);
-  const [fileName, setFileName] = useState('导入数据.xlsx');
+  const projectTemplateLoading = useDataCenterStore((state) => state.projectTemplateLoading);
+  const projectTemplateError = useDataCenterStore((state) => state.projectTemplateError);
+  const fetchProjectTemplates = useDataCenterStore((state) => state.fetchProjectTemplates);
+  const createAndParse = useImportStore((state) => state.createAndParse);
+  const loading = useImportStore((state) => state.loading);
+  const importError = useImportStore((state) => state.error);
   const projectId = Form.useWatch('projectId', form);
+  const templateId = Form.useWatch('templateId', form);
+
+  useEffect(() => {
+    void fetchProjects({ page: 1, pageSize: 100, status: 'active' }).catch(() => undefined);
+    void fetchTemplates({ page: 1, pageSize: 100 }).catch(() => undefined);
+  }, [fetchProjects, fetchTemplates]);
+
+  useEffect(() => {
+    if (projectId) void fetchProjectTemplates(projectId).catch(() => undefined);
+  }, [fetchProjectTemplates, projectId]);
+
   const enabledTemplateIds = useMemo(
     () => projectTemplates.filter((item) => item.projectId === projectId && item.isActive).map((item) => item.templateId),
     [projectId, projectTemplates],
@@ -27,64 +53,78 @@ export default function DataImportPage() {
     () => templates.filter((item) => enabledTemplateIds.includes(item.id)),
     [enabledTemplateIds, templates],
   );
+  const selectedTemplate = enabledTemplates.find((item) => item.id === templateId);
 
-  const submit = () => {
-    form.validateFields().then((values) => {
-      const task = createImportTask({
-        projectId: values.projectId,
-        templateId: values.templateId,
-        importType: values.importType,
-        fileName,
-        uploadedBy: user?.name ?? '财务',
-      });
-      message.success('导入任务已创建，进入字段映射');
-      navigate(`/data/import/${task.id}/mapping`);
+  const submit = async () => {
+    const values = await form.validateFields();
+    const file = fileList[0]?.originFileObj as RcFile | undefined;
+    if (!file) {
+      message.warning('请选择 .xlsx 文件');
+      return;
+    }
+    const template = enabledTemplates.find((item) => item.id === values.templateId);
+    if (!template) {
+      message.warning('请选择当前项目已启用的模板');
+      return;
+    }
+    const task = await createAndParse(file, {
+      projectId: values.projectId,
+      templateId: template.id,
+      importType: template.recordType,
     });
+    message.success('文件已解析，请确认字段映射');
+    navigate(`/data/import/${task.id}/mapping`);
   };
 
   return (
     <div>
-      <PageHeader title="Excel导入" description="上传文件并进入字段映射流程，当前使用 mock 表头解析" />
+      <PageHeader title="Excel导入" description="标准单 Sheet .xlsx 导入" />
+      {projectError ? <Alert type="error" showIcon message="项目列表加载失败" description={projectError} /> : null}
+      {templateError || projectTemplateError ? <Alert type="error" showIcon message="模板列表加载失败" description={templateError || projectTemplateError} /> : null}
+      {importError ? <Alert className="section-row" type="error" showIcon message="Excel 导入失败" description={importError} /> : null}
       <Card>
         <Form form={form} layout="vertical">
-          <Form.Item label="项目" name="projectId" rules={[{ required: true }]}>
+          <Form.Item label="项目" name="projectId" rules={[{ required: true, message: '请选择项目' }]}>
             <Select
+              loading={projectLoading}
               options={projects.map((item) => ({ label: item.name, value: item.id }))}
               onChange={() => form.setFieldsValue({ templateId: undefined })}
             />
           </Form.Item>
-          <Form.Item label="数据类型" name="importType" rules={[{ required: true }]}>
-            <Select options={Object.entries(recordTypeMap).filter(([value]) => value !== 'reimbursement').map(([value, label]) => ({ value, label }))} />
-          </Form.Item>
-          <Form.Item label="模板" name="templateId" rules={[{ required: true }]}>
+          <Form.Item label="模板" name="templateId" rules={[{ required: true, message: '请选择模板' }]}>
             <Select
+              loading={templateLoading || projectTemplateLoading}
               disabled={!projectId || enabledTemplates.length === 0}
-              options={enabledTemplates.map((item) => ({ label: item.name, value: item.id }))}
+              options={enabledTemplates.map((item) => ({ label: `${item.name} · ${recordTypeMap[item.recordType]}`, value: item.id }))}
             />
           </Form.Item>
+          {selectedTemplate ? (
+            <Alert className="section-row" type="info" showIcon message={`记录类型：${recordTypeMap[selectedTemplate.recordType]}`} />
+          ) : null}
           {projectId && enabledTemplates.length === 0 ? (
             <Alert
               className="section-row"
               type="warning"
               showIcon
-              message="当前项目暂无启用模板，请先在项目结构中启用模板。"
+              message="当前项目暂无启用模板"
               action={<Button size="small" onClick={() => navigate(`/data/projects/${projectId}/structure`)}>查看项目结构</Button>}
             />
           ) : null}
-          <Form.Item label="上传Excel">
+          <Form.Item label="上传 Excel" required>
             <Upload.Dragger
-              beforeUpload={(file) => {
-                setFileName(file.name);
-                return false;
-              }}
+              beforeUpload={() => false}
+              fileList={fileList}
+              onChange={({ fileList: next }) => setFileList(next.slice(-1))}
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               maxCount={1}
             >
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-              <p className="ant-upload-text">点击或拖拽 Excel 文件到这里</p>
-              <p className="ant-upload-hint">当前阶段使用 mock 表头和前5行示例数据</p>
+              <p className="ant-upload-text">选择 .xlsx 文件</p>
             </Upload.Dragger>
           </Form.Item>
-          <Button type="primary" onClick={submit}>开始解析</Button>
+          <Button type="primary" loading={loading} onClick={() => void submit().catch((error) => message.error(error instanceof Error ? error.message : '解析失败'))}>
+            上传并解析
+          </Button>
         </Form>
       </Card>
     </div>
