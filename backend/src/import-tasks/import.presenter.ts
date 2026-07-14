@@ -36,6 +36,16 @@ export function toImportTask(task: ImportTaskDetail) {
     confirmedAt: task.confirmedAt?.toISOString(),
     confirmedBy: task.confirmer?.name,
     errorMessage: task.errorMessage ?? undefined,
+    progress: {
+      executionMode: task.executionMode ?? undefined,
+      processingMode: task.processingMode ?? undefined,
+      processed: task.processedRows,
+      total: task.totalRows,
+      percent: task.totalRows > 0
+        ? Math.min(100, Math.round((task.processedRows / task.totalRows) * 100))
+        : 0,
+      attempts: task.parseAttempts
+    },
     counts: {
       total: task.totalRows,
       valid: task.validRows,

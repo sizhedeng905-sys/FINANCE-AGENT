@@ -1,8 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   UnprocessableEntityException
 } from '@nestjs/common';
 import {
@@ -35,7 +39,15 @@ import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { MappingInputDto, SaveMappingsDto } from './dto/save-mappings.dto';
-import { ExcelParserService, WorkbookSelectionRequiredException } from './excel-parser.service';
+import {
+  ExcelParserService,
+  ParsedImportColumn,
+  ParsedImportRow,
+  ParsedWorkbookMetadata,
+  ParseWorkbookOptions,
+  WorkbookInspection,
+  WorkbookSelectionRequiredException
+} from './excel-parser.service';
 import {
   importTaskDetailInclude,
   ImportTaskDetail,
@@ -103,9 +115,32 @@ const AUTOMATIC_MAPPING_TYPES: MappingDecisionType[] = [
   MappingDecisionType.fuzzy
 ];
 const IMPORT_PARSE_LEASE_MS = 10 * 60 * 1000;
+const IMPORT_PARSE_REAPER_MS = 60 * 1000;
+const IMPORT_BACKGROUND_THRESHOLD_ROWS = 5_000;
+const IMPORT_BACKGROUND_MAX_ROWS = 50_000;
+const IMPORT_ROW_BATCH_SIZE = 500;
+const IMPORT_MAX_PARSE_ATTEMPTS = 3;
+
+class ImportParseLeaseLostError extends Error {}
+class ImportParseWorkerStoppingError extends Error {}
+
+interface BackgroundParseJob {
+  taskId: string;
+  leaseToken: string;
+  actor: CurrentUser;
+  context: RequestContext;
+  options: ParseWorkbookOptions;
+  attempt: number;
+  buffer?: Buffer;
+}
 
 @Injectable()
-export class ImportTasksService {
+export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ImportTasksService.name);
+  private readonly backgroundJobs = new Map<string, Promise<void>>();
+  private leaseReaper?: NodeJS.Timeout;
+  private stopping = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly files: FilesService,
@@ -114,6 +149,18 @@ export class ImportTasksService {
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService
   ) {}
+
+  onModuleInit() {
+    void this.recoverExpiredParses();
+    this.leaseReaper = setInterval(() => void this.recoverExpiredParses(), IMPORT_PARSE_REAPER_MS);
+    this.leaseReaper.unref();
+  }
+
+  async onModuleDestroy() {
+    this.stopping = true;
+    if (this.leaseReaper) clearInterval(this.leaseReaper);
+    await Promise.allSettled(this.backgroundJobs.values());
+  }
 
   async create(
     file: Express.Multer.File | undefined,
@@ -256,16 +303,32 @@ export class ImportTasksService {
       }
 
       const leaseToken = randomUUID();
+      const attempt = task.parseAttempts + 1;
       await tx.importTask.update({
         where: { id },
         data: {
           status: ImportTaskStatus.parsing,
           leaseToken,
           leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS),
+          parseConfig: this.parseConfig(dto),
+          parseRequestedBy: actor.id,
+          executionMode: null,
+          processingMode: null,
+          processedRows: 0,
+          totalRows: 0,
+          validRows: 0,
+          errorRows: 0,
+          duplicateRows: 0,
+          ignoredRows: 0,
+          importedRows: 0,
+          parseAttempts: attempt,
           errorMessage: null,
           version: { increment: 1 }
         }
       });
+      if (task.status === ImportTaskStatus.parsing || task.status === ImportTaskStatus.failed) {
+        await tx.importSheet.deleteMany({ where: { importTaskId: id } });
+      }
       await this.auditLogs.write(
         tx,
         actor,
@@ -273,7 +336,7 @@ export class ImportTasksService {
         'import_task',
         id,
         {
-          leaseToken,
+          attempt,
           previousStatus: task.status,
           sheetIndex: dto.sheetIndex,
           headerStartRowIndex: dto.headerStartRowIndex,
@@ -283,49 +346,77 @@ export class ImportTasksService {
         },
         context
       );
-      return { skipped: false as const, task, leaseToken };
+      return { skipped: false as const, task, leaseToken, attempt };
     });
     if (prepared.skipped) return toImportTask(prepared.task);
 
-    let parsed;
+    let file: Awaited<ReturnType<FilesService['readForProcessing']>>;
     try {
-      const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
-      parsed = await this.excelParser.parse(file.buffer, dto);
+      file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Excel 解析失败';
-      const selectionRequired = error instanceof WorkbookSelectionRequiredException;
-      await this.prisma.$transaction(async (tx) => {
+      await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error);
+      throw error;
+    }
+
+    const inspection = await this.excelParser.inspect(file.buffer).catch(() => undefined);
+    const estimatedRows = inspection ? this.estimateDataRows(inspection, dto) : undefined;
+    if (estimatedRows !== undefined && estimatedRows > IMPORT_BACKGROUND_MAX_ROWS) {
+      const error = new BadRequestException(`Excel 数据行不能超过 ${IMPORT_BACKGROUND_MAX_ROWS}`);
+      await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error, dto);
+      throw error;
+    }
+    if (estimatedRows !== undefined && estimatedRows > IMPORT_BACKGROUND_THRESHOLD_ROWS) {
+      const scheduled = await this.prisma.$transaction(async (tx) => {
         await this.lockTask(tx, id);
-        const updated = await tx.importTask.updateMany({
+        const changed = await tx.importTask.updateMany({
           where: { id, status: ImportTaskStatus.parsing, leaseToken: prepared.leaseToken },
           data: {
-            status: selectionRequired ? ImportTaskStatus.uploaded : ImportTaskStatus.failed,
-            errorMessage: selectionRequired ? null : message,
-            leaseToken: null,
-            leaseUntil: null,
+            executionMode: 'background',
+            processingMode: 'streaming',
+            totalRows: estimatedRows,
+            leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS),
             version: { increment: 1 }
           }
         });
-        if (updated.count === 1) {
-          await tx.rawFile.update({
-            where: { id: prepared.task.rawFileId },
-            data: { status: selectionRequired ? RawFileStatus.uploaded : RawFileStatus.failed }
-          });
-          await this.auditLogs.write(
-            tx,
-            actor,
-            selectionRequired ? 'import_task.parse_selection_required' : 'import_task.parse_failed',
-            'import_task',
-            id,
-            selectionRequired ? {
-              sheetIndex: dto.sheetIndex,
-              headerStartRowIndex: dto.headerStartRowIndex,
-              headerRowIndex: dto.headerRowIndex
-            } : { error: message },
-            context
-          );
-        }
+        if (changed.count !== 1) return false;
+        await this.auditLogs.write(tx, actor, 'import_task.parse_scheduled', 'import_task', id, {
+          attempt: prepared.attempt,
+          estimatedRows,
+          batchSize: IMPORT_ROW_BATCH_SIZE
+        }, context);
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'import_task_parse_scheduled',
+          'import_task',
+          id,
+          { attempt: prepared.attempt, estimatedRows, batchSize: IMPORT_ROW_BATCH_SIZE },
+          `import_task:${id}:parse_attempt:${prepared.attempt}:scheduled`
+        );
+        return true;
       });
+      if (!scheduled) throw new ConflictException('Excel 解析租约已失效');
+      this.scheduleBackgroundParse({
+        taskId: id,
+        leaseToken: prepared.leaseToken,
+        actor,
+        context,
+        options: dto,
+        attempt: prepared.attempt,
+        buffer: file.buffer
+      });
+      return toImportTask(await this.findDetailOrThrow(id));
+    }
+
+    await this.prisma.importTask.updateMany({
+      where: { id, status: ImportTaskStatus.parsing, leaseToken: prepared.leaseToken },
+      data: { executionMode: 'synchronous', processingMode: inspection?.processingMode }
+    });
+    let parsed;
+    try {
+      parsed = await this.excelParser.parse(file.buffer, dto);
+    } catch (error) {
+      await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error, dto);
       throw error;
     }
 
@@ -381,6 +472,9 @@ export class ImportTasksService {
           status: decided === columns.length ? ImportTaskStatus.pending_confirm : ImportTaskStatus.mapping,
           leaseToken: null,
           leaseUntil: null,
+          executionMode: 'synchronous',
+          processingMode: parsed.processingMode,
+          processedRows: parsed.rows.length,
           version: { increment: 1 },
           parsedAt: new Date(),
           errorMessage: null,
@@ -394,6 +488,8 @@ export class ImportTasksService {
       });
       await tx.rawFile.update({ where: { id: current.rawFileId }, data: { status: RawFileStatus.parsed } });
       await this.auditLogs.write(tx, actor, 'import_task.parse', 'import_task', id, {
+        attempt: prepared.attempt,
+        executionMode: 'synchronous',
         sheetIndex: parsed.sheet.sheetIndex,
         headerRowIndex: parsed.sheet.headerRowIndex,
         processingMode: parsed.processingMode,
@@ -403,15 +499,358 @@ export class ImportTasksService {
         ...counts
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_parsed', 'import_task', id, {
+        attempt: prepared.attempt,
+        executionMode: 'synchronous',
         rawFileId: current.rawFileId,
         processingMode: parsed.processingMode,
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         rowCount: parsed.rows.length,
         columnCount: columns.length
-      });
+      }, `import_task:${id}:parse_attempt:${prepared.attempt}:parsed`);
     });
 
     return toImportTask(await this.findDetailOrThrow(id));
+  }
+
+  async recoverExpiredParses() {
+    if (this.stopping) return 0;
+    try {
+      const expired = await this.prisma.importTask.findMany({
+        where: {
+          status: ImportTaskStatus.parsing,
+          executionMode: 'background',
+          leaseUntil: { lt: new Date() }
+        },
+        select: { id: true },
+        orderBy: { leaseUntil: 'asc' },
+        take: 20
+      });
+      let recovered = 0;
+      for (const { id } of expired) {
+        if (this.stopping) continue;
+        try {
+          const job = await this.claimExpiredBackgroundParse(id);
+          if (!job) continue;
+          recovered += 1;
+          this.scheduleBackgroundParse(job);
+        } catch (error) {
+          this.logger.warn(`Import parse ${id} recovery failed: ${this.errorMessage(error)}`);
+        }
+      }
+      return recovered;
+    } catch (error) {
+      this.logger.warn(`Import parse lease recovery failed: ${this.errorMessage(error)}`);
+      return 0;
+    }
+  }
+
+  private async claimExpiredBackgroundParse(id: string): Promise<BackgroundParseJob | undefined> {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await tx.importTask.findUnique({
+        where: { id },
+        include: { uploader: true }
+      });
+      if (
+        !task ||
+        task.status !== ImportTaskStatus.parsing ||
+        task.executionMode !== 'background' ||
+        !task.leaseUntil ||
+        task.leaseUntil.getTime() >= Date.now()
+      ) {
+        return undefined;
+      }
+
+      const requestedUser = task.parseRequestedBy
+        ? await tx.user.findUnique({ where: { id: task.parseRequestedBy } })
+        : undefined;
+      const actor = this.toCurrentUser(requestedUser ?? task.uploader);
+      const options = this.readParseConfig(task.parseConfig);
+      if (!options || task.parseAttempts >= IMPORT_MAX_PARSE_ATTEMPTS) {
+        const reason = options
+          ? `后台解析连续中断 ${task.parseAttempts} 次，已停止自动恢复`
+          : '后台解析配置无效，已停止自动恢复';
+        await tx.importSheet.deleteMany({ where: { importTaskId: id } });
+        await tx.importTask.update({
+          where: { id },
+          data: {
+            status: ImportTaskStatus.failed,
+            processedRows: 0,
+            validRows: 0,
+            errorRows: 0,
+            duplicateRows: 0,
+            ignoredRows: 0,
+            errorMessage: reason,
+            leaseToken: null,
+            leaseUntil: null,
+            version: { increment: 1 }
+          }
+        });
+        await tx.rawFile.update({ where: { id: task.rawFileId }, data: { status: RawFileStatus.failed } });
+        const context = { requestId: `import-recovery-exhausted-${id}` };
+        await this.auditLogs.write(tx, actor, 'import_task.parse_recovery_exhausted', 'import_task', id, {
+          attempts: task.parseAttempts,
+          reason
+        }, context);
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'import_task_parse_recovery_exhausted',
+          'import_task',
+          id,
+          { attempts: task.parseAttempts, reason },
+          `import_task:${id}:parse_recovery_exhausted`
+        );
+        return undefined;
+      }
+
+      const attempt = task.parseAttempts + 1;
+      const leaseToken = randomUUID();
+      const context = { requestId: `import-recovery-${id}-${attempt}` };
+      await tx.importSheet.deleteMany({ where: { importTaskId: id } });
+      await tx.importTask.update({
+        where: { id },
+        data: {
+          leaseToken,
+          leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS),
+          processedRows: 0,
+          validRows: 0,
+          errorRows: 0,
+          duplicateRows: 0,
+          ignoredRows: 0,
+          parseAttempts: attempt,
+          errorMessage: null,
+          version: { increment: 1 }
+        }
+      });
+      await tx.rawFile.update({ where: { id: task.rawFileId }, data: { status: RawFileStatus.uploaded } });
+      await this.auditLogs.write(tx, actor, 'import_task.parse_recovered', 'import_task', id, {
+        attempt,
+        previousLeaseUntil: task.leaseUntil.toISOString(),
+        restartFromRow: 0
+      }, context);
+      await this.ledgerEvents.write(
+        tx,
+        actor,
+        'import_task_parse_recovered',
+        'import_task',
+        id,
+        { attempt, restartFromRow: 0 },
+        `import_task:${id}:parse_attempt:${attempt}:recovered`
+      );
+      return { taskId: id, leaseToken, actor, context, options, attempt };
+    });
+  }
+
+  private scheduleBackgroundParse(job: BackgroundParseJob) {
+    const jobKey = `${job.taskId}:${job.leaseToken}`;
+    if (this.backgroundJobs.has(jobKey) || this.stopping) return;
+    const running = this.executeBackgroundParse(job)
+      .catch((error) => this.logger.error(`Background import ${job.taskId} failed: ${this.errorMessage(error)}`))
+      .finally(() => this.backgroundJobs.delete(jobKey));
+    this.backgroundJobs.set(jobKey, running);
+  }
+
+  private async executeBackgroundParse(job: BackgroundParseJob) {
+    let rawFileId: string | undefined;
+    try {
+      if (this.stopping) throw new ImportParseWorkerStoppingError();
+      const task = await this.prisma.importTask.findUnique({
+        where: { id: job.taskId },
+        select: { status: true, leaseToken: true, rawFileId: true }
+      });
+      if (!task || task.status !== ImportTaskStatus.parsing || task.leaseToken !== job.leaseToken) {
+        throw new ImportParseLeaseLostError();
+      }
+      rawFileId = task.rawFileId;
+      const buffer = job.buffer ?? (await this.files.readForProcessing(task.rawFileId, job.actor)).buffer;
+      let sheetId: string | undefined;
+      let processedRows = 0;
+      let counts = { valid: 0, errors: 0, duplicates: 0, ignored: 0 };
+
+      const parsed = await this.excelParser.parseInBatches(
+        buffer,
+        async (rows, progress) => {
+          if (this.stopping) throw new ImportParseWorkerStoppingError();
+          if (!sheetId || progress.processedRows !== processedRows + rows.length) {
+            throw new Error('Excel 后台批次进度不连续');
+          }
+          const delta = this.parsedCounts(rows);
+          const nextCounts = {
+            valid: counts.valid + delta.valid,
+            errors: counts.errors + delta.errors,
+            duplicates: counts.duplicates + delta.duplicates,
+            ignored: counts.ignored + delta.ignored
+          };
+          await this.prisma.$transaction(async (tx) => {
+            await this.lockTask(tx, job.taskId);
+            await this.assertOwnedParse(tx, job.taskId, job.leaseToken);
+            await tx.importRow.createMany({
+              data: rows.map((row) => this.importRowData(job.taskId, sheetId!, row))
+            });
+            await tx.importTask.update({
+              where: { id: job.taskId },
+              data: {
+                processedRows: progress.processedRows,
+                totalRows: progress.totalRows,
+                validRows: nextCounts.valid,
+                errorRows: nextCounts.errors,
+                duplicateRows: nextCounts.duplicates,
+                ignoredRows: nextCounts.ignored,
+                leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS)
+              }
+            });
+          });
+          processedRows = progress.processedRows;
+          counts = nextCounts;
+        },
+        job.options,
+        {
+          maxRows: IMPORT_BACKGROUND_MAX_ROWS,
+          batchSize: IMPORT_ROW_BATCH_SIZE,
+          onStart: async (metadata) => {
+            if (this.stopping) throw new ImportParseWorkerStoppingError();
+            sheetId = await this.prisma.$transaction(async (tx) => {
+              await this.lockTask(tx, job.taskId);
+              await this.assertOwnedParse(tx, job.taskId, job.leaseToken);
+              await tx.importSheet.deleteMany({ where: { importTaskId: job.taskId } });
+              const sheet = await tx.importSheet.create({
+                data: { importTaskId: job.taskId, ...metadata.sheet }
+              });
+              if (metadata.columns.length > 0) {
+                await tx.importColumn.createMany({
+                  data: metadata.columns.map((column) => this.importColumnData(job.taskId, sheet.id, column))
+                });
+              }
+              await tx.importTask.update({
+                where: { id: job.taskId },
+                data: {
+                  processingMode: metadata.processingMode,
+                  totalRows: metadata.sheet.rowCount,
+                  processedRows: 0,
+                  leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS)
+                }
+              });
+              return sheet.id;
+            });
+          }
+        }
+      );
+
+      if (!sheetId || processedRows !== parsed.sheet.rowCount) {
+        throw new Error('Excel 后台解析行数与持久化进度不一致');
+      }
+      await this.completeBackgroundParse(job, rawFileId, sheetId, parsed, counts);
+    } catch (error) {
+      if (error instanceof ImportParseLeaseLostError) return;
+      if (error instanceof ImportParseWorkerStoppingError) {
+        await this.releaseParseForRecovery(job.taskId, job.leaseToken);
+        return;
+      }
+      if (rawFileId) {
+        this.logger.warn(`Background import ${job.taskId} attempt ${job.attempt} failed: ${this.errorMessage(error)}`);
+        await this.failOwnedParse(
+          job.taskId,
+          rawFileId,
+          job.leaseToken,
+          job.attempt,
+          job.actor,
+          job.context,
+          error,
+          job.options
+        );
+      }
+    }
+  }
+
+  private async completeBackgroundParse(
+    job: BackgroundParseJob,
+    rawFileId: string,
+    sheetId: string,
+    parsed: ParsedWorkbookMetadata,
+    counts: { valid: number; errors: number; duplicates: number; ignored: number }
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, job.taskId);
+      const current = await this.assertOwnedParse(tx, job.taskId, job.leaseToken);
+      await tx.importSheet.update({
+        where: { id: sheetId },
+        data: parsed.sheet
+      });
+      const columns = await tx.importColumn.findMany({
+        where: { importTaskId: job.taskId },
+        orderBy: { columnIndex: 'asc' }
+      });
+      if (columns.length !== parsed.columns.length) throw new Error('Excel 后台解析列数不一致');
+      for (const parsedColumn of parsed.columns) {
+        const column = columns.find((item) => item.columnIndex === parsedColumn.columnIndex);
+        if (!column) throw new Error('Excel 后台解析列索引不一致');
+        await tx.importColumn.update({
+          where: { id: column.id },
+          data: {
+            sampleValues: parsedColumn.sampleValues,
+            inferredType: parsedColumn.inferredType,
+            duplicateName: parsedColumn.duplicateName
+          }
+        });
+      }
+      const refreshedColumns = await tx.importColumn.findMany({
+        where: { importTaskId: job.taskId },
+        orderBy: { columnIndex: 'asc' }
+      });
+      await this.applyAutomaticMappings(tx, current, refreshedColumns, job.actor);
+      const decided = await tx.mappingDecision.count({ where: { importTaskId: job.taskId } });
+      await tx.importTask.update({
+        where: { id: job.taskId },
+        data: {
+          status: decided === refreshedColumns.length ? ImportTaskStatus.pending_confirm : ImportTaskStatus.mapping,
+          leaseToken: null,
+          leaseUntil: null,
+          executionMode: 'background',
+          processingMode: parsed.processingMode,
+          processedRows: parsed.sheet.rowCount,
+          totalRows: parsed.sheet.rowCount,
+          validRows: counts.valid,
+          errorRows: counts.errors,
+          duplicateRows: counts.duplicates,
+          ignoredRows: counts.ignored,
+          importedRows: 0,
+          parsedAt: new Date(),
+          errorMessage: null,
+          version: { increment: 1 }
+        }
+      });
+      await tx.rawFile.update({ where: { id: rawFileId }, data: { status: RawFileStatus.parsed } });
+      await this.auditLogs.write(tx, job.actor, 'import_task.parse', 'import_task', job.taskId, {
+        attempt: job.attempt,
+        executionMode: 'background',
+        processingMode: parsed.processingMode,
+        sheetIndex: parsed.sheet.sheetIndex,
+        headerRowIndex: parsed.sheet.headerRowIndex,
+        allowCachedFormulaResults: job.options.allowCachedFormulaResults ?? false,
+        columns: refreshedColumns.length,
+        rows: parsed.sheet.rowCount,
+        batchSize: IMPORT_ROW_BATCH_SIZE,
+        ...counts
+      }, job.context);
+      await this.ledgerEvents.write(
+        tx,
+        job.actor,
+        'import_task_parsed',
+        'import_task',
+        job.taskId,
+        {
+          attempt: job.attempt,
+          executionMode: 'background',
+          rawFileId,
+          processingMode: parsed.processingMode,
+          allowCachedFormulaResults: job.options.allowCachedFormulaResults ?? false,
+          rowCount: parsed.sheet.rowCount,
+          columnCount: refreshedColumns.length
+        },
+        `import_task:${job.taskId}:parse_attempt:${job.attempt}:parsed`
+      );
+    });
   }
 
   async getColumns(id: string) {
@@ -746,11 +1185,19 @@ export class ImportTasksService {
       if (!task) throw new NotFoundException('资源不存在');
       if (task.status === ImportTaskStatus.confirmed) throw new ConflictException('已确认任务不能取消');
       if (task.status === ImportTaskStatus.cancelled) return;
+      if (task.status === ImportTaskStatus.parsing) {
+        await tx.importSheet.deleteMany({ where: { importTaskId: id } });
+      }
       await tx.importTask.update({
         where: { id },
         data: {
           status: ImportTaskStatus.cancelled,
           errorMessage: '用户取消',
+          processedRows: task.status === ImportTaskStatus.parsing ? 0 : task.processedRows,
+          validRows: task.status === ImportTaskStatus.parsing ? 0 : task.validRows,
+          errorRows: task.status === ImportTaskStatus.parsing ? 0 : task.errorRows,
+          duplicateRows: task.status === ImportTaskStatus.parsing ? 0 : task.duplicateRows,
+          ignoredRows: task.status === ImportTaskStatus.parsing ? 0 : task.ignoredRows,
           leaseToken: null,
           leaseUntil: null,
           version: { increment: 1 }
@@ -1432,6 +1879,233 @@ export class ImportTasksService {
       const ignored = mapping.ignore === true;
       if (hasField === ignored) throw new BadRequestException('每一列必须二选一：映射字段或明确忽略');
     }
+  }
+
+  private async failOwnedParse(
+    id: string,
+    rawFileId: string,
+    leaseToken: string,
+    attempt: number,
+    actor: CurrentUser,
+    context: RequestContext,
+    error: unknown,
+    options: ParseWorkbookOptions = {}
+  ) {
+    const message = this.safeParseErrorMessage(error).slice(0, 1000);
+    const selectionRequired = error instanceof WorkbookSelectionRequiredException;
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const current = await tx.importTask.findUnique({
+        where: { id },
+        select: { status: true, leaseToken: true }
+      });
+      if (!current || current.status !== ImportTaskStatus.parsing || current.leaseToken !== leaseToken) return;
+      await tx.importSheet.deleteMany({ where: { importTaskId: id } });
+      await tx.importTask.update({
+        where: { id },
+        data: {
+          status: selectionRequired ? ImportTaskStatus.uploaded : ImportTaskStatus.failed,
+          processedRows: 0,
+          validRows: 0,
+          errorRows: 0,
+          duplicateRows: 0,
+          ignoredRows: 0,
+          errorMessage: selectionRequired ? null : message,
+          leaseToken: null,
+          leaseUntil: null,
+          version: { increment: 1 }
+        }
+      });
+      await tx.rawFile.update({
+        where: { id: rawFileId },
+        data: { status: selectionRequired ? RawFileStatus.uploaded : RawFileStatus.failed }
+      });
+      await this.auditLogs.write(
+        tx,
+        actor,
+        selectionRequired ? 'import_task.parse_selection_required' : 'import_task.parse_failed',
+        'import_task',
+        id,
+        selectionRequired ? {
+          attempt,
+          sheetIndex: options.sheetIndex,
+          headerStartRowIndex: options.headerStartRowIndex,
+          headerRowIndex: options.headerRowIndex
+        } : { attempt, error: message },
+        context
+      );
+      if (!selectionRequired) {
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'import_task_parse_failed',
+          'import_task',
+          id,
+          { attempt, error: message },
+          `import_task:${id}:parse_attempt:${attempt}:failed`
+        );
+      }
+    });
+  }
+
+  private async releaseParseForRecovery(id: string, leaseToken: string) {
+    await this.prisma.importTask.updateMany({
+      where: { id, status: ImportTaskStatus.parsing, leaseToken },
+      data: {
+        leaseUntil: new Date(Date.now() - 1),
+        errorMessage: '后台解析进程已停止，等待租约恢复'
+      }
+    }).catch(() => undefined);
+  }
+
+  private async assertOwnedParse(tx: Prisma.TransactionClient, id: string, leaseToken: string) {
+    const task = await tx.importTask.findUnique({
+      where: { id },
+      select: { id: true, templateId: true, projectId: true, status: true, leaseToken: true }
+    });
+    if (!task || task.status !== ImportTaskStatus.parsing || task.leaseToken !== leaseToken) {
+      throw new ImportParseLeaseLostError();
+    }
+    return task;
+  }
+
+  private importColumnData(importTaskId: string, sheetId: string, column: ParsedImportColumn): Prisma.ImportColumnCreateManyInput {
+    return {
+      importTaskId,
+      sheetId,
+      columnIndex: column.columnIndex,
+      sourceKey: column.sourceKey,
+      sourceName: column.sourceName,
+      normalizedName: column.normalizedName,
+      sampleValues: column.sampleValues,
+      inferredType: column.inferredType,
+      duplicateName: column.duplicateName
+    };
+  }
+
+  private importRowData(
+    importTaskId: string,
+    sheetId: string,
+    row: ParsedImportRow
+  ): Prisma.ImportRowCreateManyInput {
+    return {
+      importTaskId,
+      sheetId,
+      rowNumber: row.rowNumber,
+      rawData: row.rawData as Prisma.InputJsonObject,
+      rowHash: row.rowHash,
+      status: row.status as ImportRowStatus,
+      errors: row.errors,
+      warnings: row.warnings
+    };
+  }
+
+  private parseConfig(options: ParseWorkbookOptions): Prisma.InputJsonObject {
+    const config: Record<string, Prisma.InputJsonValue> = {};
+    if (options.sheetIndex !== undefined) config.sheetIndex = options.sheetIndex;
+    if (options.headerStartRowIndex !== undefined) config.headerStartRowIndex = options.headerStartRowIndex;
+    if (options.headerRowIndex !== undefined) config.headerRowIndex = options.headerRowIndex;
+    if (options.allowHiddenSheet !== undefined) config.allowHiddenSheet = options.allowHiddenSheet;
+    if (options.allowCachedFormulaResults !== undefined) {
+      config.allowCachedFormulaResults = options.allowCachedFormulaResults;
+    }
+    return config as Prisma.InputJsonObject;
+  }
+
+  private readParseConfig(value: Prisma.JsonValue | null): ParseWorkbookOptions | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const config = value as Record<string, Prisma.JsonValue>;
+    const sheetIndex = this.optionalInteger(config.sheetIndex, 0, 999);
+    const headerStartRowIndex = this.optionalInteger(config.headerStartRowIndex, 1, 1000);
+    const headerRowIndex = this.optionalInteger(config.headerRowIndex, 1, 1000);
+    const allowHiddenSheet = this.optionalBoolean(config.allowHiddenSheet);
+    const allowCachedFormulaResults = this.optionalBoolean(config.allowCachedFormulaResults);
+    if (
+      sheetIndex === null ||
+      headerStartRowIndex === null ||
+      headerRowIndex === null ||
+      allowHiddenSheet === null ||
+      allowCachedFormulaResults === null
+    ) {
+      return undefined;
+    }
+    return {
+      ...(sheetIndex === undefined ? {} : { sheetIndex }),
+      ...(headerStartRowIndex === undefined ? {} : { headerStartRowIndex }),
+      ...(headerRowIndex === undefined ? {} : { headerRowIndex }),
+      ...(allowHiddenSheet === undefined ? {} : { allowHiddenSheet }),
+      ...(allowCachedFormulaResults === undefined ? {} : { allowCachedFormulaResults })
+    };
+  }
+
+  private optionalInteger(value: Prisma.JsonValue | undefined, min: number, max: number): number | undefined | null {
+    if (value === undefined) return undefined;
+    return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : null;
+  }
+
+  private optionalBoolean(value: Prisma.JsonValue | undefined): boolean | undefined | null {
+    if (value === undefined) return undefined;
+    return typeof value === 'boolean' ? value : null;
+  }
+
+  private estimateDataRows(inspection: WorkbookInspection, options: ParseWorkbookOptions) {
+    if (options.sheetIndex === undefined && inspection.requiresSheetSelection) return undefined;
+    const selectedSheetIndex = options.sheetIndex ?? inspection.recommendedSelection?.sheetIndex;
+    const sheet = inspection.sheets.find((item) => item.sheetIndex === selectedSheetIndex);
+    if (!sheet || !sheet.nonEmpty || (sheet.state !== 'visible' && !options.allowHiddenSheet)) return undefined;
+    const recommended = inspection.recommendedSelection?.sheetIndex === sheet.sheetIndex
+      ? inspection.recommendedSelection
+      : undefined;
+    const headerRowIndex = options.headerRowIndex
+      ?? recommended?.headerRowIndex
+      ?? sheet.headerCandidates[0]?.endRowIndex;
+    const candidate = sheet.headerCandidates.find((item) => item.endRowIndex === headerRowIndex);
+    const headerStartRowIndex = options.headerStartRowIndex
+      ?? recommended?.headerStartRowIndex
+      ?? candidate?.startRowIndex
+      ?? headerRowIndex;
+    if (
+      !headerRowIndex ||
+      !headerStartRowIndex ||
+      headerStartRowIndex < 1 ||
+      headerRowIndex < headerStartRowIndex ||
+      headerRowIndex - headerStartRowIndex > 2 ||
+      headerRowIndex >= sheet.rowCount
+    ) {
+      return undefined;
+    }
+    return sheet.rowCount - headerRowIndex;
+  }
+
+  private toCurrentUser(user: {
+    id: string;
+    username: string;
+    name: string;
+    role: CurrentUser['role'];
+    department: string | null;
+    phone: string | null;
+    status: CurrentUser['status'];
+    tokenVersion: number;
+  }): CurrentUser {
+    return {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      department: user.department ?? '',
+      phone: user.phone ?? '',
+      status: user.status,
+      tokenVersion: user.tokenVersion
+    };
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error && error.message ? error.message : 'Excel 解析失败';
+  }
+
+  private safeParseErrorMessage(error: unknown) {
+    if (error instanceof HttpException && error.getStatus() < 500) return this.errorMessage(error);
+    return 'Excel 后台解析失败，请重试或联系管理员';
   }
 
   private parsedCounts(rows: Array<{ status: string }>) {

@@ -78,15 +78,29 @@ describe('ExcelParserService phase 9', () => {
     const tall = new ExcelJS.Workbook();
     const sheet = tall.addWorksheet('超长');
     sheet.addRow(['日期']);
-    for (let index = 0; index < 5001; index += 1) sheet.addRow([`2026-07-${String((index % 28) + 1).padStart(2, '0')}`]);
+    for (let index = 0; index < 5000; index += 1) sheet.addRow([`2026-07-${String((index % 28) + 1).padStart(2, '0')}`]);
+    const atLimit = await parser.parse(Buffer.from(await tall.xlsx.writeBuffer()));
+    expect(atLimit.rows).toHaveLength(5000);
+    sheet.addRow(['2026-07-01']);
     const tallBuffer = Buffer.from(await tall.xlsx.writeBuffer());
     await expect(parser.parse(tallBuffer)).rejects.toThrow('Excel 数据行不能超过 5000');
 
     const batchSizes: number[] = [];
     const progressValues: number[] = [];
+    const events: string[] = [];
     const parsed = await parser.parseInBatches(tallBuffer, async (rows, progress) => {
+      events.push(`batch:${progress.processedRows}`);
       batchSizes.push(rows.length);
       progressValues.push(progress.processedRows);
+    }, {}, {
+      onStart: async (metadata) => {
+        events.push('start');
+        expect(metadata).toMatchObject({
+          processingMode: 'streaming',
+          sheet: { sheetName: '超长', headerRowIndex: 1, rowCount: 5001 },
+          columns: [{ sourceName: '日期' }]
+        });
+      }
     });
     expect(parsed).toMatchObject({
       processingMode: 'streaming',
@@ -94,6 +108,7 @@ describe('ExcelParserService phase 9', () => {
     });
     expect(batchSizes).toEqual([...Array(10).fill(500), 1]);
     expect(progressValues.at(-1)).toBe(5001);
+    expect(events[0]).toBe('start');
   });
 
   it('applies the same text limit to rich text and hyperlink cells', async () => {

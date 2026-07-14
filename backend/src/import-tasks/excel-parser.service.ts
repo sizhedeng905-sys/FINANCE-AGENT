@@ -58,6 +58,12 @@ export interface ParsedWorkbook {
 
 export type ParsedWorkbookMetadata = Omit<ParsedWorkbook, 'rows'>;
 
+export interface ParsedWorkbookStartMetadata {
+  processingMode: 'streaming';
+  sheet: ParsedWorkbook['sheet'];
+  columns: ParsedImportColumn[];
+}
+
 export interface ParsedRowBatchProgress {
   processedRows: number;
   totalRows: number;
@@ -66,6 +72,7 @@ export interface ParsedRowBatchProgress {
 export interface BatchedParseSettings {
   maxRows?: number;
   batchSize?: number;
+  onStart?: (metadata: ParsedWorkbookStartMetadata) => Promise<void>;
 }
 
 export interface WorkbookHeaderCandidate {
@@ -147,6 +154,7 @@ interface StreamingInspectionState {
 interface StreamingParseControls {
   maxRows: number;
   batchSize: number;
+  onStart?: (metadata: ParsedWorkbookStartMetadata) => Promise<void>;
   onRows?: (rows: ParsedImportRow[], progress: ParsedRowBatchProgress) => Promise<void>;
 }
 
@@ -219,7 +227,12 @@ export class ExcelParserService {
       throw new BadRequestException(`Excel 分批行数必须在 1-${MAX_ROW_BATCH_SIZE} 之间`);
     }
     const metadata = await readXlsxPackageMetadata(buffer);
-    const parsed = await this.parseStreaming(buffer, metadata, options, { maxRows, batchSize, onRows });
+    const parsed = await this.parseStreaming(buffer, metadata, options, {
+      maxRows,
+      batchSize,
+      onStart: settings.onStart,
+      onRows
+    });
     const { rows: _rows, ...result } = parsed;
     return result;
   }
@@ -540,6 +553,7 @@ export class ExcelParserService {
       observation.rowCount
     );
     let columns: ParsedImportColumn[] | undefined;
+    let started = false;
     let nextDataRow = headerRowIndex + 1;
     const totalRows = observation.rowCount - headerRowIndex;
     const flushRows = async () => {
@@ -585,6 +599,27 @@ export class ExcelParserService {
       );
       return columns;
     };
+    const ensureStarted = async () => {
+      const parsedColumns = initializeColumns();
+      if (!started && controls.onStart) {
+        started = true;
+        try {
+          await controls.onStart({
+            processingMode: 'streaming',
+            sheet: {
+              sheetName: observation.metadata.sheetName,
+              sheetIndex: observation.metadata.sheetIndex,
+              headerRowIndex,
+              rowCount: totalRows
+            },
+            columns: parsedColumns
+          });
+        } catch (error) {
+          throw new RowBatchConsumerException(error);
+        }
+      }
+      return parsedColumns;
+    };
 
     for await (const row of worksheet) {
       if (row.number <= headerRowIndex) {
@@ -592,7 +627,7 @@ export class ExcelParserService {
         continue;
       }
       if (row.number > observation.rowCount) continue;
-      const parsedColumns = initializeColumns();
+      const parsedColumns = await ensureStarted();
       while (nextDataRow < row.number) {
         await appendRow(this.parseDataRow(
           undefined,
@@ -616,7 +651,7 @@ export class ExcelParserService {
       ));
       nextDataRow = row.number + 1;
     }
-    const parsedColumns = initializeColumns();
+    const parsedColumns = await ensureStarted();
     while (nextDataRow <= observation.rowCount) {
       await appendRow(this.parseDataRow(
         undefined,

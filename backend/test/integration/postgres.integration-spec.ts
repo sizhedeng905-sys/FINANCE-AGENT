@@ -32,6 +32,8 @@ import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { ResponseInterceptor } from '../../src/common/interceptors/response.interceptor';
 import { LocalFileStorageService } from '../../src/files/local-file-storage.service';
+import { ExcelParserService } from '../../src/import-tasks/excel-parser.service';
+import { ImportTasksService } from '../../src/import-tasks/import-tasks.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { dayRange, formatChinaDate, monthRange } from '../../src/reports/report-period';
 
@@ -3384,6 +3386,289 @@ describe('real PostgreSQL integration', () => {
       const resourceIds = [...taskIds, ...rawFileIds, ...recordIds, projectId, ...templateIds, suggestedFieldId].filter(
         (id): id is string => Boolean(id)
       );
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+      await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+    }
+  });
+
+  it('persists, cancels, and recovers large background XLSX files without partial records', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const token = login.body.data.accessToken as string;
+    const enabled = await prisma.projectTemplate.findFirstOrThrow({
+      where: { isActive: true, project: { status: ProjectStatus.active } },
+      include: { project: true, template: true }
+    });
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Synthetic large import');
+    sheet.addRow(['日期', '金额']);
+    for (let index = 1; index <= 5001; index += 1) {
+      sheet.addRow([
+        `2026-07-${String((index % 28) + 1).padStart(2, '0')}`,
+        index
+      ]);
+    }
+    const xlsx = Buffer.from(await workbook.xlsx.writeBuffer());
+    const taskIds: string[] = [];
+    const rawFileIds: string[] = [];
+    const parser = app.get(ExcelParserService);
+    const imports = app.get(ImportTasksService);
+    let releaseFirstBatch: () => void = () => undefined;
+    let releaseRecoveryBatch: () => void = () => undefined;
+    let parseSpy: jest.SpyInstance | undefined;
+
+    const createTask = async (key: string, fileName: string, contents = xlsx) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/import-tasks')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', key)
+        .field('projectId', enabled.projectId)
+        .field('templateId', enabled.templateId)
+        .field('importType', enabled.recordType)
+        .attach('file', contents, {
+          filename: fileName,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        })
+        .expect(201);
+      taskIds.push(response.body.data.id as string);
+      rawFileIds.push(response.body.data.rawFileId as string);
+      return response.body.data.id as string;
+    };
+    const waitForFinished = async (taskId: string) => {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+        if (task.status !== ImportTaskStatus.parsing) return task;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error('Background import did not finish in time');
+    };
+
+    try {
+      const cancelledTaskId = await createTask(`integration-large-cancel-${Date.now()}`, 'synthetic-large-cancel.xlsx');
+      let firstBatchPersisted!: () => void;
+      const firstBatch = new Promise<void>((resolve) => { firstBatchPersisted = resolve; });
+      const pause = new Promise<void>((resolve) => { releaseFirstBatch = resolve; });
+      const originalParse = parser.parseInBatches.bind(parser);
+      let paused = false;
+      parseSpy = jest.spyOn(parser, 'parseInBatches').mockImplementation(async (buffer, onRows, options, settings) => (
+        originalParse(buffer, async (rows, progress) => {
+          await onRows(rows, progress);
+          if (!paused) {
+            paused = true;
+            firstBatchPersisted();
+            await pause;
+          }
+        }, options, settings)
+      ));
+
+      const scheduled = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${cancelledTaskId}/parse`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+      expect(scheduled.body.data).toMatchObject({
+        status: ImportTaskStatus.parsing,
+        progress: { executionMode: 'background', total: 5001, attempts: 1 }
+      });
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('First import batch timed out')), 5000);
+        firstBatch.then(() => {
+          clearTimeout(timeout);
+          resolve();
+        }, reject);
+      });
+      const inProgress = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${cancelledTaskId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(inProgress.body.data.progress).toMatchObject({ processed: 500, total: 5001, percent: 10 });
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${cancelledTaskId}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201)
+        .expect(({ body }) => expect(body.data).toMatchObject({
+          status: ImportTaskStatus.cancelled,
+          progress: { processed: 0, total: 5001 }
+        }));
+      releaseFirstBatch();
+      parseSpy.mockRestore();
+      parseSpy = undefined;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(await prisma.importRow.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
+      expect(await prisma.importSheet.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
+
+      const recoveredTaskId = await createTask(`integration-large-recover-${Date.now()}`, 'synthetic-large-recover.xlsx');
+      let recoveryBatchPersisted!: () => void;
+      const recoveryBatch = new Promise<void>((resolve) => { recoveryBatchPersisted = resolve; });
+      const recoveryPause = new Promise<void>((resolve) => { releaseRecoveryBatch = resolve; });
+      const recoveryOriginalParse = parser.parseInBatches.bind(parser);
+      let recoveryPaused = false;
+      parseSpy = jest.spyOn(parser, 'parseInBatches').mockImplementation(async (buffer, onRows, options, settings) => (
+        recoveryOriginalParse(buffer, async (rows, progress) => {
+          await onRows(rows, progress);
+          if (!recoveryPaused) {
+            recoveryPaused = true;
+            recoveryBatchPersisted();
+            await recoveryPause;
+          }
+        }, options, settings)
+      ));
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${recoveredTaskId}/parse`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Recovery import batch timed out')), 5000);
+        recoveryBatch.then(() => {
+          clearTimeout(timeout);
+          resolve();
+        }, reject);
+      });
+      expect(await prisma.importRow.count({ where: { importTaskId: recoveredTaskId } })).toBe(500);
+      await prisma.importTask.update({
+        where: { id: recoveredTaskId },
+        data: {
+          leaseUntil: new Date(Date.now() - 60_000)
+        }
+      });
+      await imports.recoverExpiredParses();
+      const recovered = await waitForFinished(recoveredTaskId);
+      releaseRecoveryBatch();
+      parseSpy.mockRestore();
+      parseSpy = undefined;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(recovered.status).toBe(ImportTaskStatus.pending_confirm);
+      expect(recovered).toMatchObject({
+        totalRows: 5001,
+        processedRows: 5001,
+        validRows: 5001,
+        parseAttempts: 2,
+        leaseToken: null,
+        leaseUntil: null
+      });
+      const rows = await prisma.importRow.findMany({
+        where: { importTaskId: recoveredTaskId },
+        select: { rowNumber: true, rowHash: true },
+        orderBy: { rowNumber: 'asc' }
+      });
+      expect(rows).toHaveLength(5001);
+      expect(rows[0].rowNumber).toBe(2);
+      expect(rows.at(-1)?.rowNumber).toBe(5002);
+      expect(new Set(rows.map((row) => row.rowNumber)).size).toBe(5001);
+      expect(new Set(rows.map((row) => row.rowHash)).size).toBe(5001);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: recoveredTaskId } })).toBe(0);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.parse_recovered', resourceId: recoveredTaskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_parsed', aggregateId: recoveredTaskId }
+      })).toBe(1);
+
+      const productionScaleWorkbook = new ExcelJS.Workbook();
+      const productionScaleSheet = productionScaleWorkbook.addWorksheet('Synthetic production scale');
+      productionScaleSheet.addRow(['日期', '金额']);
+      for (let index = 1; index <= 30196; index += 1) {
+        productionScaleSheet.addRow([
+          `2026-07-${String((index % 28) + 1).padStart(2, '0')}`,
+          index
+        ]);
+      }
+      const productionScaleBuffer = Buffer.from(await productionScaleWorkbook.xlsx.writeBuffer());
+      const productionScaleTaskId = await createTask(
+        `integration-large-30196-${Date.now()}`,
+        'synthetic-production-scale.xlsx',
+        productionScaleBuffer
+      );
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${productionScaleTaskId}/parse`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201)
+        .expect(({ body }) => expect(body.data).toMatchObject({
+          status: ImportTaskStatus.parsing,
+          progress: { executionMode: 'background', total: 30196 }
+        }));
+      const productionScaleResult = await waitForFinished(productionScaleTaskId);
+      expect(productionScaleResult.status).toBe(ImportTaskStatus.pending_confirm);
+      expect(productionScaleResult).toMatchObject({
+        totalRows: 30196,
+        processedRows: 30196,
+        validRows: 30196,
+        parseAttempts: 1
+      });
+      const [stats] = await prisma.$queryRaw<Array<{
+        total: bigint;
+        distinctRows: bigint;
+        distinctHashes: bigint;
+        firstRow: number;
+        lastRow: number;
+      }>>`
+        SELECT
+          COUNT(*)::bigint AS "total",
+          COUNT(DISTINCT "row_number")::bigint AS "distinctRows",
+          COUNT(DISTINCT "row_hash")::bigint AS "distinctHashes",
+          MIN("row_number") AS "firstRow",
+          MAX("row_number") AS "lastRow"
+        FROM "import_rows"
+        WHERE "import_task_id" = ${productionScaleTaskId}
+      `;
+      expect(stats).toEqual({
+        total: 30196n,
+        distinctRows: 30196n,
+        distinctHashes: 30196n,
+        firstRow: 2,
+        lastRow: 30197
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: productionScaleTaskId } })).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await prisma.importTask.update({
+        where: { id: productionScaleTaskId },
+        data: {
+          status: ImportTaskStatus.parsing,
+          executionMode: 'background',
+          parseConfig: {},
+          parseAttempts: 3,
+          leaseToken: 'exhausted-integration-lease',
+          leaseUntil: new Date(Date.now() - 60_000),
+          processedRows: 30196
+        }
+      });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await imports.recoverExpiredParses();
+        const exhausted = await prisma.importTask.findUniqueOrThrow({ where: { id: productionScaleTaskId } });
+        if (exhausted.status === ImportTaskStatus.failed) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const exhausted = await prisma.importTask.findUniqueOrThrow({ where: { id: productionScaleTaskId } });
+      expect(exhausted).toMatchObject({
+        status: ImportTaskStatus.failed,
+        processedRows: 0,
+        parseAttempts: 3,
+        leaseToken: null,
+        leaseUntil: null
+      });
+      expect(await prisma.importRow.count({ where: { importTaskId: productionScaleTaskId } })).toBe(0);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.parse_recovery_exhausted', resourceId: productionScaleTaskId }
+      })).toBe(1);
+    } finally {
+      releaseFirstBatch();
+      releaseRecoveryBatch();
+      parseSpy?.mockRestore();
+      const files = rawFileIds.length
+        ? await prisma.rawFile.findMany({ where: { id: { in: rawFileIds } }, select: { id: true, storagePath: true } })
+        : [];
+      if (taskIds.length) {
+        await prisma.businessRecord.deleteMany({ where: { importTaskId: { in: taskIds } } });
+        await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
+      }
+      for (const file of files) await fileStorage.remove(file.storagePath);
+      if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+      const resourceIds = [...taskIds, ...rawFileIds];
       await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
       await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
     }
