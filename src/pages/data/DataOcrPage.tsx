@@ -4,7 +4,6 @@ import { InboxOutlined } from '@ant-design/icons';
 import { Alert, App, Button, Card, Form, Select, Upload } from 'antd';
 import type { RcFile, UploadFile } from 'antd/es/upload/interface';
 import PageHeader from '@/components/PageHeader';
-import { uploadFile } from '@/api/fileApi';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import { useOCRStore } from '@/store/ocrStore';
 import { recordTypeMap } from '@/utils/dataCenterMaps';
@@ -32,7 +31,7 @@ export default function DataOcrPage() {
   const projectTemplateLoading = useDataCenterStore((state) => state.projectTemplateLoading);
   const projectTemplateError = useDataCenterStore((state) => state.projectTemplateError);
   const fetchProjectTemplates = useDataCenterStore((state) => state.fetchProjectTemplates);
-  const createAndRun = useOCRStore((state) => state.createAndRun);
+  const uploadAndRun = useOCRStore((state) => state.uploadAndRun);
   const loading = useOCRStore((state) => state.loading);
   const ocrError = useOCRStore((state) => state.error);
   const projectId = Form.useWatch('projectId', form);
@@ -71,8 +70,7 @@ export default function DataOcrPage() {
     }
     setUploading(true);
     try {
-      const rawFile = await uploadFile(file, values.projectId);
-      const task = await createAndRun({ rawFileId: rawFile.id, projectId: values.projectId, templateId: template.id });
+      const task = await uploadAndRun(file, { projectId: values.projectId, templateId: template.id });
       message.success('OCR 识别完成，请人工核对字段');
       navigate(`/data/ocr/${task.id}`);
     } finally {

@@ -3,6 +3,7 @@ import type { BusinessRecord } from '@/types/dataCenter';
 import type { BossReport, BossReportPeriod, FinanceReport, FinanceReportPeriod, ProjectReport } from '@/types/report';
 import { mockGetProject } from './mockProjectRepository';
 import { mockRecordSnapshot } from './mockRecordRepository';
+import { subtractMoney, sumMoney } from '@/utils/money';
 
 const delay = (ms = 140) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -27,13 +28,13 @@ function cloneBoss(report: BossReport): BossReport {
 }
 
 function isIncome(record: BusinessRecord): boolean {
-  return record.recordType === 'revenue' || record.category === '收入';
+  return record.accountingDirection === 'income';
 }
 
 function totals(records: BusinessRecord[]) {
-  const income = records.filter(isIncome).reduce((sum, item) => sum + item.amount, 0);
-  const expense = records.filter((item) => !isIncome(item)).reduce((sum, item) => sum + item.amount, 0);
-  return { income, expense, cost: expense, profit: income - expense };
+  const income = sumMoney(records.filter(isIncome).map((item) => item.amount));
+  const expense = sumMoney(records.filter((item) => !isIncome(item)).map((item) => item.amount));
+  return { income, expense, cost: expense, profit: subtractMoney(income, expense) };
 }
 
 function monthBounds(month?: string) {

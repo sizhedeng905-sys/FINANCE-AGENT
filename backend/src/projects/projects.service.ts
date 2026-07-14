@@ -1,5 +1,13 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ProjectStatus, UserRole } from '@prisma/client';
+import {
+  BusinessRecordStatus,
+  ImportTaskStatus,
+  OcrTaskStatus,
+  Prisma,
+  ProjectStatus,
+  UserRole,
+  WorkOrderStatus
+} from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import {
@@ -140,7 +148,11 @@ export class ProjectsService {
 
   async update(id: string, dto: UpdateProjectDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 22))`;
       const before = await this.findProjectOrThrow(id, tx);
+      if (dto.status === ProjectStatus.archived && before.status !== ProjectStatus.archived) {
+        await this.assertCanArchive(tx, id);
+      }
       const project = await tx.project.update({
         where: {
           id
@@ -164,7 +176,9 @@ export class ProjectsService {
 
   async archive(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 22))`;
       const before = await this.findProjectOrThrow(id, tx);
+      await this.assertCanArchive(tx, id);
       const project = await tx.project.update({
         where: {
           id
@@ -284,14 +298,16 @@ export class ProjectsService {
   async getSummary(id: string) {
     const structure = await this.getStructure(id);
     const activeRecords = structure.records.filter((record) => record.status === 'confirmed');
-    const incomeRecords = activeRecords.filter(
-      (record) => record.recordType === 'revenue' || record.category === '收入'
+    const incomeRecords = activeRecords.filter((record) => record.accountingDirection === 'income');
+    const costRecords = activeRecords.filter((record) => record.accountingDirection === 'expense');
+    const totalIncome = incomeRecords.reduce(
+      (sum, record) => sum.plus(record.amount),
+      new Prisma.Decimal(0)
     );
-    const costRecords = activeRecords.filter(
-      (record) => record.recordType !== 'revenue' && record.category !== '收入'
+    const totalCost = costRecords.reduce(
+      (sum, record) => sum.plus(record.amount),
+      new Prisma.Decimal(0)
     );
-    const totalIncome = incomeRecords.reduce((sum, record) => sum + record.amount, 0);
-    const totalCost = costRecords.reduce((sum, record) => sum + record.amount, 0);
 
     return {
       project: structure.project,
@@ -301,9 +317,9 @@ export class ProjectsService {
       rawFileCount: structure.rawFiles.length,
       importTaskCount: structure.importTasks.length,
       ocrTaskCount: structure.ocrTasks.length,
-      totalIncome,
-      totalCost,
-      profit: totalIncome - totalCost
+      totalIncome: totalIncome.toFixed(2),
+      totalCost: totalCost.toFixed(2),
+      profit: totalIncome.minus(totalCost).toFixed(2)
     };
   }
 
@@ -329,6 +345,20 @@ export class ProjectsService {
       const project = await this.findProjectOrThrow(projectId, tx);
       this.ensureProjectWritable(project.status);
       const template = await this.findTemplateOrThrow(dto.templateId, tx);
+      const conflictingTemplate = await tx.projectTemplate.findFirst({
+        where: {
+          projectId,
+          recordType: template.recordType,
+          isActive: true,
+          templateId: { not: dto.templateId }
+        },
+        include: { template: true }
+      });
+      if (conflictingTemplate) {
+        throw new ConflictException(
+          `该项目已启用同类型模板“${conflictingTemplate.template.name}”，请先停用后再切换`
+        );
+      }
       const before = await tx.projectTemplate.findUnique({
         where: {
           projectId_templateId: { projectId, templateId: dto.templateId }
@@ -340,10 +370,16 @@ export class ProjectsService {
       const projectTemplate = before
         ? await tx.projectTemplate.update({
             where: { id: before.id },
-            data: { customName, isActive: true }
+            data: { customName, recordType: template.recordType, isActive: true }
           })
         : await tx.projectTemplate.create({
-            data: { projectId, templateId: dto.templateId, customName, isActive: true }
+            data: {
+              projectId,
+              templateId: dto.templateId,
+              recordType: template.recordType,
+              customName,
+              isActive: true
+            }
           });
 
       await this.auditLogs.write(
@@ -610,6 +646,29 @@ export class ProjectsService {
     }
 
     return project;
+  }
+
+  private async assertCanArchive(tx: Prisma.TransactionClient, id: string) {
+    const [workOrders, importTasks, ocrTasks, draftRecords] = await Promise.all([
+      tx.workOrder.count({
+        where: {
+          projectId: id,
+          status: { notIn: [WorkOrderStatus.completed, WorkOrderStatus.finance_rejected, WorkOrderStatus.boss_rejected] }
+        }
+      }),
+      tx.importTask.count({
+        where: { projectId: id, status: { notIn: [ImportTaskStatus.confirmed, ImportTaskStatus.failed, ImportTaskStatus.cancelled] } }
+      }),
+      tx.ocrTask.count({
+        where: { projectId: id, status: { notIn: [OcrTaskStatus.confirmed, OcrTaskStatus.failed, OcrTaskStatus.cancelled] } }
+      }),
+      tx.businessRecord.count({
+        where: { projectId: id, status: { in: [BusinessRecordStatus.draft, BusinessRecordStatus.pending_confirm] } }
+      })
+    ]);
+    if (workOrders + importTasks + ocrTasks + draftRecords > 0) {
+      throw new ConflictException('项目仍有在途工单、导入、OCR 或待确认记录，不能归档');
+    }
   }
 
   private async findTemplateOrThrow(id: string, prisma: PrismaWriter = this.prisma) {

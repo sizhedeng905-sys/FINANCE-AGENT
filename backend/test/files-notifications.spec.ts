@@ -3,7 +3,9 @@ import { FileScanStatus, NotificationType, RawFileStatus, UserRole, UserStatus }
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PDFDocument } from 'pdf-lib';
 
+import { FileSecurityService } from '../src/files/file-security.service';
 import { FilesService } from '../src/files/files.service';
 import { LocalFileStorageService } from '../src/files/local-file-storage.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
@@ -22,6 +24,7 @@ describe('phase 5 files and notifications', () => {
   it('validates, hashes, stores, authorizes, reads, and soft deletes a file', async () => {
     uploadDir = await mkdtemp(join(tmpdir(), 'finance-agent-files-'));
     const rawFiles: any[] = [];
+    let linkedWorkOrder: any = null;
     const prisma: any = {
       project: { findUnique: jest.fn(async ({ where }) => (where.id === 'project_1' ? { id: 'project_1', status: 'active' } : null)) },
       rawFile: {
@@ -44,14 +47,24 @@ describe('phase 5 files and notifications', () => {
           const item = rawFiles.find((file) => file.id === where.id);
           Object.assign(item, data);
           return item;
-        })
+        }),
+        aggregate: jest.fn(async ({ where }) => ({
+          _sum: {
+            fileSize: rawFiles
+              .filter((item) => !item.isVoided && (!where.uploadedBy || item.uploadedBy === where.uploadedBy) && (!where.relatedProjectId || item.relatedProjectId === where.relatedProjectId))
+              .reduce((sum, item) => sum + BigInt(item.fileSize), 0n)
+          }
+        }))
       },
+      workOrder: { findUnique: jest.fn(async () => linkedWorkOrder) },
       workOrderAttachment: {
         count: jest.fn(async () => 0),
         create: jest.fn(),
         deleteMany: jest.fn(async () => ({ count: 0 }))
       },
       businessRecord: { findFirst: jest.fn(async () => null) },
+      importTask: { findFirst: jest.fn(async () => null) },
+      ocrTask: { findFirst: jest.fn(async () => null) },
       $executeRaw: jest.fn(async () => 1),
       $transaction: jest.fn(async (callback) => callback(prisma))
     };
@@ -67,9 +80,12 @@ describe('phase 5 files and notifications', () => {
       workOrders as any,
       auditLogs as any,
       ledgerEvents as any,
+      new FileSecurityService(config),
       config
     );
-    const buffer = Buffer.from('%PDF-1.4\nunit test\n%%EOF');
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 200]);
+    const buffer = Buffer.from(await pdf.save());
     const file = {
       fieldname: 'file',
       originalname: '凭证.pdf',
@@ -87,10 +103,12 @@ describe('phase 5 files and notifications', () => {
     expect(uploaded.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(uploaded.fileSize).toBe(buffer.length);
     expect(auditLogs.write).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'file.upload', 'raw_file', uploaded.id, expect.anything(), {});
-    expect(ledgerEvents.write).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'raw_file_uploaded', 'raw_file', uploaded.id, expect.anything());
+    expect(ledgerEvents.write).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'raw_file_uploaded', 'raw_file', uploaded.id, expect.anything(), `raw_file:${uploaded.id}:uploaded`);
 
     const downloaded = await service.read(uploaded.id, actor(UserRole.finance, 'finance_1'), {}, 'download');
-    expect(downloaded.buffer.equals(buffer)).toBe(true);
+    const downloadedChunks: Buffer[] = [];
+    for await (const chunk of downloaded.stream) downloadedChunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(downloadedChunks).equals(buffer)).toBe(true);
     await expect(service.get(uploaded.id, actor(UserRole.employee, 'employee_2'))).rejects.toBeInstanceOf(ForbiddenException);
 
     const voided = await service.void(uploaded.id, { reason: '重复上传' }, actor(UserRole.finance, 'finance_1'), {});
@@ -137,20 +155,22 @@ describe('phase 5 files and notifications', () => {
       service.void(referenced.id, { reason: '误删测试' }, actor(UserRole.finance, 'finance_1'), {})
     ).rejects.toBeInstanceOf(ConflictException);
 
-    workOrders.findOne.mockResolvedValue({
+    linkedWorkOrder = {
       id: 'work_order_1',
       projectId: 'project_1',
+      creatorId: 'employee_1',
       status: 'boss_pending'
-    });
+    };
     await expect(
       service.upload(file, { workOrderId: 'work_order_1' }, actor(UserRole.employee, 'employee_1'), {})
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(ConflictException);
 
-    workOrders.findOne.mockResolvedValue({
+    linkedWorkOrder = {
       id: 'work_order_1',
       projectId: 'project_1',
+      creatorId: 'employee_1',
       status: 'draft'
-    });
+    };
     prisma.workOrderAttachment.count.mockResolvedValueOnce(20);
     await expect(
       service.upload(file, { workOrderId: 'work_order_1' }, actor(UserRole.employee, 'employee_1'), {})

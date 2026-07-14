@@ -263,7 +263,7 @@ export async function mockGetImportPreview(id: string): Promise<ImportPreview> {
       rowNumber: row.rowNumber,
       status: errors.length ? 'error' as const : 'mapped' as const,
       recordDate: String(row.rawData['日期']),
-      amount: Number.isFinite(amount) ? amount : undefined,
+      amount: Number.isFinite(amount) ? amount.toFixed(2) : undefined,
       category: task.importType === 'revenue' ? '收入' : '成本',
       subCategory: task.templateName,
       values: [],

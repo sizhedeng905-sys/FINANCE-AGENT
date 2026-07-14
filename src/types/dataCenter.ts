@@ -1,4 +1,5 @@
 export type DataRecordType = 'cost' | 'revenue' | 'reimbursement' | 'transport' | 'labor' | 'other';
+export type AccountingDirection = 'income' | 'expense';
 export type FieldType = 'text' | 'number' | 'money' | 'date' | 'select' | 'file' | 'textarea';
 export type SemanticType =
   | 'amount'
@@ -50,15 +51,19 @@ export interface ProjectSummary {
   recordCount: number;
   rawFileCount: number;
   importTaskCount: number;
-  totalIncome: number;
-  totalCost: number;
-  profit: number;
+  totalIncome: string;
+  totalCost: string;
+  profit: string;
 }
 
 export interface DataTemplate {
   id: string;
   name: string;
   recordType: DataRecordType;
+  accountingDirection: AccountingDirection;
+  primaryAmountFieldId?: string;
+  primaryDateFieldId?: string;
+  version: number;
   description: string;
   isSystem: boolean;
   createdBy: string;
@@ -67,9 +72,11 @@ export interface DataTemplate {
 }
 
 export type CreateTemplatePayload = Pick<DataTemplate, 'name' | 'recordType'> &
-  Partial<Pick<DataTemplate, 'description'>>;
+  Partial<Pick<DataTemplate, 'description' | 'accountingDirection'>>;
 
-export type UpdateTemplatePayload = Partial<Pick<DataTemplate, 'name' | 'recordType' | 'description'>>;
+export type UpdateTemplatePayload = Partial<
+  Pick<DataTemplate, 'name' | 'recordType' | 'description' | 'accountingDirection' | 'primaryAmountFieldId' | 'primaryDateFieldId'>
+>;
 
 export interface TemplateListQuery {
   page?: number;
@@ -152,6 +159,7 @@ export interface ProjectTemplate {
   id: string;
   projectId: string;
   templateId: string;
+  recordType?: DataRecordType;
   customName: string;
   isActive: boolean;
   createdAt?: string;
@@ -184,8 +192,11 @@ export interface BusinessRecord {
   templateId: string;
   templateName: string;
   recordType: DataRecordType;
+  accountingDirection: AccountingDirection;
+  templateVersion: number;
+  version: number;
   recordDate: string;
-  amount: number;
+  amount: string;
   category: string;
   subCategory: string;
   description: string;
@@ -232,7 +243,7 @@ export interface CreateRecordPayload {
   templateId: string;
   recordType: BusinessRecord['recordType'];
   recordDate: string;
-  amount: number;
+  amount: string;
   category?: string;
   subCategory?: string;
   description?: string;
@@ -245,7 +256,7 @@ export interface CreateRecordPayload {
 
 export interface UpdateRecordPayload {
   recordDate?: string;
-  amount?: number;
+  amount?: string;
   category?: string;
   subCategory?: string;
   description?: string;
@@ -256,13 +267,22 @@ export interface UpdateRecordPayload {
 export interface RawFile {
   id: string;
   fileName: string;
-  fileType: 'excel' | 'image' | 'pdf' | 'other';
-  storagePath: string;
+  originalFileName?: string;
+  fileType: 'excel' | 'image' | 'pdf' | 'word' | 'other';
+  mimeType?: string;
+  fileSize?: number;
+  sha256?: string;
+  storagePath?: string;
   uploadedBy: string;
   uploadedAt: string;
-  relatedProjectId: string;
+  relatedProjectId?: string;
+  relatedWorkOrderId?: string;
   relatedImportTaskId?: string;
-  status: 'uploaded' | 'parsed' | 'failed';
+  status: 'uploaded' | 'parsed' | 'failed' | 'voided';
+  scanStatus?: 'pending' | 'clean' | 'infected' | 'failed';
+  previewStatus?: string;
+  isVoided?: boolean;
+  voidReason?: string;
 }
 
 export interface ImportTask {
@@ -274,7 +294,7 @@ export interface ImportTask {
   templateId: string;
   templateName: string;
   importType: DataRecordType;
-  status: 'uploaded' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirmed' | 'failed';
+  status: 'uploaded' | 'parsing' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirmed' | 'failed' | 'cancelled';
   uploadedBy: string;
   uploadedById?: string;
   createdAt: string;
@@ -411,7 +431,7 @@ export interface ImportPreviewRow {
   rowNumber: number;
   status: ImportRow['status'];
   recordDate?: string;
-  amount?: number;
+  amount?: string;
   category: string;
   subCategory: string;
   values: Array<{
@@ -601,6 +621,44 @@ export interface OCRConfirmResult {
   task: OCRTask;
   record: BusinessRecord;
   alreadyConfirmed: boolean;
+}
+
+export interface ProjectStructureFieldUsage {
+  fieldId: string;
+  fieldName: string;
+  fieldKey: string;
+  fieldType: FieldType;
+  semanticType: SemanticType;
+  templateNames: string[];
+  usageCount: number;
+  sourceTypes: BusinessRecord['sourceType'][];
+  latestUsedAt?: string;
+  isSuggestedField: boolean;
+}
+
+export interface LogicalTableSummary {
+  projectId?: string;
+  tableName: string;
+  description: string;
+  relatedCount: number;
+  keyFields: string[];
+}
+
+export interface ProjectStructure {
+  project: Project;
+  enabledTemplates: Array<{
+    projectTemplate: ProjectTemplate;
+    template: DataTemplate;
+    fields: TemplateField[];
+    records: BusinessRecord[];
+  }>;
+  templateFields: TemplateField[];
+  records: BusinessRecord[];
+  rawFiles: RawFile[];
+  importTasks: ImportTask[];
+  ocrTasks: OCRTask[];
+  fieldUsageStats: ProjectStructureFieldUsage[];
+  logicalTablesSummary: LogicalTableSummary[];
 }
 
 export interface ApiResponse<T> {

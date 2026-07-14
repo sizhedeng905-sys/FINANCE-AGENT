@@ -23,7 +23,8 @@ export default function LoginPage() {
   const { message } = App.useApp();
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
-  const username = Form.useWatch('username', form) ?? 'employee';
+  const showDemoAccounts = runtimeConfig.dataMode === 'mock';
+  const username = Form.useWatch('username', form) ?? '';
   const selectedRole = accounts.find((item) => item.value === username)?.value;
 
   const submit = async (values: { username: string; password: string }) => {
@@ -68,39 +69,42 @@ export default function LoginPage() {
       <Card className="login-card">
         <Space direction="vertical" size={4} className="login-card-head">
           <Typography.Title level={3}>账号登录</Typography.Title>
-          <Typography.Text type="secondary">统一密码：123456</Typography.Text>
+          {showDemoAccounts ? <Typography.Text type="secondary">演示环境测试账号</Typography.Text> : null}
         </Space>
 
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ username: 'employee', password: '123456' }}
+          initialValues={showDemoAccounts ? { username: 'employee', password: '123456' } : undefined}
           onFinish={submit}
         >
           {loginError ? (
             <Alert type="error" showIcon message="登录失败" description={loginError} style={{ marginBottom: 16 }} />
           ) : null}
-          <Form.Item label="测试账号">
-            <Segmented
-              block
-              value={selectedRole}
-              onChange={(value) => form.setFieldsValue({ username: String(value), password: '123456' })}
-              options={accounts.map((item) => ({ label: item.label, value: item.value }))}
-            />
-          </Form.Item>
-
-          <div className="account-hints">
-            {accounts.map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => form.setFieldsValue({ username: item.value, password: '123456' })}
-              >
-                <span>{item.label}</span>
-                <small>账号：{item.value} · 密码：123456</small>
-              </button>
-            ))}
-          </div>
+          {showDemoAccounts ? (
+            <>
+              <Form.Item label="测试账号">
+                <Segmented
+                  block
+                  value={selectedRole}
+                  onChange={(value) => form.setFieldsValue({ username: String(value), password: '123456' })}
+                  options={accounts.map((item) => ({ label: item.label, value: item.value }))}
+                />
+              </Form.Item>
+              <div className="account-hints">
+                {accounts.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => form.setFieldsValue({ username: item.value, password: '123456' })}
+                  >
+                    <span>{item.label}</span>
+                    <small>{item.desc}</small>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
 
           <Form.Item label="登录账号" name="username" rules={[{ required: true, message: '请输入登录账号' }]}>
             <Input size="large" prefix={<UserOutlined />} placeholder="请输入登录账号，例如 employee" />

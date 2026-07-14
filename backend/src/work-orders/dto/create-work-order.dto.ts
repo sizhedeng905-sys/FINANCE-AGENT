@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { WorkOrderType } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -8,13 +8,11 @@ import {
   IsDateString,
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsObject,
   IsOptional,
   IsString,
   Matches,
-  MaxLength,
-  Min
+  MaxLength
 } from 'class-validator';
 
 export class CreateWorkOrderDto {
@@ -29,12 +27,13 @@ export class CreateWorkOrderDto {
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   projectId!: string;
 
-  @ApiPropertyOptional({ minimum: 0.01 })
+  @ApiPropertyOptional({ example: '8800.00', type: String })
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ allowInfinity: false, allowNaN: false, maxDecimalPlaces: 2 })
-  @Min(0.01)
-  amount?: number;
+  @IsString()
+  @Matches(/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/, {
+    message: 'amount 必须是最多两位小数的非负十进制字符串'
+  })
+  amount?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

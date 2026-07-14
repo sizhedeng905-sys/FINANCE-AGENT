@@ -17,7 +17,9 @@ async function bootstrap() {
   const nodeEnv = configService.get<string>('nodeEnv') ?? 'development';
   const allowedOrigins = new Set(configService.get<string[]>('corsOrigins') ?? []);
   const trustProxyHops = configService.get<number>('trustProxyHops') ?? 0;
-  if (trustProxyHops > 0) app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
+  const trustedProxies = configService.get<string[]>('trustedProxies') ?? [];
+  if (trustedProxies.length > 0) app.getHttpAdapter().getInstance().set('trust proxy', trustedProxies);
+  else if (trustProxyHops > 0) app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
 
   app.use(helmet({
     contentSecurityPolicy: {
@@ -27,7 +29,7 @@ async function bootstrap() {
         frameAncestors: ["'none'"],
         objectSrc: ["'none'"],
         imgSrc: ["'self'", 'data:'],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"]
       }
     },
@@ -41,8 +43,9 @@ async function bootstrap() {
       callback(null, !origin || allowedOrigins.has(origin));
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id'],
-    exposedHeaders: ['X-Request-Id', 'Content-Disposition', 'Content-Length']
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id', 'X-CSRF-Token'],
+    exposedHeaders: ['X-Request-Id', 'Content-Disposition', 'Content-Length'],
+    credentials: true
   });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
@@ -70,8 +73,9 @@ async function bootstrap() {
   }
 
   const port = configService.get<number>('port') ?? 3001;
+  const host = configService.get<string>('host') ?? '127.0.0.1';
   app.enableShutdownHooks();
-  await app.listen(port, '0.0.0.0');
+  await app.listen(port, host);
 }
 
 void bootstrap();

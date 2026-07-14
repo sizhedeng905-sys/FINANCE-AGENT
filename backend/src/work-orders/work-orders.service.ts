@@ -7,10 +7,13 @@ import {
   UnprocessableEntityException
 } from '@nestjs/common';
 import {
+  AnomalyStatus,
+  DataRecordType,
   NotificationType,
   Prisma,
   UserRole,
-  WorkOrderStatus
+  WorkOrderStatus,
+  WorkOrderType
 } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -49,10 +52,6 @@ const URGE_FORBIDDEN_STATUSES: WorkOrderStatus[] = [
   WorkOrderStatus.boss_rejected,
   WorkOrderStatus.finance_rejected
 ];
-const REVIEWER_ACTIVE_STATUSES: WorkOrderStatus[] = [
-  WorkOrderStatus.reviewer_reviewing
-];
-const BOSS_ACTIVE_STATUSES: WorkOrderStatus[] = [WorkOrderStatus.boss_pending];
 
 @Injectable()
 export class WorkOrdersService {
@@ -73,7 +72,6 @@ export class WorkOrdersService {
       urgent: query.urgent
     };
     this.applyRoleScope(where, user);
-
     const [items, total] = await Promise.all([
       this.prisma.workOrder.findMany({
         where,
@@ -84,7 +82,6 @@ export class WorkOrdersService {
       }),
       this.prisma.workOrder.count({ where })
     ]);
-
     return { items: items.map(toWorkOrder), page, pageSize, total };
   }
 
@@ -119,17 +116,19 @@ export class WorkOrdersService {
             throw new UnprocessableEntityException('项目不存在或未启用');
           }
           await this.validateAttachments(tx, dto.attachments, actor, project.id);
-
+          const templateBinding = await this.resolveWorkOrderTemplate(tx, project.id, dto.type, false);
           const workOrder = await tx.workOrder.create({
             data: {
               orderNo: this.createOrderNo(),
               type: dto.type,
               projectId: project.id,
+              templateId: templateBinding?.id,
+              templateVersion: templateBinding?.version,
               projectName: project.name,
               customerName: project.customerName,
               creatorId: actor.id,
               creatorName: actor.name,
-              amount: dto.amount ?? 0,
+              amount: dto.amount ?? '0',
               description: dto.description,
               occurredDate: dto.occurredDate ? this.parseDateOnly(dto.occurredDate, 'occurredDate') : null,
               extraValues: (dto.extraValues ?? {}) as Prisma.InputJsonValue,
@@ -151,15 +150,21 @@ export class WorkOrdersService {
             },
             include: workOrderInclude
           });
-
           if (dto.attachments?.length) {
             await tx.rawFile.updateMany({
               where: { id: { in: dto.attachments } },
               data: { relatedWorkOrderId: workOrder.id, relatedProjectId: project.id }
             });
           }
-
-          await this.auditLogs.write(tx, actor, 'work_order.create', 'work_order', workOrder.id, { status: workOrder.status }, context);
+          await this.auditLogs.write(
+            tx,
+            actor,
+            'work_order.create',
+            'work_order',
+            workOrder.id,
+            { after: toWorkOrder(workOrder) },
+            context
+          );
           return toWorkOrder(workOrder);
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -178,40 +183,51 @@ export class WorkOrdersService {
 
   async update(id: string, dto: UpdateWorkOrderDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockWorkOrder(tx, id);
       const before = await this.findOwnedOrThrow(id, actor, tx);
-      this.assertStatus(before.status, [WorkOrderStatus.draft, WorkOrderStatus.returned_for_supplement]);
+      if (before.status !== WorkOrderStatus.draft && before.status !== WorkOrderStatus.returned_for_supplement) {
+        throw new ConflictException('工单已提交，不能再修改草稿内容');
+      }
       if (Object.keys(dto).length === 0) throw new BadRequestException('至少提供一个可修改字段');
       this.validateExtraValues(dto.extraValues);
-
-      if (dto.projectId) {
-        const project = await tx.project.findUnique({ where: { id: dto.projectId } });
-        if (!project || project.status !== 'active') throw new UnprocessableEntityException('项目不存在或未启用');
-      }
-      const project = dto.projectId ? await tx.project.findUnique({ where: { id: dto.projectId } }) : null;
       const targetProjectId = dto.projectId ?? before.projectId;
-      await this.validateAttachments(tx, dto.attachments, actor, targetProjectId, id);
-
-      const workOrder = await tx.workOrder.update({
-        where: { id },
+      const targetType = dto.type ?? before.type;
+      const project = await tx.project.findUnique({ where: { id: targetProjectId } });
+      if (!project || project.status !== 'active') throw new UnprocessableEntityException('项目不存在或未启用');
+      const effectiveAttachmentIds = dto.attachments ?? before.attachments.map((item) => item.rawFileId);
+      await this.validateAttachments(tx, effectiveAttachmentIds, actor, targetProjectId, id);
+      const bindingChanges = dto.projectId !== undefined || dto.type !== undefined;
+      const templateBinding = bindingChanges
+        ? await this.resolveWorkOrderTemplate(tx, targetProjectId, targetType, false)
+        : undefined;
+      const changed = await tx.workOrder.updateMany({
+        where: { id, status: before.status, version: before.version },
         data: {
           type: dto.type,
           projectId: dto.projectId,
-          projectName: project?.name,
-          customerName: project?.customerName,
+          projectName: dto.projectId ? project.name : undefined,
+          customerName: dto.projectId ? project.customerName : undefined,
+          templateId: bindingChanges ? templateBinding?.id ?? null : undefined,
+          templateVersion: bindingChanges ? templateBinding?.version ?? null : undefined,
+          templateSnapshot: bindingChanges ? Prisma.JsonNull : undefined,
+          submissionSnapshot: Prisma.JsonNull,
+          submittedAt: null,
           amount: dto.amount,
           description: dto.description,
           occurredDate: dto.occurredDate ? this.parseDateOnly(dto.occurredDate, 'occurredDate') : undefined,
           extraValues: dto.extraValues as Prisma.InputJsonValue | undefined,
-          attachments: dto.attachments
-            ? {
-                deleteMany: {},
-                create: dto.attachments.map((rawFileId) => ({ rawFileId, uploadedBy: actor.id }))
-              }
-            : undefined
-        },
-        include: workOrderInclude
+          version: { increment: 1 }
+        }
       });
+      if (changed.count !== 1) throw new ConflictException('工单已被其他请求修改，请刷新后重试');
+
       if (dto.attachments) {
+        await tx.workOrderAttachment.deleteMany({ where: { workOrderId: id } });
+        if (dto.attachments.length) {
+          await tx.workOrderAttachment.createMany({
+            data: dto.attachments.map((rawFileId) => ({ workOrderId: id, rawFileId, uploadedBy: actor.id }))
+          });
+        }
         const removedFileIds = before.attachments
           .map((item) => item.rawFileId)
           .filter((fileId) => !dto.attachments!.includes(fileId));
@@ -228,21 +244,41 @@ export class WorkOrdersService {
           });
         }
       }
-      await this.auditLogs.write(tx, actor, 'work_order.update', 'work_order', id, { before: before.updatedAt, after: workOrder.updatedAt }, context);
-      return toWorkOrder(workOrder);
+      const after = await this.findByIdOrThrow(id, tx);
+      await this.auditLogs.write(
+        tx,
+        actor,
+        'work_order.update',
+        'work_order',
+        id,
+        { before: toWorkOrder(before), after: toWorkOrder(after) },
+        context
+      );
+      return toWorkOrder(after);
     });
   }
 
   async submit(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockWorkOrder(tx, id);
       const before = await this.findOwnedOrThrow(id, actor, tx);
       this.assertStatus(before.status, [WorkOrderStatus.draft, WorkOrderStatus.returned_for_supplement]);
       await this.assertSubmissionComplete(before, tx);
+      const preparation = await this.workOrderRecords.prepareSubmission(tx, before);
+      const submittedAt = new Date();
       const changed = await tx.workOrder.updateMany({
-        where: { id, status: before.status },
-        data: { status: WorkOrderStatus.finance_reviewing }
+        where: { id, status: before.status, version: before.version },
+        data: {
+          status: WorkOrderStatus.finance_reviewing,
+          templateId: preparation.template.id,
+          templateVersion: preparation.template.version,
+          templateSnapshot: preparation.templateSnapshot,
+          submissionSnapshot: preparation.submissionSnapshot,
+          submittedAt,
+          version: { increment: 1 }
+        }
       });
-      if (changed.count !== 1) throw new ConflictException('工单状态已被其他请求更新');
+      if (changed.count !== 1) throw new ConflictException('工单已被其他请求修改，请刷新后重试');
       await tx.workOrderTimeline.create({
         data: {
           workOrderId: id,
@@ -272,7 +308,12 @@ export class WorkOrdersService {
         'work_order.submit',
         'work_order',
         id,
-        { from: before.status, to: WorkOrderStatus.finance_reviewing },
+        {
+          from: before.status,
+          to: WorkOrderStatus.finance_reviewing,
+          submittedAt: submittedAt.toISOString(),
+          submissionSnapshot: preparation.submissionSnapshot
+        },
         context
       );
       return toWorkOrder(await this.findByIdOrThrow(id, tx));
@@ -281,37 +322,55 @@ export class WorkOrdersService {
 
   async supplement(id: string, dto: SupplementWorkOrderDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockWorkOrder(tx, id);
       const before = await this.findOwnedOrThrow(id, actor, tx);
       this.assertStatus(before.status, [WorkOrderStatus.returned_for_supplement]);
-      const existingFileIds = new Set(before.attachments.map((attachment) => attachment.rawFileId));
+      const existingFileIds = new Set(before.attachments.map((item) => item.rawFileId));
       const newAttachmentIds = (dto.attachments ?? []).filter((fileId) => !existingFileIds.has(fileId));
       if (existingFileIds.size + newAttachmentIds.length > 20) {
         throw new BadRequestException('单个工单最多关联 20 个附件');
       }
       await this.validateAttachments(tx, newAttachmentIds, actor, before.projectId, id);
-
-      const supplemented = await tx.workOrder.update({
-        where: { id },
+      const draftChanged = await tx.workOrder.updateMany({
+        where: { id, status: before.status, version: before.version },
         data: {
           description: dto.description,
-          attachments: newAttachmentIds.length
-            ? { create: newAttachmentIds.map((rawFileId) => ({ rawFileId, uploadedBy: actor.id })) }
-            : undefined
-        },
-        include: workOrderInclude
+          submissionSnapshot: Prisma.JsonNull,
+          submittedAt: null,
+          version: { increment: 1 }
+        }
       });
+      if (draftChanged.count !== 1) throw new ConflictException('工单已被其他请求修改，请刷新后重试');
       if (newAttachmentIds.length) {
+        await tx.workOrderAttachment.createMany({
+          data: newAttachmentIds.map((rawFileId) => ({ workOrderId: id, rawFileId, uploadedBy: actor.id }))
+        });
         await tx.rawFile.updateMany({
           where: { id: { in: newAttachmentIds } },
           data: { relatedWorkOrderId: id, relatedProjectId: before.projectId }
         });
       }
+      const supplemented = await this.findByIdOrThrow(id, tx);
       await this.assertSubmissionComplete(supplemented, tx);
+      const preparation = await this.workOrderRecords.prepareSubmission(tx, supplemented);
+      const submittedAt = new Date();
       const changed = await tx.workOrder.updateMany({
-        where: { id, status: WorkOrderStatus.returned_for_supplement },
-        data: { status: WorkOrderStatus.finance_reviewing }
+        where: {
+          id,
+          status: WorkOrderStatus.returned_for_supplement,
+          version: supplemented.version
+        },
+        data: {
+          status: WorkOrderStatus.finance_reviewing,
+          templateId: preparation.template.id,
+          templateVersion: preparation.template.version,
+          templateSnapshot: preparation.templateSnapshot,
+          submissionSnapshot: preparation.submissionSnapshot,
+          submittedAt,
+          version: { increment: 1 }
+        }
       });
-      if (changed.count !== 1) throw new ConflictException('工单状态已被其他请求更新');
+      if (changed.count !== 1) throw new ConflictException('工单已被其他请求修改，请刷新后重试');
       await tx.workOrderTimeline.create({
         data: {
           workOrderId: id,
@@ -341,7 +400,7 @@ export class WorkOrdersService {
         'work_order.supplement',
         'work_order',
         id,
-        { attachmentIds: newAttachmentIds, comment: dto.comment },
+        { attachmentIds: newAttachmentIds, comment: dto.comment, submissionSnapshot: preparation.submissionSnapshot },
         context
       );
       return toWorkOrder(await this.findByIdOrThrow(id, tx));
@@ -404,61 +463,74 @@ export class WorkOrdersService {
     this.validateIdempotencyKey(idempotencyKey, true);
     const next = dto.action === 'approve' ? WorkOrderStatus.completed : WorkOrderStatus.boss_rejected;
     try {
-      return await this.prisma.$transaction(
-        async (tx) => {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))`;
-          const before = await this.findByIdOrThrow(id, tx);
-          if (before.status === WorkOrderStatus.completed && before.generatedRecordId) {
-            return toWorkOrder(before);
+      return await this.prisma.$transaction(async (tx) => {
+        await this.lockWorkOrder(tx, id);
+        const before = await this.findByIdOrThrow(id, tx);
+        if (before.status === WorkOrderStatus.completed && before.generatedRecordId) return toWorkOrder(before);
+        if (before.status === WorkOrderStatus.boss_rejected && before.approvalIdempotencyKey === idempotencyKey) {
+          return toWorkOrder(before);
+        }
+        this.assertStatus(before.status, [WorkOrderStatus.boss_pending]);
+        const generatedRecord =
+          dto.action === 'approve'
+            ? await this.workOrderRecords.createWithinTransaction(tx, before, actor, context)
+            : undefined;
+        await this.writeApprovalAndTimeline(tx, before, actor, dto.action, dto.comment, next);
+        const changed = await tx.workOrder.updateMany({
+          where: { id, status: before.status, version: before.version },
+          data: {
+            status: next,
+            bossOpinion: dto.comment,
+            completedAt: next === WorkOrderStatus.completed ? new Date() : null,
+            generatedRecordId: generatedRecord?.id,
+            approvalIdempotencyKey: idempotencyKey,
+            version: { increment: 1 }
           }
-          if (
-            before.status === WorkOrderStatus.boss_rejected &&
-            before.approvalIdempotencyKey === idempotencyKey
-          ) {
-            return toWorkOrder(before);
+        });
+        if (changed.count !== 1) throw new ConflictException('工单已被其他审批请求处理');
+        const handledAt = new Date();
+        await tx.aiAnomaly.updateMany({
+          where: {
+            workOrderId: id,
+            status: { in: [AnomalyStatus.open, AnomalyStatus.acknowledged] }
+          },
+          data: {
+            status: dto.action === 'approve' ? AnomalyStatus.accepted_risk : AnomalyStatus.resolved,
+            handledById: actor.id,
+            handledByName: actor.name,
+            handlingReason: dto.comment || (dto.action === 'approve' ? '老板审批通过并接受该风险' : '老板驳回工单'),
+            handledAt,
+            resolvedAt: handledAt
           }
-          this.assertStatus(before.status, [WorkOrderStatus.boss_pending]);
-          await this.writeApprovalAndTimeline(tx, before, actor, dto.action, dto.comment, next);
-          const generatedRecord =
-            dto.action === 'approve'
-              ? await this.workOrderRecords.createWithinTransaction(tx, before, actor, context)
-              : undefined;
-          const updated = await tx.workOrder.update({
-            where: { id },
-            data: {
-              status: next,
-              bossOpinion: dto.comment,
-              completedAt: next === WorkOrderStatus.completed ? new Date() : undefined,
-              generatedRecordId: generatedRecord?.id,
-              approvalIdempotencyKey: idempotencyKey
-            },
-            include: workOrderInclude
-          });
-          await tx.notification.create({
-            data: {
-              title: dto.action === 'approve' ? '工单审批通过' : '工单被老板驳回',
-              content: `工单 ${before.orderNo} 已完成老板审批`,
-              type: NotificationType.system,
-              senderId: actor.id,
-              senderName: actor.name,
-              targetUserId: before.creatorId,
-              targetRole: UserRole.employee,
-              relatedWorkOrderId: id
-            }
-          });
-          await this.auditLogs.write(tx, actor, 'work_order.boss_approve', 'work_order', id, { action: dto.action, from: before.status, to: next }, context);
-          return toWorkOrder(updated);
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
-      );
+        });
+        await tx.notification.create({
+          data: {
+            title: dto.action === 'approve' ? '工单审批通过' : '工单被老板驳回',
+            content: `工单 ${before.orderNo} 已完成老板审批`,
+            type: NotificationType.system,
+            senderId: actor.id,
+            senderName: actor.name,
+            targetUserId: before.creatorId,
+            targetRole: UserRole.employee,
+            relatedWorkOrderId: id
+          }
+        });
+        await this.auditLogs.write(
+          tx,
+          actor,
+          'work_order.boss_approve',
+          'work_order',
+          id,
+          { action: dto.action, from: before.status, to: next, submissionSnapshot: before.submissionSnapshot },
+          context
+        );
+        return toWorkOrder(await this.findByIdOrThrow(id, tx));
+      });
     } catch (error) {
       if (this.isConcurrentWriteConflict(error)) {
         const current = await this.findByIdOrThrow(id);
         if (current.status === WorkOrderStatus.completed && current.generatedRecordId) return toWorkOrder(current);
-        if (
-          current.status === WorkOrderStatus.boss_rejected &&
-          current.approvalIdempotencyKey === idempotencyKey
-        ) {
+        if (current.status === WorkOrderStatus.boss_rejected && current.approvalIdempotencyKey === idempotencyKey) {
           return toWorkOrder(current);
         }
       }
@@ -468,12 +540,13 @@ export class WorkOrdersService {
 
   async urge(id: string, dto: UrgeWorkOrderDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockWorkOrder(tx, id);
       const before = await this.findOwnedOrThrow(id, actor, tx);
       if (URGE_FORBIDDEN_STATUSES.includes(before.status)) {
         throw new UnprocessableEntityException('当前状态不能催办');
       }
       if (before.urgentTime && Date.now() - before.urgentTime.getTime() < 30 * 60 * 1000) {
-        throw new UnprocessableEntityException('同一工单30分钟内只能催办一次');
+        throw new UnprocessableEntityException('同一工单 30 分钟内只能催办一次');
       }
       const targetRole = this.resolveCurrentRole(before.status);
       await tx.workOrderTimeline.create({
@@ -499,13 +572,21 @@ export class WorkOrdersService {
           relatedWorkOrderId: id
         }
       });
-      const updated = await tx.workOrder.update({
-        where: { id },
-        data: { urgent: true, urgentReason: dto.reason, urgentTime: new Date() },
-        include: workOrderInclude
+      const changed = await tx.workOrder.updateMany({
+        where: { id, status: before.status, version: before.version },
+        data: { urgent: true, urgentReason: dto.reason, urgentTime: new Date(), version: { increment: 1 } }
       });
-      await this.auditLogs.write(tx, actor, 'work_order.urge', 'work_order', id, { reason: dto.reason, targetRole }, context);
-      return toWorkOrder(updated);
+      if (changed.count !== 1) throw new ConflictException('工单已被其他请求修改');
+      await this.auditLogs.write(
+        tx,
+        actor,
+        'work_order.urge',
+        'work_order',
+        id,
+        { reason: dto.reason, targetRole },
+        context
+      );
+      return toWorkOrder(await this.findByIdOrThrow(id, tx));
     });
   }
 
@@ -529,13 +610,14 @@ export class WorkOrdersService {
     opinionField: 'financeOpinion' | 'reviewerOpinion'
   ) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockWorkOrder(tx, id);
       const before = await this.findByIdOrThrow(id, tx);
       this.assertStatus(before.status, expected);
       const changed = await tx.workOrder.updateMany({
-        where: { id, status: before.status },
-        data: { status: next, [opinionField]: comment }
+        where: { id, status: before.status, version: before.version },
+        data: { status: next, [opinionField]: comment, version: { increment: 1 } }
       });
-      if (changed.count !== 1) throw new ConflictException('工单状态已被其他请求更新');
+      if (changed.count !== 1) throw new ConflictException('工单已被其他请求处理');
       await this.writeApprovalAndTimeline(tx, before, actor, action, comment, next);
       await this.createReviewNotification(tx, before, actor, next);
       await this.auditLogs.write(
@@ -548,53 +630,6 @@ export class WorkOrdersService {
         context
       );
       return toWorkOrder(await this.findByIdOrThrow(id, tx));
-    });
-  }
-
-  private async transition(
-    id: string,
-    actor: CurrentUser,
-    context: RequestContext,
-    options: {
-      expected: WorkOrderStatus[];
-      next: WorkOrderStatus;
-      action: string;
-      comment: string;
-      ownerOnly?: boolean;
-      notifyRole?: UserRole;
-    }
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const before = options.ownerOnly ? await this.findOwnedOrThrow(id, actor, tx) : await this.findByIdOrThrow(id, tx);
-      this.assertStatus(before.status, options.expected);
-      await tx.workOrderTimeline.create({
-        data: {
-          workOrderId: id,
-          operatorId: actor.id,
-          operatorName: actor.name,
-          role: actor.role,
-          action: options.action,
-          comment: options.comment,
-          fromStatus: before.status,
-          toStatus: options.next
-        }
-      });
-      const updated = await tx.workOrder.update({ where: { id }, data: { status: options.next }, include: workOrderInclude });
-      if (options.notifyRole) {
-        await tx.notification.create({
-          data: {
-            title: options.action,
-            content: `工单 ${before.orderNo} 状态已更新`,
-            type: NotificationType.audit,
-            senderId: actor.id,
-            senderName: actor.name,
-            targetRole: options.notifyRole,
-            relatedWorkOrderId: id
-          }
-        });
-      }
-      await this.auditLogs.write(tx, actor, 'work_order.submit', 'work_order', id, { from: before.status, to: options.next }, context);
-      return toWorkOrder(updated);
     });
   }
 
@@ -655,9 +690,7 @@ export class WorkOrdersService {
     workOrderId?: string
   ) {
     if (!attachmentIds?.length) return;
-    const files = await tx.rawFile.findMany({
-      where: { id: { in: attachmentIds }, isVoided: false }
-    });
+    const files = await tx.rawFile.findMany({ where: { id: { in: attachmentIds }, isVoided: false } });
     if (files.length !== attachmentIds.length) throw new UnprocessableEntityException('附件不存在或已作废');
     for (const file of files) {
       if (actor.role === UserRole.employee && file.uploadedBy !== actor.id) {
@@ -677,16 +710,37 @@ export class WorkOrdersService {
     prisma: PrismaWriter
   ) {
     const missing: string[] = [];
-    if (new Prisma.Decimal(workOrder.amount).lessThanOrEqualTo(0)) missing.push('amount');
+    if (workOrder.amount.lessThanOrEqualTo(0)) missing.push('amount');
     if (!workOrder.description?.trim()) missing.push('description');
     if (!workOrder.occurredDate) missing.push('occurredDate');
-    if (missing.length) {
-      throw new UnprocessableEntityException(`工单信息不完整：${missing.join(', ')}`);
-    }
+    if (missing.length) throw new UnprocessableEntityException(`工单信息不完整：${missing.join(', ')}`);
     const project = await prisma.project.findUnique({ where: { id: workOrder.projectId } });
-    if (!project || project.status !== 'active') {
-      throw new UnprocessableEntityException('项目不存在或未启用');
+    if (!project || project.status !== 'active') throw new UnprocessableEntityException('项目不存在或未启用');
+  }
+
+  private async resolveWorkOrderTemplate(
+    tx: Prisma.TransactionClient,
+    projectId: string,
+    type: WorkOrderType,
+    required: boolean
+  ) {
+    const recordType = this.resolveRecordType(type);
+    const matches = await tx.projectTemplate.findMany({
+      where: { projectId, recordType, isActive: true },
+      include: { template: true },
+      take: 2
+    });
+    if (matches.length > 1) throw new ConflictException('项目存在多个同类型活动模板');
+    if (required && matches.length !== 1) {
+      throw new UnprocessableEntityException('项目未启用与工单类型匹配的数据模板');
     }
+    return matches[0] ? { id: matches[0].templateId, version: matches[0].template.version } : undefined;
+  }
+
+  private resolveRecordType(type: WorkOrderType) {
+    if (type === WorkOrderType.transport) return DataRecordType.transport;
+    if (type === WorkOrderType.expense) return DataRecordType.reimbursement;
+    return DataRecordType.other;
   }
 
   private parseDateOnly(value: string, fieldName: string) {
@@ -703,7 +757,7 @@ export class WorkOrdersService {
   private validateExtraValues(value: Record<string, unknown> | undefined) {
     if (!value) return;
     if (Object.keys(value).length > 50 || JSON.stringify(value).length > 20_000) {
-      throw new BadRequestException('extraValues 超出允许的大小');
+      throw new BadRequestException('extraValues 超出允许大小');
     }
   }
 
@@ -732,9 +786,15 @@ export class WorkOrdersService {
 
   private async findAccessibleOrThrow(id: string, user: CurrentUser) {
     const workOrder = await this.findByIdOrThrow(id);
-    if (user.role === UserRole.employee && workOrder.creatorId !== user.id) throw new ForbiddenException('无权访问该工单');
-    if (user.role === UserRole.reviewer && !REVIEWER_VISIBLE_STATUSES.includes(workOrder.status)) throw new ForbiddenException('无权访问该工单');
-    if (user.role === UserRole.boss && !BOSS_VISIBLE_STATUSES.includes(workOrder.status)) throw new ForbiddenException('无权访问该工单');
+    if (user.role === UserRole.employee && workOrder.creatorId !== user.id) {
+      throw new ForbiddenException('无权访问该工单');
+    }
+    if (user.role === UserRole.reviewer && !REVIEWER_VISIBLE_STATUSES.includes(workOrder.status)) {
+      throw new ForbiddenException('无权访问该工单');
+    }
+    if (user.role === UserRole.boss && !BOSS_VISIBLE_STATUSES.includes(workOrder.status)) {
+      throw new ForbiddenException('无权访问该工单');
+    }
     return workOrder;
   }
 
@@ -757,9 +817,13 @@ export class WorkOrdersService {
   }
 
   private resolveCurrentRole(status: WorkOrderStatus): UserRole {
-    if (REVIEWER_ACTIVE_STATUSES.includes(status)) return UserRole.reviewer;
-    if (BOSS_ACTIVE_STATUSES.includes(status)) return UserRole.boss;
+    if (status === WorkOrderStatus.reviewer_reviewing) return UserRole.reviewer;
+    if (status === WorkOrderStatus.boss_pending) return UserRole.boss;
     return UserRole.finance;
+  }
+
+  private async lockWorkOrder(tx: Prisma.TransactionClient, id: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))`;
   }
 
   private createOrderNo() {

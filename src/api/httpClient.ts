@@ -1,5 +1,5 @@
 import { runtimeConfig } from '@/config/runtime';
-import { clearAccessToken, createRequestId, getAccessToken, notifySessionExpired } from './authSession';
+import { clearAccessToken, createRequestId, getAccessToken, getCsrfToken, notifySessionExpired } from './authSession';
 
 export interface ApiEnvelope<T> {
   code: number;
@@ -82,6 +82,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   headers.set('Accept', 'application/json');
   headers.set('X-Request-Id', requestId);
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  const method = (options.method ?? 'GET').toUpperCase();
+  const csrfToken = getCsrfToken();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) headers.set('X-CSRF-Token', csrfToken);
   if (options.body !== undefined && !isFormData) headers.set('Content-Type', 'application/json');
 
   try {
@@ -93,6 +96,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
           ? options.body as FormData
           : JSON.stringify(options.body),
       headers,
+      credentials: 'include',
       signal: controller.signal,
     });
     const responseRequestId = response.headers.get('x-request-id') ?? requestId;
@@ -178,6 +182,7 @@ async function requestBinary(path: string, options: Omit<RequestOptions, 'body'>
       ...options,
       method: options.method ?? 'GET',
       headers,
+      credentials: 'include',
       signal: controller.signal,
     });
     const responseRequestId = response.headers.get('x-request-id') ?? requestId;

@@ -56,6 +56,33 @@ describe('environment validation', () => {
   });
 
   it('requires an explicit CORS allowlist in production', () => {
-    expect(() => validateEnvironment({ ...valid, NODE_ENV: 'production' })).toThrow('CORS_ORIGINS');
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: 'production', FILE_SCAN_MODE: 'clamav' })).toThrow('CORS_ORIGINS');
+  });
+
+  it('requires production ClamAV, verified remote PostgreSQL TLS, short JWTs, and named proxies', () => {
+    const production = {
+      ...valid,
+      NODE_ENV: 'production',
+      CORS_ORIGINS: 'https://finance-agent.example.com',
+      FILE_SCAN_MODE: 'clamav',
+      JWT_EXPIRES_IN: '30m'
+    };
+    expect(() => validateEnvironment({
+      ...production,
+      DATABASE_URL: 'postgresql://finance:secret@db.example.com:5432/finance_agent'
+    })).toThrow('sslmode=verify-ca');
+    expect(() => validateEnvironment({ ...production, FILE_SCAN_MODE: 'basic' })).toThrow('FILE_SCAN_MODE');
+    expect(() => validateEnvironment({ ...production, JWT_EXPIRES_IN: '8h' })).toThrow('must not exceed 1h');
+    expect(() => validateEnvironment({ ...production, TRUST_PROXY_HOPS: '1' })).toThrow('TRUSTED_PROXIES');
+    expect(validateEnvironment({
+      ...production,
+      DATABASE_URL: 'postgresql://finance:secret@db.example.com:5432/finance_agent?sslmode=verify-full',
+      TRUSTED_PROXIES: '127.0.0.1'
+    })).toMatchObject({ NODE_ENV: 'production' });
+  });
+
+  it('rejects ambiguous environments and low-entropy secrets', () => {
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: 'Production' })).toThrow('NODE_ENV');
+    expect(() => validateEnvironment({ ...valid, JWT_SECRET: 'a'.repeat(64) })).toThrow('JWT_SECRET');
   });
 });

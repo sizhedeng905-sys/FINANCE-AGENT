@@ -29,7 +29,7 @@ import { recordStatusMap, recordTypeMap, sourceTypeMap } from '@/utils/dataCente
 
 interface EditRecordForm {
   recordDate: Dayjs;
-  amount: number;
+  amount: string;
   category?: string;
   subCategory?: string;
   description?: string;
@@ -291,7 +291,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
       >
         <Form form={form} layout="vertical">
           <Form.Item label="记录日期" name="recordDate" rules={[{ required: true, message: '请选择记录日期' }]}><DatePicker className="full-width" /></Form.Item>
-          <Form.Item label="金额" name="amount" rules={[{ required: true, message: '请输入金额' }]}><InputNumber className="full-width" precision={2} /></Form.Item>
+          <Form.Item label="金额" name="amount" rules={[{ required: true, message: '请输入金额' }]}><InputNumber stringMode className="full-width" precision={2} /></Form.Item>
           <Form.Item label="分类" name="category"><Input maxLength={100} /></Form.Item>
           <Form.Item label="子分类" name="subCategory"><Input maxLength={100} /></Form.Item>
           <Form.Item label="说明" name="description"><Input.TextArea rows={3} maxLength={1000} showCount /></Form.Item>

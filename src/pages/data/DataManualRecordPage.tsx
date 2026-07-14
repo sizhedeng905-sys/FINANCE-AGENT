@@ -17,10 +17,10 @@ function renderField(item: TemplateField) {
   if (!item.isVisible) return null;
 
   if (item.field.fieldType === 'number') {
-    return <Form.Item key={item.id} {...common}><InputNumber className="full-width" addonAfter={item.field.unit} /></Form.Item>;
+    return <Form.Item key={item.id} {...common}><InputNumber stringMode className="full-width" addonAfter={item.field.unit} /></Form.Item>;
   }
   if (item.field.fieldType === 'money') {
-    return <Form.Item key={item.id} {...common}><InputNumber className="full-width" addonBefore="¥" /></Form.Item>;
+    return <Form.Item key={item.id} {...common}><InputNumber stringMode precision={2} className="full-width" addonBefore="¥" /></Form.Item>;
   }
   if (item.field.fieldType === 'date') {
     return <Form.Item key={item.id} {...common}><DatePicker className="full-width" /></Form.Item>;
@@ -129,9 +129,13 @@ export default function DataManualRecordPage() {
         }
         uploadedByField.set(item.field.fieldKey, fieldFileIds);
       }
-      const amountField = fields.find((item) => item.field.semanticType === 'amount' || item.field.fieldType === 'money');
-      const dateField = fields.find((item) => item.field.semanticType === 'date');
-      const amount = Number(values[amountField?.field.fieldKey ?? 'amount'] ?? 0);
+      const amountField = fields.find((item) => item.fieldId === template.primaryAmountFieldId);
+      const dateField = fields.find((item) => item.fieldId === template.primaryDateFieldId);
+      if (!amountField || !dateField) throw new Error('模板尚未配置主金额字段或主日期字段');
+      const amount = String(values[amountField.field.fieldKey] ?? '').trim();
+      if (!/^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/.test(amount) || /^0(?:\.0{1,2})?$/.test(amount)) {
+        throw new Error('主金额必须是大于 0 且最多两位小数的金额');
+      }
       const valuesList = fields.reduce<RecordValueInput[]>((result, item) => {
         const rawValue = values[item.field.fieldKey];
         const value = item.field.fieldType === 'date' && rawValue?.format
@@ -148,9 +152,9 @@ export default function DataManualRecordPage() {
         projectId: project.id,
         templateId: template.id,
         recordType: template.recordType,
-        recordDate: values[dateField?.field.fieldKey ?? 'date']?.format?.('YYYY-MM-DD') ?? dayjs().format('YYYY-MM-DD'),
+        recordDate: values[dateField.field.fieldKey]?.format?.('YYYY-MM-DD') ?? dayjs().format('YYYY-MM-DD'),
         amount,
-        category: recordTypeMap[template.recordType],
+        category: template.accountingDirection === 'income' ? '收入' : '成本',
         subCategory: template.name,
         description: values.remark ?? '手工补录记录',
         sourceType: 'manual',

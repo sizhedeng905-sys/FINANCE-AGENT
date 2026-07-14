@@ -9,6 +9,11 @@ export interface AiToolContext {
   data: unknown;
 }
 
+export interface AiHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface AiProviderRequest {
   provider: string;
   model: string;
@@ -16,6 +21,7 @@ export interface AiProviderRequest {
   apiKey?: string;
   instructions: string;
   question: string;
+  history: AiHistoryMessage[];
   contexts: AiToolContext[];
 }
 

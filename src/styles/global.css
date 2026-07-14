@@ -661,3 +661,8 @@ select {
     grid-template-columns: 1fr;
   }
 }
+.app-route-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}

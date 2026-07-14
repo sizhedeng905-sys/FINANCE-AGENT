@@ -45,7 +45,9 @@ describe('RiskRulesService phase 6', () => {
       urgentReason: null,
       urgentTime: null,
       createdAt: now,
+      submittedAt: now,
       updatedAt: now,
+      version: 1,
       completedAt: null,
       generatedRecordId: null,
       attachments: [],
@@ -87,12 +89,20 @@ describe('RiskRulesService phase 6', () => {
         findFirst: jest.fn(async () => null),
         findMany: jest.fn(async () => []),
         update: jest.fn(async ({ data }) => {
-          Object.assign(workOrder, data, { updatedAt: new Date() });
+          const normalized = { ...data };
+          if (typeof data.version === 'object') normalized.version = workOrder.version + data.version.increment;
+          Object.assign(workOrder, normalized, { updatedAt: new Date() });
           return workOrder;
         }),
         updateMany: jest.fn(async ({ where, data }) => {
-          if (workOrder.id !== where.id || workOrder.status !== where.status) return { count: 0 };
-          Object.assign(workOrder, data, { updatedAt: new Date() });
+          if (
+            workOrder.id !== where.id ||
+            workOrder.status !== where.status ||
+            (where.version !== undefined && workOrder.version !== where.version)
+          ) return { count: 0 };
+          const normalized = { ...data };
+          if (typeof data.version === 'object') normalized.version = workOrder.version + data.version.increment;
+          Object.assign(workOrder, normalized, { updatedAt: new Date() });
           return { count: 1 };
         })
       },
@@ -129,6 +139,7 @@ describe('RiskRulesService phase 6', () => {
         })
       },
       notification: { create: jest.fn(async ({ data }) => data) },
+      $executeRaw: jest.fn(async () => 0),
       $transaction: jest.fn(async (callback) => callback(prisma))
     };
     const auditLogs = { write: jest.fn(async () => undefined) };

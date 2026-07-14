@@ -15,7 +15,6 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { memoryStorage } from 'multer';
 
 import { CurrentUser as CurrentUserDecorator } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -23,6 +22,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { secureUploadOptions } from '../files/secure-upload-options';
+import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
@@ -51,7 +52,7 @@ export class ImportTasksController {
       }
     }
   })
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file', secureUploadOptions), TempUploadCleanupInterceptor)
   create(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateImportTaskDto,

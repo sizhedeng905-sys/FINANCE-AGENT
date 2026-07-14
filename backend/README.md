@@ -22,7 +22,7 @@ copy .env.example .env
 npm run prisma:generate
 ```
 
-Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/placeholder JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production requires an explicit CORS allowlist and disables Swagger unless `SWAGGER_ENABLED=true`. Use a random JWT secret of at least 32 characters. Then initialize the database:
+Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires verified TLS for a remote PostgreSQL server, an explicit CORS allowlist, trusted proxy addresses when proxying, and `FILE_SCAN_MODE=clamav`; Swagger stays disabled unless `SWAGGER_ENABLED=true`. Then initialize the database:
 
 ```bash
 npm run prisma:migrate
@@ -60,6 +60,14 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
+Current verification baseline (2026-07-14):
+
+- Backend build and Prisma validation pass with 15 applied migrations.
+- Jest: 13/13 suites and 72/72 tests.
+- Real PostgreSQL integration: 26/26 tests.
+- Root Playwright acceptance: 12/12 tests.
+- Root and backend dependency audits: 0 vulnerabilities.
+
 ## API
 
 - Health checks: `GET /api/health`, `GET /api/health/live`, `GET /api/health/ready`
@@ -90,11 +98,12 @@ The preparation and cleanup scripts reject database names that do not end in `_t
 - Risk rules and anomalies: `/api/risk-rules`, `/api/reports/anomalies`, `/api/ai/anomalies`
 - Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/projects/:projectId/{daily|monthly}`
 - Boss AI assistant: `POST /api/ai/chat`
+- Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
 - AI call logs: `GET /api/ai/call-logs`
 - Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/parse`
 - Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
 - Excel confirmation: `POST /api/import-tasks/:id/confirm`; field suggestions: `/api/field-suggestions`
-- OCR tasks: `GET/POST /api/ocr-tasks`, `POST /api/ocr-tasks/:id/{run|retry|cancel}`
+- OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
 - OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/confirm`
 - Model runtime metadata: `GET /api/model-runtime/deployments`, `/routes`, `/health`
 - Swagger UI: `/api/docs`
@@ -123,6 +132,8 @@ Notification visibility is always derived from the authenticated user: a notific
 
 Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, and voided records are excluded; money is aggregated with `Prisma.Decimal`, and day/week/month boundaries use `Asia/Shanghai`. The boss AI report tools call the same `ReportsService` used by the normal report APIs.
 
+All accounting amounts in JSON are fixed-decimal strings, not JavaScript numbers. Templates define immutable `accountingDirection`, `primaryAmountFieldId`, and `primaryDateFieldId`; manual entry, work orders, Excel, and OCR use the shared record policy so top-level amount/date and dynamic values cannot diverge.
+
 ## Seed Accounts
 
 Run:
@@ -148,9 +159,9 @@ The seed also creates default projects, templates, fields, six risk rules, one p
 
 ## File Storage
 
-Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` is configurable and `MAX_FILE_SIZE_MB` must be between 1 and 50. The API accepts validated image, PDF, Excel, CSV, and Word content, records SHA-256 metadata, limits a work order to 20 active attachments, applies work-order authorization, and uses soft deletion. Employee uploads must target their own editable work order; finance project files support manual records. Files referenced by business records are retained. Object storage and antivirus scanning are not implemented yet.
+Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` is configurable and `MAX_FILE_SIZE_MB` must be between 1 and 50. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. The API validates images, PDF, OOXML, CSV, and Word content structurally, rejects active/forged documents and EICAR, records SHA-256 metadata, limits work-order attachments, and enforces user/project quotas plus a minimum disk-waterline.
 
-The storage implementation is isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local storage later. Virus scanning is reserved through `scanStatus`; phase 5 does not include a real antivirus engine.
+`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Downloads are streamed, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. The storage implementation remains isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local disk later; the ClamAV daemon, object storage, backup, and retention jobs are deployment responsibilities.
 
 ## AI Provider
 
@@ -180,15 +191,19 @@ AI_API_KEY=
 
 The compatible endpoint must implement `POST /chat/completions`. The model never receives database access; the backend selects approved tools and sends only their structured results.
 
+The server loads a bounded persisted conversation history (16 messages / 12,000 characters), isolates conversations by boss user, treats tool data as untrusted content, and caps provider response bytes and output tokens. Conversation and message history APIs are paginated.
+
 OCR defaults to `OCR_PROVIDER=mock`. The repository now includes a buildable `local_paddle` adapter implementing the provider-neutral HTTP contract. Database model routes select the real AI/OCR providers only after `model:routes enable` passes an authenticated health check. Runtime timeout, retry, circuit breaker, queue, concurrency and deployment instructions are documented in `docs/MODEL_DEPLOYMENT.md`.
 
 ## Runtime Security
 
 - `CORS_ORIGINS` is a comma-separated exact-origin allowlist.
-- `REQUEST_RATE_LIMIT_WINDOW_MS` / `REQUEST_RATE_LIMIT_MAX` configure global per-IP limits; login failures have a separate 5-attempt/15-minute block.
-- `TRUST_PROXY_HOPS` stays `0` unless the reverse-proxy topology is known.
+- Authentication defaults to an HttpOnly, SameSite=Strict session cookie; cookie-authenticated writes require the matching CSRF cookie/header. Bearer authentication remains available for API clients. Production cookie names use the `__Host-` prefix and `Secure`.
+- `REQUEST_RATE_LIMIT_WINDOW_MS` / `REQUEST_RATE_LIMIT_MAX` configure global per-IP limits. Login admission atomically limits IP, username, and pair keys, performs dummy password work for unknown users, and expires stale counters.
+- Keep `TRUST_PROXY_HOPS=0` for direct access. Production proxying requires exact `TRUSTED_PROXIES` IP/CIDR entries, and the Nest port must not be publicly reachable around the proxy.
 - `/api/health/ready` checks PostgreSQL; `/api/health` remains the phase 0 compatibility probe.
 - Structured logs include requestId, path, status, latency and authenticated actor, but not request bodies, Tokens, passwords or Provider keys.
+- Demo seed rejects production and ambiguous `NODE_ENV` values and requires an explicit database-bound confirmation before resetting demo users.
 - Use `npm run prisma:migrate:deploy` in deployment and allow NestJS shutdown hooks to close connections.
 
 See `docs/SECURITY.md` and `docs/LOCAL_SETUP.md` for the production gap list and repeatable Windows/cross-platform initialization.
@@ -215,10 +230,16 @@ Completed:
 - Realization batch G: model deployment/route registry, provider contracts, JSON Schema validation, health checks, timeout/retry/circuit breaker and bounded concurrency.
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
+- PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
 
-Not implemented yet:
+Explicitly deferred by the user:
+
+- Cross-source duplicate-posting policy and idempotency across separate Excel uploads, OCR tasks, and manual retries (audit P1-07).
+- Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001-row memory, latency, response-size, and recovery benchmarks (audit P1-08).
+
+Deployment or data work still required:
 
 - Real container startup and accuracy tuning against redacted company documents; the current Windows host still needs WSL 2/Docker installation.
-- Qwen3-VL startup until its missing third safetensor shard is downloaded.
-- Object storage, antivirus scanning, and production backup jobs.
+- All four local model asset sets pass integrity checks, but GPU container startup, OOM/latency checks, and service recovery have not been exercised.
+- Object storage, a running ClamAV service, production backup/restore, and retention jobs.
 - Shared/distributed rate limiting, centralized observability, managed secrets and production infrastructure validation.

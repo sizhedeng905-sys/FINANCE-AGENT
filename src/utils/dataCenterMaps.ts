@@ -52,11 +52,13 @@ export const sourceTypeMap: Record<BusinessRecord['sourceType'], string> = {
 
 export const importStatusMap: Record<ImportTask['status'], string> = {
   uploaded: '已上传',
+  parsing: '解析中',
   parsed: '已解析',
   mapping: '待映射',
   pending_confirm: '待确认',
   confirmed: '已确认',
   failed: '失败',
+  cancelled: '已取消',
 };
 
 export const suggestionStatusMap: Record<FieldSuggestion['status'], string> = {

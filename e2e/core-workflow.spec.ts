@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { moneyToCents } from '../src/utils/money';
 import {
   API_FRONTEND_URL,
   chinaDate,
@@ -20,7 +21,7 @@ interface WorkOrderDto {
 
 interface RecordDto {
   id: string;
-  amount: number;
+  amount: string;
   sourceId: string;
   status: string;
 }
@@ -29,7 +30,7 @@ test('API mode: employee submission reaches a confirmed record and boss report',
   test.setTimeout(120_000);
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const description = `E2E D workflow ${suffix}`;
-  const amount = 4321.09;
+  const amount = '4321.09';
 
   await login(page, 'employee', '/employee/home');
   await page.goto(`${API_FRONTEND_URL}/work-orders/create`);
@@ -114,8 +115,8 @@ test('API mode: employee submission reaches a confirmed record and boss report',
     response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/reports/boss'
   ));
   await page.goto(`${API_FRONTEND_URL}/boss/reports`);
-  const report = await readEnvelope<{ expense: number; recordCount: number }>(await reportResponse);
-  expect(report.data.expense).toBeGreaterThanOrEqual(amount);
+  const report = await readEnvelope<{ expense: string; recordCount: number }>(await reportResponse);
+  expect(moneyToCents(report.data.expense) >= moneyToCents(amount)).toBeTruthy();
   expect(report.data.recordCount).toBeGreaterThanOrEqual(1);
   const expenseMetric = page.locator('.metric-card').filter({ hasText: '确认支出' });
   await expect(expenseMetric).toContainText('4,321.09');

@@ -2,6 +2,7 @@ import { Prisma, WorkOrderStatus } from '@prisma/client';
 
 export const workOrderInclude = {
   attachments: {
+    include: { rawFile: true },
     orderBy: { createdAt: 'asc' }
   },
   timeline: {
@@ -50,13 +51,17 @@ export function toWorkOrder(workOrder: WorkOrderWithRelations) {
     customerName: workOrder.customerName ?? '',
     creatorName: workOrder.creatorName,
     creatorId: workOrder.creatorId,
-    amount: Number(workOrder.amount),
-    income: Number(workOrder.income),
-    cost: Number(workOrder.cost),
-    profit: Number(workOrder.profit),
+    amount: workOrder.amount.toFixed(2),
+    income: workOrder.income.toFixed(2),
+    cost: workOrder.cost.toFixed(2),
+    profit: workOrder.profit.toFixed(2),
     status: workOrder.status,
     riskLevel: workOrder.riskLevel,
     occurredDate: workOrder.occurredDate?.toISOString(),
+    submittedAt: workOrder.submittedAt?.toISOString(),
+    templateId: workOrder.templateId ?? undefined,
+    templateVersion: workOrder.templateVersion ?? undefined,
+    version: workOrder.version,
     createdAt: workOrder.createdAt.toISOString(),
     updatedAt: workOrder.updatedAt.toISOString(),
     currentStep: stepByStatus[workOrder.status],

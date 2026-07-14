@@ -25,6 +25,7 @@ const env = {
   NODE_ENV: 'test',
   DATABASE_URL: databaseUrl,
   SEED_ALLOW_NONSTANDARD_DATABASE: 'false',
+  SEED_DEMO_CONFIRMATION: `reset-demo-users:${databaseName}`,
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://127.0.0.1:4173,http://127.0.0.1:4174',
   REQUEST_RATE_LIMIT_MAX: process.env.REQUEST_RATE_LIMIT_MAX || '5000'
 };

@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsDateString, IsNumber, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsDateString, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 
 import { RecordValueInputDto } from './record-value-input.dto';
 
@@ -11,11 +11,13 @@ export class UpdateRecordDto {
   @IsDateString({ strict: true })
   recordDate?: string;
 
-  @ApiPropertyOptional({ example: 8800 })
+  @ApiPropertyOptional({ example: '8800.00', type: String })
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ allowInfinity: false, allowNaN: false, maxDecimalPlaces: 2 })
-  amount?: number;
+  @IsString()
+  @Matches(/^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/, {
+    message: 'amount 必须是最多两位小数的非负十进制字符串'
+  })
+  amount?: string;
 
   @ApiPropertyOptional({ example: '成本' })
   @IsOptional()

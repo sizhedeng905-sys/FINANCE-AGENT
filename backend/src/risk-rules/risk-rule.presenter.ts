@@ -28,7 +28,7 @@ export function toAnomaly(anomaly: AnomalyWithRelations) {
     projectId: anomaly.projectId ?? undefined,
     projectName: anomaly.project?.name ?? anomaly.workOrder.projectName,
     type: anomaly.anomalyType,
-    amount: Number(anomaly.workOrder.amount),
+    amount: anomaly.workOrder.amount.toFixed(2),
     riskLevel: anomaly.riskLevel,
     reason: anomaly.reason,
     suggestion: anomaly.suggestion ?? '',
@@ -37,6 +37,11 @@ export function toAnomaly(anomaly: AnomalyWithRelations) {
     statusText: anomaly.workOrder.status,
     rule: toRiskRule(anomaly.rule),
     detectedAt: anomaly.detectedAt.toISOString(),
+    handledById: anomaly.handledById ?? undefined,
+    handledByName: anomaly.handledByName ?? undefined,
+    handlingReason: anomaly.handlingReason ?? undefined,
+    handledAt: anomaly.handledAt?.toISOString(),
+    resolvedAt: anomaly.resolvedAt?.toISOString(),
     updatedAt: anomaly.updatedAt.toISOString()
   };
 }

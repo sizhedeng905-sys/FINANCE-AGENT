@@ -8,6 +8,7 @@ import { fetchProjectMonthlyReportApi } from '@/api/reportApi';
 import type { Project } from '@/types/dataCenter';
 import type { ProjectReport } from '@/types/report';
 import { formatMoney, formatPercent } from '@/utils/format';
+import { moneyRatioPercent } from '@/utils/money';
 
 interface ProjectOverview {
   project: Project;
@@ -61,7 +62,7 @@ export default function BossProjectsPage() {
     { title: '本月利润', render: (_, item) => formatMoney(item.report.profit) },
     {
       title: '利润率',
-      render: (_, item) => formatPercent(item.report.income ? (item.report.profit / item.report.income) * 100 : 0),
+      render: (_, item) => formatPercent(moneyRatioPercent(item.report.profit, item.report.income)),
     },
     { title: '异常数量', render: (_, item) => item.report.anomalyCount },
     {

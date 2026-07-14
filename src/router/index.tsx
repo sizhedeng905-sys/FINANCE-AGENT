@@ -1,50 +1,54 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { Spin } from 'antd';
 import MainLayout from '@/layouts/MainLayout';
-import LoginPage from '@/pages/login/LoginPage';
-import EmployeeHome from '@/pages/employee/EmployeeHome';
-import CreateWorkOrderPage from '@/pages/employee/CreateWorkOrderPage';
-import MyWorkOrdersPage from '@/pages/employee/MyWorkOrdersPage';
-import FinanceHome from '@/pages/finance/FinanceHome';
-import FinanceAuditPage from '@/pages/finance/FinanceAuditPage';
-import FinanceAnomaliesPage from '@/pages/finance/FinanceAnomaliesPage';
-import FinanceReportsPage from '@/pages/finance/FinanceReportsPage';
-import ReviewerHome from '@/pages/reviewer/ReviewerHome';
-import ReviewerTasksPage from '@/pages/reviewer/ReviewerTasksPage';
-import ReviewerHistoryPage from '@/pages/reviewer/ReviewerHistoryPage';
-import ReviewerTaskDetailPage from '@/pages/reviewer/ReviewerTaskDetailPage';
-import BossHome from '@/pages/boss/BossHome';
-import BossApprovalPage from '@/pages/boss/BossApprovalPage';
-import BossApprovalDetailPage from '@/pages/boss/BossApprovalDetailPage';
-import BossAIPage from '@/pages/boss/BossAIPage';
-import BossReportsPage from '@/pages/boss/BossReportsPage';
-import BossProjectsPage from '@/pages/boss/BossProjectsPage';
-import WorkOrderDetailPage from '@/pages/common/WorkOrderDetailPage';
-import NotFoundPage from '@/pages/common/NotFoundPage';
-import DataProjectsPage from '@/pages/data/DataProjectsPage';
-import DataTemplatesPage from '@/pages/data/DataTemplatesPage';
-import DataTemplateEditPage from '@/pages/data/DataTemplateEditPage';
-import DataFieldsPage from '@/pages/data/DataFieldsPage';
-import DataManualRecordPage from '@/pages/data/DataManualRecordPage';
-import DataImportPage from '@/pages/data/DataImportPage';
-import DataImportMappingPage from '@/pages/data/DataImportMappingPage';
-import DataImportConfirmPage from '@/pages/data/DataImportConfirmPage';
-import DataImportTasksPage from '@/pages/data/DataImportTasksPage';
-import DataRecordsPage from '@/pages/data/DataRecordsPage';
-import DataFieldSuggestionsPage from '@/pages/data/DataFieldSuggestionsPage';
-import DataProjectStructurePage from '@/pages/data/DataProjectStructurePage';
-import DataOcrPage from '@/pages/data/DataOcrPage';
-import DataOcrTasksPage from '@/pages/data/DataOcrTasksPage';
-import DataOcrDetailPage from '@/pages/data/DataOcrDetailPage';
-import UserManagementPage from '@/pages/system/UserManagementPage';
 import { useAuthStore } from '@/store/authStore';
 import ProtectedRoute from './ProtectedRoute';
 import { getDefaultPath } from './roleMenus';
+
+const LoginPage = lazy(() => import('@/pages/login/LoginPage'));
+const EmployeeHome = lazy(() => import('@/pages/employee/EmployeeHome'));
+const CreateWorkOrderPage = lazy(() => import('@/pages/employee/CreateWorkOrderPage'));
+const MyWorkOrdersPage = lazy(() => import('@/pages/employee/MyWorkOrdersPage'));
+const FinanceHome = lazy(() => import('@/pages/finance/FinanceHome'));
+const FinanceAuditPage = lazy(() => import('@/pages/finance/FinanceAuditPage'));
+const FinanceAnomaliesPage = lazy(() => import('@/pages/finance/FinanceAnomaliesPage'));
+const FinanceReportsPage = lazy(() => import('@/pages/finance/FinanceReportsPage'));
+const ReviewerHome = lazy(() => import('@/pages/reviewer/ReviewerHome'));
+const ReviewerTasksPage = lazy(() => import('@/pages/reviewer/ReviewerTasksPage'));
+const ReviewerHistoryPage = lazy(() => import('@/pages/reviewer/ReviewerHistoryPage'));
+const ReviewerTaskDetailPage = lazy(() => import('@/pages/reviewer/ReviewerTaskDetailPage'));
+const BossHome = lazy(() => import('@/pages/boss/BossHome'));
+const BossApprovalPage = lazy(() => import('@/pages/boss/BossApprovalPage'));
+const BossApprovalDetailPage = lazy(() => import('@/pages/boss/BossApprovalDetailPage'));
+const BossAIPage = lazy(() => import('@/pages/boss/BossAIPage'));
+const BossReportsPage = lazy(() => import('@/pages/boss/BossReportsPage'));
+const BossProjectsPage = lazy(() => import('@/pages/boss/BossProjectsPage'));
+const WorkOrderDetailPage = lazy(() => import('@/pages/common/WorkOrderDetailPage'));
+const NotFoundPage = lazy(() => import('@/pages/common/NotFoundPage'));
+const DataProjectsPage = lazy(() => import('@/pages/data/DataProjectsPage'));
+const DataTemplatesPage = lazy(() => import('@/pages/data/DataTemplatesPage'));
+const DataTemplateEditPage = lazy(() => import('@/pages/data/DataTemplateEditPage'));
+const DataFieldsPage = lazy(() => import('@/pages/data/DataFieldsPage'));
+const DataManualRecordPage = lazy(() => import('@/pages/data/DataManualRecordPage'));
+const DataImportPage = lazy(() => import('@/pages/data/DataImportPage'));
+const DataImportMappingPage = lazy(() => import('@/pages/data/DataImportMappingPage'));
+const DataImportConfirmPage = lazy(() => import('@/pages/data/DataImportConfirmPage'));
+const DataImportTasksPage = lazy(() => import('@/pages/data/DataImportTasksPage'));
+const DataRecordsPage = lazy(() => import('@/pages/data/DataRecordsPage'));
+const DataFieldSuggestionsPage = lazy(() => import('@/pages/data/DataFieldSuggestionsPage'));
+const DataProjectStructurePage = lazy(() => import('@/pages/data/DataProjectStructurePage'));
+const DataOcrPage = lazy(() => import('@/pages/data/DataOcrPage'));
+const DataOcrTasksPage = lazy(() => import('@/pages/data/DataOcrTasksPage'));
+const DataOcrDetailPage = lazy(() => import('@/pages/data/DataOcrDetailPage'));
+const UserManagementPage = lazy(() => import('@/pages/system/UserManagementPage'));
 
 export default function AppRouter() {
   const user = useAuthStore((state) => state.user);
 
   return (
-    <Routes>
+    <Suspense fallback={<div className="app-route-loading"><Spin size="large" /></div>}>
+      <Routes>
       <Route
         path="/login"
         element={user ? <Navigate to={getDefaultPath(user.role)} replace /> : <LoginPage />}
@@ -97,6 +101,7 @@ export default function AppRouter() {
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }

@@ -15,10 +15,10 @@
 | 文本模型 | `model/Qwen3-14B-AWQ`，9.31 GiB，索引和 2 个分片完整 |
 | OCR 模型 | `model/PaddleOCR-VL`，2.00 GiB，V1 权重和 `PP-DocLayoutV2` 完整 |
 | Embedding | `model/Qwen3-Embedding-8B`，14.11 GiB，4 个分片完整 |
-| 视觉模型 | `model/Qwen3-VL-8B-Instruct` 不完整，缺少 `model-00003-of-00004.safetensors` |
-| WSL / Docker | 2026-07-14 审计时尚未安装，因此容器和真实推理尚未启动验收 |
+| 视觉模型 | `model/Qwen3-VL-8B-Instruct`，16.34 GiB，4 个分片完整 |
+| WSL / Docker | 2026-07-14 检查时 Windows 没有可用的 `docker` 命令，因此容器和真实推理尚未启动验收 |
 
-`Qwen3-VL-8B-Instruct` 目录当前存在 `model-00003-of-00004.safetensors.incomplete`。启动脚本会在停止文本服务之前拒绝启动该模型，必须先用原下载工具补齐该分片。
+`npm run model:check:all` 已验证文本、OCR、视觉和 Embedding 四套模型的配置、索引及全部分片；资产完整不等于模型服务已启动或准确率已验收。
 
 ## 运行策略
 
@@ -75,7 +75,7 @@ npm run model:check
 
 ```powershell
 npm run model:check                 # 文本 + OCR 常驻资产
-npm run model:check:all             # 全部模型；当前会因 VL 缺失分片失败
+npm run model:check:all             # 文本、OCR、VL、Embedding 全部资产
 node backend/scripts/verify-model-assets.mjs embedding
 node backend/scripts/verify-model-assets.mjs vl
 ```
@@ -163,7 +163,7 @@ npm run model:restore
 
 `model:on-demand` 先校验目标权重，再停止 `qwen-text` 并启动目标服务；失败时会尝试恢复文本服务。`model:restore` 停止 VL/Embedding 并等待文本模型重新就绪。Paddle OCR 在整个切换期间保持常驻。
 
-VL 补齐缺失分片后才可执行：
+VL 资产已完整，可在任务窗口按需执行：
 
 ```powershell
 npm run model:on-demand -- vl

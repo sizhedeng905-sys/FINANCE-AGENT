@@ -54,6 +54,8 @@ export async function mockCreateTemplate(payload: CreateTemplatePayload): Promis
     id: `mock-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: payload.name.trim(),
     recordType: payload.recordType,
+    accountingDirection: payload.accountingDirection ?? (payload.recordType === 'revenue' ? 'income' : 'expense'),
+    version: 1,
     description: payload.description?.trim() ?? '',
     isSystem: false,
     createdBy: 'mock-finance',
@@ -70,7 +72,7 @@ export async function mockUpdateTemplate(id: string, payload: UpdateTemplatePayl
   const normalized = { ...payload };
   if (normalized.name !== undefined) normalized.name = normalized.name.trim();
   if (normalized.description !== undefined) normalized.description = normalized.description.trim();
-  Object.assign(template, normalized, { updatedAt: new Date().toISOString() });
+  Object.assign(template, normalized, { version: template.version + 1, updatedAt: new Date().toISOString() });
   return clone(template);
 }
 

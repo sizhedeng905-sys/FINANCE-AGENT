@@ -13,7 +13,7 @@ import type { CreateWorkOrderPayload, WorkOrderType } from '@/types/workOrder';
 interface FormValues {
   type: WorkOrderType;
   projectId: string;
-  amount: number;
+  amount: string;
   reason: string;
   date?: Dayjs;
   expenseType?: string;
@@ -34,8 +34,6 @@ const typeOptions = [
 ];
 
 const expenseTypeOptions = ['人工', '运输', '场地', '设备', '办公', '其他'].map((item) => ({ label: item, value: item }));
-
-const num = (value?: number) => Number(value ?? 0);
 
 export default function CreateWorkOrderPage() {
   const [form] = Form.useForm<FormValues>();
@@ -92,7 +90,7 @@ export default function CreateWorkOrderPage() {
     const payload: CreateWorkOrderPayload = {
       type: values.type,
       projectId: project.id,
-      amount: values.amount === undefined ? undefined : num(values.amount),
+      amount: values.amount,
       description: values.reason?.trim() || undefined,
       occurredDate: values.date?.format('YYYY-MM-DD'),
       extraValues,
@@ -143,7 +141,7 @@ export default function CreateWorkOrderPage() {
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="申请金额（元）" name="amount" rules={[{ required: true, message: '请输入申请金额' }]}>
-                <InputNumber min={0} addonBefore="¥" className="full-width" />
+                <InputNumber<string> stringMode min="0.01" precision={2} step="0.01" addonBefore="¥" className="full-width" />
               </Form.Item>
             </Col>
           </Row>
@@ -160,8 +158,8 @@ export default function CreateWorkOrderPage() {
 
           {type === 'transport' ? (
             <Row gutter={16}>
-              <Col xs={24} md={6}><Form.Item label="车牌号" name="vehiclePlate"><Input /></Form.Item></Col>
-              <Col xs={24} md={6}><Form.Item label="司机" name="driverName"><Input /></Form.Item></Col>
+              <Col xs={24} md={6}><Form.Item label="车牌号" name="vehiclePlate" rules={[{ required: true, message: '请输入车牌号' }]}><Input /></Form.Item></Col>
+              <Col xs={24} md={6}><Form.Item label="司机" name="driverName" rules={[{ required: true, message: '请输入司机' }]}><Input /></Form.Item></Col>
               <Col xs={24} md={6}><Form.Item label="起点" name="startLocation"><Input /></Form.Item></Col>
               <Col xs={24} md={6}><Form.Item label="终点" name="endLocation"><Input /></Form.Item></Col>
             </Row>

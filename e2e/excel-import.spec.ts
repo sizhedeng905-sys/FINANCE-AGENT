@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { moneyToCents } from '../src/utils/money';
 import {
   API_FRONTEND_URL,
   isApiResponse,
@@ -35,7 +36,7 @@ interface RecordDto {
   importTaskId?: string;
   sourceId: string;
   sourceType: string;
-  amount: number;
+  amount: string;
   status: string;
 }
 
@@ -105,7 +106,7 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
   const imported = records.data.items.find((record) => record.importTaskId === created.data.id);
   expect(imported).toMatchObject({
     sourceType: 'excel',
-    amount: 8765.43,
+    amount: '8765.43',
     status: 'confirmed'
   });
   expect(imported?.sourceId).toBeTruthy();
@@ -119,7 +120,7 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
       && url.searchParams.get('period') === 'month';
   });
   await page.getByRole('tab', { name: '本月' }).click();
-  const report = await readEnvelope<{ totalExpense: number; confirmedRecords: number }>(await reportResponse);
-  expect(report.data.totalExpense).toBeGreaterThanOrEqual(8765.43);
+  const report = await readEnvelope<{ totalExpense: string; confirmedRecords: number }>(await reportResponse);
+  expect(moneyToCents(report.data.totalExpense) >= moneyToCents('8765.43')).toBeTruthy();
   expect(report.data.confirmedRecords).toBeGreaterThanOrEqual(1);
 });

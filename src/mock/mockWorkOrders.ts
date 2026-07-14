@@ -1,6 +1,7 @@
 import type { TimelineItem, WorkOrder, WorkOrderStatus } from '@/types/workOrder';
 
 const now = '2026-07-08 09:00';
+const money = (value: number) => value.toFixed(2);
 
 function stepFromStatus(status: WorkOrderStatus) {
   if (status === 'completed') return 5;
@@ -62,10 +63,10 @@ function base(
     customerName: project.customerName,
     creatorName: '陈明',
     creatorId: 'u-employee',
-    amount,
-    income,
-    cost,
-    profit,
+    amount: money(amount),
+    income: money(income),
+    cost: money(cost),
+    profit: money(profit),
     status,
     riskLevel,
     occurredDate: `2026-07-${String(Math.max(1, index)).padStart(2, '0')}`,
@@ -114,13 +115,13 @@ function transport(
     startLocation: '上海嘉定仓',
     endLocation: '杭州萧山门店',
     distance: 216 + index * 8,
-    transportIncome: amount,
-    fuelCost,
-    tollCost,
-    driverCost,
-    otherCost,
-    cost: fuelCost + tollCost + driverCost + otherCost,
-    profit: amount - fuelCost - tollCost - driverCost - otherCost,
+    transportIncome: money(amount),
+    fuelCost: money(fuelCost),
+    tollCost: money(tollCost),
+    driverCost: money(driverCost),
+    otherCost: money(otherCost),
+    cost: money(fuelCost + tollCost + driverCost + otherCost),
+    profit: money(amount - fuelCost - tollCost - driverCost - otherCost),
     remark: '运输订单模拟数据。',
   };
 }
@@ -135,7 +136,7 @@ function expense(
     ...base(index, status, riskLevel, 'expense', amount),
     type: 'expense',
     expenseType: index % 2 === 0 ? '装卸费' : '维修费',
-    expenseAmount: amount,
+    expenseAmount: money(amount),
     expenseDate: `2026-07-${String(index).padStart(2, '0')}`,
     paymentMethod: '银行转账',
     remark: '费用报销模拟数据。',
@@ -147,7 +148,7 @@ function other(index: number, status: WorkOrderStatus, riskLevel: WorkOrder['ris
     ...base(index, status, riskLevel, 'other', amount),
     type: 'other',
     expenseType: '临时支出',
-    expenseAmount: amount,
+    expenseAmount: money(amount),
     expenseDate: `2026-07-${String(index).padStart(2, '0')}`,
     paymentMethod: '备用金',
     remark: '其他支出模拟数据。',

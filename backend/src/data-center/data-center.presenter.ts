@@ -40,6 +40,10 @@ export function toTemplate(template: Template) {
     id: template.id,
     name: template.name,
     recordType: template.recordType,
+    accountingDirection: template.accountingDirection,
+    primaryAmountFieldId: template.primaryAmountFieldId ?? undefined,
+    primaryDateFieldId: template.primaryDateFieldId ?? undefined,
+    version: template.version,
     description: template.description ?? '',
     isSystem: template.isSystem,
     createdBy: template.createdBy ?? '',
@@ -82,6 +86,7 @@ export function toProjectTemplate(projectTemplate: ProjectTemplate) {
     id: projectTemplate.id,
     projectId: projectTemplate.projectId,
     templateId: projectTemplate.templateId,
+    recordType: projectTemplate.recordType,
     customName: projectTemplate.customName ?? '',
     isActive: projectTemplate.isActive,
     createdAt: projectTemplate.createdAt.toISOString(),
@@ -115,8 +120,11 @@ export function toBusinessRecord(record: BusinessRecordWithRelations) {
     templateId: record.templateId,
     templateName: record.template.name,
     recordType: record.recordType,
+    accountingDirection: record.accountingDirection,
+    templateVersion: record.templateVersion,
+    version: record.version,
     recordDate: record.recordDate.toISOString(),
-    amount: toNumber(record.amount),
+    amount: record.amount.toFixed(2),
     category: record.category ?? '',
     subCategory: record.subCategory ?? '',
     description: record.description ?? '',
@@ -142,7 +150,7 @@ export function normalizeAliases(value: Prisma.JsonValue | null): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function resolveRecordValue(recordValue: RecordValue): string | number | string[] | null {
+function resolveRecordValue(recordValue: RecordValue & { field?: FieldDefinition }): string | string[] | null {
   if (recordValue.valueJson !== null && recordValue.valueJson !== undefined) {
     if (Array.isArray(recordValue.valueJson)) {
       return recordValue.valueJson.filter((item): item is string => typeof item === 'string');
@@ -152,7 +160,9 @@ function resolveRecordValue(recordValue: RecordValue): string | number | string[
   }
 
   if (recordValue.valueNumber !== null && recordValue.valueNumber !== undefined) {
-    return toNumber(recordValue.valueNumber);
+    return recordValue.field?.fieldType === 'money'
+      ? recordValue.valueNumber.toFixed(2)
+      : recordValue.valueNumber.toString();
   }
 
   if (recordValue.valueDate) {
@@ -168,12 +178,4 @@ function normalizeStringArray(value: Prisma.JsonValue | null): string[] {
   }
 
   return value.filter((item): item is string => typeof item === 'string');
-}
-
-function toNumber(value: Prisma.Decimal | number | string): number {
-  if (typeof value === 'number') {
-    return value;
-  }
-
-  return Number(value);
 }

@@ -8,6 +8,7 @@ import {
   getOCRTasks,
   retryOCRTask,
   runOCRTask,
+  uploadAndCreateOCRTask,
 } from '@/api/ocrApi';
 import type {
   CorrectOCRTaskPayload,
@@ -30,6 +31,7 @@ interface OCRState {
   fetchTasks: (query?: OCRTaskListQuery) => Promise<void>;
   fetchTask: (id: string) => Promise<OCRTask>;
   createAndRun: (payload: CreateOCRTaskPayload) => Promise<OCRTask>;
+  uploadAndRun: (file: File, payload: Omit<CreateOCRTaskPayload, 'rawFileId'>) => Promise<OCRTask>;
   runTask: (id: string) => Promise<OCRTask>;
   correctTask: (id: string, payload: CorrectOCRTaskPayload) => Promise<OCRTask>;
   confirmTask: (id: string, acknowledgeLowConfidence: boolean) => Promise<OCRConfirmResult>;
@@ -82,6 +84,17 @@ export const useOCRStore = create<OCRState>((set) => {
       set({ loading: true, error: null });
       try {
         const created = await createOCRTask(payload);
+        upsert(created);
+        return upsert(await runOCRTask(created.id));
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    uploadAndRun: async (file, payload) => {
+      set({ loading: true, error: null });
+      try {
+        const created = await uploadAndCreateOCRTask(file, payload);
         upsert(created);
         return upsert(await runOCRTask(created.id));
       } catch (error) {

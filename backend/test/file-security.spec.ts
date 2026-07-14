@@ -1,0 +1,45 @@
+import { BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import ExcelJS from 'exceljs';
+import { PDFDocument } from 'pdf-lib';
+
+import { FileSecurityService } from '../src/files/file-security.service';
+
+describe('FileSecurityService', () => {
+  const config = {
+    get: jest.fn((key: string) => key === 'fileScan.mode' ? 'basic' : undefined)
+  } as unknown as ConfigService;
+  const security = new FileSecurityService(config);
+
+  it('accepts parser-valid PDF and OOXML documents', async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage([320, 240]);
+    await expect(security.scan('voucher.pdf', Buffer.from(await pdf.save()))).resolves.toBeUndefined();
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Sheet1').addRow(['日期', '金额']);
+    await expect(security.scan('records.xlsx', Buffer.from(await workbook.xlsx.writeBuffer()))).resolves.toBeUndefined();
+  });
+
+  it('rejects EICAR, forged PDFs, and PDF active content', async () => {
+    const eicar = Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*');
+    await expect(security.scan('eicar.csv', eicar)).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(security.scan('forged.pdf', Buffer.from('%PDF-1.4\n%%EOF'))).rejects.toBeInstanceOf(BadRequestException);
+
+    const pdf = await PDFDocument.create();
+    pdf.addPage([320, 240]);
+    const active = Buffer.concat([Buffer.from(await pdf.save()), Buffer.from('\n/JavaScript\n')]);
+    await expect(security.scan('active.pdf', active)).rejects.toThrow('PDF 包含活动内容');
+  });
+
+  it('rejects malformed OOXML and external relationships', async () => {
+    await expect(security.scan('forged.xlsx', Buffer.from('PK\u0003\u0004[Content_Types].xmlxl/workbook.xml')))
+      .rejects.toBeInstanceOf(BadRequestException);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1');
+    sheet.getCell('A1').value = { text: '外部链接', hyperlink: 'https://example.invalid/data' };
+    await expect(security.scan('external.xlsx', Buffer.from(await workbook.xlsx.writeBuffer())))
+      .rejects.toThrow('Office 文件包含外部关系');
+  });
+});

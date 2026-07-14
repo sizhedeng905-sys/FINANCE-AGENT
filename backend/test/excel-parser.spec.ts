@@ -54,4 +54,23 @@ describe('ExcelParserService phase 9', () => {
     for (let index = 0; index < 5001; index += 1) sheet.addRow([`2026-07-${String((index % 28) + 1).padStart(2, '0')}`]);
     await expect(parser.parse(Buffer.from(await tall.xlsx.writeBuffer()))).rejects.toThrow('Excel 数据行不能超过 5000');
   });
+
+  it('applies the same text limit to rich text and hyperlink cells', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('文本边界');
+    sheet.addRow(['说明', '链接']);
+    const row = sheet.addRow([]);
+    row.getCell(1).value = { richText: [{ text: 'a'.repeat(20_000) }] };
+    row.getCell(2).value = { text: 'b'.repeat(20_000), hyperlink: 'https://example.invalid' };
+
+    const parsed = await parser.parse(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.rows[0].status).toBe('error');
+    expect(parsed.rows[0].errors).toEqual(expect.arrayContaining([
+      '说明：文本不能超过 10000 个字符',
+      '链接：文本不能超过 10000 个字符'
+    ]));
+    expect(String(parsed.rows[0].rawData['说明'])).toHaveLength(10_000);
+    expect(String(parsed.rows[0].rawData['链接'])).toHaveLength(10_000);
+  });
 });

@@ -3,7 +3,7 @@
 更新日期：2026-07-14
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/complete-real-api-and-local-model-runtime`
-当前提交：`561db74 process 8`
+当前批次：PR #2 完整审计修复与发布前回归
 
 ## 完成口径
 
@@ -11,6 +11,17 @@
 - “真实闭环完成”必须同时具备真实 PostgreSQL、真实 API、后端权限、错误处理和自动化测试证据。
 - `api` 模式失败时不得静默回退到 Mock；Mock 只能由显式环境变量启用。
 - 本文件在每个执行批次结束后更新。
+
+## PR #2 审计修复结论
+
+2026-07-14 已按审计报告完成除用户明确暂缓项之外的 P1/P2/P3 修复，并通过最终自动化回归。核心变化包括会计方向与主字段、Decimal 字符串契约、经营记录/工单并发锁和提交快照、不可变模板版本、文件 fail-closed 与 ClamAV 门禁、导入/OCR lease、原子 OCR 上传、AI 历史和输出边界、异常处置、Cookie/CSRF、真实项目结构页、路由拆包及 CI 供应链加固。
+
+明确暂缓：
+
+- P1-07：不同 Excel 上传、OCR 任务和手工重试之间的业务级去重与统一幂等政策。
+- P1-08：5000 行 Excel 的后台分块实现，以及 4999/5000/5001 行性能、内存和失败恢复基准。
+
+当前自动化证据：15/15 Prisma migrations；13/13 Jest suites、72/72 tests；26/26 真实 PostgreSQL；12/12 Playwright；前后端 build；386 个 tracked/candidate 文件卫生检查；根目录与后端 `npm audit` 均为 0 vulnerabilities。四套本地模型资产均完整，但当前系统无可用 Docker，真实 GPU 推理仍未验收。
 
 ## 当前状态矩阵
 
@@ -22,13 +33,13 @@
 | 字段/模板字段 | 显式 Mock/API Repository；真实分页筛选、CRUD/停用、usage、模板字段增改排序移除；相关页面具备 loading/error/empty | finance-only 字段字典管理；boss 仅可读取项目已启用模板字段；严格 DTO、停用保护、连续排序、类型变更保护及审计 | `field_definitions`、`template_fields` 已在 dev/test PostgreSQL 验证 | 32 个普通测试、13 个真实集成测试中的字段不变量用例、API/Mock 浏览器验收 | 显式 Mock/API | C-3 真实闭环完成 |
 | 业务记录/手工补录 | 显式 Mock/API Repository；真实创建、分页筛选、详情、编辑、确认、软作废和项目结构记录 | 动态值类型与必填校验、草稿边界、来源/状态防伪、状态专用动作、幂等、归档保护、审计和 ledger | `business_records`、`record_values`、`ledger_events` 已在 dev/test PostgreSQL 验证 | 32 个普通测试、15 个真实集成测试、API/Mock 浏览器完整补录验收 | 显式 Mock/API | C-5 与 C-6 真实闭环完成 |
 | 工单/审批 | 显式 Mock/API Repository；真实分页、筛选、详情、草稿、提交、补充、各角色审核、规则/AI 复核、催办和终审归档 | 唯一状态机、角色资源范围、提交完整校验、死路恢复、并发状态保护、终审幂等事务和审计 | 工单、附件、时间线、审批及第 10 个迁移已在 dev/test PostgreSQL 验证 | 32 个普通测试、16 个真实 PostgreSQL 集成测试、API/Mock 全流程浏览器验收 | 显式 Mock/API | C-7 真实闭环完成 |
-| 文件 | 显式 Mock/API Repository；工单与手工补录真实上传，元数据、预览、下载、软删除及记录详情已接通 | 可替换 FileStorage、本地不可预测路径、SHA-256、MIME/签名/内容/名称/大小/数量校验、角色与状态授权、原件保留 | `raw_files`、附件关系已在 dev/test PostgreSQL 验证；上传目录与测试目录均忽略 | 34 个普通测试、17 个真实 PostgreSQL 集成测试、API/Mock/移动端浏览器验收 | 显式 Mock/API | C-8 本地文件真实闭环完成；对象存储与病毒扫描未实现 |
+| 文件 | 显式 Mock/API Repository；工单与手工补录真实上传，元数据、预览、下载、作废及记录详情已接通 | 私有隔离区、SHA-256、结构解析、fail-closed 扫描、ClamAV 生产门禁、流式读写、配额/磁盘水位、角色与状态授权 | `raw_files`、附件关系已在 dev/test PostgreSQL 验证；上传目录与测试目录均忽略 | 文件攻击单测、真实 PostgreSQL 和 API/Mock 浏览器验收 | 显式 Mock/API | 本地文件闭环完成；对象存储和目标环境 ClamAV/备份待部署 |
 | 通知 | 显式 Mock/API Repository；服务端分页、未读数、单条/全部已读、轮询和工作流跳转已接通 | 按 JWT 用户隔离目标用户/角色通知；用户级已读收据、幂等审计和参数校验 | `notifications`、`notification_receipts` 已通过第 11 个 migration 在 dev/test PostgreSQL 验证 | 34 个普通测试、18 个真实 PostgreSQL 集成测试中的通知隔离用例、API/Mock/移动端浏览器验收 | 显式 Mock/API | C-9 真实闭环完成 |
 | 报表 | 显式 Mock/API Repository；财务日/周/月、老板日/周/月、老板首页和项目月报概览已接通 | 仅聚合 confirmed BusinessRecord；Decimal 金额、北京时间边界、分类、异常、排行及四角色权限 | 复用真实经营记录、审批和异常表；第一版实时聚合不新增报表快照表 | 35 个普通测试、19 个真实 PostgreSQL 集成测试中的固定数据/边界/AI 一致性用例、API/Mock/移动端浏览器验收 | 显式 Mock/API | C-10 真实闭环完成；历史快照未实现 |
 | Excel | 显式 Mock/API Repository、真实上传、任务列表、列映射、字段建议、错误预览和确认页 | 单 Sheet `.xlsx` 解析、确定性映射、人工决定、逐行校验、部分成功、事务确认与幂等 | 第 12 个 migration 新增 ImportTask/Sheet/Column/Row、Profile/Decision/Suggestion，并关联 BusinessRecord | 38 个普通测试、22 个 PostgreSQL 集成测试、真实浏览器上传验收 | API 模式读取真实文件；Mock 模式显式可选 | 批次 E/阶段 9 真实闭环完成；复杂历史表留作适配 |
 | OCR | 显式 Mock/API Repository、票据上传、任务列表、原文/证据/置信度、人工纠错和确认页 | Mock/Local Paddle HTTP Provider、可构建 PaddleOCR-VL 适配器、PDF预检查、任务状态机、重试、严格纠错、幂等确认 | 第 13 个 migration 新增 `ocr_tasks`、`ocr_attempts`、`ocr_corrections` 并关联原文件和生成记录 | 普通/集成/E2E 基线通过；适配器纯逻辑测试通过 | 默认 Mock；真实路由启用前需鉴权健康检查 | 程序链完成；Docker 实际启动和真实样本准确率待验收 |
-| AI/模型运行时 | 显式 Mock/API 聊天；模型运行时通过受保护 API 查看部署、路由和健康 | 结构化工具、DB 路由真实选型、OpenAI-compatible、资产校验、常驻/按需编排、超时/重试/熔断/队列 | 第 14 个 migration 新增部署、任务路由、通用 AI 任务/尝试，并扩展 call log 哈希/correlation | 无 GPU 路径基线通过；文本/OCR/Embedding 权重完整性通过，VL 缺失分片被正确拦截 | 默认 Mock；文本和 OCR 计划常驻，VL/Embedding 按需 | 程序链完成；WSL 2/Docker 与真实性能待验收 |
-| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 62 个普通测试、24 个 PostgreSQL 集成测试、12 个 Playwright E2E | API 与 Mock 均有自动化证据 | 批次 D-H 全部完成，GitHub CI job 已配置 |
+| AI/模型运行时 | 显式 Mock/API 聊天；会话和消息分页；模型运行时通过受保护 API 查看部署、路由和健康 | 结构化工具、有限服务端历史、DB 路由、OpenAI-compatible、输出边界、常驻/按需编排、超时/重试/熔断/队列 | 模型部署、任务路由、AI 任务/尝试、会话消息和调用日志均持久化 | 无 GPU 路径基线通过；文本/OCR/VL/Embedding 四套权重完整性通过 | 默认 Mock；文本和 OCR 计划常驻，VL/Embedding 按需 | 程序链完成；Docker/GPU 真实性能待验收 |
+| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 72 个普通测试、26 个 PostgreSQL 集成测试、12 个 Playwright E2E | API 与 Mock 均有自动化证据 | 审计修复回归通过，GitHub CI job 已配置 |
 
 ## 只读审计结论
 
@@ -70,15 +81,15 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| 前端 `npm run build` | 通过；存在大于 500 kB 的 bundle 警告 |
+| 前端 `npm run build` | 通过；页面路由懒加载，最大业务共享块约 449 kB，Ant Design runtime 约 554 kB，无循环或体积警告 |
 | 后端 `npm run build` | 通过 |
-| 后端 `npm test -- --runInBand` | 11/11 suites，64/64 tests 通过 |
-| `prisma validate` | 通过，仅为静态 schema 校验 |
-| 真实 migration / seed | dev/test 两库均通过 14 个 migration 和 seed |
-| 真实数据库集成 | 1/1 suite，24/24 tests 通过；包含 Token、Excel、OCR和模型运行时安全元数据/健康检查 |
+| 后端 `npm test -- --runInBand` | 13/13 suites，72/72 tests 通过 |
+| `prisma validate` | 通过；schema 已执行官方 formatter |
+| 真实 migration / seed | dev/test 两库均通过 15 个 migration 和 seed |
+| 真实数据库集成 | 1/1 suite，26/26 tests 通过；包含财务精度、并发、Token、文件、Excel、OCR、AI 和模型运行时边界 |
 | 前端浏览器验收 | 12/12 Playwright 自动化通过；四角色登录、完整审批、真实 XLSX/PDF、数据中心/报表、错误与安全运行 |
 | 后端 `npm run dev` | 使用 Node watch + ts-node 正常启动，`GET /api/health` 返回统一成功结构 |
-| 模型资产与适配器 | 文本、OCR、Embedding 通过；VL 缺失分片按预期失败；Paddle 适配器 4/4 纯逻辑测试通过 |
+| 模型资产与适配器 | 文本 9.31 GiB、OCR 2 GiB、VL 16.34 GiB、Embedding 14.11 GiB 全部通过；Docker/GPU 推理未启动 |
 
 ## 批次进度
 
@@ -326,13 +337,13 @@
 - Ajv JSON Schema 对模型中间结构做严格验证；新增可构建 PaddleOCR-VL 适配器，输出再由后端按内部 OCR 契约校验。
 - `npm run model:routes -- list|enable|disable` 提供显式路由开关；启用前执行带密钥健康检查，生产修改需额外环境授权。
 - `deploy/model-services` 提供文本/OCR 常驻、VL/Embedding 按需的 Compose 和 OCR OpenAPI 契约；脚本在共享 GPU 上切换大模型并在失败时恢复文本服务。
-- 已只读核对本地权重索引：文本、OCR、Embedding 完整；Qwen3-VL 第 3 分片未完成并被启动前校验拦截。未移动、删除、转换或提交任何模型权重。
+- 已只读核对本地权重索引：文本、OCR、Qwen3-VL、Embedding 全部完整。未移动、删除、转换或提交任何模型权重。
 - 验收证据：后端 build、10/10 suites 55/55 单测、24/24 PostgreSQL；11/11 E2E 仍保持通过（阶段 F 最后一次全量运行）。
 
 ## 本地模型部署跟进
 
 - 本机 GPU 为 RTX 5090 32 GB，驱动 591.86；文本与 OCR 采用单并发常驻，vLLM 初始显存比例 0.52。
-- `verify-model-assets.mjs` 校验配置、Tokenizer、索引分片、非空文件、`.incomplete` 和 OCR 布局模型；常驻资产通过，VL 缺失分片的失败路径通过。
+- `verify-model-assets.mjs` 校验配置、Tokenizer、索引分片、非空文件、`.incomplete` 和 OCR 布局模型；四套模型资产均通过。
 - `model-services.mjs` 支持初始化本地密钥、常驻启动、状态检查、日志、按需模型切换、文本恢复与全部停止。
 - OCR 适配器限制类型和大小、校验 Bearer Key、串行推理、清理临时文件，并只产生低置信度确定性字段候选，强制保留人工确认。
 - 后端 AI 和 OCR 现在优先解析启用的数据库任务路由；密钥通过 `secretRef` 读取环境变量，不进入数据库或日志。
@@ -348,7 +359,7 @@
 - 生产 Swagger 默认关闭，启用 shutdown hook；部署 migration 使用 `prisma migrate deploy`。
 - 仓库卫生脚本检查 `.env`、模型权重、上传物、测试样本和高风险密钥模式；370 个 tracked/candidate 文件通过。
 - `docs/ARCHITECTURE.md`、`docs/SECURITY.md`、`docs/LOCAL_SETUP.md` 与 `docs/PR_PREPARATION.md` 补齐架构、安全、Windows/跨平台初始化和 PR/回滚说明。
-- 最终证据：前后端 build 通过；11/11 suites、64/64 单测；24/24 PostgreSQL；12/12 Playwright；Paddle 适配器 4/4；14 个 migration、40 张业务表核对一致。
-- 生产依赖高危/严重漏洞为 0；ECharts 与 ExcelJS 传递依赖的中等级公告已记录，未执行破坏性 `--force` 修复。
+- 审计修复后证据：前后端 build 通过；13/13 suites、72/72 单测；26/26 PostgreSQL；12/12 Playwright；15 个 migration、41 张业务表核对一致。
+- 根目录与后端 `npm audit` 均为 0 vulnerabilities；未使用破坏性 `--force` 修复。
 - 当前实现仍默认 Mock AI/OCR；真实 GPU 性能、模型准确率、企业 Excel/票据适配明确留待 Docker 环境、脱敏样本与业务真值。
 - 用户已确认提交和推送；当前在专用分支完成模型部署跟进与全量回归，尚未 merge。

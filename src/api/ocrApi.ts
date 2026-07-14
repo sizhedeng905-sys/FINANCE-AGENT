@@ -41,6 +41,25 @@ export function createOCRTask(payload: CreateOCRTaskPayload): Promise<OCRTask> {
     : mockCreateOCRTask(payload);
 }
 
+export async function uploadAndCreateOCRTask(
+  file: File,
+  payload: Omit<CreateOCRTaskPayload, 'rawFileId'>,
+): Promise<OCRTask> {
+  if (runtimeConfig.dataMode !== 'api') {
+    const { mockUploadFile } = await import('./mockFileRepository');
+    const rawFile = await mockUploadFile(file, payload.projectId);
+    return mockCreateOCRTask({ ...payload, rawFileId: rawFile.id });
+  }
+  const formData = new FormData();
+  formData.set('file', file);
+  formData.set('projectId', payload.projectId);
+  formData.set('templateId', payload.templateId);
+  if (payload.mockScenario) formData.set('mockScenario', payload.mockScenario);
+  return httpClient.post<OCRTask>('/ocr-tasks/upload', formData, {
+    headers: { 'Idempotency-Key': idempotencyKey('ocr-upload') },
+  });
+}
+
 export function getOCRTasks(query: OCRTaskListQuery = {}): Promise<PaginatedOCRTasks> {
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<PaginatedOCRTasks>(`/ocr-tasks${queryString(query)}`)

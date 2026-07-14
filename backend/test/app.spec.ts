@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
+  AccountingDirection,
   BusinessRecordStatus,
   DataRecordType,
   FieldType,
@@ -49,6 +50,10 @@ interface TemplateRecord {
   id: string;
   name: string;
   recordType: DataRecordType;
+  accountingDirection: AccountingDirection;
+  primaryAmountFieldId: string | null;
+  primaryDateFieldId: string | null;
+  version: number;
   description: string | null;
   isSystem: boolean;
   createdBy: string | null;
@@ -86,6 +91,7 @@ interface ProjectTemplateRecord {
   id: string;
   projectId: string;
   templateId: string;
+  recordType: DataRecordType;
   customName: string | null;
   isActive: boolean;
   createdAt: Date;
@@ -97,6 +103,9 @@ interface BusinessRecordRecord {
   projectId: string;
   templateId: string;
   recordType: DataRecordType;
+  accountingDirection: AccountingDirection;
+  templateVersion: number;
+  version: number;
   recordDate: Date;
   amount: number;
   category: string | null;
@@ -252,13 +261,28 @@ class InMemoryPrisma {
       this.applyTemplateWhere(where)
         .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
         .slice(skip, skip + take),
-    count: async ({ where }: { where?: Record<string, unknown> }) => this.applyTemplateWhere(where).length,
+    count: async ({ where }: { where?: Record<string, unknown> }) => {
+      const primaryFilters = where?.OR as Array<{ primaryAmountFieldId?: string; primaryDateFieldId?: string }> | undefined;
+      if (primaryFilters?.some((item) => item.primaryAmountFieldId !== undefined || item.primaryDateFieldId !== undefined)) {
+        return this.templates.filter((template) => primaryFilters.some((filter) =>
+          (filter.primaryAmountFieldId !== undefined && template.primaryAmountFieldId === filter.primaryAmountFieldId) ||
+          (filter.primaryDateFieldId !== undefined && template.primaryDateFieldId === filter.primaryDateFieldId)
+        )).length;
+      }
+      return this.applyTemplateWhere(where).length;
+    },
     create: async ({ data }: { data: any }) => {
       const now = new Date();
       const template: TemplateRecord = {
         id: data.id ?? `template_${++this.templateCounter}`,
         name: data.name,
         recordType: data.recordType,
+        accountingDirection:
+          data.accountingDirection ??
+          (data.recordType === DataRecordType.revenue ? AccountingDirection.income : AccountingDirection.expense),
+        primaryAmountFieldId: data.primaryAmountFieldId ?? null,
+        primaryDateFieldId: data.primaryDateFieldId ?? null,
+        version: data.version ?? 1,
         description: data.description ?? null,
         isSystem: data.isSystem ?? false,
         createdBy: data.createdBy ?? null,
@@ -281,10 +305,12 @@ class InMemoryPrisma {
 
       return template;
     },
-    update: async ({ where, data }: { where: { id: string }; data: Partial<TemplateRecord> }) => {
+    update: async ({ where, data }: { where: { id: string }; data: any }) => {
       const template = this.templates.find((item) => item.id === where.id);
       if (!template) throw new Error('Template not found');
-      Object.assign(template, data, { updatedAt: new Date() });
+      const cleanData = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+      if (typeof data.version === 'object') cleanData.version = template.version + data.version.increment;
+      Object.assign(template, cleanData, { updatedAt: new Date() });
       return template;
     },
     delete: async ({ where }: { where: { id: string } }) => {
@@ -340,8 +366,14 @@ class InMemoryPrisma {
   };
 
   templateField = {
-    findUnique: async ({ where, include }: { where: { id: string }; include?: Record<string, unknown> }) => {
-      const templateField = this.templateFields.find((item) => item.id === where.id);
+    findUnique: async ({ where, include }: { where: { id?: string; templateId_fieldId?: { templateId: string; fieldId: string } }; include?: Record<string, unknown> }) => {
+      const templateField = this.templateFields.find(
+        (item) =>
+          item.id === where.id ||
+          (where.templateId_fieldId &&
+            item.templateId === where.templateId_fieldId.templateId &&
+            item.fieldId === where.templateId_fieldId.fieldId)
+      );
       return templateField ? this.withTemplateFieldInclude(templateField, include) : null;
     },
     findMany: async ({ where, include, orderBy }: { where?: Record<string, unknown>; include?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
@@ -396,13 +428,20 @@ class InMemoryPrisma {
       where: {
         templateId?: string;
         id?: { not?: string };
+        fieldId?: string | { in?: string[] };
         displayOrder?: { gte?: number; gt?: number; lte?: number; lt?: number };
       };
-      data: { displayOrder?: number | { increment?: number; decrement?: number } };
+      data: {
+        displayOrder?: number | { increment?: number; decrement?: number };
+        isRequired?: boolean;
+        isVisible?: boolean;
+      };
     }) => {
       let count = 0;
       for (const item of this.templateFields) {
         if (where.templateId && item.templateId !== where.templateId) continue;
+        if (typeof where.fieldId === 'string' && item.fieldId !== where.fieldId) continue;
+        if (typeof where.fieldId === 'object' && where.fieldId.in && !where.fieldId.in.includes(item.fieldId)) continue;
         if (where.id?.not && item.id === where.id.not) continue;
         if (where.displayOrder?.gte !== undefined && item.displayOrder < where.displayOrder.gte) continue;
         if (where.displayOrder?.gt !== undefined && item.displayOrder <= where.displayOrder.gt) continue;
@@ -413,6 +452,8 @@ class InMemoryPrisma {
           item.displayOrder += data.displayOrder.increment ?? 0;
           item.displayOrder -= data.displayOrder.decrement ?? 0;
         }
+        if (data.isRequired !== undefined) item.isRequired = data.isRequired;
+        if (data.isVisible !== undefined) item.isVisible = data.isVisible;
         item.updatedAt = new Date();
         count += 1;
       }
@@ -439,10 +480,15 @@ class InMemoryPrisma {
             item.projectId === where.projectId_templateId.projectId &&
             item.templateId === where.projectId_templateId.templateId)
       ) ?? null,
+    findFirst: async ({ where, include }: { where?: Record<string, unknown>; include?: Record<string, unknown> }) => {
+      const items = await this.projectTemplate.findMany({ where, include });
+      return items[0] ?? null;
+    },
     findMany: async ({ where, include, orderBy }: { where?: Record<string, unknown>; include?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
       let items = this.projectTemplates.filter((item) => {
         if (where?.projectId && item.projectId !== where.projectId) return false;
         if (where?.templateId && item.templateId !== where.templateId) return false;
+        if (where?.recordType && item.recordType !== where.recordType) return false;
         if (typeof where?.isActive === 'boolean' && item.isActive !== where.isActive) return false;
         return true;
       });
@@ -454,6 +500,8 @@ class InMemoryPrisma {
       }
       return items.map((item) => this.withProjectTemplateInclude(item, include));
     },
+    count: async ({ where }: { where?: Record<string, unknown> }) =>
+      (await this.projectTemplate.findMany({ where })).length,
     create: async ({ data }: { data: Partial<ProjectTemplateRecord> & Pick<ProjectTemplateRecord, 'projectId' | 'templateId'> }) => {
       if (this.projectTemplates.some((item) => item.projectId === data.projectId && item.templateId === data.templateId)) {
         throw { code: 'P2002', meta: { target: ['project_id', 'template_id'] } };
@@ -463,6 +511,7 @@ class InMemoryPrisma {
         id: data.id ?? `project_template_${++this.projectTemplateCounter}`,
         projectId: data.projectId,
         templateId: data.templateId,
+        recordType: data.recordType ?? this.templates.find((item) => item.id === data.templateId)!.recordType,
         customName: data.customName ?? null,
         isActive: data.isActive ?? true,
         createdAt: now,
@@ -486,6 +535,7 @@ class InMemoryPrisma {
         id: create.id ?? `project_template_${++this.projectTemplateCounter}`,
         projectId: create.projectId,
         templateId: create.templateId,
+        recordType: create.recordType ?? this.templates.find((item) => item.id === create.templateId)!.recordType,
         customName: create.customName ?? null,
         isActive: create.isActive ?? true,
         createdAt: now,
@@ -507,11 +557,17 @@ class InMemoryPrisma {
   };
 
   importTask = {
-    findMany: async () => []
+    findMany: async () => [],
+    count: async () => 0
   };
 
   ocrTask = {
-    findMany: async () => []
+    findMany: async () => [],
+    count: async () => 0
+  };
+
+  workOrder = {
+    count: async () => 0
   };
 
   businessRecord = {
@@ -549,6 +605,9 @@ class InMemoryPrisma {
         projectId: data.projectId,
         templateId: data.templateId,
         recordType: data.recordType,
+        accountingDirection: data.accountingDirection ?? AccountingDirection.expense,
+        templateVersion: data.templateVersion ?? 1,
+        version: data.version ?? 1,
         recordDate: new Date(data.recordDate),
         amount: Number(data.amount),
         category: data.category ?? null,
@@ -593,10 +652,26 @@ class InMemoryPrisma {
       Object.assign(record, cleanData, { updatedAt: new Date() });
 
       return this.withBusinessRecordInclude(record, include);
+    },
+    updateMany: async ({ where, data }: { where: { id: string; status?: BusinessRecordStatus; version?: number }; data: any }) => {
+      const record = this.businessRecords.find(
+        (item) =>
+          item.id === where.id &&
+          (where.status === undefined || item.status === where.status) &&
+          (where.version === undefined || item.version === where.version)
+      );
+      if (!record) return { count: 0 };
+      const cleanData = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+      if (typeof data.version === 'object') cleanData.version = record.version + Number(data.version.increment ?? 0);
+      if (cleanData.amount !== undefined) cleanData.amount = Number(cleanData.amount);
+      Object.assign(record, cleanData, { updatedAt: new Date() });
+      return { count: 1 };
     }
   };
 
   recordValue = {
+    findFirst: async ({ where }: { where?: { fieldId?: string } }) =>
+      this.recordValues.find((item) => !where?.fieldId || item.fieldId === where.fieldId) ?? null,
     count: async ({ where }: { where?: { fieldId?: string } }) =>
       this.recordValues.filter((item) => !where?.fieldId || item.fieldId === where.fieldId).length,
     deleteMany: async ({ where }: { where: { recordId?: string } }) => {
@@ -651,6 +726,10 @@ class InMemoryPrisma {
 
   async $transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {
     return callback(this);
+  }
+
+  async $executeRaw() {
+    return 0;
   }
 
   async $disconnect() {
@@ -1253,6 +1332,12 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .expect(201);
     const templateId = templateResponse.body.data.id as string;
 
+    await request(app.getHttpServer())
+      .patch(`/api/templates/${templateId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ name: '阶段二模板已更新' })
+      .expect(200);
+
     const fieldCountBefore = prisma.fieldDefinitions.length;
     const fieldResponse = await request(app.getHttpServer())
       .post('/api/fields')
@@ -1267,6 +1352,12 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       })
       .expect(201);
     const fieldId = fieldResponse.body.data.id as string;
+
+    await request(app.getHttpServer())
+      .patch(`/api/fields/${fieldId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ description: '夜班补贴已更新' })
+      .expect(200);
 
     expect(prisma.fieldDefinitions).toHaveLength(fieldCountBefore + 1);
     expect(fieldResponse.body.data.fieldKey).toMatch(/^field_[a-f0-9]{8}$|^夜班补贴$/);
@@ -1283,6 +1374,12 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       })
       .expect(201);
     const templateFieldId = templateFieldResponse.body.data.id as string;
+
+    await request(app.getHttpServer())
+      .patch(`/api/template-fields/${templateFieldId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ displayOrder: 2 })
+      .expect(200);
 
     const projectTemplateResponse = await request(app.getHttpServer())
       .post(`/api/projects/${projectId}/templates`)
@@ -1343,20 +1440,20 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     await request(app.getHttpServer())
       .patch(`/api/templates/${templateId}`)
       .set('Authorization', `Bearer ${financeToken}`)
-      .send({ name: '阶段二模板已更新' })
-      .expect(200);
+      .send({ name: '已发布模板不能原地更新' })
+      .expect(409);
 
     await request(app.getHttpServer())
       .patch(`/api/fields/${fieldId}`)
       .set('Authorization', `Bearer ${financeToken}`)
-      .send({ description: '夜班补贴已更新' })
-      .expect(200);
+      .send({ description: '已发布字段不能原地更新' })
+      .expect(409);
 
     await request(app.getHttpServer())
       .patch(`/api/template-fields/${templateFieldId}`)
       .set('Authorization', `Bearer ${financeToken}`)
-      .send({ displayOrder: 2 })
-      .expect(200);
+      .send({ displayOrder: 1 })
+      .expect(409);
 
     await request(app.getHttpServer())
       .patch(`/api/project-templates/${projectTemplateId}`)
@@ -1367,13 +1464,29 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     await request(app.getHttpServer())
       .patch(`/api/fields/${fieldId}/disable`)
       .set('Authorization', `Bearer ${financeToken}`)
+      .expect(409);
+
+    const unusedFieldResponse = await request(app.getHttpServer())
+      .post('/api/fields')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        fieldName: '阶段二待停用字段',
+        fieldType: FieldType.text,
+        semanticType: SemanticType.remark
+      })
+      .expect(201);
+    const unusedFieldId = unusedFieldResponse.body.data.id as string;
+
+    await request(app.getHttpServer())
+      .patch(`/api/fields/${unusedFieldId}/disable`)
+      .set('Authorization', `Bearer ${financeToken}`)
       .expect(200);
 
     await request(app.getHttpServer())
       .get('/api/fields?isActive=false')
       .set('Authorization', `Bearer ${financeToken}`)
       .expect(200)
-      .expect(({ body }) => expect(body.data.items.map((field: { id: string }) => field.id)).toContain(fieldId));
+      .expect(({ body }) => expect(body.data.items.map((field: { id: string }) => field.id)).toContain(unusedFieldId));
 
     await request(app.getHttpServer())
       .get('/api/fields?isActive=not-a-boolean')
@@ -1556,7 +1669,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
         templateId: unenabledTemplateResponse.body.data.id,
         recordType: DataRecordType.transport,
         recordDate: '2026-07-10',
-        amount: 99,
+        amount: '99.00',
         sourceType: RecordSourceType.manual,
         values: []
       })
@@ -1570,7 +1683,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
         templateId,
         recordType: DataRecordType.transport,
         recordDate: '2026-07-10',
-        amount: 99,
+        amount: '99.00',
         sourceType: RecordSourceType.manual,
         values: [{ fieldId: unrelatedFieldId, value: '不应入库' }]
       })
@@ -1607,7 +1720,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
         templateId,
         recordType: DataRecordType.transport,
         recordDate: '2026-07-10',
-        amount: 1280.5,
+        amount: '1280.50',
         category: '成本',
         subCategory: '运输',
         description: '阶段三手工补录',
@@ -1616,7 +1729,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
         status: BusinessRecordStatus.pending_confirm,
         values: [
           { fieldId: dateFieldId, value: '2026-07-10' },
-          { fieldId: amountFieldId, value: 1280.5 },
+          { fieldId: amountFieldId, value: '1280.50' },
           { fieldId: driverFieldId, value: '王师傅' }
         ],
         attachments: [recordAttachmentId]
@@ -1644,7 +1757,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: recordId,
-          amount: 1280.5,
+          amount: '1280.50',
           sourceType: RecordSourceType.manual
         })
       ])

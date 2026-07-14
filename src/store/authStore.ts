@@ -7,6 +7,7 @@ import {
   setAccessToken,
 } from '@/api/authSession';
 import type { User } from '@/types/auth';
+import { runtimeConfig } from '@/config/runtime';
 
 interface AuthState {
   user: User | null;
@@ -29,7 +30,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     set({ initialized: false, initializationError: null });
     const task = (async () => {
-      if (!getAccessToken()) {
+      if (runtimeConfig.dataMode !== 'api' && !getAccessToken()) {
         set({ user: null, initialized: true });
         return;
       }
@@ -38,7 +39,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ user, initialized: true, initializationError: null });
       } catch (error) {
         const message = error instanceof Error ? error.message : '恢复登录状态失败';
-        set({ user: null, initialized: true, initializationError: getAccessToken() ? message : null });
+        set({
+          user: null,
+          initialized: true,
+          initializationError: runtimeConfig.dataMode === 'api' ? null : getAccessToken() ? message : null,
+        });
       }
     })();
     initializationPromise = task;
@@ -50,14 +55,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   login: async (username, password) => {
     const session = await loginApi(username, password);
-    setAccessToken(session.accessToken);
+    if (runtimeConfig.dataMode !== 'api') setAccessToken(session.accessToken);
+    else clearAccessToken();
     set({ user: session.user, initialized: true, initializationError: null });
     return session.user;
   },
   logout: async () => {
     let failure: unknown;
     try {
-      if (getAccessToken()) await logoutApi();
+      if (runtimeConfig.dataMode === 'api' || getAccessToken()) await logoutApi();
     } catch (error) {
       failure = error;
     } finally {

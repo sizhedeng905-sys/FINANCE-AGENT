@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Key } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -30,10 +30,12 @@ import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import MoneyText from '@/components/MoneyText';
 import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
+import { getProjectStructure as getProjectStructureRequest } from '@/api/projectApi';
+import { runtimeConfig } from '@/config/runtime';
 import { useDataCenterStore } from '@/store/dataCenterStore';
-import type { BusinessRecord, CreateFieldPayload, ProjectTemplate, TemplateField } from '@/types/dataCenter';
+import type { BusinessRecord, CreateFieldPayload, ImportTask, ProjectStructure, ProjectTemplate, RawFile, TemplateField } from '@/types/dataCenter';
 import { fieldTypeMap, importStatusMap, projectStatusMap, recordStatusMap, recordTypeMap, semanticTypeMap, sourceTypeMap } from '@/utils/dataCenterMaps';
-import { getProjectStructure, type FieldUsageStat, type LogicalTableSummary } from '@/utils/projectStructure';
+import { getProjectStructure as buildMockProjectStructure, type FieldUsageStat, type LogicalTableSummary } from '@/utils/projectStructure';
 
 interface StructureNode {
   type: 'project' | 'template' | 'field' | 'records' | 'source';
@@ -66,6 +68,9 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   const [fieldId, setFieldId] = useState<string>();
   const [fieldOperation, setFieldOperation] = useState<string | null>(null);
   const [projectTemplateOperation, setProjectTemplateOperation] = useState<string | null>(null);
+  const [apiStructure, setApiStructure] = useState<ProjectStructure | null>(null);
+  const [structureLoading, setStructureLoading] = useState(false);
+  const [structureError, setStructureError] = useState<string | null>(null);
 
   const projects = useDataCenterStore((state) => state.projects);
   const projectLoading = useDataCenterStore((state) => state.projectLoading);
@@ -98,14 +103,28 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   const removeTemplateField = useDataCenterStore((state) => state.removeTemplateField);
   const createField = useDataCenterStore((state) => state.createField);
 
+  const refreshApiStructure = useCallback(async () => {
+    if (!id || runtimeConfig.dataMode !== 'api') return;
+    setStructureLoading(true);
+    setStructureError(null);
+    try {
+      setApiStructure(await getProjectStructureRequest(id));
+    } catch (error) {
+      setStructureError(error instanceof Error ? error.message : '项目结构加载失败');
+    } finally {
+      setStructureLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     if (id) {
       void fetchProject(id).catch(() => undefined);
       void fetchProjectTemplates(id).catch(() => undefined);
       void fetchProjectRecords(id).catch(() => undefined);
+      void refreshApiStructure();
     }
     if (!readOnly) void fetchTemplates({ page: 1, pageSize: 100 }).catch(() => undefined);
-  }, [fetchProject, fetchProjectRecords, fetchProjectTemplates, fetchTemplates, id, readOnly]);
+  }, [fetchProject, fetchProjectRecords, fetchProjectTemplates, fetchTemplates, id, readOnly, refreshApiStructure]);
 
   useEffect(() => {
     if (!readOnly) void fetchFields({ page: 1, pageSize: 100, isActive: true }).catch(() => undefined);
@@ -115,9 +134,9 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     void Promise.all(templateIds.map((templateId) => fetchTemplateFields(templateId))).catch(() => undefined);
   }, [fetchFields, fetchTemplateFields, id, projectTemplates, readOnly]);
 
-  const structure = useMemo(
+  const locallyBuiltStructure = useMemo(
     () =>
-      getProjectStructure(id ?? '', {
+      buildMockProjectStructure(id ?? '', {
         projects,
         templates,
         fields,
@@ -132,6 +151,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       }),
     [fields, fieldSuggestions, id, importRows, importTasks, mappingRules, projectTemplates, projects, rawFiles, records, templateFields, templates],
   );
+  const structure = runtimeConfig.dataMode === 'api' && apiStructure ? apiStructure : locallyBuiltStructure;
 
   const sourceCounts = useMemo(() => {
     return structure.records.reduce<Record<BusinessRecord['sourceType'], number>>(
@@ -224,6 +244,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       const values = await enableForm.validateFields();
       setProjectTemplateOperation('enable');
       await enableTemplateForProject(id, values.templateId, values.customName || undefined);
+      await refreshApiStructure();
       message.success('模板已启用');
       setEnableOpen(false);
       enableForm.resetFields();
@@ -240,6 +261,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       const values = await renameForm.validateFields();
       setProjectTemplateOperation(`rename:${renameTemplate.id}`);
       await updateProjectTemplate(renameTemplate.id, values);
+      await refreshApiStructure();
       message.success('项目模板名称已更新');
       setRenameTemplate(null);
       renameForm.resetFields();
@@ -254,6 +276,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     try {
       setProjectTemplateOperation(`disable:${projectTemplateId}`);
       await disableTemplateForProject(projectTemplateId);
+      await refreshApiStructure();
       message.success('项目模板已停用');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '项目模板停用失败');
@@ -267,6 +290,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     try {
       setFieldOperation('add');
       await addExistingFieldToTemplate(addTemplateId, fieldId);
+      await refreshApiStructure();
       message.success('字段已加入模板，项目结构已更新');
       setAddTemplateId(undefined);
       setFieldId(undefined);
@@ -284,6 +308,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       setFieldOperation('create');
       const field = await createField({ ...values, fieldKey: values.fieldKey || undefined, aliases: values.aliases ?? [] });
       await addExistingFieldToTemplate(newTemplateId, field.id);
+      await refreshApiStructure();
       message.success('新字段已加入字段字典和模板，项目结构已更新');
       setNewTemplateId(undefined);
       fieldForm.resetFields();
@@ -298,6 +323,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     try {
       setFieldOperation(`remove:${record.id}`);
       await removeTemplateField(record.id);
+      await refreshApiStructure();
       message.success('字段关系已移除，字段字典定义仍保留');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '移除字段失败');
@@ -306,12 +332,12 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     }
   };
 
-  if (projectLoading && !structure.project) {
+  if ((projectLoading || structureLoading) && !structure.project) {
     return <Card><Spin size="large" /></Card>;
   }
 
-  if (projectError && !structure.project) {
-    return <Alert type="error" showIcon message="项目加载失败" description={projectError} />;
+  if ((projectError || structureError) && !structure.project) {
+    return <Alert type="error" showIcon message="项目加载失败" description={structureError || projectError} />;
   }
 
   if (!structure.project) {
@@ -324,7 +350,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     { title: '日期', dataIndex: 'recordDate' },
     { title: '模板', dataIndex: 'templateName' },
     { title: '类型', dataIndex: 'recordType', render: (value) => recordTypeMap[value as BusinessRecord['recordType']] },
-    { title: '金额', dataIndex: 'amount', render: (value) => <MoneyText value={Number(value)} /> },
+    { title: '金额', dataIndex: 'amount', render: (value) => <MoneyText value={value} /> },
     { title: '分类', dataIndex: 'category' },
     { title: '来源', dataIndex: 'sourceType', render: (value) => <Tag color={sourceTagColor[value as BusinessRecord['sourceType']]}>{sourceTypeMap[value as BusinessRecord['sourceType']]}</Tag> },
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{recordStatusMap[value as BusinessRecord['status']]}</Tag> },
@@ -680,6 +706,6 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   );
 }
 
-type RawFileRow = ReturnType<typeof useDataCenterStore.getState>['rawFiles'][number] & {
-  task?: ReturnType<typeof useDataCenterStore.getState>['importTasks'][number];
+type RawFileRow = RawFile & {
+  task?: ImportTask;
 };

@@ -120,11 +120,11 @@ export async function mockGetProjectSummary(id: string): Promise<ProjectSummary>
   const records = mockRecordSnapshot().filter((item) => item.projectId === id);
   const confirmedRecords = records.filter((item) => item.status === 'confirmed');
   const income = confirmedRecords
-    .filter((item) => item.recordType === 'revenue' || item.category === '收入')
-    .reduce((sum, item) => sum + item.amount, 0);
+    .filter((item) => item.accountingDirection === 'income')
+    .reduce((sum, item) => sum + Number(item.amount), 0);
   const cost = confirmedRecords
-    .filter((item) => item.recordType !== 'revenue' && item.category !== '收入')
-    .reduce((sum, item) => sum + item.amount, 0);
+    .filter((item) => item.accountingDirection === 'expense')
+    .reduce((sum, item) => sum + Number(item.amount), 0);
   return {
     project,
     enabledTemplateCount: enabledTemplateIds.length,
@@ -134,9 +134,9 @@ export async function mockGetProjectSummary(id: string): Promise<ProjectSummary>
     recordCount: records.length,
     rawFileCount: mockRawFiles.filter((item) => item.relatedProjectId === id).length,
     importTaskCount: mockImportTasks.filter((item) => item.projectId === id).length,
-    totalIncome: income,
-    totalCost: cost,
-    profit: income - cost,
+    totalIncome: income.toFixed(2),
+    totalCost: cost.toFixed(2),
+    profit: (income - cost).toFixed(2),
   };
 }
 

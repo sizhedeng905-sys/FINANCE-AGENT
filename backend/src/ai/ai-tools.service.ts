@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ProjectStatus } from '@prisma/client';
 
 import { CurrentUser } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
@@ -57,13 +58,23 @@ export class AiToolsService {
 
   private async projectContext(question: string): Promise<AiToolContext | null> {
     if (/哪个(?:项目|客户)|(?:项目|客户).*(?:最高|最低|排行)/.test(question)) return null;
-    const projects = await this.prisma.project.findMany({
-      orderBy: { createdAt: 'asc' },
-      take: 500
-    });
-    const project = projects.find(
-      (item) => question.includes(item.name) || question.includes(item.id) || question.includes(item.customerName)
-    );
+    const matches = await this.findProjectMatches(question);
+    const top = matches[0];
+    const ambiguous = top
+      ? matches.filter(
+          (item) => item.matchPriority === top.matchPriority && item.matchLength === top.matchLength
+        )
+      : [];
+    if (ambiguous.length > 1) {
+      return {
+        name: 'get_project_summary',
+        data: {
+          error: '项目名称或客户名称存在歧义，请提供项目 ID',
+          candidates: ambiguous.slice(0, 10).map((item) => ({ id: item.id, name: item.name }))
+        }
+      };
+    }
+    const project = top;
     if (project) {
       const data = /本月|这个月|月报/.test(question)
         ? await this.reports.projectMonthly(project.id, {})
@@ -74,6 +85,61 @@ export class AiToolsService {
       return { name: 'get_project_summary', data: { error: '项目不存在或问题中未提供可识别的项目名称' } };
     }
     return null;
+  }
+
+  private async findProjectMatches(question: string) {
+    type Match = {
+      id: string;
+      name: string;
+      customerName: string;
+      matchPriority: number;
+      matchLength: number;
+    };
+    if (typeof this.prisma.$queryRaw === 'function') {
+      return this.prisma.$queryRaw<Match[]>`
+        SELECT
+          p."id",
+          p."name",
+          p."customer_name" AS "customerName",
+          CASE
+            WHEN strpos(${question}, p."id") > 0 THEN 3
+            WHEN strpos(${question}, p."name") > 0 THEN 2
+            ELSE 1
+          END AS "matchPriority",
+          CASE
+            WHEN strpos(${question}, p."id") > 0 THEN length(p."id")
+            WHEN strpos(${question}, p."name") > 0 THEN length(p."name")
+            ELSE length(p."customer_name")
+          END AS "matchLength"
+        FROM "projects" AS p
+        WHERE p."status" IN (${ProjectStatus.active}::"ProjectStatus", ${ProjectStatus.archived}::"ProjectStatus")
+          AND (
+            strpos(${question}, p."id") > 0
+            OR (length(trim(p."name")) >= 2 AND strpos(${question}, p."name") > 0)
+            OR (length(trim(p."customer_name")) >= 2 AND strpos(${question}, p."customer_name") > 0)
+          )
+        ORDER BY "matchPriority" DESC, "matchLength" DESC, p."id" ASC
+        LIMIT 20
+      `;
+    }
+
+    const projects = await this.prisma.project.findMany({ orderBy: { createdAt: 'asc' } });
+    return projects
+      .flatMap((item) => {
+        if (question.includes(item.id)) {
+          return [{ ...item, matchPriority: 3, matchLength: item.id.length }];
+        }
+        if (item.name.length >= 2 && question.includes(item.name)) {
+          return [{ ...item, matchPriority: 2, matchLength: item.name.length }];
+        }
+        if (item.customerName.length >= 2 && question.includes(item.customerName)) {
+          return [{ ...item, matchPriority: 1, matchLength: item.customerName.length }];
+        }
+        return [];
+      })
+      .sort((first, second) =>
+        second.matchPriority - first.matchPriority || second.matchLength - first.matchLength || first.id.localeCompare(second.id)
+      );
   }
 
   private async workOrderContext(question: string, explicitId: string | undefined, user: CurrentUser): Promise<AiToolContext> {

@@ -17,7 +17,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Response } from 'express';
-import { memoryStorage } from 'multer';
 
 import { CurrentUser as CurrentUserDecorator } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -28,6 +27,8 @@ import { getRequestContext } from '../common/utils/request-context';
 import { UploadFileDto } from './dto/upload-file.dto';
 import { VoidFileDto } from './dto/void-file.dto';
 import { FilesService } from './files.service';
+import { secureUploadOptions } from './secure-upload-options';
+import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
 
 @ApiTags('files')
 @ApiBearerAuth()
@@ -50,7 +51,7 @@ export class FilesController {
       required: ['file']
     }
   })
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file', secureUploadOptions), TempUploadCleanupInterceptor)
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: UploadFileDto,
@@ -71,11 +72,14 @@ export class FilesController {
     @Res({ passthrough: true }) response: Response
   ) {
     const file = await this.files.read(id, user, getRequestContext(request), 'preview');
-    response.setHeader('Content-Type', file.mimeType);
-    response.setHeader('Content-Disposition', this.contentDisposition('inline', file.fileName));
-    response.setHeader('Content-Length', String(file.buffer.length));
+    response.setHeader('Content-Type', file.inlineAllowed ? file.mimeType : 'application/octet-stream');
+    response.setHeader(
+      'Content-Disposition',
+      this.contentDisposition(file.inlineAllowed ? 'inline' : 'attachment', file.fileName)
+    );
+    response.setHeader('Content-Length', file.fileSize.toString());
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    return new StreamableFile(file.buffer);
+    return new StreamableFile(file.stream);
   }
 
   @Get(':id/download')
@@ -91,9 +95,9 @@ export class FilesController {
     const file = await this.files.read(id, user, getRequestContext(request), 'download');
     response.setHeader('Content-Type', file.mimeType);
     response.setHeader('Content-Disposition', this.contentDisposition('attachment', file.fileName));
-    response.setHeader('Content-Length', String(file.buffer.length));
+    response.setHeader('Content-Length', file.fileSize.toString());
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    return new StreamableFile(file.buffer);
+    return new StreamableFile(file.stream);
   }
 
   @Get(':id')

@@ -93,7 +93,16 @@ export class FieldsService {
   async update(id: string, dto: UpdateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findFieldOrThrow(id, tx);
+      await this.assertDefinitionMutable(id, tx);
       if (dto.fieldType && dto.fieldType !== before.fieldType) {
+        const primaryTemplateCount = await tx.template.count({
+          where: {
+            OR: [{ primaryAmountFieldId: id }, { primaryDateFieldId: id }]
+          }
+        });
+        if (primaryTemplateCount > 0) {
+          throw new ConflictException('模板主金额或主日期字段不能原地修改类型');
+        }
         const valueCount = await tx.recordValue.count({ where: { fieldId: id } });
         if (valueCount > 0) {
           throw new ConflictException('字段已有业务数据，不能修改字段类型');
@@ -132,6 +141,15 @@ export class FieldsService {
   async disable(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findFieldOrThrow(id, tx);
+      await this.assertDefinitionMutable(id, tx);
+      const primaryTemplateCount = await tx.template.count({
+        where: {
+          OR: [{ primaryAmountFieldId: id }, { primaryDateFieldId: id }]
+        }
+      });
+      if (primaryTemplateCount > 0) {
+        throw new ConflictException('模板主金额或主日期字段不能停用，请先为模板选择替代字段');
+      }
       const field = await tx.fieldDefinition.update({
         where: {
           id
@@ -189,6 +207,30 @@ export class FieldsService {
       templates,
       projects: Array.from(projectMap.values())
     };
+  }
+
+  private async assertDefinitionMutable(id: string, tx: Prisma.TransactionClient) {
+    const [publishedTemplateField, recordValue] = await Promise.all([
+      tx.templateField.findFirst({
+        where: {
+          fieldId: id,
+          template: {
+            OR: [
+              { projectTemplates: { some: {} } },
+              { businessRecords: { some: {} } },
+              { workOrders: { some: {} } },
+              { importTasks: { some: {} } },
+              { ocrTasks: { some: {} } }
+            ]
+          }
+        },
+        select: { id: true }
+      }),
+      tx.recordValue.findFirst({ where: { fieldId: id }, select: { id: true } })
+    ]);
+    if (publishedTemplateField || recordValue) {
+      throw new ConflictException('已发布模板或历史记录使用的字段定义不可原地修改，请创建新字段和模板版本');
+    }
   }
 
   private async resolveFieldKey(input: string, prisma: PrismaWriter, currentFieldId?: string) {

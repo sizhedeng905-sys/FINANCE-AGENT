@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
@@ -10,6 +10,8 @@ import { toAuthUser } from '../common/utils/user-presenter';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
+
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('finance-agent-dummy-password', 10);
 
 @Injectable()
 export class AuthService {
@@ -22,8 +24,9 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto, context: RequestContext) {
+    let reservation;
     try {
-      this.loginRateLimit.assertAllowed(dto.username, context.ip);
+      reservation = this.loginRateLimit.reserve(dto.username, context.ip);
     } catch (error) {
       await this.auditLogs.writeAuthentication(
         this.prisma,
@@ -33,39 +36,32 @@ export class AuthService {
       throw error;
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: {
-        username: dto.username
-      }
-    });
+    let user;
+    let passwordMatched = false;
+    try {
+      user = await this.prisma.user.findUnique({ where: { username: dto.username } });
+      passwordMatched = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    } catch (error) {
+      this.loginRateLimit.release(reservation);
+      throw error;
+    }
 
-    if (!user || user.status !== UserStatus.active) {
-      this.loginRateLimit.recordFailure(dto.username, context.ip);
+    if (!user || user.status !== UserStatus.active || !passwordMatched) {
+      this.loginRateLimit.failure(reservation);
       await this.auditLogs.writeAuthentication(
         this.prisma,
         {
           userId: user?.id,
           username: dto.username,
           success: false,
-          failureReason: user ? 'account_disabled' : 'invalid_credentials'
+          failureReason: user && user.status !== UserStatus.active ? 'account_disabled' : 'invalid_credentials'
         },
         context
       );
       throw new UnauthorizedException('账号或密码错误');
     }
 
-    const passwordMatched = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!passwordMatched) {
-      this.loginRateLimit.recordFailure(dto.username, context.ip);
-      await this.auditLogs.writeAuthentication(
-        this.prisma,
-        { userId: user.id, username: dto.username, success: false, failureReason: 'invalid_credentials' },
-        context
-      );
-      throw new UnauthorizedException('账号或密码错误');
-    }
-
-    this.loginRateLimit.reset(dto.username, context.ip);
+    this.loginRateLimit.success(reservation);
 
     const accessToken = await this.jwtService.signAsync(
       {
@@ -74,7 +70,7 @@ export class AuthService {
       },
       {
         secret: this.configService.getOrThrow<string>('jwtSecret'),
-        expiresIn: '7d'
+        expiresIn: (this.configService.get<string>('jwtExpiresIn') ?? '8h') as JwtSignOptions['expiresIn']
       }
     );
 

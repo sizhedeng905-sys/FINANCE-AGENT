@@ -1,5 +1,5 @@
 import { UnprocessableEntityException } from '@nestjs/common';
-import { RiskLevel, UserRole, UserStatus, WorkOrderStatus, WorkOrderType } from '@prisma/client';
+import { DataRecordType, Prisma, RiskLevel, UserRole, UserStatus, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 
 import { WorkOrdersService } from '../src/work-orders/work-orders.service';
 import { toWorkOrder } from '../src/work-orders/work-order.presenter';
@@ -48,6 +48,16 @@ describe('WorkOrdersService phase 4 state machine', () => {
       project: {
         findUnique: jest.fn(async ({ where }) => (where.id === project.id ? project : null))
       },
+      projectTemplate: {
+        findMany: jest.fn(async () => [{
+          id: 'project_template_1',
+          projectId: project.id,
+          templateId: 'template_expense',
+          recordType: DataRecordType.reimbursement,
+          isActive: true,
+          template: { id: 'template_expense', version: 1 }
+        }])
+      },
       workOrder: {
         create: jest.fn(async ({ data }) => {
           const now = new Date();
@@ -60,10 +70,10 @@ describe('WorkOrdersService phase 4 state machine', () => {
             customerName: data.customerName,
             creatorId: data.creatorId,
             creatorName: data.creatorName,
-            amount: data.amount,
-            income: 0,
-            cost: 0,
-            profit: 0,
+            amount: new Prisma.Decimal(data.amount),
+            income: new Prisma.Decimal(0),
+            cost: new Prisma.Decimal(0),
+            profit: new Prisma.Decimal(0),
             status: data.status,
             riskLevel: RiskLevel.low,
             description: data.description,
@@ -80,6 +90,12 @@ describe('WorkOrdersService phase 4 state machine', () => {
             updatedAt: now,
             completedAt: null,
             generatedRecordId: null,
+            templateId: data.templateId ?? null,
+            templateVersion: data.templateVersion ?? null,
+            templateSnapshot: null,
+            submissionSnapshot: null,
+            submittedAt: null,
+            version: 1,
             creationIdempotencyKey: data.creationIdempotencyKey ?? null,
             approvalIdempotencyKey: null,
             attachments: (data.attachments?.create ?? []).map((attachment: any, index: number) => ({
@@ -118,15 +134,21 @@ describe('WorkOrdersService phase 4 state machine', () => {
         ),
         update: jest.fn(async ({ where, data }) => {
           const item = workOrders.find((workOrder) => workOrder.id === where.id);
-          Object.assign(item, data, { updatedAt: new Date() });
+          const normalized = { ...data };
+          if (typeof data.version === 'object') normalized.version = item.version + data.version.increment;
+          Object.assign(item, normalized, { updatedAt: new Date() });
           return includeRelations(item);
         }),
         updateMany: jest.fn(async ({ where, data }) => {
           const item = workOrders.find((workOrder) =>
-            workOrder.id === where.id && (!where.status || workOrder.status === where.status)
+            workOrder.id === where.id &&
+            (!where.status || workOrder.status === where.status) &&
+            (where.version === undefined || workOrder.version === where.version)
           );
           if (!item) return { count: 0 };
-          Object.assign(item, data, { updatedAt: new Date() });
+          const normalized = { ...data };
+          if (typeof data.version === 'object') normalized.version = item.version + data.version.increment;
+          Object.assign(item, normalized, { updatedAt: new Date() });
           return { count: 1 };
         })
       },
@@ -150,6 +172,9 @@ describe('WorkOrdersService phase 4 state machine', () => {
           notifications.push(item);
           return item;
         })
+      },
+      aiAnomaly: {
+        updateMany: jest.fn(async () => ({ count: 0 }))
       }
     };
     tx.$transaction = jest.fn(async (callback) => callback(tx));
@@ -180,6 +205,13 @@ describe('WorkOrdersService phase 4 state machine', () => {
       })
     };
     const workOrderRecords = {
+      prepareSubmission: jest.fn(async () => ({
+        template: { id: 'template_expense', version: 1 },
+        recordType: DataRecordType.reimbursement,
+        values: [],
+        templateSnapshot: { templateId: 'template_expense', version: 1 },
+        submissionSnapshot: { templateId: 'template_expense', version: 1 }
+      })),
       createWithinTransaction: jest.fn(async () => ({ id: 'business_record_1' })),
       generate: jest.fn(async () => ({ id: 'business_record_1' }))
     };
@@ -191,7 +223,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
       {
         type: WorkOrderType.expense,
         projectId: project.id,
-        amount: 1200,
+        amount: '1200.00',
         description: '测试报销',
         occurredDate: '2026-07-11'
       },

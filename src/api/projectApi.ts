@@ -6,6 +6,7 @@ import type {
   Project,
   ProjectListQuery,
   ProjectSummary,
+  ProjectStructure,
   ProjectTemplate,
   UpdateProjectPayload,
   UpdateProjectTemplatePayload,
@@ -67,6 +68,13 @@ export function getProjectSummary(id: string): Promise<ProjectSummary> {
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<ProjectSummary>(`/projects/${encodeURIComponent(id)}/summary`)
     : mockGetProjectSummary(id);
+}
+
+export function getProjectStructure(id: string): Promise<ProjectStructure> {
+  if (runtimeConfig.dataMode !== 'api') {
+    return Promise.reject(new Error('Mock 模式使用本地项目结构仓库'));
+  }
+  return httpClient.get<ProjectStructure>(`/projects/${encodeURIComponent(id)}/structure`);
 }
 
 export function getProjectTemplates(projectId: string): Promise<ProjectTemplate[]> {

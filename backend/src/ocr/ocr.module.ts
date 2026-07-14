@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { FilesModule } from '../files/files.module';
 import { LedgerEventsModule } from '../ledger-events/ledger-events.module';
+import { RecordPolicyModule } from '../record-policy/record-policy.module';
 import { DocumentPreprocessorService } from './document-preprocessor.service';
 import { LocalPaddleOcrProvider } from './local-paddle-ocr.provider';
 import { MockOcrProvider } from './mock-ocr.provider';
@@ -14,7 +15,7 @@ import { OcrTasksController } from './ocr-tasks.controller';
 import { OcrTasksService } from './ocr-tasks.service';
 
 @Module({
-  imports: [FilesModule, AuditLogsModule, LedgerEventsModule, JwtModule.register({})],
+  imports: [FilesModule, AuditLogsModule, LedgerEventsModule, RecordPolicyModule, JwtModule.register({})],
   controllers: [OcrTasksController],
   providers: [
     OcrTasksService,

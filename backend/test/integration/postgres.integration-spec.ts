@@ -3,9 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import {
+  AccountingDirection,
   AiMessageRole,
   BusinessRecordStatus,
   DataRecordType,
+  FileScanStatus,
   FieldType,
   ImportRowStatus,
   ImportTaskStatus,
@@ -147,6 +149,24 @@ describe('real PostgreSQL integration', () => {
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${token}`)
       .expect(401);
+  });
+
+  it('supports HttpOnly cookie auth and requires double-submit CSRF for writes', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const login = await agent
+      .post('/api/auth/login')
+      .send({ username: '员工', password: '123456' })
+      .expect(200);
+    const cookies = login.headers['set-cookie'] as unknown as string[];
+    expect(cookies.join(';')).toContain('finance_agent_session=');
+    expect(cookies.join(';')).toContain('HttpOnly');
+    const csrfCookie = cookies.find((cookie) => cookie.startsWith('finance_agent_csrf='));
+    const csrfToken = decodeURIComponent(csrfCookie!.split(';')[0].slice('finance_agent_csrf='.length));
+
+    await agent.get('/api/auth/me').expect(200);
+    await agent.post('/api/auth/logout').expect(401);
+    await agent.post('/api/auth/logout').set('X-CSRF-Token', csrfToken).expect(200);
+    await agent.get('/api/auth/me').expect(401);
   });
 
   it('enforces the finance-to-boss management boundary in PostgreSQL mode', async () => {
@@ -447,7 +467,12 @@ describe('real PostgreSQL integration', () => {
         .expect(409);
 
       const projectTemplate = await prisma.projectTemplate.create({
-        data: { projectId: 'dp-001', templateId: customTemplateId, customName: '集成测试启用模板' }
+        data: {
+          projectId: 'dp-001',
+          templateId: customTemplateId,
+          recordType: DataRecordType.cost,
+          customName: '集成测试启用模板'
+        }
       });
       projectTemplateId = projectTemplate.id;
       await request(app.getHttpServer())
@@ -1004,9 +1029,14 @@ describe('real PostgreSQL integration', () => {
         await request(app.getHttpServer())
           .post(`/api/templates/${templateId}/fields`)
           .set('Authorization', `Bearer ${tokens.finance}`)
-          .send({ fieldId, displayOrder: index + 1 })
+          .send({ fieldId, displayOrder: index + 1, isRequired: index < 2 })
           .expect(201);
       }
+      await request(app.getHttpServer())
+        .patch(`/api/templates/${templateId}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({ primaryAmountFieldId: amountFieldId, primaryDateFieldId: dateFieldId })
+        .expect(200);
 
       const relationResponse = await request(app.getHttpServer())
         .post(`/api/projects/${projectId}/templates`)
@@ -1039,7 +1069,7 @@ describe('real PostgreSQL integration', () => {
 
       const createRecord = async (
         recordDate: string,
-        amount: number,
+        amount: string,
         status: BusinessRecordStatus,
         note: string,
         requestId: string
@@ -1054,7 +1084,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.cost,
             recordDate,
             amount,
-            category: 'Integration cost',
+            category: '成本',
             sourceType: RecordSourceType.manual,
             sourceId: 'manual',
             status,
@@ -1074,14 +1104,14 @@ describe('real PostgreSQL integration', () => {
 
       const first = await createRecord(
         '2026-07-10',
-        123.45,
+        '123.45',
         BusinessRecordStatus.draft,
         'first record',
         'integration-record-create-first'
       );
       const second = await createRecord(
         '2026-07-11',
-        678.9,
+        '678.90',
         BusinessRecordStatus.pending_confirm,
         'second record',
         'integration-record-create-second'
@@ -1140,9 +1170,9 @@ describe('real PostgreSQL integration', () => {
         .patch(`/api/records/${first.id}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-record-update')
-        .send({ amount: 222.22, description: '  updated record  ' })
+        .send({ amount: '222.22', description: '  updated record  ' })
         .expect(200)
-        .expect(({ body }) => expect(body.data).toMatchObject({ amount: 222.22, description: 'updated record' }));
+        .expect(({ body }) => expect(body.data).toMatchObject({ amount: '222.22', description: 'updated record' }));
 
       await request(app.getHttpServer())
         .post(`/api/records/${first.id}/confirm`)
@@ -1184,11 +1214,19 @@ describe('real PostgreSQL integration', () => {
 
       const third = await createRecord(
         '2026-07-12',
-        50,
+        '50.00',
         BusinessRecordStatus.pending_confirm,
         'archived boundary record',
         'integration-record-create-third'
       );
+      await request(app.getHttpServer())
+        .delete(`/api/projects/${projectId}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(409);
+      await request(app.getHttpServer())
+        .delete(`/api/records/${third.id}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
       await request(app.getHttpServer())
         .delete(`/api/projects/${projectId}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -1202,7 +1240,7 @@ describe('real PostgreSQL integration', () => {
           templateId,
           recordType: DataRecordType.cost,
           recordDate: '2026-07-13',
-          amount: 1,
+          amount: '1.00',
           values: []
         })
         .expect(409);
@@ -1218,7 +1256,7 @@ describe('real PostgreSQL integration', () => {
       await request(app.getHttpServer())
         .delete(`/api/records/${third.id}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .expect(409);
+        .expect(200);
 
       const recordAudits = await prisma.auditLog.findMany({
         where: { resourceType: 'business_record', resourceId: { in: recordIds } }
@@ -1308,10 +1346,16 @@ describe('real PostgreSQL integration', () => {
           displayOrder: index + 1
         }))
       });
-      await prisma.projectTemplate.create({ data: { projectId: project.id, templateId: template.id } });
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { primaryAmountFieldId: amountField.id, primaryDateFieldId: dateField.id }
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId: project.id, templateId: template.id, recordType: template.recordType }
+      });
 
       const values = [
-        { fieldId: amountField.id, value: 88.125 },
+        { fieldId: amountField.id, value: '88.12' },
         { fieldId: dateField.id, value: '2026-07-15' },
         { fieldId: noteField.id, value: '真实手工补录' }
       ];
@@ -1320,7 +1364,7 @@ describe('real PostgreSQL integration', () => {
         templateId: template.id,
         recordType: DataRecordType.cost,
         recordDate: '2026-07-15',
-        amount: 88.12,
+        amount: '88.12',
         sourceType: RecordSourceType.manual,
         sourceId: 'manual',
         values,
@@ -1350,7 +1394,7 @@ describe('real PostgreSQL integration', () => {
       await request(app.getHttpServer())
         .post('/api/records')
         .set('Authorization', `Bearer ${financeToken}`)
-        .send({ ...basePayload, amount: 88.123 })
+        .send({ ...basePayload, amount: '88.123' })
         .expect(400);
       await request(app.getHttpServer())
         .post('/api/records')
@@ -1397,7 +1441,7 @@ describe('real PostgreSQL integration', () => {
         .patch(`/api/records/${recordId}`)
         .set('Authorization', `Bearer ${financeToken}`)
         .set('X-Request-Id', 'integration-manual-draft-complete')
-        .send({ amount: 88.12, values })
+        .send({ amount: '88.12', values })
         .expect(200);
       await request(app.getHttpServer())
         .post(`/api/records/${recordId}/confirm`)
@@ -1410,7 +1454,7 @@ describe('real PostgreSQL integration', () => {
       expect(stored.recordDate.toISOString()).toBe('2026-07-15T00:00:00.000Z');
       expect(stored.createdBy).toBe('finance');
       const storedValues = await prisma.recordValue.findMany({ where: { recordId } });
-      expect(storedValues.find((value) => value.fieldId === amountField.id)?.valueNumber?.toString()).toBe('88.125');
+      expect(storedValues.find((value) => value.fieldId === amountField.id)?.valueNumber?.toString()).toBe('88.12');
       expect(storedValues.find((value) => value.fieldId === dateField.id)?.valueDate?.toISOString()).toBe('2026-07-15T00:00:00.000Z');
       expect(storedValues.find((value) => value.fieldId === noteField.id)?.valueText).toBe('真实手工补录');
 
@@ -1441,6 +1485,95 @@ describe('real PostgreSQL integration', () => {
     }
   });
 
+  it('preserves large decimal cents and serializes concurrent record transitions', async () => {
+    const tokens = Object.fromEntries(await Promise.all(['finance', 'boss'].map(async (username) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username, password: '123456' })
+        .expect(200);
+      return [username, response.body.data.accessToken as string] as const;
+    }))) as Record<'finance' | 'boss', string>;
+    const template = await prisma.template.findUniqueOrThrow({
+      where: { id: 'dt-reimbursement' },
+      include: { templateFields: { include: { field: true } } }
+    });
+    const recordIds: string[] = [];
+    const create = async (amount: string, date: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/records')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          projectId: 'dp-001',
+          templateId: template.id,
+          recordType: template.recordType,
+          recordDate: date,
+          amount,
+          category: '成本',
+          status: BusinessRecordStatus.pending_confirm,
+          values: [
+            { fieldId: template.primaryAmountFieldId, value: amount },
+            { fieldId: template.primaryDateFieldId, value: date },
+            ...template.templateFields
+              .filter((item) => item.isRequired && ![template.primaryAmountFieldId, template.primaryDateFieldId].includes(item.fieldId))
+              .map((item) => ({ fieldId: item.fieldId, value: `边界测试-${item.field.fieldKey}` }))
+          ],
+          attachments: []
+        })
+        .expect(201);
+      recordIds.push(response.body.data.id as string);
+      return response.body.data as { id: string; amount: string };
+    };
+
+    try {
+      const large = await create('90071992547409.91', '2026-07-20');
+      expect(large.amount).toBe('90071992547409.91');
+      const fetched = await request(app.getHttpServer())
+        .get(`/api/records/${large.id}`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      expect(fetched.body.data.amount).toBe('90071992547409.91');
+      expect((await prisma.businessRecord.findUniqueOrThrow({ where: { id: large.id } })).amount.toString())
+        .toBe('90071992547409.91');
+
+      const confirm = () => request(app.getHttpServer())
+        .post(`/api/records/${large.id}/confirm`)
+        .set('Authorization', `Bearer ${tokens.finance}`);
+      const voidRecord = () => request(app.getHttpServer())
+        .delete(`/api/records/${large.id}`)
+        .set('Authorization', `Bearer ${tokens.finance}`);
+      const transitionResponses = await Promise.all([confirm(), voidRecord()]);
+      expect(transitionResponses.filter((response) => response.status === 409)).toHaveLength(1);
+      expect(transitionResponses.filter((response) => [200, 201].includes(response.status))).toHaveLength(1);
+      const terminal = await prisma.businessRecord.findUniqueOrThrow({ where: { id: large.id } });
+      expect(Boolean(terminal.confirmedAt)).not.toBe(Boolean(terminal.voidedAt));
+      expect(await prisma.ledgerEvent.count({
+        where: {
+          aggregateId: large.id,
+          eventType: { in: ['business_record_confirmed', 'business_record_voided'] }
+        }
+      })).toBe(1);
+
+      const duplicateConfirm = await create('0.01', '2026-07-21');
+      const duplicateResponses = await Promise.all([
+        request(app.getHttpServer()).post(`/api/records/${duplicateConfirm.id}/confirm`).set('Authorization', `Bearer ${tokens.finance}`),
+        request(app.getHttpServer()).post(`/api/records/${duplicateConfirm.id}/confirm`).set('Authorization', `Bearer ${tokens.finance}`)
+      ]);
+      expect(duplicateResponses.map((response) => response.status)).toEqual([201, 201]);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: duplicateConfirm.id, eventType: 'business_record_confirmed' }
+      })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: duplicateConfirm.id, action: 'business_record.confirm' }
+      })).toBe(1);
+    } finally {
+      if (recordIds.length) {
+        await prisma.businessRecord.deleteMany({ where: { id: { in: recordIds } } });
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: recordIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: recordIds } } });
+      }
+    }
+  });
+
   it('runs the complete work-order state machine with ownership, recovery, idempotency, and record generation', async () => {
     const roles = ['employee', '员工', 'finance', 'reviewer', 'boss'] as const;
     const logins = await Promise.all(
@@ -1459,6 +1592,7 @@ describe('real PostgreSQL integration', () => {
     let templateId: string | undefined;
     let rawFileId: string | undefined;
     let workOrderId: string | undefined;
+    let raceWorkOrderId: string | undefined;
     let generatedRecordId: string | undefined;
 
     try {
@@ -1488,10 +1622,19 @@ describe('real PostgreSQL integration', () => {
           templateId: template.id,
           fieldId: field.id,
           displayOrder: index + 1,
-          isVisible: true
+          isVisible: true,
+          isRequired: field.fieldKey !== 'attachment'
         }))
       });
-      await prisma.projectTemplate.create({ data: { projectId: project.id, templateId: template.id } });
+      const amountField = standardFields.find((field) => field.fieldKey === 'amount')!;
+      const dateField = standardFields.find((field) => field.fieldKey === 'date')!;
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { primaryAmountFieldId: amountField.id, primaryDateFieldId: dateField.id }
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId: project.id, templateId: template.id, recordType: template.recordType }
+      });
       const rawFile = await prisma.rawFile.create({
         data: {
           fileName: `${suffix}.pdf`,
@@ -1501,6 +1644,7 @@ describe('real PostgreSQL integration', () => {
           fileSize: BigInt(128),
           storagePath: `integration/${suffix}.pdf`,
           sha256: suffix.padEnd(64, '0').slice(0, 64),
+          scanStatus: FileScanStatus.clean,
           uploadedBy: employee.id,
           relatedProjectId: project.id
         }
@@ -1521,8 +1665,37 @@ describe('real PostgreSQL integration', () => {
       expect(firstCreate.body.data).toMatchObject({
         status: WorkOrderStatus.draft,
         creatorId: employee.id,
-        amount: 0
+        amount: '0.00'
       });
+
+      const raceCreate = await request(app.getHttpServer())
+        .post('/api/work-orders')
+        .set('Authorization', `Bearer ${tokens.employee}`)
+        .set('Idempotency-Key', `integration-work-order-race-${suffix}`)
+        .send({
+          type: WorkOrderType.expense,
+          projectId: project.id,
+          amount: '100.00',
+          description: '并发提交快照测试',
+          occurredDate: '2026-07-17'
+        })
+        .expect(201);
+      raceWorkOrderId = raceCreate.body.data.id as string;
+      const [racePatch, raceSubmit] = await Promise.all([
+        request(app.getHttpServer())
+          .patch(`/api/work-orders/${raceWorkOrderId}`)
+          .set('Authorization', `Bearer ${tokens.employee}`)
+          .send({ amount: '200.00' }),
+        request(app.getHttpServer())
+          .post(`/api/work-orders/${raceWorkOrderId}/submit`)
+          .set('Authorization', `Bearer ${tokens.employee}`)
+      ]);
+      expect(raceSubmit.status).toBe(201);
+      expect([200, 409]).toContain(racePatch.status);
+      const storedRaceWorkOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: raceWorkOrderId } });
+      expect(storedRaceWorkOrder.status).toBe(WorkOrderStatus.finance_reviewing);
+      expect((storedRaceWorkOrder.submissionSnapshot as { amount: string }).amount)
+        .toBe(storedRaceWorkOrder.amount.toFixed(2));
 
       await request(app.getHttpServer())
         .post(`/api/work-orders/${workOrderId}/submit`)
@@ -1538,7 +1711,7 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.employee}`)
         .set('X-Request-Id', `integration-work-order-update-${suffix}`)
         .send({
-          amount: 2450.5,
+          amount: '2450.50',
           description: '  PostgreSQL workflow expense  ',
           occurredDate: '2026-07-18',
           extraValues: { expenseType: '人工' }
@@ -1699,11 +1872,12 @@ describe('real PostgreSQL integration', () => {
         )
       ).toBe(true);
     } finally {
-      if (workOrderId) await prisma.workOrder.deleteMany({ where: { id: workOrderId } });
+      const workOrderIds = [workOrderId, raceWorkOrderId].filter((id): id is string => Boolean(id));
+      if (workOrderIds.length) await prisma.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
       const projectRecordIds = projectId
         ? (await prisma.businessRecord.findMany({ where: { projectId }, select: { id: true } })).map((record) => record.id)
         : [];
-      const resourceIds = [workOrderId, generatedRecordId, ...projectRecordIds].filter((id): id is string => Boolean(id));
+      const resourceIds = [...workOrderIds, generatedRecordId, ...projectRecordIds].filter((id): id is string => Boolean(id));
       if (projectRecordIds.length) await prisma.businessRecord.deleteMany({ where: { id: { in: projectRecordIds } } });
       if (resourceIds.length) await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
       if (resourceIds.length) {
@@ -1740,7 +1914,9 @@ describe('real PostgreSQL integration', () => {
     let secondProjectId: string | undefined;
     let templateId: string | undefined;
 
-    const validPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n');
+    const validPdfDocument = await PDFDocument.create();
+    validPdfDocument.addPage([320, 240]);
+    const validPdf = Buffer.from(await validPdfDocument.save());
     const upload = (token: string, targetProjectId: string, file: Buffer, options: {
       name?: string;
       mimeType?: string;
@@ -1781,15 +1957,34 @@ describe('real PostgreSQL integration', () => {
       const template = await prisma.template.create({
         data: {
           name: `${TEST_USER_PREFIX}files_template_${suffix}`,
-          recordType: DataRecordType.cost,
+          recordType: DataRecordType.reimbursement,
           createdBy: 'finance'
         }
       });
       templateId = template.id;
+      const recordFields = await prisma.fieldDefinition.findMany({
+        where: { fieldKey: { in: ['date', 'amount'] } }
+      });
+      const recordAmountField = recordFields.find((field) => field.fieldKey === 'amount')!;
+      const recordDateField = recordFields.find((field) => field.fieldKey === 'date')!;
+      await prisma.templateField.createMany({
+        data: recordFields.map((field, index) => ({
+          templateId: template.id,
+          fieldId: field.id,
+          displayOrder: index + 1,
+          isRequired: true,
+          isVisible: true
+        }))
+      });
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { primaryAmountFieldId: recordAmountField.id, primaryDateFieldId: recordDateField.id }
+      });
       await prisma.projectTemplate.createMany({
         data: [project.id, secondProject.id].map((targetProjectId) => ({
           projectId: targetProjectId,
-          templateId: template.id
+          templateId: template.id,
+          recordType: template.recordType
         }))
       });
 
@@ -1824,6 +2019,11 @@ describe('real PostgreSQL integration', () => {
         workOrderId,
         name: 'empty.pdf'
       }).expect(400);
+      await upload(tokens.employee, project.id, Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'), {
+        workOrderId,
+        name: 'eicar.csv',
+        mimeType: 'text/csv'
+      }).expect(422);
       const oversizedPdf = Buffer.concat([
         Buffer.from('%PDF-1.4\n'),
         Buffer.alloc(5 * 1024 * 1024, 0x20),
@@ -1832,7 +2032,7 @@ describe('real PostgreSQL integration', () => {
       await upload(tokens.employee, project.id, oversizedPdf, {
         workOrderId,
         name: 'oversized.pdf'
-      }).expect(400);
+      }).expect(413);
 
       const uploadedResponse = await upload(tokens.employee, project.id, validPdf, {
         workOrderId,
@@ -1875,7 +2075,8 @@ describe('real PostgreSQL integration', () => {
         .get(`/api/files/${fileId}/preview`)
         .set('Authorization', `Bearer ${tokens.employee}`)
         .set('X-Request-Id', `integration-file-preview-${suffix}`)
-        .expect('Content-Type', /application\/pdf/)
+        .expect('Content-Type', /application\/octet-stream/)
+        .expect('Content-Disposition', /attachment/)
         .expect(200);
       expect(Buffer.isBuffer(preview.body)).toBe(true);
       expect(preview.body.equals(validPdf)).toBe(true);
@@ -1887,12 +2088,22 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(download.body.equals(validPdf)).toBe(true);
 
-      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: 'infected' } });
+      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: FileScanStatus.pending } });
+      await request(app.getHttpServer())
+        .get(`/api/files/${fileId}/download`)
+        .set('Authorization', `Bearer ${tokens.employee}`)
+        .expect(423);
+      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: FileScanStatus.failed } });
+      await request(app.getHttpServer())
+        .get(`/api/files/${fileId}/download`)
+        .set('Authorization', `Bearer ${tokens.employee}`)
+        .expect(409);
+      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: FileScanStatus.infected } });
       await request(app.getHttpServer())
         .get(`/api/files/${fileId}/preview`)
         .set('Authorization', `Bearer ${tokens.employee}`)
         .expect(403);
-      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: 'clean' } });
+      await prisma.rawFile.update({ where: { id: fileId }, data: { scanStatus: FileScanStatus.clean } });
 
       const removableResponse = await upload(tokens.employee, project.id, validPdf, {
         workOrderId,
@@ -1915,23 +2126,48 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.employee}`)
         .expect(404);
       expect(await prisma.workOrderAttachment.count({ where: { rawFileId: removableId } })).toBe(0);
-      await expect(fileStorage.read(removableStored.storagePath)).resolves.toEqual(validPdf);
+      await expect(fileStorage.read(removableStored.storagePath)).rejects.toMatchObject({ code: 'ENOENT' });
 
       await request(app.getHttpServer())
         .patch(`/api/work-orders/${workOrderId}`)
         .set('Authorization', `Bearer ${tokens.employee}`)
-        .send({ amount: 120, description: '文件集成测试工单', occurredDate: '2026-07-19' })
+        .send({ amount: '120.00', description: '文件集成测试工单', occurredDate: '2026-07-19' })
         .expect(200);
-      await request(app.getHttpServer())
-        .post(`/api/work-orders/${workOrderId}/submit`)
-        .set('Authorization', `Bearer ${tokens.employee}`)
-        .expect(201);
-      await upload(tokens.employee, project.id, validPdf, { workOrderId, name: 'late.pdf' }).expect(403);
-      await request(app.getHttpServer())
-        .delete(`/api/files/${fileId}`)
-        .set('Authorization', `Bearer ${tokens.employee}`)
-        .send({ reason: '提交后删除' })
-        .expect(403);
+      const [concurrentUpload, concurrentDelete, concurrentSubmit] = await Promise.all([
+        upload(tokens.employee, project.id, validPdf, {
+          workOrderId,
+          name: 'concurrent.pdf',
+          requestId: `integration-file-concurrent-upload-${suffix}`
+        }),
+        request(app.getHttpServer())
+          .delete(`/api/files/${fileId}`)
+          .set('Authorization', `Bearer ${tokens.employee}`)
+          .send({ reason: '与提交并发删除' }),
+        request(app.getHttpServer())
+          .post(`/api/work-orders/${workOrderId}/submit`)
+          .set('Authorization', `Bearer ${tokens.employee}`)
+      ]);
+      expect(concurrentSubmit.status).toBe(201);
+      expect([201, 409]).toContain(concurrentUpload.status);
+      expect([200, 409]).toContain(concurrentDelete.status);
+      if (concurrentUpload.status === 201) {
+        const concurrentFileId = concurrentUpload.body.data.id as string;
+        rawFileIds.push(concurrentFileId);
+        const concurrentFile = await prisma.rawFile.findUniqueOrThrow({ where: { id: concurrentFileId } });
+        storagePaths.push(concurrentFile.storagePath);
+      }
+      const submittedWorkOrder = await prisma.workOrder.findUniqueOrThrow({
+        where: { id: workOrderId },
+        include: { attachments: { include: { rawFile: true } } }
+      });
+      const snapshotAttachments = (submittedWorkOrder.submissionSnapshot as {
+        attachments: Array<{ rawFileId: string; sha256: string }>;
+      }).attachments;
+      expect(snapshotAttachments.map((item) => item.rawFileId).sort())
+        .toEqual(submittedWorkOrder.attachments.map((item) => item.rawFileId).sort());
+      expect(snapshotAttachments.map((item) => item.sha256).sort())
+        .toEqual(submittedWorkOrder.attachments.map((item) => item.rawFile.sha256).sort());
+      await upload(tokens.employee, project.id, validPdf, { workOrderId, name: 'late.pdf' }).expect(409);
 
       const recordFileResponse = await upload(tokens.finance, project.id, validPdf, {
         name: 'record-voucher.pdf',
@@ -1947,13 +2183,16 @@ describe('real PostgreSQL integration', () => {
         .send({
           projectId: project.id,
           templateId: template.id,
-          recordType: DataRecordType.cost,
+          recordType: DataRecordType.reimbursement,
           recordDate: '2026-07-19',
-          amount: 120,
+          amount: '120.00',
           sourceType: RecordSourceType.manual,
           sourceId: 'manual',
           status: BusinessRecordStatus.pending_confirm,
-          values: [],
+          values: [
+            { fieldId: recordAmountField.id, value: '120.00' },
+            { fieldId: recordDateField.id, value: '2026-07-19' }
+          ],
           attachments: [recordFileId]
         })
         .expect(201);
@@ -1967,10 +2206,13 @@ describe('real PostgreSQL integration', () => {
         .send({
           projectId: secondProject.id,
           templateId: template.id,
-          recordType: DataRecordType.cost,
+          recordType: DataRecordType.reimbursement,
           recordDate: '2026-07-19',
-          amount: 1,
-          values: [],
+          amount: '1.00',
+          values: [
+            { fieldId: recordAmountField.id, value: '1.00' },
+            { fieldId: recordDateField.id, value: '2026-07-19' }
+          ],
           attachments: [recordFileId]
         })
         .expect(400);
@@ -1980,10 +2222,13 @@ describe('real PostgreSQL integration', () => {
         .send({
           projectId: project.id,
           templateId: template.id,
-          recordType: DataRecordType.cost,
+          recordType: DataRecordType.reimbursement,
           recordDate: '2026-07-19',
-          amount: 1,
-          values: [],
+          amount: '1.00',
+          values: [
+            { fieldId: recordAmountField.id, value: '1.00' },
+            { fieldId: recordDateField.id, value: '2026-07-19' }
+          ],
           attachments: [fileId]
         })
         .expect(400);
@@ -2098,6 +2343,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.revenue,
             recordDate: boundaryDates.insideStart,
             amount: new Prisma.Decimal('100.10'),
+            accountingDirection: AccountingDirection.income,
             category: '收入',
             subCategory: '边界收入',
             sourceId: `${projectId}-inside-start`,
@@ -2112,6 +2358,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.reimbursement,
             recordDate: boundaryDates.insideEnd,
             amount: new Prisma.Decimal('40.05'),
+            accountingDirection: AccountingDirection.expense,
             category: '支出',
             subCategory: '边界成本',
             sourceId: `${projectId}-inside-end`,
@@ -2126,6 +2373,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.revenue,
             recordDate: boundaryDates.outsideBefore,
             amount: new Prisma.Decimal('9999.00'),
+            accountingDirection: AccountingDirection.income,
             category: '收入',
             subCategory: '前一日收入',
             sourceId: `${projectId}-outside-before`,
@@ -2140,6 +2388,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.reimbursement,
             recordDate: boundaryDates.outsideAfter,
             amount: new Prisma.Decimal('9999.00'),
+            accountingDirection: AccountingDirection.expense,
             category: '支出',
             subCategory: '后一日成本',
             sourceId: `${projectId}-outside-after`,
@@ -2154,6 +2403,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.revenue,
             recordDate: new Date(dailyRange.start.getTime() + 12 * 60 * 60 * 1000),
             amount: new Prisma.Decimal('5000.00'),
+            accountingDirection: AccountingDirection.income,
             category: '收入',
             subCategory: '草稿收入',
             sourceId: `${projectId}-draft`,
@@ -2166,6 +2416,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.reimbursement,
             recordDate: new Date(dailyRange.start.getTime() + 13 * 60 * 60 * 1000),
             amount: new Prisma.Decimal('5000.00'),
+            accountingDirection: AccountingDirection.expense,
             category: '支出',
             subCategory: '待确认成本',
             sourceId: `${projectId}-pending`,
@@ -2178,6 +2429,7 @@ describe('real PostgreSQL integration', () => {
             recordType: DataRecordType.reimbursement,
             recordDate: new Date(dailyRange.start.getTime() + 14 * 60 * 60 * 1000),
             amount: new Prisma.Decimal('5000.00'),
+            accountingDirection: AccountingDirection.expense,
             category: '支出',
             subCategory: '作废成本',
             sourceId: `${projectId}-voided`,
@@ -2224,15 +2476,15 @@ describe('real PostgreSQL integration', () => {
         projectId,
         date: reportDate,
         range: { startDate: reportDate, endDate: reportDate, timezone: 'Asia/Shanghai' },
-        income: 100.1,
-        expense: 40.05,
-        cost: 40.05,
-        profit: 60.05,
+        income: '100.10',
+        expense: '40.05',
+        cost: '40.05',
+        profit: '60.05',
         recordCount: 2,
         anomalyCount: 0
       });
       expect(projectDaily.body.data.expenseCategories).toEqual([
-        { name: '边界成本', amount: 40.05, recordCount: 1, percentage: 1 }
+        { name: '边界成本', amount: '40.05', recordCount: 1, percentage: 1 }
       ]);
 
       const projectMonthly = await request(app.getHttpServer())
@@ -2242,9 +2494,9 @@ describe('real PostgreSQL integration', () => {
       expect(projectMonthly.body.data).toMatchObject({
         projectId,
         month: reportMonth,
-        income: expectedMonthlyIncome,
-        expense: expectedMonthlyExpense,
-        profit: Number((expectedMonthlyIncome - expectedMonthlyExpense).toFixed(2)),
+        income: expectedMonthlyIncome.toFixed(2),
+        expense: expectedMonthlyExpense.toFixed(2),
+        profit: (expectedMonthlyIncome - expectedMonthlyExpense).toFixed(2),
         recordCount: monthlyRecords.length
       });
       expect(projectMonthly.body.data.dailyTrend.map((item: { date: string }) => item.date)).toEqual(expectedMonthlyDates);
@@ -2258,7 +2510,7 @@ describe('real PostgreSQL integration', () => {
         range: { startDate: reportDate, endDate: reportDate, timezone: 'Asia/Shanghai' }
       });
       expect(financeReport.body.data.expenseCategories).toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: '边界成本', amount: 40.05, recordCount: 1 })
+        expect.objectContaining({ name: '边界成本', amount: '40.05', recordCount: 1 })
       ]));
 
       const bossReport = await request(app.getHttpServer())
@@ -2272,7 +2524,7 @@ describe('real PostgreSQL integration', () => {
         profit: financeReport.body.data.estimatedProfit
       });
       expect(bossReport.body.data.projectRanking).toEqual(expect.arrayContaining([
-        expect.objectContaining({ projectId, income: 100.1, cost: 40.05, profit: 60.05 })
+        expect.objectContaining({ projectId, income: '100.10', cost: '40.05', profit: '60.05' })
       ]));
 
       const chat = await request(app.getHttpServer())
@@ -2583,6 +2835,28 @@ describe('real PostgreSQL integration', () => {
         .send({ message: '继续查询', conversationId })
         .expect(403);
       await request(app.getHttpServer())
+        .get('/api/ai/conversations')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(403);
+      const ownConversations = await request(app.getHttpServer())
+        .get('/api/ai/conversations?page=1&pageSize=1')
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      expect(ownConversations.body.data).toMatchObject({ page: 1, pageSize: 1 });
+      expect(ownConversations.body.data.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: conversationId, messageCount: 12 })
+      ]));
+      const ownMessages = await request(app.getHttpServer())
+        .get(`/api/ai/conversations/${conversationId}/messages?page=1&pageSize=5`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      expect(ownMessages.body.data).toMatchObject({ page: 1, pageSize: 5, total: 12 });
+      expect(ownMessages.body.data.items).toHaveLength(5);
+      await request(app.getHttpServer())
+        .get(`/api/ai/conversations/${conversationId}/messages`)
+        .set('Authorization', `Bearer ${tokens['老板']}`)
+        .expect(403);
+      await request(app.getHttpServer())
         .get('/api/ai/call-logs')
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(403);
@@ -2692,6 +2966,7 @@ describe('real PostgreSQL integration', () => {
     const recordIds: string[] = [];
     let projectId: string | undefined;
     let templateId: string | undefined;
+    let activeTemplateId: string | undefined;
     let suggestedFieldId: string | undefined;
 
     const workbook = new ExcelJS.Workbook();
@@ -2724,6 +2999,7 @@ describe('real PostgreSQL integration', () => {
         }
       });
       templateId = template.id;
+      activeTemplateId = template.id;
       const standardFields = await prisma.fieldDefinition.findMany({
         where: { fieldKey: { in: ['date', 'amount', 'vehiclePlate', 'driverName'] } }
       });
@@ -2738,7 +3014,15 @@ describe('real PostgreSQL integration', () => {
           isVisible: true
         }))
       });
-      await prisma.projectTemplate.create({ data: { projectId: project.id, templateId: template.id } });
+      const amountField = standardFields.find((field) => field.fieldKey === 'amount')!;
+      const dateField = standardFields.find((field) => field.fieldKey === 'date')!;
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { primaryAmountFieldId: amountField.id, primaryDateFieldId: dateField.id }
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId: project.id, templateId: template.id, recordType: template.recordType }
+      });
 
       await request(app.getHttpServer())
         .post('/api/import-tasks')
@@ -2754,7 +3038,7 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('Idempotency-Key', key)
         .field('projectId', project.id)
-        .field('templateId', template.id)
+        .field('templateId', activeTemplateId!)
         .field('importType', DataRecordType.cost)
         .attach('file', xlsx, { filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
@@ -2821,6 +3105,8 @@ describe('real PostgreSQL integration', () => {
         .send({ fieldName: '上楼费', fieldType: FieldType.money })
         .expect(201);
       suggestedFieldId = approved.body.data.fieldId as string;
+      activeTemplateId = approved.body.data.templateId as string;
+      expect(activeTemplateId).not.toBe(template.id);
 
       const mapped = await request(app.getHttpServer())
         .put(`/api/import-tasks/${taskId}/mappings`)
@@ -2889,7 +3175,7 @@ describe('real PostgreSQL integration', () => {
         .get(`/api/reports/projects/${project.id}/daily?date=2026-07-01`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(200);
-      expect(projectReport.body.data).toMatchObject({ expense: 8200, recordCount: 1 });
+      expect(projectReport.body.data).toMatchObject({ expense: '8200.00', recordCount: 1 });
 
       expect(await prisma.auditLog.count({ where: { action: 'import_task.confirm', resourceId: taskId } })).toBe(1);
       expect(await prisma.ledgerEvent.count({ where: { eventType: 'import_task_confirmed', aggregateId: taskId } })).toBe(1);
@@ -2936,9 +3222,10 @@ describe('real PostgreSQL integration', () => {
       for (const file of files) await fileStorage.remove(file.storagePath);
       if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
       if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
-      if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+      const templateIds = [templateId, activeTemplateId].filter((id): id is string => Boolean(id));
+      if (templateIds.length) await prisma.template.deleteMany({ where: { id: { in: templateIds } } });
       if (suggestedFieldId) await prisma.fieldDefinition.deleteMany({ where: { id: suggestedFieldId } });
-      const resourceIds = [...taskIds, ...rawFileIds, ...recordIds, projectId, templateId, suggestedFieldId].filter(
+      const resourceIds = [...taskIds, ...rawFileIds, ...recordIds, projectId, ...templateIds, suggestedFieldId].filter(
         (id): id is string => Boolean(id)
       );
       await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
@@ -3067,7 +3354,7 @@ describe('real PostgreSQL integration', () => {
         .send({
           corrections: [
             { fieldId: lowField!.fieldId, correctedValue: '2026-07-01', reason: '人工核对票据日期' },
-            { fieldId: amountField!.fieldId, correctedValue: 1299.25, reason: '人工核对票据金额' }
+            { fieldId: amountField!.fieldId, correctedValue: '1299.25', reason: '人工核对票据金额' }
           ]
         })
         .expect(200);
@@ -3092,7 +3379,7 @@ describe('real PostgreSQL integration', () => {
       recordIds.push(recordId);
       expect(firstConfirm.body.data).toMatchObject({
         task: { status: OcrTaskStatus.confirmed, generatedRecordId: recordId },
-        record: { sourceType: 'ocr', sourceId: taskId, amount: 1299.25, status: 'confirmed' }
+        record: { sourceType: 'ocr', sourceId: taskId, amount: '1299.25', status: 'confirmed' }
       });
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { action: 'ocr_task.confirm', resourceId: taskId } })).toBe(1);
@@ -3190,7 +3477,8 @@ describe('real PostgreSQL integration', () => {
       prisma.projectTemplate.create({
         data: {
           projectId: 'missing-project-for-integration-test',
-          templateId: 'missing-template-for-integration-test'
+          templateId: 'missing-template-for-integration-test',
+          recordType: DataRecordType.cost
         }
       })
     ).rejects.toMatchObject({ code: 'P2003' });

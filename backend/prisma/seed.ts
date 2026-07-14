@@ -1,4 +1,5 @@
 import {
+  AccountingDirection,
   BusinessRecordStatus,
   DataRecordType,
   FieldType,
@@ -20,8 +21,8 @@ function assertSafeSeedEnvironment() {
     throw new Error('DATABASE_URL is required before running the development seed.');
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('The development seed is disabled when NODE_ENV=production.');
+  if (!['development', 'test'].includes(process.env.NODE_ENV ?? '')) {
+    throw new Error('The demo seed requires NODE_ENV=development or NODE_ENV=test exactly.');
   }
 
   let databaseName = '';
@@ -36,6 +37,10 @@ function assertSafeSeedEnvironment() {
     throw new Error(
       `Refusing to seed database "${databaseName}". Use a database ending in _dev or _test, or explicitly set SEED_ALLOW_NONSTANDARD_DATABASE=true outside production.`
     );
+  }
+  const expectedConfirmation = `reset-demo-users:${databaseName}`;
+  if (process.env.SEED_DEMO_CONFIRMATION !== expectedConfirmation) {
+    throw new Error(`Set SEED_DEMO_CONFIRMATION=${expectedConfirmation} to confirm resetting demo users.`);
   }
 }
 
@@ -117,7 +122,8 @@ async function main() {
         department: user.department,
         phone: user.phone,
         passwordHash,
-        status: 'active'
+        status: 'active',
+        tokenVersion: { increment: 1 }
       }
     });
   }
@@ -179,36 +185,54 @@ async function main() {
       id: 'dt-transport',
       name: '运输费用模板',
       recordType: DataRecordType.transport,
+      accountingDirection: AccountingDirection.expense,
+      primaryAmountFieldId: 'f-amount',
+      primaryDateFieldId: 'f-date',
       description: '记录车辆、司机、线路和运输成本。'
     },
     {
       id: 'dt-labor',
       name: '人工劳务费用模板',
       recordType: DataRecordType.labor,
+      accountingDirection: AccountingDirection.expense,
+      primaryAmountFieldId: 'f-amount',
+      primaryDateFieldId: 'f-date',
       description: '记录人员、岗位、工时和单价。'
     },
     {
       id: 'dt-site',
       name: '场地费用模板',
       recordType: DataRecordType.cost,
+      accountingDirection: AccountingDirection.expense,
+      primaryAmountFieldId: 'f-amount',
+      primaryDateFieldId: 'f-date',
       description: '记录场地、水电和固定成本。'
     },
     {
       id: 'dt-revenue',
       name: '收入记录模板',
       recordType: DataRecordType.revenue,
+      accountingDirection: AccountingDirection.income,
+      primaryAmountFieldId: 'f-income',
+      primaryDateFieldId: 'f-date',
       description: '记录票数、吨数和收入金额。'
     },
     {
       id: 'dt-reimbursement',
       name: '报销工单模板',
       recordType: DataRecordType.reimbursement,
+      accountingDirection: AccountingDirection.expense,
+      primaryAmountFieldId: 'f-amount',
+      primaryDateFieldId: 'f-date',
       description: '记录报销事由、成本分类、付款对象和凭证。'
     },
     {
       id: 'dt-other',
       name: '其他支出模板',
       recordType: DataRecordType.other,
+      accountingDirection: AccountingDirection.expense,
+      primaryAmountFieldId: 'f-amount',
+      primaryDateFieldId: 'f-date',
       description: '记录不属于标准报销分类的临时支出。'
     }
   ];
@@ -226,6 +250,9 @@ async function main() {
       update: {
         name: template.name,
         recordType: template.recordType,
+        accountingDirection: template.accountingDirection,
+        primaryAmountFieldId: template.primaryAmountFieldId,
+        primaryDateFieldId: template.primaryDateFieldId,
         description: template.description,
         isSystem: true,
         createdBy: '系统'
@@ -255,13 +282,19 @@ async function main() {
           id: `tf-${templateId}-${fieldId}`,
           templateId,
           fieldId,
-          isRequired: index < 3,
+          isRequired:
+            index < 3 ||
+            fieldId === templates.find((template) => template.id === templateId)?.primaryAmountFieldId ||
+            fieldId === templates.find((template) => template.id === templateId)?.primaryDateFieldId,
           isVisible: true,
           displayOrder: index + 1,
           defaultValue: ''
         },
         update: {
-          isRequired: index < 3,
+          isRequired:
+            index < 3 ||
+            fieldId === templates.find((template) => template.id === templateId)?.primaryAmountFieldId ||
+            fieldId === templates.find((template) => template.id === templateId)?.primaryDateFieldId,
           isVisible: true,
           displayOrder: index + 1,
           defaultValue: ''
@@ -321,11 +354,11 @@ async function main() {
     ['dp-001', 'dt-reimbursement', '太和报销费用'],
     ['dp-001', 'dt-other', '太和其他支出'],
     ['dp-002', 'dt-revenue', '得物收入记录'],
-    ['dp-002', 'dt-transport', '得物运输收入'],
+    ['dp-002', 'dt-transport', '得物运输成本'],
     ['dp-002', 'dt-reimbursement', '得物报销费用'],
     ['dp-002', 'dt-other', '得物其他支出'],
     ['dp-003', 'dt-site', '旧衣场地费用'],
-    ['dp-003', 'dt-transport', '旧衣运输收入'],
+    ['dp-003', 'dt-transport', '旧衣运输成本'],
     ['dp-003', 'dt-reimbursement', '旧衣报销费用'],
     ['dp-003', 'dt-other', '旧衣其他支出']
   ] as const;
@@ -342,10 +375,12 @@ async function main() {
         id: `pt-${projectId}-${templateId}`,
         projectId,
         templateId,
+        recordType: templates.find((template) => template.id === templateId)!.recordType,
         customName,
         isActive: true
       },
       update: {
+        recordType: templates.find((template) => template.id === templateId)!.recordType,
         customName,
         isActive: true
       }

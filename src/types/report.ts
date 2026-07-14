@@ -11,7 +11,7 @@ export interface ReportRange {
 
 export interface ExpenseCategory {
   name: string;
-  amount: number;
+  amount: string;
   recordCount: number;
   percentage: number;
 }
@@ -44,9 +44,9 @@ export interface FinanceReport {
   newRecords: number;
   confirmedRecords: number;
   anomalyCount: number;
-  totalIncome: number;
-  totalExpense: number;
-  estimatedProfit: number;
+  totalIncome: string;
+  totalExpense: string;
+  estimatedProfit: string;
   expenseCategories: ExpenseCategory[];
   anomalies: ReportAnomaly[];
   aiSummary: string;
@@ -55,10 +55,10 @@ export interface FinanceReport {
 export interface ProjectRankingItem {
   projectId: string;
   projectName: string;
-  income: number;
-  expense: number;
-  cost: number;
-  profit: number;
+  income: string;
+  expense: string;
+  cost: string;
+  profit: string;
   profitRate: number;
   riskCount: number;
 }
@@ -70,9 +70,9 @@ export interface BossReport {
   date: string;
   range: ReportRange;
   generatedAt: string;
-  income: number;
-  expense: number;
-  profit: number;
+  income: string;
+  expense: string;
+  profit: string;
   profitRate: number;
   recordCount: number;
   anomalies: string[];
@@ -96,16 +96,16 @@ export interface ProjectReport {
   month?: string;
   range: ReportRange;
   generatedAt: string;
-  income: number;
-  expense: number;
-  cost: number;
-  profit: number;
+  income: string;
+  expense: string;
+  cost: string;
+  profit: string;
   recordCount: number;
   recordsCount: number;
   anomalyCount: number;
   expenseCategories: ExpenseCategory[];
-  categoryBreakdown?: Array<{ category: string; amount: number }>;
-  dailyTrend?: Array<{ date: string; income: number; expense: number; profit: number }>;
+  categoryBreakdown?: Array<{ category: string; amount: string }>;
+  dailyTrend?: Array<{ date: string; income: string; expense: string; profit: string }>;
 }
 
 export interface AIAnomaly {
@@ -114,7 +114,7 @@ export interface AIAnomaly {
   orderNo: string;
   projectName: string;
   type: string;
-  amount: number;
+  amount: string;
   riskLevel: RiskLevel;
   reason: string;
   statusText: string;

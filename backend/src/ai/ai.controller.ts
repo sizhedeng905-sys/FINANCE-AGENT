@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -11,6 +11,7 @@ import { getRequestContext } from '../common/utils/request-context';
 import { AiService } from './ai.service';
 import { AiChatDto } from './dto/ai-chat.dto';
 import { QueryAiCallLogsDto } from './dto/query-ai-call-logs.dto';
+import { QueryAiConversationsDto } from './dto/query-ai-conversations.dto';
 
 @ApiTags('ai')
 @ApiBearerAuth()
@@ -23,6 +24,22 @@ export class AiController {
   @Roles(UserRole.boss)
   chat(@Body() dto: AiChatDto, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
     return this.ai.chat(dto, user, getRequestContext(request));
+  }
+
+  @Get('conversations')
+  @Roles(UserRole.boss)
+  conversations(@Query() query: QueryAiConversationsDto, @CurrentUserDecorator() user: CurrentUser) {
+    return this.ai.conversations(query, user);
+  }
+
+  @Get('conversations/:id/messages')
+  @Roles(UserRole.boss)
+  messages(
+    @Param('id') id: string,
+    @Query() query: QueryAiConversationsDto,
+    @CurrentUserDecorator() user: CurrentUser
+  ) {
+    return this.ai.messages(id, query, user);
   }
 
   @Get('call-logs')

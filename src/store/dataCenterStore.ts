@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { runtimeConfig } from '@/config/runtime';
 import {
   createProject as createProjectRequest,
   deleteProject as archiveProjectRequest,
@@ -80,6 +81,12 @@ import type {
   UpdateTemplatePayload,
   UpdateTemplateFieldPayload,
 } from '@/types/dataCenter';
+
+if (runtimeConfig.dataMode === 'api' && typeof window !== 'undefined') {
+  for (const key of ['audit-data-center-store-v7', 'audit-data-center-store-mock-v8']) {
+    window.localStorage.removeItem(key);
+  }
+}
 
 type ExcelColumn = (typeof mockExcelColumns)[number];
 
@@ -305,12 +312,12 @@ export const useDataCenterStore = create<DataCenterState>()(
       recordLoading: false,
       recordError: null,
       lastRecordQuery: { page: 1, pageSize: 20 },
-      rawFiles: mockRawFiles,
-      importTasks: mockImportTasks,
-      importRows: mockImportRows,
-      mappingRules: mockMappingRules,
-      fieldSuggestions: mockFieldSuggestions,
-      excelColumns: mockExcelColumns,
+      rawFiles: runtimeConfig.dataMode === 'mock' ? mockRawFiles : [],
+      importTasks: runtimeConfig.dataMode === 'mock' ? mockImportTasks : [],
+      importRows: runtimeConfig.dataMode === 'mock' ? mockImportRows : [],
+      mappingRules: runtimeConfig.dataMode === 'mock' ? mockMappingRules : [],
+      fieldSuggestions: runtimeConfig.dataMode === 'mock' ? mockFieldSuggestions : [],
+      excelColumns: runtimeConfig.dataMode === 'mock' ? mockExcelColumns : [],
 
       fetchProjects: async (query = get().lastProjectQuery) => {
         const normalizedQuery: ProjectListQuery = {
@@ -1112,7 +1119,7 @@ export const useDataCenterStore = create<DataCenterState>()(
         sourceRows.forEach((row, rowIndex) => {
           const recordId = `br-import-${Date.now()}-${rowIndex}`;
           const values: RecordValue[] = [];
-          let amount: number | undefined;
+          let amount: string | undefined;
           let recordDate: string | undefined;
 
           Object.entries(row.rawData).forEach(([sourceColumnName, rawValue], valueIndex) => {
@@ -1129,8 +1136,8 @@ export const useDataCenterStore = create<DataCenterState>()(
               value,
             });
             if ((field.semanticType === 'amount' || field.fieldType === 'money') && amount === undefined) {
-              const parsed = Number(rawValue);
-              amount = Number.isFinite(parsed) ? parsed : undefined;
+              const parsed = String(rawValue).trim();
+              amount = /^\d+(?:\.\d{1,2})?$/.test(parsed) ? Number(parsed).toFixed(2) : undefined;
             }
             if ((field.semanticType === 'date' || field.fieldType === 'date') && !recordDate) {
               recordDate = String(rawValue);
@@ -1146,6 +1153,9 @@ export const useDataCenterStore = create<DataCenterState>()(
             templateId: task.templateId,
             templateName: task.templateName,
             recordType: task.importType as DataRecordType,
+            accountingDirection: task.importType === 'revenue' ? 'income' : 'expense',
+            templateVersion: 1,
+            version: 1,
             recordDate: recordDate || task.createdAt.slice(0, 10),
             amount,
             category: task.importType === 'revenue' ? '收入' : '成本',
@@ -1236,15 +1246,18 @@ export const useDataCenterStore = create<DataCenterState>()(
           .sort((a, b) => a.displayOrder - b.displayOrder),
     }),
     {
-      name: 'audit-data-center-store-v7',
-      partialize: (state) => ({
-        rawFiles: state.rawFiles,
-        importTasks: state.importTasks,
-        importRows: state.importRows,
-        mappingRules: state.mappingRules,
-        fieldSuggestions: state.fieldSuggestions,
-        excelColumns: state.excelColumns,
-      }),
+      name: runtimeConfig.dataMode === 'mock' ? 'audit-data-center-store-mock-v8' : 'audit-data-center-store-api-v1',
+      partialize: (state) =>
+        runtimeConfig.dataMode === 'mock'
+          ? {
+              rawFiles: state.rawFiles,
+              importTasks: state.importTasks,
+              importRows: state.importRows,
+              mappingRules: state.mappingRules,
+              fieldSuggestions: state.fieldSuggestions,
+              excelColumns: state.excelColumns,
+            }
+          : {},
     },
   ),
 );

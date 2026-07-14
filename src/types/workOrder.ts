@@ -39,10 +39,10 @@ export interface BaseWorkOrder {
   customerName: string;
   creatorName: string;
   creatorId: string;
-  amount: number;
-  income: number;
-  cost: number;
-  profit: number;
+  amount: string;
+  income: string;
+  cost: string;
+  profit: string;
   status: WorkOrderStatus;
   riskLevel: RiskLevel;
   occurredDate?: string;
@@ -72,14 +72,14 @@ export interface WorkOrder extends BaseWorkOrder {
   startLocation?: string;
   endLocation?: string;
   distance?: number;
-  transportIncome?: number;
-  fuelCost?: number;
-  tollCost?: number;
-  driverCost?: number;
-  otherCost?: number;
+  transportIncome?: string;
+  fuelCost?: string;
+  tollCost?: string;
+  driverCost?: string;
+  otherCost?: string;
   remark?: string;
   expenseType?: string;
-  expenseAmount?: number;
+  expenseAmount?: string;
   expenseDate?: string;
   paymentMethod?: string;
 }
@@ -87,7 +87,7 @@ export interface WorkOrder extends BaseWorkOrder {
 export interface CreateWorkOrderPayload {
   type: WorkOrderType;
   projectId: string;
-  amount?: number;
+  amount?: string;
   description?: string;
   occurredDate?: string;
   attachments?: string[];
@@ -128,8 +128,8 @@ export interface Project {
   projectName: string;
   customerName: string;
   ownerName: string;
-  monthIncome: number;
-  monthCost: number;
+  monthIncome: string;
+  monthCost: string;
   anomalyCount: number;
   status: 'normal' | 'watch' | 'risk';
   aiSummary: string;

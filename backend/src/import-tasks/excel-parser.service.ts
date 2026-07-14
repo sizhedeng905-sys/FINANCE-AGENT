@@ -176,10 +176,7 @@ export class ExcelParserService {
       return { value: date, displayValue: date, formula: false };
     }
     if (typeof value === 'string') {
-      if (value.length > MAX_CELL_TEXT_LENGTH) {
-        return { value: value.slice(0, MAX_CELL_TEXT_LENGTH), displayValue: value.slice(0, 200), formula: false, error: '文本过长' };
-      }
-      return { value, displayValue: value, formula: false };
+      return this.normalizeTextCell(value);
     }
     if (typeof value === 'number' || typeof value === 'boolean') {
       return { value, displayValue: value, formula: false };
@@ -195,16 +192,28 @@ export class ExcelParserService {
     }
     if ('richText' in value) {
       const text = value.richText.map((part) => part.text).join('');
-      return { value: text, displayValue: text, formula: false };
+      return this.normalizeTextCell(text);
     }
     if ('hyperlink' in value) {
       const text = value.text || value.hyperlink;
-      return { value: text, displayValue: text, formula: false };
+      return this.normalizeTextCell(text);
     }
     if ('error' in value) {
       return { value: { error: value.error }, displayValue: value.error, formula: false, error: 'Excel 单元格错误' };
     }
-    return { value: String(cell.text), displayValue: String(cell.text), formula: false };
+    return this.normalizeTextCell(String(cell.text));
+  }
+
+  private normalizeTextCell(value: string): NormalizedCell {
+    if (value.length > MAX_CELL_TEXT_LENGTH) {
+      return {
+        value: value.slice(0, MAX_CELL_TEXT_LENGTH),
+        displayValue: value.slice(0, 200),
+        formula: false,
+        error: `文本不能超过 ${MAX_CELL_TEXT_LENGTH} 个字符`
+      };
+    }
+    return { value, displayValue: value, formula: false };
   }
 
   private inferType(values: Array<string | number | boolean>): 'date' | 'number' | 'text' {

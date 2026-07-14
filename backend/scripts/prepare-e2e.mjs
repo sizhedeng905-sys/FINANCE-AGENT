@@ -26,6 +26,7 @@ const env = {
   DATABASE_URL: databaseUrl,
   TEST_DATABASE_URL: databaseUrl,
   SEED_ALLOW_NONSTANDARD_DATABASE: 'false',
+  SEED_DEMO_CONFIRMATION: `reset-demo-users:${databaseName}`,
   UPLOAD_DIR: process.env.E2E_UPLOAD_DIR || 'test-uploads/e2e'
 };
 

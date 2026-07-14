@@ -19,7 +19,7 @@ interface RecordDto {
   id: string;
   sourceType: string;
   sourceId: string;
-  amount: number;
+  amount: string;
   status: string;
 }
 
@@ -33,13 +33,11 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   await selectOption(page, '模板', '报销工单模板');
   await page.locator('input[type="file"]').setInputFiles(fixture);
 
-  const uploadResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/files/upload'));
-  const createResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/ocr-tasks'));
+  const createResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/ocr-tasks/upload'));
   const runResponse = page.waitForResponse((response) => (
     response.request().method() === 'POST' && /\/api\/ocr-tasks\/[^/]+\/run$/.test(new URL(response.url()).pathname)
   ));
   await page.getByRole('button', { name: '上传并识别' }).click();
-  await readEnvelope(await uploadResponse);
   const created = await readEnvelope<OcrTaskDto>(await createResponse);
   const recognized = await readEnvelope<OcrTaskDto>(await runResponse);
   expect(recognized.data).toMatchObject({ id: created.data.id, status: 'pending_confirm' });
@@ -61,7 +59,7 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   await dialog.getByRole('button', { name: '保存修正' }).click();
   const corrected = await readEnvelope<OcrTaskDto>(await correctionResponse);
   expect(corrected.data.fields.find((field) => field.fieldName === '金额')).toMatchObject({
-    normalizedValue: 1366.66,
+    normalizedValue: '1366.66',
     corrected: true
   });
   await expect(dialog).toBeHidden();
@@ -78,13 +76,13 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   const confirmed = await readEnvelope<{ task: OcrTaskDto; record: RecordDto; alreadyConfirmed: boolean }>(await confirmResponse);
   expect(confirmed.data).toMatchObject({
     task: { status: 'confirmed' },
-    record: { sourceType: 'ocr', sourceId: created.data.id, amount: 1366.66, status: 'confirmed' },
+    record: { sourceType: 'ocr', sourceId: created.data.id, amount: '1366.66', status: 'confirmed' },
     alreadyConfirmed: false
   });
 
   const records = await readEnvelope<{ items: RecordDto[] }>(await recordsResponse);
   expect(records.data.items).toEqual(expect.arrayContaining([
-    expect.objectContaining({ sourceType: 'ocr', sourceId: created.data.id, amount: 1366.66 })
+    expect.objectContaining({ sourceType: 'ocr', sourceId: created.data.id, amount: '1366.66' })
   ]));
   await expect(page.locator('.ant-table-row').filter({ hasText: '1,366.66' })).toContainText('OCR');
 });

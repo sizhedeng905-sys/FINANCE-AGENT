@@ -1,6 +1,8 @@
-import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
+  AccountingDirection,
   AnomalyStatus,
+  BusinessRecordStatus,
   NotificationType,
   Prisma,
   RiskLevel,
@@ -19,6 +21,7 @@ import { CreateRiskRuleDto } from './dto/create-risk-rule.dto';
 import { QueryAnomaliesDto } from './dto/query-anomalies.dto';
 import { QueryRiskRulesDto } from './dto/query-risk-rules.dto';
 import { UpdateRiskRuleDto } from './dto/update-risk-rule.dto';
+import { HandleAnomalyDto } from './dto/handle-anomaly.dto';
 import { toAnomaly, toRiskRule } from './risk-rule.presenter';
 
 interface RuleEvaluation {
@@ -50,6 +53,7 @@ export class RiskRulesService {
   }
 
   async create(dto: CreateRiskRuleDto, actor: CurrentUser, context: RequestContext) {
+    this.validateRuleCondition(dto.ruleType, dto.conditionJson);
     return this.prisma.$transaction(async (tx) => {
       const rule = await tx.riskRule.create({
         data: {
@@ -69,6 +73,7 @@ export class RiskRulesService {
     return this.prisma.$transaction(async (tx) => {
       const before = await tx.riskRule.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('资源不存在');
+      this.validateRuleCondition(dto.ruleType ?? before.ruleType, dto.conditionJson ?? this.asObject(before.conditionJson));
       const rule = await tx.riskRule.update({
         where: { id },
         data: {
@@ -95,6 +100,56 @@ export class RiskRulesService {
       this.prisma.aiAnomaly.count({ where })
     ]);
     return { items: items.map(toAnomaly), page, pageSize, total };
+  }
+
+  async handleAnomaly(id: string, dto: HandleAnomalyDto, actor: CurrentUser, context: RequestContext) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 12))`;
+      const before = await tx.aiAnomaly.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException('资源不存在');
+      const terminal: AnomalyStatus[] = [
+        AnomalyStatus.resolved,
+        AnomalyStatus.ignored,
+        AnomalyStatus.accepted_risk,
+        AnomalyStatus.false_positive
+      ];
+      if (terminal.includes(before.status)) throw new ConflictException('该异常已完成处置');
+      const now = new Date();
+      const isTerminal = dto.status !== AnomalyStatus.acknowledged;
+      const updated = await tx.aiAnomaly.update({
+        where: { id },
+        data: {
+          status: dto.status,
+          handledById: actor.id,
+          handledByName: actor.name,
+          handlingReason: dto.reason,
+          handledAt: now,
+          resolvedAt: isTerminal ? now : null
+        }
+      });
+      await this.auditLogs.write(
+        tx,
+        actor,
+        'anomaly.handle',
+        'ai_anomaly',
+        id,
+        { before: { status: before.status }, after: { status: updated.status }, reason: dto.reason },
+        context
+      );
+      await this.ledgerEvents.write(
+        tx,
+        actor,
+        'anomaly_handled',
+        'ai_anomaly',
+        id,
+        { status: updated.status, reason: dto.reason },
+        `anomaly:${id}:status:${updated.status}`
+      );
+      return toAnomaly(await tx.aiAnomaly.findUniqueOrThrow({
+        where: { id },
+        include: { workOrder: true, project: true, rule: true }
+      }));
+    });
   }
 
   async runForWorkOrder(id: string, actor: CurrentUser, context: RequestContext) {
@@ -125,9 +180,10 @@ export class RiskRulesService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))`;
       const claimed = await tx.workOrder.updateMany({
-        where: { id, status: WorkOrderStatus.ai_reviewing },
-        data: { status: reviewStatus }
+        where: { id, status: WorkOrderStatus.ai_reviewing, version: workOrder.version },
+        data: { status: reviewStatus, version: { increment: 1 } }
       });
       if (claimed.count !== 1) throw new ConflictException('规则复核任务已被其他请求处理');
       const results = [];
@@ -168,6 +224,10 @@ export class RiskRulesService {
               evidence: evaluation.evidence,
               status: AnomalyStatus.open,
               resolvedAt: null,
+              handledAt: null,
+              handledById: null,
+              handledByName: null,
+              handlingReason: null,
               detectedAt: new Date()
             }
           });
@@ -203,7 +263,7 @@ export class RiskRulesService {
       });
       const updated = await tx.workOrder.update({
         where: { id },
-        data: { status: WorkOrderStatus.boss_pending, riskLevel, aiSummary: summary },
+        data: { status: WorkOrderStatus.boss_pending, riskLevel, aiSummary: summary, version: { increment: 1 } },
         include: workOrderInclude
       });
       await tx.notification.create({
@@ -246,14 +306,26 @@ export class RiskRulesService {
     const condition = this.asObject(rule.conditionJson);
     const threshold = this.number(condition.threshold, 0);
     if (rule.ruleType === 'amount_threshold') {
-      const amount = Number(workOrder.amount);
-      return this.result(amount > threshold, `${workOrder.orderNo}金额${amount}元超过阈值${threshold}元`, '请核对合同、凭证和付款依据。', { amount, threshold });
+      const amount = workOrder.amount;
+      const thresholdAmount = new Prisma.Decimal(threshold);
+      return this.result(
+        amount.gt(thresholdAmount),
+        `${workOrder.orderNo}金额${amount.toFixed(2)}元超过阈值${thresholdAmount.toFixed(2)}元`,
+        '请核对合同、凭证和付款依据。',
+        { amount: amount.toFixed(2), threshold: thresholdAmount.toFixed(2) }
+      );
     }
     if (rule.ruleType === 'missing_attachment') {
-      const amount = Number(workOrder.amount);
+      const amount = workOrder.amount;
+      const thresholdAmount = new Prisma.Decimal(threshold);
       const targetType = typeof condition.workOrderType === 'string' ? condition.workOrderType : 'expense';
-      const hit = workOrder.type === targetType && amount > threshold && workOrder.attachments.length === 0;
-      return this.result(hit, `报销金额${amount}元且缺少附件`, '请补充发票、付款凭证或业务回单。', { amount, threshold, attachmentCount: workOrder.attachments.length });
+      const hit = workOrder.type === targetType && amount.gt(thresholdAmount) && workOrder.attachments.length === 0;
+      return this.result(
+        hit,
+        `报销金额${amount.toFixed(2)}元且缺少附件`,
+        '请补充发票、付款凭证或业务回单。',
+        { amount: amount.toFixed(2), threshold: thresholdAmount.toFixed(2), attachmentCount: workOrder.attachments.length }
+      );
     }
     if (rule.ruleType === 'duplicate_submission') {
       if (!workOrder.occurredDate) {
@@ -263,38 +335,73 @@ export class RiskRulesService {
       start.setUTCHours(0, 0, 0, 0);
       const end = new Date(start);
       end.setUTCDate(end.getUTCDate() + 1);
+      const hashes = [...new Set(workOrder.attachments.map((item) => item.rawFile.sha256))];
+      const reference = this.businessReference(workOrder.extraValues);
+      const alternatives: Prisma.WorkOrderWhereInput[] = [
+        { amount: workOrder.amount, occurredDate: { gte: start, lt: end } }
+      ];
+      if (hashes.length) alternatives.push({ attachments: { some: { rawFile: { sha256: { in: hashes } } } } });
+      if (reference) alternatives.push({ extraValues: { path: [reference.key], equals: reference.value } });
       const duplicate = await this.prisma.workOrder.findFirst({
         where: {
           id: { not: workOrder.id },
           projectId: workOrder.projectId,
-          creatorId: workOrder.creatorId,
-          amount: workOrder.amount,
-          occurredDate: { gte: start, lt: end },
+          OR: alternatives,
           status: { notIn: [WorkOrderStatus.finance_rejected, WorkOrderStatus.boss_rejected] }
         },
-        select: { id: true, orderNo: true }
+        select: { id: true, orderNo: true, creatorId: true }
       });
-      return this.result(Boolean(duplicate), `疑似与工单${duplicate?.orderNo ?? ''}重复提交`, '请核对同日同项目同金额工单。', { duplicateWorkOrderId: duplicate?.id ?? null });
+      return this.result(
+        Boolean(duplicate),
+        `疑似与工单${duplicate?.orderNo ?? ''}重复提交`,
+        '请核对同日同项目同金额、票据号或相同附件的工单。',
+        {
+          duplicateWorkOrderId: duplicate?.id ?? null,
+          crossEmployee: duplicate ? duplicate.creatorId !== workOrder.creatorId : false,
+          attachmentHashesCompared: hashes.length,
+          businessReference: reference?.value ?? null
+        }
+      );
     }
     if (rule.ruleType === 'after_hours') {
-      const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(workOrder.createdAt));
+      const submittedAt = workOrder.submittedAt ?? workOrder.createdAt;
+      const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(submittedAt));
       const startHour = this.number(condition.startHour, 8);
       const endHour = this.number(condition.endHour, 20);
-      return this.result(hour < startHour || hour >= endHour, `工单在非工作时间${hour}时提交`, '建议确认提交背景和紧急原因。', { hour, startHour, endHour, timeZone: 'Asia/Shanghai' });
+      return this.result(hour < startHour || hour >= endHour, `工单在非工作时间${hour}时提交`, '建议确认提交背景和紧急原因。', {
+        hour,
+        startHour,
+        endHour,
+        submittedAt: submittedAt.toISOString(),
+        timeZone: 'Asia/Shanghai'
+      });
     }
     if (rule.ruleType === 'cost_trend') {
-      const since = new Date(workOrder.createdAt.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const previous = await this.prisma.workOrder.findMany({
-        where: { projectId: workOrder.projectId, createdAt: { gte: since, lt: workOrder.createdAt } },
-        orderBy: { createdAt: 'desc' },
-        take: 3,
-        select: { amount: true, cost: true }
+      const windowDays = this.integer(condition.windowDays, 7, 1, 365);
+      const minimumSamples = this.integer(condition.minimumSamples, 3, 2, 100);
+      const referenceDate = workOrder.occurredDate ?? workOrder.submittedAt ?? workOrder.createdAt;
+      const since = new Date(referenceDate.getTime() - windowDays * 24 * 60 * 60 * 1000);
+      const previous = await this.prisma.businessRecord.findMany({
+        where: {
+          projectId: workOrder.projectId,
+          status: BusinessRecordStatus.confirmed,
+          accountingDirection: AccountingDirection.expense,
+          recordDate: { gte: since, lt: referenceDate }
+        },
+        orderBy: [{ recordDate: 'desc' }, { id: 'desc' }],
+        take: minimumSamples,
+        select: { amount: true }
       });
-      const values = previous.reverse().map((item) => (Number(item.cost) > 0 ? Number(item.cost) : Number(item.amount)));
-      const current = Number(workOrder.cost) > 0 ? Number(workOrder.cost) : Number(workOrder.amount);
+      const values = previous.reverse().map((item) => item.amount);
+      const current = workOrder.cost.gt(0) ? workOrder.cost : workOrder.amount;
       const all = [...values, current];
-      const hit = values.length >= 3 && all.every((value, index) => index === 0 || value > all[index - 1]);
-      return this.result(hit, '同项目近7天成本连续升高', '请复核近期成本变动和供应商价格。', { values: all });
+      const hit = values.length >= minimumSamples && all.every((value, index) => index === 0 || value.gt(all[index - 1]));
+      return this.result(
+        hit,
+        `同项目近${windowDays}天成本连续升高`,
+        '请复核近期成本变动和供应商价格。',
+        { values: all.map((value) => value.toFixed(2)), windowDays, minimumSamples }
+      );
     }
     return this.result(false, '规则类型未支持', '需要人工确认', { ruleType: rule.ruleType });
   }
@@ -309,5 +416,63 @@ export class RiskRulesService {
 
   private number(value: unknown, fallback: number) {
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  }
+
+  private integer(value: unknown, fallback: number, minimum: number, maximum: number) {
+    return typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum
+      ? value
+      : fallback;
+  }
+
+  private businessReference(value: Prisma.JsonValue | null) {
+    const object = this.asObject(value ?? {});
+    for (const key of ['invoiceNo', 'ticketNo', 'receiptNo', '票据号', '发票号', '单号']) {
+      const candidate = object[key];
+      if (typeof candidate === 'string' && candidate.trim().length >= 3) {
+        return { key, value: candidate.trim().slice(0, 128) };
+      }
+    }
+    return null;
+  }
+
+  private validateRuleCondition(ruleType: string, condition: Record<string, unknown>) {
+    const allowed = new Set<string>();
+    const requireFinite = (key: string, minimum: number, maximum: number, integer = false) => {
+      const value = condition[key];
+      if (value === undefined) return;
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        value < minimum ||
+        value > maximum ||
+        (integer && !Number.isInteger(value))
+      ) {
+        throw new BadRequestException(`风险规则参数 ${key} 不合法`);
+      }
+      allowed.add(key);
+    };
+    if (ruleType === 'amount_threshold') requireFinite('threshold', 0, 99999999999999.99);
+    if (ruleType === 'missing_attachment') {
+      requireFinite('threshold', 0, 99999999999999.99);
+      allowed.add('workOrderType');
+      if (condition.workOrderType !== undefined && !['expense', 'transport', 'other'].includes(String(condition.workOrderType))) {
+        throw new BadRequestException('风险规则参数 workOrderType 不合法');
+      }
+    }
+    if (ruleType === 'duplicate_submission') requireFinite('windowDays', 1, 365, true);
+    if (ruleType === 'after_hours') {
+      requireFinite('startHour', 0, 23, true);
+      requireFinite('endHour', 0, 23, true);
+      allowed.add('timeZone');
+      if (condition.timeZone !== undefined && condition.timeZone !== 'Asia/Shanghai') {
+        throw new BadRequestException('第一版只支持 Asia/Shanghai 时区');
+      }
+    }
+    if (ruleType === 'cost_trend') {
+      requireFinite('windowDays', 1, 365, true);
+      requireFinite('minimumSamples', 2, 100, true);
+    }
+    const unknown = Object.keys(condition).filter((key) => !allowed.has(key));
+    if (unknown.length) throw new BadRequestException(`风险规则包含未知参数：${unknown.join(', ')}`);
   }
 }

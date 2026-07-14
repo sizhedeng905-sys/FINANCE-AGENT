@@ -110,7 +110,7 @@ function setStatus(workOrder: WorkOrder, status: WorkOrderStatus): void {
 
 function assertComplete(workOrder: WorkOrder): void {
   const missing = [];
-  if (!(workOrder.amount > 0)) missing.push('amount');
+  if (!(Number(workOrder.amount) > 0)) missing.push('amount');
   if (!workOrder.description.trim()) missing.push('description');
   if (!workOrder.occurredDate) missing.push('occurredDate');
   if (missing.length) throw new Error(`工单信息不完整：${missing.join(', ')}`);
@@ -168,10 +168,10 @@ export async function mockCreateWorkOrder(payload: CreateWorkOrderPayload, idemp
     customerName: project.customerName,
     creatorName: user.name,
     creatorId: user.id,
-    amount: payload.amount ?? 0,
-    income: 0,
-    cost: 0,
-    profit: 0,
+    amount: payload.amount ?? '0.00',
+    income: '0.00',
+    cost: '0.00',
+    profit: '0.00',
     status: 'draft',
     riskLevel: 'low',
     occurredDate: payload.occurredDate,
@@ -329,7 +329,7 @@ async function mockRunAiReview(id: string, requester?: UserAccount): Promise<Wor
   const workOrder = findOrThrow(id);
   if (workOrder.status === 'boss_pending') return cloneWorkOrder(workOrder);
   if (workOrder.status !== 'ai_reviewing') throw new Error('非法状态流转');
-  const reviewStatus: WorkOrderStatus = workOrder.amount > 20_000 || workOrder.attachments.length === 0 ? 'ai_flagged' : 'ai_passed';
+  const reviewStatus: WorkOrderStatus = Number(workOrder.amount) > 20_000 || workOrder.attachments.length === 0 ? 'ai_flagged' : 'ai_passed';
   workOrder.riskLevel = reviewStatus === 'ai_flagged' ? 'high' : 'low';
   workOrder.aiSummary = reviewStatus === 'ai_flagged' ? '规则复核发现高额或附件异常。' : '规则复核未发现明显异常。';
   setStatus(workOrder, reviewStatus);
@@ -373,9 +373,12 @@ async function createGeneratedRecord(workOrder: WorkOrder, user: UserAccount): P
     templateId: template.id,
     templateName: template.name,
     recordType: workOrder.type === 'transport' ? 'transport' : workOrder.type === 'expense' ? 'reimbursement' : 'other',
+    accountingDirection: 'expense',
+    templateVersion: template.version,
+    version: 1,
     recordDate: workOrder.occurredDate?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
     amount: workOrder.amount,
-    category: workOrder.type === 'transport' ? '收入' : '支出',
+    category: '成本',
     subCategory: template.name,
     description: workOrder.description,
     sourceType: 'work_order',

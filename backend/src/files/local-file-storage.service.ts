@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { chmod, mkdir, readFile, statfs, unlink, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { FileStorage } from './file-storage';
@@ -21,15 +22,28 @@ export class LocalFileStorageService implements FileStorage {
     const extension = extname(file.originalname).toLowerCase();
     const storageName = `${randomUUID()}${extension}`;
     const directory = resolve(this.root, folder);
-    await mkdir(directory, { recursive: true });
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(this.root, 0o700);
+    await chmod(directory, 0o700);
     const absolutePath = resolve(directory, storageName);
     this.assertInsideRoot(absolutePath);
-    await writeFile(absolutePath, file.buffer, { flag: 'wx' });
+    await writeFile(absolutePath, file.buffer, { flag: 'wx', mode: 0o600 });
     return relative(this.root, absolutePath).split(sep).join('/');
   }
 
   async read(storagePath: string) {
     return readFile(this.resolvePath(storagePath));
+  }
+
+  openReadStream(storagePath: string) {
+    return createReadStream(this.resolvePath(storagePath));
+  }
+
+  async availableBytes() {
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
+    await chmod(this.root, 0o700);
+    const stats = await statfs(this.root, { bigint: true });
+    return stats.bavail * stats.bsize;
   }
 
   async remove(storagePath: string) {

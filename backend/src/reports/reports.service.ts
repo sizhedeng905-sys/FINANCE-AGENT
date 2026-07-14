@@ -2,7 +2,6 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AnomalyStatus,
   BusinessRecordStatus,
-  DataRecordType,
   Prisma,
   RiskLevel,
   WorkOrderStatus
@@ -24,7 +23,7 @@ export class ReportsService {
     const period = dto.period ?? 'today';
     const range = reportRange(period, dto.date);
     const anomalyWhere: Prisma.AiAnomalyWhereInput = {
-      status: AnomalyStatus.open,
+      status: { in: [AnomalyStatus.open, AnomalyStatus.acknowledged] },
       detectedAt: { gte: range.start, lt: range.end }
     };
     const [
@@ -34,6 +33,8 @@ export class ReportsService {
       supplementCount,
       pendingFinanceReview,
       records,
+      newRecords,
+      confirmedRecords,
       anomalyCount,
       anomalies
     ] = await Promise.all([
@@ -51,6 +52,10 @@ export class ReportsService {
         where: { status: { in: [WorkOrderStatus.finance_reviewing, WorkOrderStatus.reviewer_rejected] } }
       }),
       this.findRecords(range.start, range.end),
+      this.prisma.businessRecord.count({ where: { createdAt: { gte: range.start, lt: range.end } } }),
+      this.prisma.businessRecord.count({
+        where: { status: BusinessRecordStatus.confirmed, confirmedAt: { gte: range.start, lt: range.end } }
+      }),
       this.prisma.aiAnomaly.count({ where: anomalyWhere }),
       this.prisma.aiAnomaly.findMany({
         where: anomalyWhere,
@@ -72,8 +77,8 @@ export class ReportsService {
       supplementCount,
       reviewedCount: approvedCount + rejectedCount + supplementCount,
       pendingFinanceReview,
-      newRecords: records.length,
-      confirmedRecords: records.length,
+      newRecords,
+      confirmedRecords,
       anomalyCount,
       totalIncome: totals.income,
       totalExpense: totals.expense,
@@ -91,7 +96,7 @@ export class ReportsService {
     const period = dto.period ?? 'daily';
     const range = reportRange(periodMap[period], dto.date);
     const anomalyWhere: Prisma.AiAnomalyWhereInput = {
-      status: AnomalyStatus.open,
+      status: { in: [AnomalyStatus.open, AnomalyStatus.acknowledged] },
       detectedAt: { gte: range.start, lt: range.end }
     };
     const [
@@ -136,7 +141,7 @@ export class ReportsService {
       income: totals.income,
       expense: totals.expense,
       profit: totals.profit,
-      profitRate: totals.income === 0 ? 0 : Number((totals.profit / totals.income).toFixed(4)),
+      profitRate: this.profitRate(totals.income, totals.profit),
       recordCount: records.length,
       anomalies: anomalies.map((item) => `${item.workOrder.orderNo}：${item.reason}`),
       highRiskItems: anomalies.map((item) => this.presentAnomaly(item)),
@@ -238,7 +243,7 @@ export class ReportsService {
       orderNo: item.orderNo,
       projectId: item.projectId,
       projectName: item.projectName,
-      amount: Number(item.amount),
+      amount: item.amount.toFixed(2),
       riskLevel: item.riskLevel,
       urgent: item.urgent
     }));
@@ -263,11 +268,9 @@ export class ReportsService {
       if (this.isIncome(record)) income = income.plus(record.amount);
       else expense = expense.plus(record.amount);
     }
-    const normalizedIncome = this.toMoney(income);
-    const normalizedExpense = this.toMoney(expense);
     return {
-      income: normalizedIncome,
-      expense: normalizedExpense,
+      income: this.toMoney(income),
+      expense: this.toMoney(expense),
       profit: this.toMoney(income.minus(expense))
     };
   }
@@ -287,13 +290,13 @@ export class ReportsService {
       new Prisma.Decimal(0)
     );
     return Array.from(categories.entries())
+      .sort((first, second) => second[1].amount.comparedTo(first[1].amount) || first[0].localeCompare(second[0]))
       .map(([name, item]) => ({
         name,
         amount: this.toMoney(item.amount),
         recordCount: item.recordCount,
         percentage: totalExpense.isZero() ? 0 : item.amount.dividedBy(totalExpense).toDecimalPlaces(4).toNumber()
-      }))
-      .sort((first, second) => second.amount - first.amount || first.name.localeCompare(second.name));
+      }));
   }
 
   private projectRanking(records: RecordWithProject[], anomalies: AnomalyWithWorkOrder[]) {
@@ -311,11 +314,15 @@ export class ReportsService {
           projectName: projectRecords[0].project.name,
           ...totals,
           cost: totals.expense,
-          profitRate: totals.income === 0 ? 0 : Number((totals.profit / totals.income).toFixed(4)),
+          profitRate: this.profitRate(totals.income, totals.profit),
           riskCount: riskCounts.get(projectId) ?? 0
         };
       })
-      .sort((first, second) => second.profit - first.profit || first.projectName.localeCompare(second.projectName));
+      .sort(
+        (first, second) =>
+          new Prisma.Decimal(second.profit).comparedTo(first.profit) ||
+          first.projectName.localeCompare(second.projectName)
+      );
   }
 
   private presentAnomaly(item: AnomalyWithWorkOrder) {
@@ -338,11 +345,18 @@ export class ReportsService {
   }
 
   private toMoney(value: Prisma.Decimal) {
-    return value.toDecimalPlaces(2).toNumber();
+    return value.toFixed(2);
   }
 
   private isIncome(record: RecordWithProject) {
-    return record.recordType === DataRecordType.revenue || record.category === '收入';
+    return record.accountingDirection === 'income';
+  }
+
+  private profitRate(income: string, profit: string) {
+    const incomeDecimal = new Prisma.Decimal(income);
+    return incomeDecimal.isZero()
+      ? 0
+      : new Prisma.Decimal(profit).dividedBy(incomeDecimal).toDecimalPlaces(4).toNumber();
   }
 
   private async findProject(id: string) {

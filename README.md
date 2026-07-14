@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 已校验本地 Qwen3-14B-AWQ、PaddleOCR-VL 和 Qwen3-Embedding-8B 权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
+- 已校验 Qwen3-14B-AWQ、PaddleOCR-VL、Qwen3-VL-8B-Instruct 和 Qwen3-Embedding-8B 全部本地权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
 
 ## 技术栈
 
@@ -17,7 +17,6 @@
 - Ant Design
 - Zustand
 - React Router
-- ECharts
 - dayjs
 - Playwright
 
@@ -58,6 +57,28 @@
 - 项目数据中心：项目、模板、字段、手工补录、Excel 导入、字段建议、数据记录
 - OCR中心：票据/PDF任务、识别证据与置信度、人工纠错、确认入库
 - 员工管理：财务和老板可新增、编辑、禁用、重置用户
+
+## 2026-07-14 审计修复状态
+
+针对 PR #2 的 15 项 P1、12 项 P2 和 5 项 P3 审计结果，本分支已完成财务方向、金额精度、并发状态、审批快照、文件隔离、模板版本、AI 可信边界、风险异常闭环、认证与供应链等修复，并补充攻击型回归测试。
+
+主要收口项：
+
+- 模板版本固定 `income/expense` 会计方向和主金额/主日期字段；手工、工单、Excel、OCR 复用同一记录策略，报表不再根据中文分类猜测方向。
+- 所有正式金额 API 使用固定小数位字符串，数据库和聚合路径保持 `Prisma.Decimal`，已验证 `90071992547409.91` 分币无损往返。
+- 经营记录和工单使用版本/CAS、事务锁、互斥时间戳、提交快照和附件 SHA-256 清单；并发确认、作废、修改、上传、删除和提交均有最终数据库断言。
+- 文件先授权、后进入隔离区并 fail-closed 扫描；生产强制 ClamAV，PDF/OOXML/CSV/图片做结构校验，上传下载流式处理，并有用户/项目配额与磁盘水位保护。
+- Excel/OCR 任务具备 lease、取消和过期恢复；OCR 使用原子上传建任务接口；不可变模板发生字段扩展时自动克隆新版本。
+- Cookie 登录使用 HttpOnly、SameSite 和双提交 CSRF；生产环境校验可信代理、远程 PostgreSQL TLS、JWT 熵和受保护 seed。
+- AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
+- 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
+
+按用户当前决定暂缓两项，不应视为已解决：
+
+- **P1-07**：Excel、OCR、手工录入之间的跨来源业务去重策略和统一幂等键。
+- **P1-08**：4999/5000/5001 行 Excel 的后台分块处理、内存/耗时基准和恢复压测。
+
+因此当前版本适合隔离开发和合成数据验收；在上述两项完成、真实模型/ClamAV/反向代理部署验收及脱敏业务样本校准前，不标记为生产就绪。
 
 ## 启动方式
 
@@ -149,8 +170,9 @@ http://localhost:3001/api/health
 | 阶段 8 | 已完成 | 老板 AI 助手、六个结构化工具、mock/OpenAI-compatible provider、AI 调用日志 |
 | 阶段 9 | 已完成 | 真实 `.xlsx` 解析、映射、逐行错误、字段建议和幂等事务入库 |
 | 阶段 10 | 程序完成 | OCR Task、可构建 PaddleOCR 适配器、证据/置信度、人工纠错、重试和幂等入库；真实准确率待样本校准 |
-| 真实化批次 D-H | 已完成 | 24 条 PostgreSQL、12 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
-| 本地模型部署 | 待系统环境 | 常驻/按需编排和资产校验已完成；WSL 2/Docker 未安装，Qwen3-VL 还缺 1 个权重分片 |
+| 真实化批次 D-H | 已完成 | 26 条 PostgreSQL、12 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
+| PR #2 审计修复 | 基本完成 | 除用户暂缓的 P1-07 跨来源去重、P1-08 超大 Excel 性能外，其余 P1/P2/P3 已修复并回归 |
+| 本地模型部署 | 待系统环境 | 四套模型资产和常驻/按需编排已校验；当前环境没有可用 Docker，真实 GPU 推理尚未验收 |
 
 阶段 1 后端测试账号：
 
@@ -236,6 +258,8 @@ http://localhost:3001/api/health
 - `GET /api/reports/projects/:projectId/daily`
 - `GET /api/reports/projects/:projectId/monthly`
 - `POST /api/ai/chat`
+- `GET /api/ai/conversations`
+- `GET /api/ai/conversations/:id/messages`
 - `GET /api/ai/call-logs`
 - `GET/POST /api/import-tasks`
 - `POST /api/import-tasks/:id/parse`
@@ -247,6 +271,7 @@ http://localhost:3001/api/health
 - `GET /api/field-suggestions`
 - `POST /api/field-suggestions/:id/{approve|map|reject}`
 - `GET/POST /api/ocr-tasks`
+- `POST /api/ocr-tasks/upload`
 - `POST /api/ocr-tasks/:id/run`
 - `POST /api/ocr-tasks/:id/retry`
 - `PUT /api/ocr-tasks/:id/corrections`
@@ -283,6 +308,8 @@ dist/
 npm test --prefix backend
 npm run test:integration --prefix backend
 ```
+
+当前审计修复基线为 13/13 Jest suites、72/72 tests，以及 26/26 真实 PostgreSQL 集成测试。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 
@@ -413,17 +440,19 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 - 认证、用户管理和 C-1 至 C-11 已完成显式 Mock/API 切换；API 失败不会静默回退 Mock。
 - Excel 已使用真实解析器和 PostgreSQL；OCR 适配器和容器配置已完成，但默认仍使用确定性 Mock Provider，真实模型尚未在 Docker/GPU 上启动并用企业样本校准。
 - 后端权限已经按 JWT 角色和数据归属强制校验，前端路由仅用于界面体验。
-- 文件当前真实存储在 `backend/uploads`，生产环境仍需替换为对象存储并接入病毒扫描与备份。
+- 文件当前真实存储在 `backend/uploads`；开发可用基础扫描，生产配置强制使用 ClamAV 且只允许 `clean` 文件进入预览、下载、Excel 或 OCR。对象存储、备份和实际 ClamAV 服务部署仍需在目标环境完成。
 - 后端报表只聚合 PostgreSQL 中已确认经营记录，前端财务/老板/项目报表均已切换真实接口。
-- AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。Qwen3-VL 当前缺少第 3 个权重分片，程序会拒绝启动它。
-- 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、真实病毒扫描、集中监控和备份仍待部署。
+- AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。四套本地模型权重均已通过完整性检查，但当前系统没有可用 Docker 命令，尚未完成容器推理、显存和延迟验收。
+- 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、ClamAV 服务、集中监控和备份仍待部署。
+- 跨 Excel/OCR/手工来源的业务去重，以及 5000 行级 Excel 的后台分块与性能基准，按用户决定暂缓。
 
 ## 推荐后续开发顺序
 
-1. 经用户确认后安装 WSL 2 和 Docker Desktop，按 `docs/MODEL_DEPLOYMENT.md` 启动文本与 OCR 常驻服务。
-2. 补齐 Qwen3-VL 缺失分片，并实测 32 GB 单卡显存、延迟和服务恢复。
-3. 收集脱敏 Excel、票据/PDF、字段真值、审批规则和老板问题标准答案，校准准确率与回答口径。
-4. 上线前替换对象存储/共享限流，并接入病毒扫描、密钥托管、监控和备份。
+1. 经用户确认后安装 WSL 2 和 Docker Desktop，按 `docs/MODEL_DEPLOYMENT.md` 启动文本与 OCR 常驻服务，并实测 32 GB 单卡显存、延迟和服务恢复。
+2. 定义跨 Excel/OCR/手工来源的业务唯一性政策，再实现统一幂等键和重复入账攻击测试。
+3. 将大 Excel 改为后台分块任务，完成 4999/5000/5001 行的耗时、RSS、响应大小和失败恢复基准。
+4. 收集脱敏 Excel、票据/PDF、字段真值、审批规则和老板问题标准答案，校准准确率与回答口径。
+5. 上线前部署对象存储、ClamAV、共享限流、密钥托管、监控和备份，并在真实反向代理/PostgreSQL TLS 拓扑演练。
 
 ## GitHub
 

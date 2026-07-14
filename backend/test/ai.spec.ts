@@ -81,7 +81,11 @@ describe('phase 8 boss AI assistant', () => {
           const item = { id: `message_${messages.length + 1}`, createdAt: new Date(), ...data };
           messages.push(item);
           return item;
-        })
+        }),
+        findMany: jest.fn(async ({ where, take }) => messages
+          .filter((item) => item.conversationId === where.conversationId && item.id !== where.id?.not)
+          .slice(-take)
+          .reverse())
       },
       aiModelConfig: {
         findFirst: jest.fn(async () => ({ id: 'model_mock', provider: 'mock', modelName: 'mock-structured-v1', baseUrl: null }))
@@ -145,5 +149,30 @@ describe('phase 8 boss AI assistant', () => {
     expect(failed.reply).toContain('需要人工确认');
     expect(callLogs).toHaveLength(2);
     expect(callLogs[1]).toMatchObject({ success: false, errorMessage: 'provider unavailable' });
+
+    const historyProvider = {
+      generate: jest.fn(async () => ({ text: '上个月需要人工确认。', inputTokens: 20, outputTokens: 8, raw: {} }))
+    };
+    const historyService = new AiService(
+      prisma,
+      tools,
+      historyProvider as any,
+      auditLogs as any,
+      config,
+      modelRuntime
+    );
+    await historyService.chat(
+      { message: '那上个月呢？', conversationId: result.conversationId },
+      boss,
+      {}
+    );
+    expect(historyProvider.generate).toHaveBeenCalledWith(expect.objectContaining({
+      history: [
+        expect.objectContaining({ role: AiMessageRole.user, content: '今天经营情况' }),
+        expect.objectContaining({ role: AiMessageRole.assistant })
+      ],
+      question: '那上个月呢？'
+    }));
+    expect(callLogs).toHaveLength(3);
   });
 });

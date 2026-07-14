@@ -202,13 +202,13 @@ export default function WorkOrderDetailPage() {
             <Card title="收入/成本/利润">
               <Row gutter={[12, 12]}>
                 <Col span={24}>
-                  <Statistic title="收入" value={workOrder.income} formatter={(value) => formatMoney(Number(value))} />
+                  <Statistic title="收入" value={workOrder.income} formatter={(value) => formatMoney(String(value))} />
                 </Col>
                 <Col span={12}>
-                  <Statistic title="成本" value={workOrder.cost} formatter={(value) => formatMoney(Number(value))} />
+                  <Statistic title="成本" value={workOrder.cost} formatter={(value) => formatMoney(String(value))} />
                 </Col>
                 <Col span={12}>
-                  <Statistic title="利润" value={workOrder.profit} formatter={(value) => formatMoney(Number(value))} />
+                  <Statistic title="利润" value={workOrder.profit} formatter={(value) => formatMoney(String(value))} />
                 </Col>
               </Row>
             </Card>
@@ -295,7 +295,7 @@ export default function WorkOrderDetailPage() {
       >
         <Form form={editForm} layout="vertical">
           <Form.Item label="申请金额" name="amount">
-            <InputNumber min={0.01} precision={2} className="full-width" />
+            <InputNumber<string> stringMode min="0.01" precision={2} step="0.01" className="full-width" />
           </Form.Item>
           <Form.Item label="发生日期" name="occurredDate">
             <DatePicker className="full-width" />
