@@ -2,8 +2,8 @@
 
 更新日期：2026-07-14
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
-当前分支：`agent/complete-real-api-and-local-model-runtime`
-当前批次：PR #2 完整审计修复与发布前回归
+当前分支：`agent/real-business-data-validation`
+当前批次：真实业务数据 B0 已完成，B1/B2 兼容适配进行中
 
 ## 完成口径
 
@@ -11,6 +11,20 @@
 - “真实闭环完成”必须同时具备真实 PostgreSQL、真实 API、后端权限、错误处理和自动化测试证据。
 - `api` 模式失败时不得静默回退到 Mock；Mock 只能由显式环境变量启用。
 - 本文件在每个执行批次结束后更新。
+
+## 真实业务数据 B0/B1 结论
+
+2026-07-14 已对 Git 忽略的本地 `数据文件/` 完成只读 B0 扫描：112/112 个物理文件均建立匿名分类，扫描前后 SHA-256 一致，公开报告不含原始路径、文件名、完整哈希或业务值。聚合报告见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`，原始映射只保存在被忽略的 `.realdata-test/`。
+
+已实现和验证：
+
+- 新增可复用 B0 扫描器和 CLI，覆盖格式签名、哈希重复组、XLSX Sheet/隐藏/公式/合并/媒体、PDF 页数、图片尺寸、DOCX 表格和 ZIP 条目镜像。
+- 34 份 XLSX 共 298 个 Sheet；23 份为多 Sheet、22 份有多个非空 Sheet、30 份含合并单元格、29 份含公式、10 份含 998 个内嵌媒体对象。
+- 发现 6 组独立文件完全重复，以及 ZIP 中 46 个与散文件完全一致的条目；当前只提示与验证幂等，不自动判断业务近似重复。
+- B1 基线发现 PNG 结束块偏移、手机 JPEG 尾部元数据和 PDF 压缩流关键字导致误拒绝；已改为 PNG chunk/CRC、JPEG 结构与有限厂商尾部、PDF 对象语义校验，并保留 polyglot、脚本、Launch、嵌入文件和 Office 外链门禁。
+- 修复后 `FileSecurityService` 接受 87 份当前支持格式；25 份按策略拒绝，其中 15 份旧 XLS、4 份 ZIP、6 份含外链/嵌入对象的 XLSX。另有 1 份 35 页 PDF 超过当前 OCR 20 页限制，进入拆分/页范围适配队列。
+
+当前自动化证据：14/14 Jest suites、79/79 tests；26/26 真实 PostgreSQL；12/12 Playwright；前后端 build；394 个 tracked/candidate 文件卫生检查。以上只证明结构、安全和业务回归，真实 PaddleOCR/Qwen 推理准确率仍未验收。
 
 ## PR #2 审计修复结论
 
@@ -21,7 +35,7 @@
 - P1-07：不同 Excel 上传、OCR 任务和手工重试之间的业务级去重与统一幂等政策。
 - P1-08：5000 行 Excel 的后台分块实现，以及 4999/5000/5001 行性能、内存和失败恢复基准。
 
-当前自动化证据：15/15 Prisma migrations；13/13 Jest suites、73/73 tests；26/26 真实 PostgreSQL；12/12 Playwright；前后端 build；387 个 tracked/candidate 文件卫生检查；根目录与后端 `npm audit` 均为 0 vulnerabilities。四套本地模型资产均完整，但当前系统无可用 Docker，真实 GPU 推理仍未验收。
+当前自动化证据：15/15 Prisma migrations；14/14 Jest suites、79/79 tests；26/26 真实 PostgreSQL；12/12 Playwright；前后端 build；394 个 tracked/candidate 文件卫生检查；根目录与后端 `npm audit` 均为 0 vulnerabilities。四套本地模型资产均完整，但真实 GPU 推理仍未验收。
 
 ## 当前状态矩阵
 
@@ -39,7 +53,7 @@
 | Excel | 显式 Mock/API Repository、真实上传、任务列表、列映射、字段建议、错误预览和确认页 | 单 Sheet `.xlsx` 解析、确定性映射、人工决定、逐行校验、部分成功、事务确认与幂等 | 第 12 个 migration 新增 ImportTask/Sheet/Column/Row、Profile/Decision/Suggestion，并关联 BusinessRecord | 38 个普通测试、22 个 PostgreSQL 集成测试、真实浏览器上传验收 | API 模式读取真实文件；Mock 模式显式可选 | 批次 E/阶段 9 真实闭环完成；复杂历史表留作适配 |
 | OCR | 显式 Mock/API Repository、票据上传、任务列表、原文/证据/置信度、人工纠错和确认页 | Mock/Local Paddle HTTP Provider、可构建 PaddleOCR-VL 适配器、PDF预检查、任务状态机、重试、严格纠错、幂等确认 | 第 13 个 migration 新增 `ocr_tasks`、`ocr_attempts`、`ocr_corrections` 并关联原文件和生成记录 | 普通/集成/E2E 基线通过；适配器纯逻辑测试通过 | 默认 Mock；真实路由启用前需鉴权健康检查 | 程序链完成；Docker 实际启动和真实样本准确率待验收 |
 | AI/模型运行时 | 显式 Mock/API 聊天；会话和消息分页；模型运行时通过受保护 API 查看部署、路由和健康 | 结构化工具、有限服务端历史、DB 路由、OpenAI-compatible、输出边界、常驻/按需编排、超时/重试/熔断/队列 | 模型部署、任务路由、AI 任务/尝试、会话消息和调用日志均持久化 | 无 GPU 路径基线通过；文本/OCR/VL/Embedding 四套权重完整性通过 | 默认 Mock；文本和 OCR 计划常驻，VL/Embedding 按需 | 程序链完成；Docker/GPU 真实性能待验收 |
-| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 73 个普通测试、26 个 PostgreSQL 集成测试、12 个 Playwright E2E | API 与 Mock 均有自动化证据 | 审计修复回归通过，GitHub CI job 已配置 |
+| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 79 个普通测试、26 个 PostgreSQL 集成测试、12 个 Playwright E2E | API 与 Mock 均有自动化证据 | 审计修复和真实数据 B0/B1 回归通过，GitHub CI job 已配置 |
 
 ## 只读审计结论
 
@@ -83,7 +97,7 @@
 | --- | --- |
 | 前端 `npm run build` | 通过；页面路由懒加载，最大业务共享块约 449 kB，Ant Design runtime 约 554 kB，无循环或体积警告 |
 | 后端 `npm run build` | 通过 |
-| 后端 `npm test -- --runInBand` | 13/13 suites，73/73 tests 通过 |
+| 后端 `npm test -- --runInBand` | 14/14 suites，79/79 tests 通过 |
 | `prisma validate` | 通过；schema 已执行官方 formatter |
 | 真实 migration / seed | dev/test 两库均通过 15 个 migration 和 seed |
 | 真实数据库集成 | 1/1 suite，26/26 tests 通过；包含财务精度、并发、Token、文件、Excel、OCR、AI 和模型运行时边界 |
@@ -104,6 +118,7 @@
 | F OCR | 完成 | Mock/Local Provider、PDF预检、纠错、重试和幂等入库均通过 |
 | G 本地模型 Provider | 程序完成 | Provider、真实 DB 路由、资产校验、Paddle 适配器、常驻/按需编排已通过静态验收；实际容器启动待 WSL 2/Docker |
 | H 工程化收尾 | 完成 | CI、安全运行、文档、依赖/仓库检查和 PR 准备均通过；远程操作待用户确认 |
+| I 真实业务数据 | B0 完成，B1/B2 进行中 | 112 个文件只读结构基线、匿名报告和图片/PDF 安全误报修复已通过；多 Sheet、XLS、大文件和真实模型准确率继续适配 |
 
 ## 批次 A 验收报告
 

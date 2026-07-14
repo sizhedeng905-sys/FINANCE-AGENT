@@ -10,6 +10,9 @@ import { Socket } from 'node:net';
 import { extname } from 'node:path';
 import * as yauzl from 'yauzl';
 
+import { isStructurallyValidJpeg, isStructurallyValidPng } from './image-security';
+import { hasActivePdfContent } from './pdf-security';
+
 const EICAR_SIGNATURE = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
 const MAX_ARCHIVE_ENTRIES = 2_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 100 * 1024 * 1024;
@@ -41,23 +44,11 @@ export class FileSecurityService {
 
   private async validateStructure(extension: string, buffer: Buffer) {
     if (extension === '.png') {
-      this.assert(
-        buffer.length >= 20 &&
-          buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) &&
-          buffer.subarray(-12, -8).toString('ascii') === 'IEND',
-        'PNG 文件结构不完整'
-      );
+      this.assert(isStructurallyValidPng(buffer), 'PNG 文件结构不完整');
       return;
     }
     if (extension === '.jpg' || extension === '.jpeg') {
-      this.assert(
-        buffer.length >= 4 &&
-          buffer[0] === 0xff &&
-          buffer[1] === 0xd8 &&
-          buffer.at(-2) === 0xff &&
-          buffer.at(-1) === 0xd9,
-        'JPEG 文件结构不完整'
-      );
+      this.assert(isStructurallyValidJpeg(buffer), 'JPEG 文件结构不完整');
       return;
     }
     if (extension === '.webp') {
@@ -96,12 +87,9 @@ export class FileSecurityService {
         buffer.subarray(Math.max(0, buffer.length - 2048)).includes(Buffer.from('%%EOF')),
       'PDF 文件结构不完整'
     );
-    const source = buffer.toString('latin1');
-    if (/\/(?:JavaScript|JS|Launch|EmbeddedFile|OpenAction|AA)\b/i.test(source)) {
-      throw new BadRequestException('PDF 包含活动内容或嵌入文件');
-    }
     try {
       const document = await PDFDocument.load(buffer, { ignoreEncryption: false, updateMetadata: false });
+      if (hasActivePdfContent(document)) throw new BadRequestException('PDF 包含活动内容或嵌入文件');
       const pages = document.getPageCount();
       this.assert(pages > 0 && pages <= 500, 'PDF 页数超出允许范围');
     } catch (error) {
