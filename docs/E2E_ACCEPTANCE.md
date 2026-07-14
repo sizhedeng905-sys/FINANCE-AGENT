@@ -45,7 +45,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 
 ## 自动化覆盖
 
-后端真实 PostgreSQL 集成测试共 24 条，覆盖：
+后端真实 PostgreSQL 集成测试共 26 条，覆盖：
 
 - 四角色权限、员工资源归属、finance/boss 管理边界；
 - 无 Token、伪造 Token、过期 Token、旧 `tokenVersion`、停用和登出失效；
@@ -53,11 +53,11 @@ npx playwright show-trace test-results/<case>/trace.zip
 - 动态字段类型、模板归属、项目归档、幂等和事务回滚；
 - 文件签名/MIME/扩展名/大小、归属授权和原件保留；
 - confirmed 报表口径、北京时间边界及 AI 工具一致性。
-- 真实 `.xlsx`、字段建议/Profile、错误行部分成功、并发确认和项目结构统计。
+- 真实 `.xlsx`、Sheet/合并表头、公式缓存、媒体流式隔离、字段建议/Profile、错误行部分成功、并发确认和项目结构统计。
 - 合成 PDF、OCR低置信度、纠错证据、未确认不入库、失败重试、并发确认和项目结构统计。
 - 模型 deployment/route 只暴露安全元数据，权限边界和显式健康检查。
 
-Playwright 共 12 条，覆盖：
+Playwright 共 13 条，覆盖：
 
 - employee、finance、reviewer、boss 真实登录及默认首页；
 - 员工创建提交、财务通过、复核并自动规则检查、老板终审；
@@ -65,6 +65,7 @@ Playwright 共 12 条，覆盖：
 - 401 自动清理会话、网络错误显示 requestId、客户端 403 页面；
 - Mock 模式明确显示且后端请求数为 0。
 - 财务真实上传 `.xlsx`、人工忽略未知列、错误行隔离、合法行入库及本月报表可见。
+- 财务在含媒体 XLSX 中看到隔离提示，并显式授权公式缓存后解析。
 - 财务真实上传 PDF、读取 OCR 证据、人工修改金额、确认后生成 OCR 来源经营记录。
 - CORS 白名单、拒绝未知 Origin、安全响应头和 PostgreSQL readiness。
 
@@ -74,13 +75,13 @@ Playwright 共 12 条，覆盖：
 
 ## 当前证据
 
-2026-07-12 本地验收结果：
+2026-07-14 本地验收结果：
 
-- 前端 build：通过，保留既有大于 500 kB bundle 警告；
+- 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：11 suites，62 tests，失败 0；
-- PostgreSQL 集成：1 suite，24 tests，失败 0；
-- Playwright：12 tests，失败 0；
+- 后端单测：14 suites，87 tests，失败 0；
+- PostgreSQL 集成：1 suite，26 tests，失败 0；
+- Playwright：13 tests，失败 0；
 - E2E teardown：成功清理测试工单、导入/OCR任务、生成记录和上传文件；
-- Prisma：14 个 migration，40 张业务表，无缺失或意外表；
-- 仓库卫生：360 个 tracked/candidate 文件通过。
+- Prisma：15 个 migration，41 张业务表，无缺失或意外表；
+- 仓库卫生：398 个 tracked/candidate 文件通过。

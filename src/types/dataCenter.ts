@@ -353,6 +353,9 @@ export interface ImportWorkbookSheetInspection {
 export interface ImportWorkbookInspection {
   sheets: ImportWorkbookSheetInspection[];
   requiresSheetSelection: boolean;
+  processingMode: 'document' | 'streaming';
+  mediaCount: number;
+  mediaExpandedBytes: number;
   recommendedSelection?: ParseImportTaskPayload;
 }
 

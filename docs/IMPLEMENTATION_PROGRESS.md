@@ -27,10 +27,13 @@
 - 多表缺少选择时返回统一 400，任务和干净原文件恢复为 `uploaded`；检查与解析均写 audit/ledger。标准单表仍自动进入映射，API/Mock 前端均兼容。
 - B2 公式政策已落地：默认不执行公式也不使用缓存；仅在财务显式勾选后接受日期或有限标量缓存结果，公式原文保留在 `ImportRow.rawData`，警告进入确认预览，选择同步写 audit/ledger；缺失、Excel 错误或非标量缓存继续拒绝。
 - 数据区合并单元格只保留主单元格值，每个受影响行标记“确认前必须复核”；非主单元格保持空值，最终是否可入库由模板必填字段校验决定，不自动填充或复制。
-- 对 26 份小于等于 10 MiB 的安全匿名 XLSX 完成 512 MiB 堆限制对照：26/26 检查通过，25 份可解析、1 份因无可靠表头安全跳过；4078 行中，默认策略为 2309 pending / 1759 error / 10 ignored，显式允许缓存后为 3926 pending / 142 error / 10 ignored，1676 行公式和 1737 行合并数据保留人工复核警告。
-- B2 尚未完成：大于 10 MiB/50 MiB 通道、5001/30196 行后台分块与恢复、`.xls` 隔离解析和内嵌媒体分离仍是下一批门禁。
+- XLSX 有效边界不再误用 ExcelJS 的“非空行/列数量”：中间空行、空列后的真实尾部数据会被保留，只有样式或图片锚点的尾部单元格不会伪造字段和记录；由此找回旧路径漏掉的 9 行，并让 1 份首行留空样本进入明确的公式人工处理，而非静默跳过。
+- 压缩文件大于 10 MiB 或含内嵌媒体时启用流式行读取。媒体只统计数量与展开大小，不进入单元格值或工作簿对象；共享公式由 OOXML 元数据还原并保留来源，不执行公式。已防护 ExcelJS 多工作表延迟读取竞态。
+- 对 26 份小于等于 10 MiB 的安全匿名 XLSX 完成 512 MiB 堆限制复测：26/26 检查和解析通过，共 4087 行，显式允许缓存后为 3933 pending / 144 error / 10 ignored，1677 行公式和 1738 行合并数据保留人工复核警告，重复运行峰值 RSS 为 284.82-315.66 MiB。
+- 19.67 MiB 多工作表样本与 46.35 MiB、含 28 个约 46.24 MiB 媒体对象的样本均通过检查和解析；分别解析 33/32 行，重复运行峰值 RSS 为 191.07-192.07 / 202.90-204.54 MiB，媒体未混入字段值。
+- B2 尚未完成：4999/5000/5001/30196 行后台分块、进度、lease/恢复和资源压测，以及 `.xls` 隔离转换/解析仍是下一批门禁；当前文件服务仍会持有受 50 MiB 上传上限约束的压缩 Buffer。
 
-当前自动化证据：14/14 Jest suites、84/84 tests；26/26 真实 PostgreSQL；13/13 Playwright；前后端 build；396 个 tracked/candidate 文件卫生检查。以上只证明结构、安全和业务回归，真实 PaddleOCR/Qwen 推理准确率仍未验收。
+当前自动化证据：14/14 Jest suites、87/87 tests；26/26 真实 PostgreSQL；13/13 Playwright；前后端 build；398 个 tracked/candidate 文件通过仓库卫生检查。以上只证明结构、安全和业务回归，真实 PaddleOCR/Qwen 推理准确率仍未验收。
 
 ## PR #2 审计修复结论
 
@@ -41,7 +44,7 @@
 - P1-07：不同 Excel 上传、OCR 任务和手工重试之间的业务级去重与统一幂等政策。
 - P1-08：5000 行 Excel 的后台分块实现，以及 4999/5000/5001 行性能、内存和失败恢复基准。
 
-当前自动化证据：15/15 Prisma migrations；14/14 Jest suites、84/84 tests；26/26 真实 PostgreSQL；13/13 Playwright；前后端 build；396 个 tracked/candidate 文件卫生检查；根目录与后端 `npm audit` 均为 0 vulnerabilities。四套本地模型资产均完整，但真实 GPU 推理仍未验收。
+当前自动化证据：15/15 Prisma migrations；14/14 Jest suites、87/87 tests；26/26 真实 PostgreSQL；13/13 Playwright；前后端 build；398 个 tracked/candidate 文件通过仓库卫生检查；根目录与后端 `npm audit` 均为 0 vulnerabilities。四套本地模型资产均完整，但真实 GPU 推理仍未验收。
 
 ## 当前状态矩阵
 
@@ -56,10 +59,10 @@
 | 文件 | 显式 Mock/API Repository；工单与手工补录真实上传，元数据、预览、下载、作废及记录详情已接通 | 私有隔离区、SHA-256、结构解析、fail-closed 扫描、ClamAV 生产门禁、流式读写、配额/磁盘水位、角色与状态授权 | `raw_files`、附件关系已在 dev/test PostgreSQL 验证；上传目录与测试目录均忽略 | 文件攻击单测、真实 PostgreSQL 和 API/Mock 浏览器验收 | 显式 Mock/API | 本地文件闭环完成；对象存储和目标环境 ClamAV/备份待部署 |
 | 通知 | 显式 Mock/API Repository；服务端分页、未读数、单条/全部已读、轮询和工作流跳转已接通 | 按 JWT 用户隔离目标用户/角色通知；用户级已读收据、幂等审计和参数校验 | `notifications`、`notification_receipts` 已通过第 11 个 migration 在 dev/test PostgreSQL 验证 | 34 个普通测试、18 个真实 PostgreSQL 集成测试中的通知隔离用例、API/Mock/移动端浏览器验收 | 显式 Mock/API | C-9 真实闭环完成 |
 | 报表 | 显式 Mock/API Repository；财务日/周/月、老板日/周/月、老板首页和项目月报概览已接通 | 仅聚合 confirmed BusinessRecord；Decimal 金额、北京时间边界、分类、异常、排行及四角色权限 | 复用真实经营记录、审批和异常表；第一版实时聚合不新增报表快照表 | 35 个普通测试、19 个真实 PostgreSQL 集成测试中的固定数据/边界/AI 一致性用例、API/Mock/移动端浏览器验收 | 显式 Mock/API | C-10 真实闭环完成；历史快照未实现 |
-| Excel | 显式 Mock/API Repository、真实上传、Sheet/表头/公式缓存选择、任务列表、列映射、字段建议、错误预览和确认页 | 工作簿检查、多 Sheet/隐藏 Sheet 门禁、1-3 行合并表头展开、公式缓存显式授权与来源保留、确定性映射、逐行校验、事务确认与幂等 | 第 12 个 migration 新增 ImportTask/Sheet/Column/Row、Profile/Decision/Suggestion，并关联 BusinessRecord | 84 个普通测试中的解析边界、26 个 PostgreSQL 集成测试、2 个真实浏览器 Excel 流程 | API 模式读取真实文件；Mock 模式显式可选 | 标准、多 Sheet 选择和公式缓存人工授权已闭环；大文件、`.xls` 和媒体分离待完成 |
+| Excel | 显式 Mock/API Repository、真实上传、Sheet/表头/公式缓存选择、媒体隔离提示、任务列表、列映射、字段建议、错误预览和确认页 | 工作簿检查、多 Sheet/隐藏 Sheet 门禁、1-3 行合并表头、稀疏边界、共享公式还原、流式行读取、媒体统计、逐行校验、事务确认与幂等 | 第 12 个 migration 新增 ImportTask/Sheet/Column/Row、Profile/Decision/Suggestion，并关联 BusinessRecord | 87 个普通测试中的解析边界、26 个 PostgreSQL 集成测试、2 个真实浏览器 Excel 流程、三个真实文件规模档位 | API 模式读取真实文件；Mock 模式显式可选 | 标准、多 Sheet、公式和接近 50 MiB 媒体样本已闭环；超大行数后台分块与 `.xls` 待完成 |
 | OCR | 显式 Mock/API Repository、票据上传、任务列表、原文/证据/置信度、人工纠错和确认页 | Mock/Local Paddle HTTP Provider、可构建 PaddleOCR-VL 适配器、PDF预检查、任务状态机、重试、严格纠错、幂等确认 | 第 13 个 migration 新增 `ocr_tasks`、`ocr_attempts`、`ocr_corrections` 并关联原文件和生成记录 | 普通/集成/E2E 基线通过；适配器纯逻辑测试通过 | 默认 Mock；真实路由启用前需鉴权健康检查 | 程序链完成；Docker 实际启动和真实样本准确率待验收 |
 | AI/模型运行时 | 显式 Mock/API 聊天；会话和消息分页；模型运行时通过受保护 API 查看部署、路由和健康 | 结构化工具、有限服务端历史、DB 路由、OpenAI-compatible、输出边界、常驻/按需编排、超时/重试/熔断/队列 | 模型部署、任务路由、AI 任务/尝试、会话消息和调用日志均持久化 | 无 GPU 路径基线通过；文本/OCR/VL/Embedding 四套权重完整性通过 | 默认 Mock；文本和 OCR 计划常驻，VL/Embedding 按需 | 程序链完成；Docker/GPU 真实性能待验收 |
-| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 84 个普通测试、26 个 PostgreSQL 集成测试、13 个 Playwright E2E | API 与 Mock 均有自动化证据 | 审计修复和真实数据 B0/B1/B2 公式切片回归通过，GitHub CI job 已配置 |
+| E2E 验收 | Playwright 驱动 API/Mock 两套前端，覆盖四角色、完整审批、Excel、OCR、数据中心、报表、错误与安全运行 | 专用测试启动脚本，统一错误、CORS、安全头和 readiness 可断言 | 独立 `_test` PostgreSQL 自动 migrate/seed，精确清理 E2E 工单、导入/OCR任务、记录与文件 | 87 个普通测试、26 个 PostgreSQL 集成测试、13 个 Playwright E2E | API 与 Mock 均有自动化证据 | 审计修复和真实数据 B0/B1/B2 流式媒体切片回归通过，GitHub CI job 已配置 |
 
 ## 只读审计结论
 
@@ -103,7 +106,7 @@
 | --- | --- |
 | 前端 `npm run build` | 通过；页面路由懒加载，最大业务共享块约 449 kB，Ant Design runtime 约 554 kB，无循环或体积警告 |
 | 后端 `npm run build` | 通过 |
-| 后端 `npm test -- --runInBand` | 14/14 suites，84/84 tests 通过 |
+| 后端 `npm test -- --runInBand` | 14/14 suites，87/87 tests 通过 |
 | `prisma validate` | 通过；schema 已执行官方 formatter |
 | 真实 migration / seed | dev/test 两库均通过 15 个 migration 和 seed |
 | 真实数据库集成 | 1/1 suite，26/26 tests 通过；包含财务精度、并发、Token、文件、Excel、OCR、AI 和模型运行时边界 |
@@ -124,7 +127,7 @@
 | F OCR | 完成 | Mock/Local Provider、PDF预检、纠错、重试和幂等入库均通过 |
 | G 本地模型 Provider | 程序完成 | Provider、真实 DB 路由、资产校验、Paddle 适配器、常驻/按需编排已通过静态验收；实际容器启动待 WSL 2/Docker |
 | H 工程化收尾 | 完成 | CI、安全运行、文档、依赖/仓库检查和 PR 准备均通过；远程操作待用户确认 |
-| I 真实业务数据 | B0/B1 完成，B2 进行中 | 112 个文件只读结构基线、匿名报告、图片/PDF 安全修复、多 Sheet/表头选择及公式缓存显式复核已通过；XLS、大文件分块、媒体分离和真实模型准确率继续适配 |
+| I 真实业务数据 | B0/B1 完成，B2 进行中 | 112 个文件只读结构基线、图片/PDF 安全、多 Sheet/表头/公式、稀疏行列和媒体流式隔离已通过；超大行数后台分块、`.xls` 和真实模型准确率继续适配 |
 
 ## 批次 A 验收报告
 

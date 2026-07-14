@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0/B1 门禁已完成；B2 已支持多 Sheet、1-3 行合并表头、隐藏 Sheet 二次确认和公式缓存显式复核，大文件分块、旧 `.xls` 和内嵌媒体分离仍在推进
+- 真实业务数据 B0/B1 门禁已完成；B2 已支持多 Sheet、1-3 行合并表头、隐藏 Sheet 二次确认、公式缓存显式复核，以及大于 10 MiB/含媒体 XLSX 的流式行解析和媒体隔离；超大行数后台分块与旧 `.xls` 仍在推进
 - 已校验 Qwen3-14B-AWQ、PaddleOCR-VL、Qwen3-VL-8B-Instruct 和 Qwen3-Embedding-8B 全部本地权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
 
 ## 技术栈
@@ -173,7 +173,7 @@ http://localhost:3001/api/health
 | 阶段 10 | 程序完成 | OCR Task、可构建 PaddleOCR 适配器、证据/置信度、人工纠错、重试和幂等入库；真实准确率待样本校准 |
 | 真实化批次 D-H | 已完成 | 26 条 PostgreSQL、13 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | 除用户暂缓的 P1-07 跨来源去重、P1-08 超大 Excel 性能外，其余 P1/P2/P3 已修复并回归 |
-| 真实业务数据 B0-B2 | 进行中 | 112 个文件只读匿名基线、文件安全边界、Sheet/表头选择与公式缓存复核已验收；详见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` |
+| 真实业务数据 B0-B2 | 进行中 | 112 个文件只读匿名基线、文件安全边界、Sheet/表头/公式、稀疏行列、共享公式和媒体隔离已验收；19.67/46.35 MiB 样本在 512 MiB 堆限制下通过，超大行数后台分块与 `.xls` 待完成；详见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` |
 | 本地模型部署 | 待系统环境 | 四套模型资产和常驻/按需编排已校验；当前环境没有可用 Docker，真实 GPU 推理尚未验收 |
 
 阶段 1 后端测试账号：
@@ -311,7 +311,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前验收基线为 14/14 Jest suites、84/84 tests、26/26 真实 PostgreSQL 集成测试和 13/13 Playwright。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
+当前验收基线为 14/14 Jest suites、87/87 tests、26/26 真实 PostgreSQL 集成测试和 13/13 Playwright。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

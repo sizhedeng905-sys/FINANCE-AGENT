@@ -218,11 +218,16 @@ export class ImportTasksService {
       await this.auditLogs.write(tx, actor, 'import_task.inspect', 'import_task', id, {
         rawFileId: task.rawFileId,
         sheetCount: inspection.sheets.length,
-        requiresSheetSelection: inspection.requiresSheetSelection
+        requiresSheetSelection: inspection.requiresSheetSelection,
+        processingMode: inspection.processingMode,
+        mediaCount: inspection.mediaCount,
+        mediaExpandedBytes: inspection.mediaExpandedBytes
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_inspected', 'import_task', id, {
         rawFileId: task.rawFileId,
-        sheetCount: inspection.sheets.length
+        sheetCount: inspection.sheets.length,
+        processingMode: inspection.processingMode,
+        mediaCount: inspection.mediaCount
       });
     });
     return inspection;
@@ -391,6 +396,7 @@ export class ImportTasksService {
       await this.auditLogs.write(tx, actor, 'import_task.parse', 'import_task', id, {
         sheetIndex: parsed.sheet.sheetIndex,
         headerRowIndex: parsed.sheet.headerRowIndex,
+        processingMode: parsed.processingMode,
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         columns: columns.length,
         rows: parsed.rows.length,
@@ -398,6 +404,7 @@ export class ImportTasksService {
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_parsed', 'import_task', id, {
         rawFileId: current.rawFileId,
+        processingMode: parsed.processingMode,
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         rowCount: parsed.rows.length,
         columnCount: columns.length

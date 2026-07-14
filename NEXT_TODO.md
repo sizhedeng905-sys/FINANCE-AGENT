@@ -1,79 +1,57 @@
-# 后续功能 TODO List
+# FINANCE-AGENT 下一步执行清单
 
-当前项目仍是前端原型，已为主要功能预留 `src/api` mock Promise 接口。下一阶段建议按下面顺序推进。
+更新日期：2026-07-14
 
-## 1. 后端接口
+项目已不是纯前端原型。阶段 0-10 的真实 PostgreSQL/API 主链路已完成，当前按 `docs/REAL_BUSINESS_DATA_TEST_PLAN.md` 推进真实业务数据门禁。详细证据见 `docs/IMPLEMENTATION_PROGRESS.md` 和 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`。
 
-- 登录认证：接入 `POST /api/auth/login`，返回用户、角色、token、权限菜单。
-- 工单列表：接入 `GET /api/work-orders`，支持角色、状态、项目、创建人、时间范围筛选。
-- 工单详情：接入 `GET /api/work-orders/:id`。
-- 新建工单：接入 `POST /api/work-orders`。
-- 更新工单：接入 `PUT /api/work-orders/:id`。
-- 审核流转：接入 `POST /api/work-orders/:id/status`，统一处理财务审核、复核员审核、AI复核、老板审批。
-- 员工催办：接入 `POST /api/work-orders/:id/urge`，同时生成通知和时间线。
-- 附件上传：接入 `POST /api/work-orders/:id/attachments`，支持发票、回单、图片、PDF。
-- 通知列表：接入 `GET /api/notifications?targetRole=finance`。
-- 通知已读：接入 `PATCH /api/notifications/:id/read` 和 `PATCH /api/notifications/read-all`。
-- AI聊天：接入 `POST /api/ai/chat`，仅老板完整聊天页面可用。
-- AI异常：接入 `GET /api/reports/anomalies`，供财务异常提示页展示。
-- 财务日报：接入 `GET /api/reports/finance?period=today|week|month`。
-- 老板经营日报：接入 `GET /api/reports/boss?period=daily|weekly|monthly`。
-- 项目概览：接入 `GET /api/projects` 和 `GET /api/projects/:id/summary`。
+## 当前门禁：B2 Excel 剩余项
 
-## 2. 数据库设计
+已完成：
 
-- `users`：用户账号、姓名、角色、部门、职位、状态。
-- `roles`：角色定义，包含 employee、finance、reviewer、boss。
-- `permissions`：页面和操作权限。
-- `projects`：客户/项目、负责人、收入、成本、状态、AI摘要。
-- `work_orders`：工单主表，保存类型、项目、客户、金额、收入、成本、利润、状态、风险等级、加急字段。
-- `work_order_transport`：运输订单扩展字段，保存车牌、司机、起终点、公里数、油费、过路费等。
-- `work_order_expense`：费用报销和其他支出扩展字段，保存费用类型、金额、日期、付款方式、说明。
-- `attachments`：附件表，关联工单，保存文件名、URL、类型、上传人。
-- `audit_timeline`：审核时间线，记录操作人、角色、动作、意见、时间。
-- `notifications`：通知表，保存类型、发送人、目标角色、已读状态、关联工单。
-- `reports`：日报/周报/月报汇总数据。
-- `ai_anomalies`：AI异常检测结果，关联工单和风险原因。
-- `ai_conversations`：AI对话会话，仅老板可创建。
-- `ai_messages`：AI对话消息明细。
-- `audit_logs`：系统操作日志，便于追踪审批和权限变更。
+- XLSX 多 Sheet、隐藏 Sheet、1-3 行合并表头和人工选择。
+- 公式默认拒绝、缓存结果显式授权、共享公式来源还原和 audit/ledger。
+- 稀疏行列边界、样式尾部排除、数据区合并单元格人工复核。
+- 大于 10 MiB 或含媒体 XLSX 的流式行读取；19.67 MiB 与 46.35 MiB 真实匿名样本在 512 MiB 堆限制下通过。
+- 单元、真实 PostgreSQL、Playwright 和前后端构建回归。
 
-## 3. 权限和安全
+下一批按顺序执行：
 
-- 后端必须校验角色权限，前端 403 只作为体验层控制。
-- 员工只能访问自己创建的工单。
-- 财务可查看全部业务工单和财务日报，但不可访问老板 AI 助手。
-- 复核员只能访问复核任务和审核历史，不可访问财务日报和老板 AI 助手。
-- 老板可访问最终审批、经营日报、财务日报、AI助手、项目分析。
-- 所有审批操作需要记录操作日志和时间线。
+1. 为 4999/5000/5001/30196 行建立不含业务数据的确定性 fixture 和资源基线。
+2. 将超大导入改为可观察的后台分块任务，复用 lease、heartbeat、取消和过期恢复机制。
+3. 验证分块持久化不重复、不漏行，失败重试不提前生成 `BusinessRecord`，确认事务保持幂等。
+4. 为 15 份旧 `.xls` 设计隔离转换/解析通道；禁止依赖桌面 Excel/COM，转换产物只进入测试隔离区。
+5. 明确超过 50 MiB 文件的产品策略：保持统一 413，或进入独立大文件通道；未完成前不提高全局上传上限。
 
-## 4. 业务流程
+## 后续门禁
 
-- 明确工单状态机，禁止非法状态跳转。
-- 财务通过后进入复核员复核。
-- 复核通过后进入 AI 自动复核。
-- AI复核结果只作为流程步骤，不作为登录角色。
-- AI通过或标记异常后进入老板待审批。
-- 老板通过后归档完成，老板驳回后进入驳回状态。
-- 待补充材料状态下，员工补充后重新提交财务审核。
-- 催办需要限制频率，例如同一工单 30 分钟内只能催办一次。
+### B3 OCR 与视觉样本
 
-## 5. 前端后续优化
+- 文本模型和 OCR 常驻，VL/Embedding 按需；真实 Provider 不可用时核心财务链路继续可用。
+- 先建立脱敏真值，再测试照片、长截图、拍屏表格、4 页和 35 页 PDF。
+- 记录字段准确率、证据坐标、低置信度、人工纠错、超时、重试和显存峰值。
 
-- 将页面中的部分直接 mock 读取逐步切换为 `src/api` 调用。
-- 增加加载态、空状态、错误态。
-- 增加列表分页、排序、搜索条件持久化。
-- 增加附件真实预览组件。
-- 增加工单详情打印或导出 PDF。
-- 增加更多表单校验，例如金额必须大于 0、运输订单收入不能为空。
-- 优化大包体，按角色页面做路由懒加载。
-- 增加单元测试和关键流程 E2E 测试。
+### B4-B5 统一经营记录与对账
 
-## 6. 当前已预留的前端 API 文件
+- 验证 Excel、OCR、手工补录、工单终审进入同一套模板、Decimal、来源快照、audit 和 ledger 规则。
+- 派生汇总表只用于对账，不重复入账；跨来源业务去重继续保留人工复核，直到财务给出唯一性规则。
+- 用测试项目完成收入、成本、利润、日期边界和作废/冲销对账。
 
-- `src/api/authApi.ts`
-- `src/api/workOrderApi.ts`
-- `src/api/notificationApi.ts`
-- `src/api/projectApi.ts`
-- `src/api/reportApi.ts`
-- `src/api/aiApi.ts`
+### B6 老板 AI 助手
+
+- 建立 50-100 个老板问题及确定性标准答案。
+- 数字只来自服务端结构化工具；覆盖无数据、越权、时间边界、下钻和 Prompt Injection。
+- Qwen 输出不得替代财务审批，也不得直接写经营数据。
+
+### B7 稳定性与交付
+
+- 测试模型重启、后端重启、数据库短断、ClamAV 离线、磁盘水位、队列拥塞和模型切换。
+- 全量运行 build、unit、integration、Playwright、hygiene、依赖审计和原始文件哈希复核。
+- 每个通过门禁形成独立提交并推送 `agent/real-business-data-validation`，PR #3 持续更新；真实文件、模型、`.env` 和用户未跟踪文档永不提交。
+
+## 每批提交条件
+
+- 先有失败复现或明确基线，再修改通用能力。
+- 所有接口继续使用后端身份、统一响应、DTO 校验、分页、权限、audit 和必要 ledger。
+- 原始样本扫描前后 SHA-256 一致，公开输出仅含匿名 ID 和聚合指标。
+- 相关单元、PostgreSQL 集成、Playwright、前后端 build 与仓库卫生全部通过。
+- README、进度报告、未完成限制和复现命令同步更新。

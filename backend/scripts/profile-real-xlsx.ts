@@ -38,6 +38,9 @@ interface SampleProfile {
   sheetCount?: number;
   nonEmptySheetCount?: number;
   hiddenSheetCount?: number;
+  processingMode?: 'document' | 'streaming';
+  mediaCount?: number;
+  mediaExpandedBytes?: number;
   requiresSheetSelection?: boolean;
   sheetsWithoutHeaderCandidates?: number;
   maxRows?: number;
@@ -103,6 +106,9 @@ async function main() {
         sheetCount: inspection.sheets.length,
         nonEmptySheetCount: inspection.sheets.filter((sheet) => sheet.nonEmpty).length,
         hiddenSheetCount: inspection.sheets.filter((sheet) => sheet.state !== 'visible').length,
+        processingMode: inspection.processingMode,
+        mediaCount: inspection.mediaCount,
+        mediaExpandedBytes: inspection.mediaExpandedBytes,
         requiresSheetSelection: inspection.requiresSheetSelection,
         sheetsWithoutHeaderCandidates: inspection.sheets.filter((sheet) => sheet.nonEmpty && sheet.headerCandidates.length === 0).length,
         maxRows: Math.max(0, ...inspection.sheets.map((sheet) => sheet.rowCount)),
@@ -194,6 +200,9 @@ async function main() {
       failed: profiles.length - passed.length,
       totalBytes: profiles.reduce((sum, profile) => sum + profile.sizeBytes, 0),
       totalSheets: passed.reduce((sum, profile) => sum + (profile.sheetCount ?? 0), 0),
+      streamingSamples: passed.filter((profile) => profile.processingMode === 'streaming').length,
+      mediaCount: passed.reduce((sum, profile) => sum + (profile.mediaCount ?? 0), 0),
+      mediaExpandedBytes: passed.reduce((sum, profile) => sum + (profile.mediaExpandedBytes ?? 0), 0),
       selectionRequired: passed.filter((profile) => profile.requiresSheetSelection).length,
       sheetsWithoutHeaderCandidates: passed.reduce((sum, profile) => sum + (profile.sheetsWithoutHeaderCandidates ?? 0), 0),
       parsePassed: passed.filter((profile) => profile.parseStatus === 'passed').length,

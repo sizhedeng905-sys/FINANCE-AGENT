@@ -30,6 +30,33 @@ describe('ExcelParserService phase 9', () => {
     expect(parsed.rows[4].errors).toContain('公式单元格不自动执行，请转换为静态值后重新上传');
   });
 
+  it('keeps values after row and column gaps without importing style-only tail cells', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sparse detail');
+    sheet.getRow(1).values = ['Date', null, null, 'Amount'];
+    sheet.getRow(5).values = ['2026-07-01', null, null, 1250];
+    sheet.getCell('H20').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const inspection = await parser.inspect(buffer);
+    expect(inspection.sheets[0]).toMatchObject({ rowCount: 5, columnCount: 4, nonEmpty: true });
+
+    const parsed = await parser.parse(buffer, { headerRowIndex: 1 });
+    expect(parsed.columns.map((column) => column.sourceName)).toEqual([
+      'Date',
+      '未命名列2',
+      '未命名列3',
+      'Amount'
+    ]);
+    expect(parsed.rows.map((row) => [row.rowNumber, row.status])).toEqual([
+      [2, 'ignored'],
+      [3, 'ignored'],
+      [4, 'ignored'],
+      [5, 'pending']
+    ]);
+    expect(parsed.rows[3].rawData.Amount).toBe(1250);
+  });
+
   it('rejects an unselected multi-sheet workbook instead of silently dropping data', async () => {
     const multi = new ExcelJS.Workbook();
     multi.addWorksheet('一').addRow(['日期']);
@@ -164,6 +191,17 @@ describe('ExcelParserService phase 9', () => {
     expect(accepted.rows[2].errors).toContain('Amount：公式缓存结果不可用');
   });
 
+  it('does not treat a cached value with empty formula provenance as trustworthy', () => {
+    const workbook = new ExcelJS.Workbook();
+    const cell = workbook.addWorksheet('Formula boundary').getCell('A1');
+    cell.value = { formula: '', result: 100 };
+    const normalizeCell = (parser as unknown as {
+      normalizeCell(target: ExcelJS.Cell): { formula: boolean; error?: string };
+    }).normalizeCell.bind(parser);
+
+    expect(normalizeCell(cell)).toMatchObject({ formula: true, error: '公式来源不可用' });
+  });
+
   it('keeps only data-merge master values and defers importability to mapped-field validation', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Merged data');
@@ -192,6 +230,71 @@ describe('ExcelParserService phase 9', () => {
     await expect(parser.parse(buffer, { allowCachedFormulaResults: true })).resolves.toMatchObject({
       columns: [{ sourceName: 'Date' }, { sourceName: 'Amount' }],
       rows: [{ status: 'pending' }]
+    });
+  });
+
+  it('streams workbooks with embedded media while preserving merges and formula provenance', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Media detail');
+    sheet.addRow(['Cost', null, 'Date']);
+    sheet.addRow(['Amount', 'Note', null]);
+    const data = sheet.addRow([null, 'manual review', '2026-07-01']);
+    data.getCell(1).value = {
+      formula: 'LEN(B3)',
+      result: 13,
+      shareType: 'shared',
+      ref: 'A3:A4'
+    } as ExcelJS.CellValue;
+    const sharedData = sheet.addRow([null, 'second review', '2026-07-02']);
+    sharedData.getCell(1).value = { sharedFormula: 'A3', result: 13 };
+    sheet.mergeCells('A1:B1');
+    sheet.mergeCells('C1:C2');
+    const imageId = workbook.addImage({
+      extension: 'png',
+      base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    });
+    sheet.addImage(imageId, { tl: { col: 4, row: 0 }, ext: { width: 1, height: 1 } });
+    sheet.getCell('F20').font = { bold: true };
+    const archive = workbook.addWorksheet('Archive');
+    archive.state = 'hidden';
+    archive.addRows([['Date', 'Amount'], ['2025-01-01', 10]]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const inspection = await parser.inspect(buffer);
+    expect(inspection).toMatchObject({
+      processingMode: 'streaming',
+      mediaCount: 1,
+      requiresSheetSelection: true,
+      sheets: [
+        {
+          sheetName: 'Media detail',
+          rowCount: 4,
+          columnCount: 3,
+          mergeCount: 2,
+          formulaCellCount: 2
+        },
+        { sheetName: 'Archive', state: 'hidden', rowCount: 2, columnCount: 2 }
+      ]
+    });
+    expect(inspection.mediaExpandedBytes).toBeGreaterThan(0);
+
+    const parsed = await parser.parse(buffer, {
+      sheetIndex: 0,
+      headerStartRowIndex: 1,
+      headerRowIndex: 2,
+      allowCachedFormulaResults: true
+    });
+    expect(parsed.columns.map((column) => column.sourceName)).toEqual(['Cost / Amount', 'Cost / Note', 'Date']);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.rows[0]).toMatchObject({
+      status: 'pending',
+      rawData: { 'Cost / Amount': { formula: 'LEN(B3)', result: 13 } },
+      warnings: ['Cost / Amount：使用公式缓存结果，确认前必须复核']
+    });
+    expect(parsed.rows[1]).toMatchObject({
+      status: 'pending',
+      rawData: { 'Cost / Amount': { formula: 'LEN(B4)', result: 13 } },
+      warnings: ['Cost / Amount：使用公式缓存结果，确认前必须复核']
     });
   });
 });

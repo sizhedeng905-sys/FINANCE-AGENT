@@ -185,6 +185,9 @@ export async function mockInspectImportTask(id: string): Promise<ImportWorkbookI
   findTask(id);
   return {
     requiresSheetSelection: false,
+    processingMode: 'document',
+    mediaCount: 0,
+    mediaExpandedBytes: 0,
     recommendedSelection: { sheetIndex: 0, headerStartRowIndex: 1, headerRowIndex: 1 },
     sheets: [{
       sheetName: 'Sheet1',

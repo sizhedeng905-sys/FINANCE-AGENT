@@ -140,6 +140,7 @@ test('API mode: finance explicitly accepts cached formula results before parsing
   const created = await readEnvelope<ImportTaskDto>(await createdResponse);
 
   await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/mapping$`));
+  await expect(page.getByText('已从表格解析路径分离 1 个内嵌媒体对象')).toBeVisible();
   await expect(page.getByText('当前工作表包含 1 个公式单元格')).toBeVisible();
   await page.getByRole('checkbox', { name: '允许使用公式缓存结果' }).check();
 

@@ -3001,6 +3001,11 @@ describe('real PostgreSQL integration', () => {
       ['日期', '金额'],
       ['2025-01-01', 10]
     ]);
+    const multiImageId = multiWorkbook.addImage({
+      extension: 'png',
+      base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    });
+    multiDetail.addImage(multiImageId, { tl: { col: 6, row: 0 }, ext: { width: 1, height: 1 } });
     const multiXlsx = Buffer.from(await multiWorkbook.xlsx.writeBuffer());
 
     try {
@@ -3097,14 +3102,23 @@ describe('real PostgreSQL integration', () => {
         .expect(201);
       expect(inspected.body.data).toMatchObject({
         requiresSheetSelection: true,
+        processingMode: 'streaming',
+        mediaCount: 1,
+        mediaExpandedBytes: expect.any(Number),
         sheets: [
           { sheetIndex: 0, sheetName: '汇总', state: 'visible' },
           { sheetIndex: 1, sheetName: '费用明细', state: 'visible' },
           { sheetIndex: 2, sheetName: '历史归档', state: 'hidden' }
         ]
       });
-      expect(await prisma.auditLog.count({ where: { action: 'import_task.inspect', resourceId: multiTaskId } })).toBe(1);
-      expect(await prisma.ledgerEvent.count({ where: { eventType: 'import_task_inspected', aggregateId: multiTaskId } })).toBe(1);
+      const inspectAudit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'import_task.inspect', resourceId: multiTaskId }
+      });
+      expect(inspectAudit.metadata).toMatchObject({ processingMode: 'streaming', mediaCount: 1 });
+      const inspectLedger = await prisma.ledgerEvent.findFirstOrThrow({
+        where: { eventType: 'import_task_inspected', aggregateId: multiTaskId }
+      });
+      expect(inspectLedger.payload).toMatchObject({ processingMode: 'streaming', mediaCount: 1 });
 
       await request(app.getHttpServer())
         .post(`/api/import-tasks/${multiTaskId}/parse`)
@@ -3150,12 +3164,18 @@ describe('real PostgreSQL integration', () => {
         where: { action: 'import_task.parse', resourceId: multiTaskId },
         orderBy: { createdAt: 'desc' }
       });
-      expect(cachedFormulaAudit.metadata).toMatchObject({ allowCachedFormulaResults: true });
+      expect(cachedFormulaAudit.metadata).toMatchObject({
+        allowCachedFormulaResults: true,
+        processingMode: 'streaming'
+      });
       const cachedFormulaLedger = await prisma.ledgerEvent.findFirstOrThrow({
         where: { eventType: 'import_task_parsed', aggregateId: multiTaskId },
         orderBy: { createdAt: 'desc' }
       });
-      expect(cachedFormulaLedger.payload).toMatchObject({ allowCachedFormulaResults: true });
+      expect(cachedFormulaLedger.payload).toMatchObject({
+        allowCachedFormulaResults: true,
+        processingMode: 'streaming'
+      });
       const multiColumns = selectedParse.body.data.columns as Array<{ id: string; sourceName: string }>;
       const multiDateColumn = multiColumns.find((column) => column.sourceName === '发生日期')!;
       const multiAmountColumn = multiColumns.find((column) => column.sourceName === '费用 / 金额')!;

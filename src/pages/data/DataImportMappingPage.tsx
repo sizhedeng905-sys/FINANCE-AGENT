@@ -200,6 +200,14 @@ export default function DataImportMappingPage() {
                   {inspection?.requiresSheetSelection ? (
                     <Alert type="warning" showIcon message="工作簿包含多个非空工作表，必须明确选择" />
                   ) : null}
+                  {inspection && inspection.mediaCount > 0 ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={`已从表格解析路径分离 ${inspection.mediaCount} 个内嵌媒体对象`}
+                      description="本次只流式读取工作表数据，内嵌图片不作为单元格值导入。"
+                    />
+                  ) : null}
                   <Select
                     className="full-width"
                     placeholder="选择工作表"

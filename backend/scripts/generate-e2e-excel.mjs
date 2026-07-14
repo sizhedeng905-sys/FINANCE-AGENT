@@ -35,6 +35,11 @@ const formulaSheet = formulaWorkbook.addWorksheet('费用明细');
 formulaSheet.addRow(['发生日期', '费用金额', '车牌', '司机']);
 const formulaDataRow = formulaSheet.addRow([validDate, null, '粤A54321', '公式测试司机']);
 formulaDataRow.getCell(2).value = { formula: 'SUM(8000,765.43)', result: 8765.43 };
+const formulaImageId = formulaWorkbook.addImage({
+  extension: 'png',
+  base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+});
+formulaSheet.addImage(formulaImageId, { tl: { col: 5, row: 0 }, ext: { width: 1, height: 1 } });
 await formulaWorkbook.xlsx.writeFile(formulaFixturePath);
 console.log(`Generated E2E formula Excel fixture: ${formulaFixturePath}`);
 
