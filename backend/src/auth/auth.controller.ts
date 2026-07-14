@@ -1,9 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 
 import { CurrentUser as CurrentUserDecorator } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/types/current-user';
+import { AuthenticatedRequest } from '../common/types/current-user';
+import { getRequestContext } from '../common/utils/request-context';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 
@@ -34,8 +36,8 @@ export class AuthController {
     }
   })
   @ApiUnauthorizedResponse({ description: '账号或密码错误' })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() request: AuthenticatedRequest) {
+    return this.authService.login(dto, getRequestContext(request));
   }
 
   @Get('me')
@@ -56,8 +58,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  logout() {
-    return this.authService.logout();
+  logout(
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.authService.logout(user, getRequestContext(request));
   }
 
   private getTitle(role: CurrentUser['role']): string {

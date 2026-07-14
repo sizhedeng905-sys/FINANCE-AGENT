@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 
 export class FinanceReviewDto {
   @ApiProperty({ enum: ['approve', 'reject', 'supplement'] })
@@ -7,9 +8,11 @@ export class FinanceReviewDto {
   action!: 'approve' | 'reject' | 'supplement';
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((dto: FinanceReviewDto) => dto.action !== 'approve' || dto.comment !== undefined)
   @IsString()
+  @IsNotEmpty()
   @MaxLength(2000)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   comment?: string;
 }
 
@@ -19,9 +22,11 @@ export class ReviewerReviewDto {
   action!: 'approve' | 'reject_to_finance' | 'supplement';
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((dto: ReviewerReviewDto) => dto.action !== 'approve' || dto.comment !== undefined)
   @IsString()
+  @IsNotEmpty()
   @MaxLength(2000)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   comment?: string;
 }
 
@@ -31,15 +36,19 @@ export class BossApproveDto {
   action!: 'approve' | 'reject';
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((dto: BossApproveDto) => dto.action === 'reject' || dto.comment !== undefined)
   @IsString()
+  @IsNotEmpty()
   @MaxLength(2000)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   comment?: string;
 }
 
 export class UrgeWorkOrderDto {
   @ApiProperty()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(500)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   reason!: string;
 }

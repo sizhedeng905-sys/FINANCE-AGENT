@@ -57,6 +57,10 @@ export class WorkOrderRecordsService {
       include: this.recordInclude()
     });
     if (existing) return existing;
+    const occurredDate = workOrder.occurredDate;
+    if (!occurredDate) {
+      throw new UnprocessableEntityException('工单缺少发生日期，不能生成经营记录');
+    }
 
     const recordType = this.resolveRecordType(workOrder.type);
     const projectTemplate = await tx.projectTemplate.findFirst({
@@ -80,8 +84,18 @@ export class WorkOrderRecordsService {
       throw new UnprocessableEntityException('项目未启用与工单类型匹配的数据模板');
     }
 
-    const values = projectTemplate.template.templateFields
-      .map((templateField) => this.toRecordValue(templateField, workOrder))
+    const mappedValues = projectTemplate.template.templateFields.map((templateField) => ({
+      templateField,
+      value: this.toRecordValue(templateField, workOrder)
+    }));
+    const missingRequired = mappedValues
+      .filter((item) => item.templateField.isRequired && item.value === null)
+      .map((item) => item.templateField.field.fieldName);
+    if (missingRequired.length) {
+      throw new UnprocessableEntityException(`工单缺少业务记录必填字段：${missingRequired.join('、')}`);
+    }
+    const values = mappedValues
+      .map((item) => item.value)
       .filter((value): value is NonNullable<typeof value> => value !== null);
     const now = new Date();
     const record = await tx.businessRecord.create({
@@ -89,7 +103,7 @@ export class WorkOrderRecordsService {
         projectId: workOrder.projectId,
         templateId: projectTemplate.templateId,
         recordType,
-        recordDate: workOrder.occurredDate,
+        recordDate: occurredDate,
         amount: workOrder.amount,
         category: workOrder.type === WorkOrderType.transport ? '收入' : '支出',
         subCategory: projectTemplate.customName ?? projectTemplate.template.name,
@@ -149,6 +163,9 @@ export class WorkOrderRecordsService {
     };
     if (fieldKey in standard) return standard[fieldKey];
     const extra = this.asObject(workOrder.extraValues);
+    if (fieldKey === 'costCategory') {
+      return extra.costCategory ?? extra.expenseType ?? templateField.defaultValue ?? undefined;
+    }
     return extra[fieldKey] ?? templateField.defaultValue ?? undefined;
   }
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   AnomalyStatus,
   NotificationType,
@@ -121,8 +121,15 @@ export class RiskRulesService {
       ? `规则复核发现${hits.length}项异常：${hits.map((item) => item.evaluation.reason).join('；')}`
       : '规则复核未发现明显异常';
     const runId = randomUUID();
+    const reviewStatus = hits.length ? WorkOrderStatus.ai_flagged : WorkOrderStatus.ai_passed;
 
-    return this.prisma.$transaction(async (tx) => {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.workOrder.updateMany({
+        where: { id, status: WorkOrderStatus.ai_reviewing },
+        data: { status: reviewStatus }
+      });
+      if (claimed.count !== 1) throw new ConflictException('规则复核任务已被其他请求处理');
       const results = [];
       for (const { rule, evaluation } of evaluations) {
         const result = await tx.ruleRunResult.create({
@@ -180,6 +187,17 @@ export class RiskRulesService {
           action: '规则复核完成',
           comment: summary,
           fromStatus: WorkOrderStatus.ai_reviewing,
+          toStatus: reviewStatus
+        }
+      });
+      await tx.workOrderTimeline.create({
+        data: {
+          workOrderId: id,
+          operatorName: '系统规则',
+          role: 'system',
+          action: '提交老板审批',
+          comment: '规则复核结果已持久化，等待老板最终审批。',
+          fromStatus: reviewStatus,
           toStatus: WorkOrderStatus.boss_pending
         }
       });
@@ -212,7 +230,16 @@ export class RiskRulesService {
         })),
         alreadyProcessed: false
       };
-    });
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        const current = await this.prisma.workOrder.findUnique({ where: { id }, include: workOrderInclude });
+        if (current?.status === WorkOrderStatus.boss_pending) {
+          return { workOrder: toWorkOrder(current), runId: null, results: [], alreadyProcessed: true };
+        }
+      }
+      throw error;
+    }
   }
 
   private async evaluate(rule: RiskRule, workOrder: WorkOrderWithRelations): Promise<RuleEvaluation> {
@@ -229,6 +256,9 @@ export class RiskRulesService {
       return this.result(hit, `报销金额${amount}元且缺少附件`, '请补充发票、付款凭证或业务回单。', { amount, threshold, attachmentCount: workOrder.attachments.length });
     }
     if (rule.ruleType === 'duplicate_submission') {
+      if (!workOrder.occurredDate) {
+        return this.result(true, '工单缺少发生日期', '请补充业务发生日期后重新提交。', { occurredDate: null });
+      }
       const start = new Date(workOrder.occurredDate);
       start.setUTCHours(0, 0, 0, 0);
       const end = new Date(start);

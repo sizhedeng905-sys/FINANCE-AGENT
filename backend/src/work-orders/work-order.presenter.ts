@@ -56,7 +56,7 @@ export function toWorkOrder(workOrder: WorkOrderWithRelations) {
     profit: Number(workOrder.profit),
     status: workOrder.status,
     riskLevel: workOrder.riskLevel,
-    occurredDate: workOrder.occurredDate.toISOString(),
+    occurredDate: workOrder.occurredDate?.toISOString(),
     createdAt: workOrder.createdAt.toISOString(),
     updatedAt: workOrder.updatedAt.toISOString(),
     currentStep: stepByStatus[workOrder.status],

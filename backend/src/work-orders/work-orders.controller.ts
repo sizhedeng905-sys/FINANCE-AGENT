@@ -11,6 +11,7 @@ import { getRequestContext } from '../common/utils/request-context';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { BossApproveDto, FinanceReviewDto, ReviewerReviewDto, UrgeWorkOrderDto } from './dto/review-work-order.dto';
+import { SupplementWorkOrderDto } from './dto/supplement-work-order.dto';
 import { UpdateWorkOrderDto } from './dto/update-work-order.dto';
 import { WorkOrdersService } from './work-orders.service';
 
@@ -29,8 +30,13 @@ export class WorkOrdersController {
 
   @Post()
   @Roles(UserRole.employee)
-  create(@Body() dto: CreateWorkOrderDto, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
-    return this.workOrders.create(dto, user, getRequestContext(request));
+  create(
+    @Body() dto: CreateWorkOrderDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.workOrders.create(dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Get(':id/timeline')
@@ -43,6 +49,17 @@ export class WorkOrdersController {
   @Roles(UserRole.employee)
   submit(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
     return this.workOrders.submit(id, user, getRequestContext(request));
+  }
+
+  @Post(':id/supplement')
+  @Roles(UserRole.employee)
+  supplement(
+    @Param('id') id: string,
+    @Body() dto: SupplementWorkOrderDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.workOrders.supplement(id, dto, user, getRequestContext(request));
   }
 
   @Post(':id/finance-review')

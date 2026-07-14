@@ -1,40 +1,68 @@
+import { BadRequestException } from '@nestjs/common';
+
 export type ReportPeriod = 'today' | 'week' | 'month';
 
 const CHINA_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function reportRange(period: ReportPeriod, now = new Date()) {
-  const local = new Date(now.getTime() + CHINA_OFFSET_MS);
-  const year = local.getUTCFullYear();
-  const month = local.getUTCMonth();
-  const date = local.getUTCDate();
-  let startLocal = Date.UTC(year, month, date);
-  if (period === 'week') {
-    const weekday = local.getUTCDay() || 7;
-    startLocal -= (weekday - 1) * 24 * 60 * 60 * 1000;
+function dateParts(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new BadRequestException('日期格式必须为 YYYY-MM-DD');
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    throw new BadRequestException('日期无效');
   }
-  if (period === 'month') startLocal = Date.UTC(year, month, 1);
-  const endLocal =
-    period === 'today'
-      ? startLocal + 24 * 60 * 60 * 1000
-      : period === 'week'
-        ? startLocal + 7 * 24 * 60 * 60 * 1000
-        : Date.UTC(year, month + 1, 1);
+  return { year, month: month - 1, day };
+}
+
+function nowParts(now: Date) {
+  const local = new Date(now.getTime() + CHINA_OFFSET_MS);
   return {
-    start: new Date(startLocal - CHINA_OFFSET_MS),
-    end: new Date(endLocal - CHINA_OFFSET_MS),
-    label: formatChinaDate(new Date(startLocal - CHINA_OFFSET_MS))
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth(),
+    day: local.getUTCDate()
   };
 }
 
-export function dayRange(date: string | undefined, now = new Date()) {
-  if (!date) return reportRange('today', now);
-  const [year, month, day] = date.slice(0, 10).split('-').map(Number);
-  const startLocal = Date.UTC(year, month - 1, day);
+function rangeResult(startLocal: number, endLocal: number, anchorLocal: number) {
+  const start = new Date(startLocal - CHINA_OFFSET_MS);
+  const end = new Date(endLocal - CHINA_OFFSET_MS);
   return {
-    start: new Date(startLocal - CHINA_OFFSET_MS),
-    end: new Date(startLocal + 24 * 60 * 60 * 1000 - CHINA_OFFSET_MS),
-    label: date.slice(0, 10)
+    start,
+    end,
+    label: formatChinaDate(new Date(anchorLocal - CHINA_OFFSET_MS)),
+    startDate: formatChinaDate(start),
+    endDate: formatChinaDate(new Date(end.getTime() - 1))
   };
+}
+
+export function reportRange(period: ReportPeriod, date?: string, now = new Date()) {
+  const parts = date ? dateParts(date) : nowParts(now);
+  const anchorLocal = Date.UTC(parts.year, parts.month, parts.day);
+  let startLocal = anchorLocal;
+  if (period === 'week') {
+    const weekday = new Date(anchorLocal).getUTCDay() || 7;
+    startLocal -= (weekday - 1) * DAY_MS;
+  }
+  if (period === 'month') startLocal = Date.UTC(parts.year, parts.month, 1);
+  const endLocal =
+    period === 'today'
+      ? startLocal + DAY_MS
+      : period === 'week'
+        ? startLocal + 7 * DAY_MS
+        : Date.UTC(parts.year, parts.month + 1, 1);
+  return rangeResult(startLocal, endLocal, anchorLocal);
+}
+
+export function dayRange(date: string | undefined, now = new Date()) {
+  return reportRange('today', date, now);
 }
 
 export function monthRange(monthValue: string | undefined, now = new Date()) {
@@ -45,8 +73,7 @@ export function monthRange(monthValue: string | undefined, now = new Date()) {
   const startLocal = Date.UTC(year, month - 1, 1);
   const endLocal = Date.UTC(year, month, 1);
   return {
-    start: new Date(startLocal - CHINA_OFFSET_MS),
-    end: new Date(endLocal - CHINA_OFFSET_MS),
+    ...rangeResult(startLocal, endLocal, startLocal),
     label: `${year}-${String(month).padStart(2, '0')}`
   };
 }

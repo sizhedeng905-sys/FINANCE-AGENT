@@ -27,6 +27,7 @@ interface UserRecord {
   department: string | null;
   phone: string | null;
   status: UserStatus;
+  tokenVersion: number;
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -173,6 +174,7 @@ class InMemoryPrisma {
         department: data.department ?? null,
         phone: data.phone ?? null,
         status: data.status ?? UserStatus.active,
+        tokenVersion: data.tokenVersion ?? 0,
         createdBy: data.createdBy ?? null,
         createdAt: now,
         updatedAt: now
@@ -191,7 +193,12 @@ class InMemoryPrisma {
         throw { code: 'P2002', meta: { target: ['username'] } };
       }
 
-      Object.assign(user, data, { updatedAt: new Date() });
+      const tokenVersionUpdate = data.tokenVersion as unknown;
+      const normalizedData = { ...data } as Partial<UserRecord>;
+      if (typeof tokenVersionUpdate === 'object' && tokenVersionUpdate !== null && 'increment' in tokenVersionUpdate) {
+        normalizedData.tokenVersion = user.tokenVersion + Number((tokenVersionUpdate as { increment: number }).increment);
+      }
+      Object.assign(user, normalizedData, { updatedAt: new Date() });
       return user;
     },
     delete: async ({ where }: { where: { id: string } }) => {
@@ -292,7 +299,11 @@ class InMemoryPrisma {
 
   fieldDefinition = {
     findUnique: async ({ where }: { where: { id?: string; fieldKey?: string } }) =>
-      this.fieldDefinitions.find((field) => field.id === where.id || field.fieldKey === where.fieldKey) ?? null,
+      this.fieldDefinitions.find(
+        (field) =>
+          (where.id !== undefined && field.id === where.id) ||
+          (where.fieldKey !== undefined && field.fieldKey === where.fieldKey)
+      ) ?? null,
     findMany: async ({ where, skip = 0, take = 20 }: { where?: Record<string, unknown>; skip?: number; take?: number }) =>
       this.applyFieldWhere(where)
         .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
@@ -322,7 +333,8 @@ class InMemoryPrisma {
     update: async ({ where, data }: { where: { id: string }; data: Partial<FieldRecord> }) => {
       const field = this.fieldDefinitions.find((item) => item.id === where.id);
       if (!field) throw new Error('Field not found');
-      Object.assign(field, data, { updatedAt: new Date() });
+      const definedData = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+      Object.assign(field, definedData, { updatedAt: new Date() });
       return field;
     }
   };
@@ -350,6 +362,8 @@ class InMemoryPrisma {
       const items = await this.templateField.findMany({ where, orderBy });
       return items[0] ?? null;
     },
+    count: async ({ where }: { where?: { templateId?: string } }) =>
+      this.templateFields.filter((item) => !where?.templateId || item.templateId === where.templateId).length,
     create: async ({ data, include }: { data: Partial<TemplateFieldRecord> & Pick<TemplateFieldRecord, 'templateId' | 'fieldId'>; include?: Record<string, unknown> }) => {
       if (this.templateFields.some((item) => item.templateId === data.templateId && item.fieldId === data.fieldId)) {
         throw { code: 'P2002', meta: { target: ['template_id', 'field_id'] } };
@@ -374,6 +388,35 @@ class InMemoryPrisma {
       if (!templateField) throw new Error('Template field not found');
       Object.assign(templateField, data, { updatedAt: new Date() });
       return this.withTemplateFieldInclude(templateField, include);
+    },
+    updateMany: async ({
+      where,
+      data
+    }: {
+      where: {
+        templateId?: string;
+        id?: { not?: string };
+        displayOrder?: { gte?: number; gt?: number; lte?: number; lt?: number };
+      };
+      data: { displayOrder?: number | { increment?: number; decrement?: number } };
+    }) => {
+      let count = 0;
+      for (const item of this.templateFields) {
+        if (where.templateId && item.templateId !== where.templateId) continue;
+        if (where.id?.not && item.id === where.id.not) continue;
+        if (where.displayOrder?.gte !== undefined && item.displayOrder < where.displayOrder.gte) continue;
+        if (where.displayOrder?.gt !== undefined && item.displayOrder <= where.displayOrder.gt) continue;
+        if (where.displayOrder?.lte !== undefined && item.displayOrder > where.displayOrder.lte) continue;
+        if (where.displayOrder?.lt !== undefined && item.displayOrder >= where.displayOrder.lt) continue;
+        if (typeof data.displayOrder === 'number') item.displayOrder = data.displayOrder;
+        if (typeof data.displayOrder === 'object') {
+          item.displayOrder += data.displayOrder.increment ?? 0;
+          item.displayOrder -= data.displayOrder.decrement ?? 0;
+        }
+        item.updatedAt = new Date();
+        count += 1;
+      }
+      return { count };
     },
     delete: async ({ where }: { where: { id: string } }) => {
       const index = this.templateFields.findIndex((item) => item.id === where.id);
@@ -411,6 +454,23 @@ class InMemoryPrisma {
       }
       return items.map((item) => this.withProjectTemplateInclude(item, include));
     },
+    create: async ({ data }: { data: Partial<ProjectTemplateRecord> & Pick<ProjectTemplateRecord, 'projectId' | 'templateId'> }) => {
+      if (this.projectTemplates.some((item) => item.projectId === data.projectId && item.templateId === data.templateId)) {
+        throw { code: 'P2002', meta: { target: ['project_id', 'template_id'] } };
+      }
+      const now = new Date();
+      const projectTemplate: ProjectTemplateRecord = {
+        id: data.id ?? `project_template_${++this.projectTemplateCounter}`,
+        projectId: data.projectId,
+        templateId: data.templateId,
+        customName: data.customName ?? null,
+        isActive: data.isActive ?? true,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.projectTemplates.push(projectTemplate);
+      return projectTemplate;
+    },
     upsert: async ({ where, create, update }: { where: { projectId_templateId: { projectId: string; templateId: string } }; create: Partial<ProjectTemplateRecord> & Pick<ProjectTemplateRecord, 'projectId' | 'templateId'>; update: Partial<ProjectTemplateRecord> }) => {
       const existing = this.projectTemplates.find(
         (item) =>
@@ -444,6 +504,14 @@ class InMemoryPrisma {
 
   rawFile = {
     findMany: async () => this.rawFiles
+  };
+
+  importTask = {
+    findMany: async () => []
+  };
+
+  ocrTask = {
+    findMany: async () => []
   };
 
   businessRecord = {
@@ -529,6 +597,8 @@ class InMemoryPrisma {
   };
 
   recordValue = {
+    count: async ({ where }: { where?: { fieldId?: string } }) =>
+      this.recordValues.filter((item) => !where?.fieldId || item.fieldId === where.fieldId).length,
     deleteMany: async ({ where }: { where: { recordId?: string } }) => {
       const before = this.recordValues.length;
       this.recordValues = this.recordValues.filter((item) => item.recordId !== where.recordId);
@@ -829,6 +899,13 @@ class InMemoryPrisma {
       users = users.filter((user) => user.status === where.status);
     }
 
+    const idFilter = where.id as { not?: string } | string | undefined;
+    if (typeof idFilter === 'string') {
+      users = users.filter((user) => user.id === idFilter);
+    } else if (idFilter?.not) {
+      users = users.filter((user) => user.id !== idFilter.not);
+    }
+
     const or = where.OR as Array<Record<string, { contains: string }>> | undefined;
     if (or?.length) {
       users = users.filter((user) =>
@@ -850,7 +927,9 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
   let prisma: InMemoryPrisma;
 
   beforeAll(async () => {
-    process.env.JWT_SECRET = 'test-secret';
+    process.env.DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public';
+    process.env.JWT_SECRET = 'test-secret-with-at-least-32-characters';
+    process.env.AI_PROVIDER = 'mock';
     prisma = new InMemoryPrisma();
     await prisma.seed();
 
@@ -945,6 +1024,40 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     });
   });
 
+  it('revokes the current token on logout', async () => {
+    const token = await login('employee');
+    const response = await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.headers['x-request-id']).toEqual(expect.any(String));
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    await login('employee');
+  });
+
+  it('rate limits repeated failed login attempts and audits failures', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'missing_rate_limited_user', password: 'wrong-password' })
+        .expect(401);
+    }
+    const blocked = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'missing_rate_limited_user', password: 'wrong-password' })
+      .expect(429);
+    expect(blocked.body).toMatchObject({ code: 42901 });
+    expect(
+      prisma.auditLogs.filter(
+        (log) => log.action === 'auth.login.failure' && log.actorUsername === 'missing_rate_limited_user'
+      )
+    ).toHaveLength(6);
+  });
+
   it('protects user management with auth and role guards', async () => {
     await request(app.getHttpServer()).get('/api/users').expect(401);
 
@@ -987,6 +1100,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     const createdUser = prisma.users.find((user) => user.id === createdUserId);
     expect(createdUser?.passwordHash).not.toBe('123456');
     expect(createdUser?.passwordHash).toMatch(/^\$2[aby]\$/);
+    const oldToken = await login('api_employee');
 
     const bossCreateResponse = await request(app.getHttpServer())
       .post('/api/users')
@@ -1006,6 +1120,11 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .set('Authorization', `Bearer ${financeToken}`)
       .send({ newPassword: '654321' })
       .expect(200);
+
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${oldToken}`)
+      .expect(401);
 
     await login('api_employee', '654321');
 
@@ -1031,10 +1150,65 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .set('Authorization', `Bearer ${bossToken}`)
       .expect(200);
 
+    expect(prisma.users.find((user) => user.id === bossCreateResponse.body.data.id)?.status).toBe(UserStatus.disabled);
+
     const actions = prisma.auditLogs.map((log) => log.action);
     expect(actions).toEqual(
       expect.arrayContaining(['user.create', 'user.password.reset', 'user.update', 'user.status.update', 'user.delete'])
     );
+  });
+
+  it('prevents finance from creating, promoting, resetting, disabling, or deleting boss accounts', async () => {
+    const financeToken = await login('finance');
+    const bossAccount = prisma.users.find((user) => user.username === '老板')!;
+    const employeeAccount = prisma.users.find((user) => user.username === 'employee')!;
+
+    await request(app.getHttpServer())
+      .post('/api/users')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ username: 'finance_created_boss', password: '123456', name: '禁止创建', role: UserRole.boss })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${employeeAccount.id}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ role: UserRole.boss })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${bossAccount.id}/password`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ newPassword: '654321' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${bossAccount.id}/status`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ status: UserStatus.disabled })
+      .expect(403);
+    await request(app.getHttpServer())
+      .delete(`/api/users/${bossAccount.id}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(403);
+  });
+
+  it('does not allow the last active boss to be disabled', async () => {
+    const bossToken = await login('boss');
+    const chineseBoss = prisma.users.find((user) => user.username === '老板')!;
+    const englishBoss = prisma.users.find((user) => user.username === 'boss')!;
+
+    await request(app.getHttpServer())
+      .patch(`/api/users/${chineseBoss.id}/status`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({ status: UserStatus.disabled })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${englishBoss.id}/status`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({ status: UserStatus.disabled })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${chineseBoss.id}/status`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({ status: UserStatus.active })
+      .expect(200);
   });
 
   it('returns a paginated users list for finance', async () => {
@@ -1194,6 +1368,17 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .patch(`/api/fields/${fieldId}/disable`)
       .set('Authorization', `Bearer ${financeToken}`)
       .expect(200);
+
+    await request(app.getHttpServer())
+      .get('/api/fields?isActive=false')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200)
+      .expect(({ body }) => expect(body.data.items.map((field: { id: string }) => field.id)).toContain(fieldId));
+
+    await request(app.getHttpServer())
+      .get('/api/fields?isActive=not-a-boolean')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(400);
 
     await request(app.getHttpServer())
       .patch(`/api/project-templates/${projectTemplateId}/disable`)
@@ -1391,6 +1576,29 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       })
       .expect(400);
 
+    const recordAttachmentId = 'stage3-file-id';
+    prisma.rawFiles.push({
+      id: recordAttachmentId,
+      fileName: 'stage3-voucher.pdf',
+      originalFileName: 'stage3-voucher.pdf',
+      fileType: 'pdf',
+      mimeType: 'application/pdf',
+      fileSize: BigInt(128),
+      storagePath: 'test/stage3-voucher.pdf',
+      sha256: 'a'.repeat(64),
+      uploadedBy: 'finance-user',
+      uploadedAt: new Date(),
+      isVoided: false,
+      relatedProjectId: projectId,
+      relatedWorkOrderId: null,
+      status: 'uploaded',
+      scanStatus: 'clean',
+      previewStatus: 'original',
+      voidReason: null,
+      voidedAt: null,
+      voidedBy: null
+    });
+
     const recordResponse = await request(app.getHttpServer())
       .post('/api/records')
       .set('Authorization', `Bearer ${financeToken}`)
@@ -1411,7 +1619,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
           { fieldId: amountFieldId, value: 1280.5 },
           { fieldId: driverFieldId, value: '王师傅' }
         ],
-        attachments: ['stage3-voucher.pdf']
+        attachments: [recordAttachmentId]
       })
       .expect(201);
     const recordId = recordResponse.body.data.id as string;
@@ -1492,7 +1700,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .patch(`/api/records/${recordId}`)
       .set('Authorization', `Bearer ${financeToken}`)
       .send({ description: '已确认后不允许覆盖' })
-      .expect(400);
+      .expect(409);
 
     const voidResponse = await request(app.getHttpServer())
       .delete(`/api/records/${recordId}`)
@@ -1502,6 +1710,38 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       id: recordId,
       status: BusinessRecordStatus.rejected
     });
+
+    const requiredBase = {
+      projectId,
+      templateId,
+      recordType: DataRecordType.transport,
+      recordDate: '2026-07-11',
+      amount: 10,
+      values: [
+        { fieldId: dateFieldId, value: '2026-07-11' },
+        { fieldId: amountFieldId, value: 10 },
+        { fieldId: driverFieldId, value: '李师傅' }
+      ]
+    };
+    await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ...requiredBase, sourceId: 'forged-source' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ...requiredBase, status: BusinessRecordStatus.pending_confirm, values: [] })
+      .expect(400);
+    const incompleteDraft = await request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ...requiredBase, status: BusinessRecordStatus.draft, values: [] })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/records/${incompleteDraft.body.data.id}/confirm`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(400);
 
     const actions = prisma.auditLogs.map((log) => log.action);
     expect(actions).toEqual(

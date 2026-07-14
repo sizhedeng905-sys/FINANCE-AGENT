@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -65,7 +65,7 @@ export class TemplatesService {
           name: dto.name,
           recordType: dto.recordType,
           description: dto.description,
-          isSystem: dto.isSystem ?? false,
+          isSystem: false,
           createdBy: actor.username
         }
       });
@@ -102,7 +102,15 @@ export class TemplatesService {
 
   async remove(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
-      const before = await this.findTemplateOrThrow(id, tx);
+      const before = await tx.template.findUnique({
+        where: { id },
+        include: { _count: { select: { projectTemplates: true, businessRecords: true } } }
+      });
+      if (!before) throw new NotFoundException('资源不存在');
+      if (before.isSystem) throw new ConflictException('系统内置模板不能删除');
+      if (before._count.projectTemplates > 0 || before._count.businessRecords > 0) {
+        throw new ConflictException('模板已被项目或业务记录使用，不能删除');
+      }
       await tx.template.delete({
         where: {
           id
@@ -185,9 +193,17 @@ export class TemplatesService {
   async addField(templateId: string, dto: CreateTemplateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       await this.findTemplateOrThrow(templateId, tx);
-      await this.findFieldOrThrow(dto.fieldId, tx);
+      const field = await this.findFieldOrThrow(dto.fieldId, tx);
+      if (!field.isActive) throw new ConflictException('停用字段不能加入模板');
 
-      const displayOrder = dto.displayOrder ?? (await this.getNextDisplayOrder(templateId, tx));
+      const fieldCount = await tx.templateField.count({ where: { templateId } });
+      const displayOrder = Math.min(dto.displayOrder ?? fieldCount + 1, fieldCount + 1);
+      if (displayOrder <= fieldCount) {
+        await tx.templateField.updateMany({
+          where: { templateId, displayOrder: { gte: displayOrder } },
+          data: { displayOrder: { increment: 1 } }
+        });
+      }
       const templateField = await tx.templateField.create({
         data: {
           templateId,
@@ -219,11 +235,38 @@ export class TemplatesService {
   async updateTemplateField(id: string, dto: UpdateTemplateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findTemplateFieldOrThrow(id, tx);
+      let displayOrder = dto.displayOrder;
+      if (displayOrder !== undefined && displayOrder !== before.displayOrder) {
+        const siblingCount = await tx.templateField.count({ where: { templateId: before.templateId } });
+        displayOrder = Math.min(displayOrder, siblingCount);
+        if (displayOrder < before.displayOrder) {
+          await tx.templateField.updateMany({
+            where: {
+              templateId: before.templateId,
+              id: { not: id },
+              displayOrder: { gte: displayOrder, lt: before.displayOrder }
+            },
+            data: { displayOrder: { increment: 1 } }
+          });
+        } else {
+          await tx.templateField.updateMany({
+            where: {
+              templateId: before.templateId,
+              id: { not: id },
+              displayOrder: { gt: before.displayOrder, lte: displayOrder }
+            },
+            data: { displayOrder: { decrement: 1 } }
+          });
+        }
+      }
       const templateField = await tx.templateField.update({
         where: {
           id
         },
-        data: dto,
+        data: {
+          ...dto,
+          displayOrder
+        },
         include: {
           field: true
         }
@@ -251,6 +294,13 @@ export class TemplatesService {
           id
         }
       });
+      await tx.templateField.updateMany({
+        where: {
+          templateId: before.templateId,
+          displayOrder: { gt: before.displayOrder }
+        },
+        data: { displayOrder: { decrement: 1 } }
+      });
 
       await this.auditLogs.write(
         tx,
@@ -266,19 +316,6 @@ export class TemplatesService {
         id
       };
     });
-  }
-
-  private async getNextDisplayOrder(templateId: string, prisma: PrismaWriter) {
-    const latest = await prisma.templateField.findFirst({
-      where: {
-        templateId
-      },
-      orderBy: {
-        displayOrder: 'desc'
-      }
-    });
-
-    return (latest?.displayOrder ?? 0) + 1;
   }
 
   private async findTemplateOrThrow(id: string, prisma: PrismaWriter = this.prisma) {

@@ -9,7 +9,12 @@ export class QueryNotificationsDto {
   targetRole?: UserRole;
 
   @IsOptional()
-  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @Transform(({ obj, key, value }) => {
+    const rawValue = (obj as Record<string, unknown>)[key];
+    if (rawValue === true || rawValue === 'true') return true;
+    if (rawValue === false || rawValue === 'false') return false;
+    return rawValue ?? value;
+  })
   @IsBoolean()
   read?: boolean;
 

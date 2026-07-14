@@ -37,6 +37,7 @@ export class TemplatesController {
   }
 
   @Get(':id/fields')
+  @Roles(UserRole.finance, UserRole.boss)
   getFields(@Param('id') id: string) {
     return this.templatesService.getFields(id);
   }

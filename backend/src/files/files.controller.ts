@@ -14,7 +14,7 @@ import {
   UseInterceptors
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Response } from 'express';
 import { memoryStorage } from 'multer';
@@ -62,6 +62,8 @@ export class FilesController {
 
   @Get(':id/preview')
   @Roles(UserRole.employee, UserRole.finance, UserRole.reviewer, UserRole.boss)
+  @ApiProduces('application/octet-stream')
+  @ApiOkResponse({ schema: { type: 'string', format: 'binary' } })
   async preview(
     @Param('id') id: string,
     @CurrentUserDecorator() user: CurrentUser,
@@ -71,11 +73,15 @@ export class FilesController {
     const file = await this.files.read(id, user, getRequestContext(request), 'preview');
     response.setHeader('Content-Type', file.mimeType);
     response.setHeader('Content-Disposition', this.contentDisposition('inline', file.fileName));
+    response.setHeader('Content-Length', String(file.buffer.length));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(file.buffer);
   }
 
   @Get(':id/download')
   @Roles(UserRole.employee, UserRole.finance, UserRole.reviewer, UserRole.boss)
+  @ApiProduces('application/octet-stream')
+  @ApiOkResponse({ schema: { type: 'string', format: 'binary' } })
   async download(
     @Param('id') id: string,
     @CurrentUserDecorator() user: CurrentUser,
@@ -85,6 +91,8 @@ export class FilesController {
     const file = await this.files.read(id, user, getRequestContext(request), 'download');
     response.setHeader('Content-Type', file.mimeType);
     response.setHeader('Content-Disposition', this.contentDisposition('attachment', file.fileName));
+    response.setHeader('Content-Length', String(file.buffer.length));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(file.buffer);
   }
 

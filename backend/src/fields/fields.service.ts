@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 
@@ -93,6 +93,12 @@ export class FieldsService {
   async update(id: string, dto: UpdateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findFieldOrThrow(id, tx);
+      if (dto.fieldType && dto.fieldType !== before.fieldType) {
+        const valueCount = await tx.recordValue.count({ where: { fieldId: id } });
+        if (valueCount > 0) {
+          throw new ConflictException('字段已有业务数据，不能修改字段类型');
+        }
+      }
       const fieldKey = dto.fieldKey ? await this.resolveFieldKey(dto.fieldKey, tx, id) : undefined;
       const field = await tx.fieldDefinition.update({
         where: {

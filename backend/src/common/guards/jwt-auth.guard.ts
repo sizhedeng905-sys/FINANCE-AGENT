@@ -8,6 +8,7 @@ import { AuthenticatedRequest, CurrentUser } from '../types/current-user';
 
 interface JwtPayload {
   sub?: string;
+  ver?: number;
 }
 
 @Injectable()
@@ -29,13 +30,13 @@ export class JwtAuthGuard implements CanActivate {
     let payload: JwtPayload;
     try {
       payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
-        secret: this.configService.get<string>('jwtSecret')
+        secret: this.configService.getOrThrow<string>('jwtSecret')
       });
     } catch {
       throw new UnauthorizedException('Token 失效');
     }
 
-    if (!payload.sub) {
+    if (!payload.sub || !Number.isInteger(payload.ver)) {
       throw new UnauthorizedException('Token 失效');
     }
 
@@ -45,7 +46,7 @@ export class JwtAuthGuard implements CanActivate {
       }
     });
 
-    if (!user || user.status !== UserStatus.active) {
+    if (!user || user.status !== UserStatus.active || user.tokenVersion !== payload.ver) {
       throw new UnauthorizedException('Token 失效');
     }
 
@@ -56,7 +57,8 @@ export class JwtAuthGuard implements CanActivate {
       role: user.role,
       department: user.department ?? '',
       phone: user.phone ?? '',
-      status: user.status
+      status: user.status,
+      tokenVersion: user.tokenVersion
     } satisfies CurrentUser;
 
     return true;

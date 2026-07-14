@@ -102,6 +102,7 @@ export function toRecordValue(recordValue: RecordValue & { field?: FieldDefiniti
     recordId: recordValue.recordId,
     fieldId: recordValue.fieldId,
     fieldName: recordValue.fieldName,
+    fieldType: recordValue.field?.fieldType,
     value: resolveRecordValue(recordValue)
   };
 }
@@ -121,6 +122,7 @@ export function toBusinessRecord(record: BusinessRecordWithRelations) {
     description: record.description ?? '',
     sourceType: record.sourceType,
     sourceId: record.sourceId,
+    importTaskId: record.importTaskId ?? undefined,
     status: record.status,
     values: record.values.map(toRecordValue),
     attachments: normalizeStringArray(record.attachments),

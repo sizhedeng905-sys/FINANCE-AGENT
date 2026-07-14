@@ -4,8 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+import { FileStorage } from './file-storage';
+
 @Injectable()
-export class LocalFileStorageService {
+export class LocalFileStorageService implements FileStorage {
   private readonly root: string;
 
   constructor(config: ConfigService) {

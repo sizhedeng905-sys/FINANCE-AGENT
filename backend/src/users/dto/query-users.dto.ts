@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole, UserStatus } from '@prisma/client';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class QueryUsersDto {
   @ApiPropertyOptional({ example: 1, default: 1 })
@@ -22,6 +22,8 @@ export class QueryUsersDto {
   @ApiPropertyOptional({ example: '员工' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   keyword?: string;
 
   @ApiPropertyOptional({ enum: UserRole })

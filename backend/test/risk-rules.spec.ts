@@ -9,7 +9,8 @@ const actor = {
   role: UserRole.reviewer,
   department: '',
   phone: '',
-  status: UserStatus.active
+  status: UserStatus.active,
+  tokenVersion: 0
 };
 
 describe('RiskRulesService phase 6', () => {
@@ -88,6 +89,11 @@ describe('RiskRulesService phase 6', () => {
         update: jest.fn(async ({ data }) => {
           Object.assign(workOrder, data, { updatedAt: new Date() });
           return workOrder;
+        }),
+        updateMany: jest.fn(async ({ where, data }) => {
+          if (workOrder.id !== where.id || workOrder.status !== where.status) return { count: 0 };
+          Object.assign(workOrder, data, { updatedAt: new Date() });
+          return { count: 1 };
         })
       },
       riskRule: {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ProjectStatus, UserRole } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -13,6 +13,8 @@ import {
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { toRawFile } from '../files/file.presenter';
+import { importTaskDetailInclude, toImportTask } from '../import-tasks/import.presenter';
+import { ocrTaskDetailInclude, toOcrTask } from '../ocr/ocr.presenter';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateProjectTemplateDto } from './dto/create-project-template.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -26,6 +28,8 @@ type PresentedTemplate = ReturnType<typeof toTemplate>;
 type PresentedTemplateField = ReturnType<typeof toTemplateField>;
 type PresentedBusinessRecord = ReturnType<typeof toBusinessRecord>;
 type PresentedRawFile = ReturnType<typeof toRawFile>;
+type PresentedImportTask = ReturnType<typeof toImportTask>;
+type PresentedOcrTask = ReturnType<typeof toOcrTask>;
 
 export interface EnabledTemplateInfo {
   projectTemplate: PresentedProjectTemplate;
@@ -53,7 +57,8 @@ export interface ProjectStructure {
   templateFields: PresentedTemplateField[];
   records: PresentedBusinessRecord[];
   rawFiles: PresentedRawFile[];
-  importTasks: never[];
+  importTasks: PresentedImportTask[];
+  ocrTasks: PresentedOcrTask[];
   fieldUsageStats: FieldUsageStat[];
   logicalTablesSummary: Array<{
     projectId: string;
@@ -240,6 +245,20 @@ export class ProjectsService {
         orderBy: { uploadedAt: 'desc' }
       })
     ).map(toRawFile);
+    const importTasks = (
+      await this.prisma.importTask.findMany({
+        where: { projectId: id },
+        include: importTaskDetailInclude,
+        orderBy: { createdAt: 'desc' }
+      })
+    ).map(toImportTask);
+    const ocrTasks = (
+      await this.prisma.ocrTask.findMany({
+        where: { projectId: id },
+        include: ocrTaskDetailInclude,
+        orderBy: { createdAt: 'desc' }
+      })
+    ).map(toOcrTask);
 
     const enabledTemplates = projectTemplates.map((projectTemplate) => ({
       projectTemplate: toProjectTemplate(projectTemplate),
@@ -255,15 +274,16 @@ export class ProjectsService {
       templateFields,
       records,
       rawFiles,
-      importTasks: [],
+      importTasks,
+      ocrTasks,
       fieldUsageStats: this.getFieldUsageStats(enabledTemplates, records),
-      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates, records, rawFiles.length)
+      logicalTablesSummary: this.getLogicalTablesSummary(id, enabledTemplates, records, rawFiles.length, importTasks, ocrTasks)
     };
   }
 
   async getSummary(id: string) {
     const structure = await this.getStructure(id);
-    const activeRecords = structure.records.filter((record) => record.status !== 'rejected');
+    const activeRecords = structure.records.filter((record) => record.status === 'confirmed');
     const incomeRecords = activeRecords.filter(
       (record) => record.recordType === 'revenue' || record.category === '收入'
     );
@@ -280,6 +300,7 @@ export class ProjectsService {
       recordCount: structure.records.length,
       rawFileCount: structure.rawFiles.length,
       importTaskCount: structure.importTasks.length,
+      ocrTaskCount: structure.ocrTasks.length,
       totalIncome,
       totalCost,
       profit: totalIncome - totalCost
@@ -305,27 +326,25 @@ export class ProjectsService {
 
   async enableTemplate(projectId: string, dto: CreateProjectTemplateDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
-      await this.findProjectOrThrow(projectId, tx);
-      await this.findTemplateOrThrow(dto.templateId, tx);
-
-      const projectTemplate = await tx.projectTemplate.upsert({
+      const project = await this.findProjectOrThrow(projectId, tx);
+      this.ensureProjectWritable(project.status);
+      const template = await this.findTemplateOrThrow(dto.templateId, tx);
+      const before = await tx.projectTemplate.findUnique({
         where: {
-          projectId_templateId: {
-            projectId,
-            templateId: dto.templateId
-          }
-        },
-        create: {
-          projectId,
-          templateId: dto.templateId,
-          customName: dto.customName,
-          isActive: dto.isActive ?? true
-        },
-        update: {
-          customName: dto.customName,
-          isActive: dto.isActive ?? true
+          projectId_templateId: { projectId, templateId: dto.templateId }
         }
       });
+      if (before?.isActive) throw new ConflictException('该模板已在项目中启用');
+
+      const customName = dto.customName || before?.customName || template.name;
+      const projectTemplate = before
+        ? await tx.projectTemplate.update({
+            where: { id: before.id },
+            data: { customName, isActive: true }
+          })
+        : await tx.projectTemplate.create({
+            data: { projectId, templateId: dto.templateId, customName, isActive: true }
+          });
 
       await this.auditLogs.write(
         tx,
@@ -333,7 +352,10 @@ export class ProjectsService {
         'project_template.enable',
         'project_template',
         projectTemplate.id,
-        { after: toProjectTemplate(projectTemplate) },
+        {
+          before: before ? toProjectTemplate(before) : undefined,
+          after: toProjectTemplate(projectTemplate)
+        },
         context
       );
 
@@ -344,6 +366,8 @@ export class ProjectsService {
   async updateProjectTemplate(id: string, dto: UpdateProjectTemplateDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findProjectTemplateOrThrow(id, tx);
+      const project = await this.findProjectOrThrow(before.projectId, tx);
+      this.ensureProjectWritable(project.status);
       const projectTemplate = await tx.projectTemplate.update({
         where: {
           id
@@ -368,6 +392,9 @@ export class ProjectsService {
   async disableProjectTemplate(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findProjectTemplateOrThrow(id, tx);
+      const project = await this.findProjectOrThrow(before.projectId, tx);
+      this.ensureProjectWritable(project.status);
+      if (!before.isActive) return toProjectTemplate(before);
       const projectTemplate = await tx.projectTemplate.update({
         where: {
           id
@@ -389,6 +416,12 @@ export class ProjectsService {
 
       return toProjectTemplate(projectTemplate);
     });
+  }
+
+  private ensureProjectWritable(status: ProjectStatus) {
+    if (status !== ProjectStatus.active) {
+      throw new ConflictException('归档项目不能修改启用模板');
+    }
   }
 
   private getFieldUsageStats(enabledTemplates: EnabledTemplateInfo[], records: PresentedBusinessRecord[]): FieldUsageStat[] {
@@ -459,10 +492,14 @@ export class ProjectsService {
     projectId: string,
     enabledTemplates: EnabledTemplateInfo[],
     records: PresentedBusinessRecord[],
-    rawFileCount: number
+    rawFileCount: number,
+    importTasks: PresentedImportTask[],
+    ocrTasks: PresentedOcrTask[]
   ) {
     const fieldIds = new Set(enabledTemplates.flatMap((item) => item.fields.map((field) => field.fieldId)));
     const recordValuesCount = records.flatMap((record) => record.values).length;
+    const importRowCount = importTasks.reduce((sum, task) => sum + task.counts.total, 0);
+    const importColumnCount = importTasks.reduce((sum, task) => sum + task.columns.length, 0);
 
     return [
       {
@@ -516,8 +553,38 @@ export class ProjectsService {
       {
         tableName: 'import_tasks',
         description: 'Excel导入任务表',
-        relatedCount: 0,
+        relatedCount: importTasks.length,
         keyFields: ['id', 'projectId', 'templateId', 'status']
+      },
+      {
+        tableName: 'import_columns',
+        description: 'Excel导入列与字段映射表',
+        relatedCount: importColumnCount,
+        keyFields: ['importTaskId', 'sourceName', 'normalizedName', 'inferredType']
+      },
+      {
+        tableName: 'import_rows',
+        description: 'Excel导入原始行与校验结果表',
+        relatedCount: importRowCount,
+        keyFields: ['importTaskId', 'rowNumber', 'rawData', 'status']
+      },
+      {
+        tableName: 'ocr_tasks',
+        description: 'OCR任务、结构化结果与确认状态表',
+        relatedCount: ocrTasks.length,
+        keyFields: ['id', 'rawFileId', 'provider', 'status', 'generatedRecordId']
+      },
+      {
+        tableName: 'ocr_attempts',
+        description: 'OCR Provider调用尝试表',
+        relatedCount: ocrTasks.reduce((sum, task) => sum + task.attempts.length, 0),
+        keyFields: ['ocrTaskId', 'attemptNo', 'provider', 'latencyMs', 'status']
+      },
+      {
+        tableName: 'ocr_corrections',
+        description: 'OCR人工纠错证据表',
+        relatedCount: ocrTasks.reduce((sum, task) => sum + task.corrections.length, 0),
+        keyFields: ['ocrTaskId', 'fieldId', 'beforeValue', 'afterValue', 'correctedBy']
       },
       {
         tableName: 'work_orders',

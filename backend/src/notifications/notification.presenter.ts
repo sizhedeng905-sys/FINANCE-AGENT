@@ -1,6 +1,6 @@
 import { Notification } from '@prisma/client';
 
-export function toNotification(notification: Notification) {
+export function toNotification(notification: Notification, readAt?: Date) {
   return {
     id: notification.id,
     title: notification.title,
@@ -8,9 +8,10 @@ export function toNotification(notification: Notification) {
     type: notification.type,
     sender: notification.senderName ?? '系统',
     targetRole: notification.targetRole ?? undefined,
-    read: notification.read,
+    targetUserId: notification.targetUserId ?? undefined,
+    read: Boolean(readAt),
     createdAt: notification.createdAt.toISOString(),
-    readAt: notification.readAt?.toISOString(),
+    readAt: readAt?.toISOString(),
     relatedWorkOrderId: notification.relatedWorkOrderId ?? undefined,
     link: notification.relatedWorkOrderId ? `/work-orders/${notification.relatedWorkOrderId}` : undefined
   };

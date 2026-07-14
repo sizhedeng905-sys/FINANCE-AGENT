@@ -12,7 +12,8 @@ function createActor(role: UserRole, id: string = role) {
     role,
     department: '',
     phone: '',
-    status: UserStatus.active
+    status: UserStatus.active,
+    tokenVersion: 0
   };
 }
 
@@ -43,6 +44,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
       timeline: timeline.filter((item) => item.workOrderId === workOrder.id)
     });
     const tx: any = {
+      $executeRaw: jest.fn(async () => 1),
       project: {
         findUnique: jest.fn(async ({ where }) => (where.id === project.id ? project : null))
       },
@@ -78,6 +80,8 @@ describe('WorkOrdersService phase 4 state machine', () => {
             updatedAt: now,
             completedAt: null,
             generatedRecordId: null,
+            creationIdempotencyKey: data.creationIdempotencyKey ?? null,
+            approvalIdempotencyKey: null,
             attachments: (data.attachments?.create ?? []).map((attachment: any, index: number) => ({
               id: `attachment_${index}`,
               workOrderId: `wo_${counter}`,
@@ -99,7 +103,9 @@ describe('WorkOrdersService phase 4 state machine', () => {
           return includeRelations(item);
         }),
         findUnique: jest.fn(async ({ where }) => {
-          const item = workOrders.find((workOrder) => workOrder.id === where.id);
+          const item = workOrders.find((workOrder) =>
+            where.id ? workOrder.id === where.id : workOrder.creationIdempotencyKey === where.creationIdempotencyKey
+          );
           return item ? includeRelations(item) : null;
         }),
         findMany: jest.fn(async ({ where }) =>
@@ -114,6 +120,14 @@ describe('WorkOrdersService phase 4 state machine', () => {
           const item = workOrders.find((workOrder) => workOrder.id === where.id);
           Object.assign(item, data, { updatedAt: new Date() });
           return includeRelations(item);
+        }),
+        updateMany: jest.fn(async ({ where, data }) => {
+          const item = workOrders.find((workOrder) =>
+            workOrder.id === where.id && (!where.status || workOrder.status === where.status)
+          );
+          if (!item) return { count: 0 };
+          Object.assign(item, data, { updatedAt: new Date() });
+          return { count: 1 };
         })
       },
       workOrderTimeline: {
@@ -172,7 +186,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
     service = new WorkOrdersService(tx, auditLogs as any, riskRules as any, workOrderRecords as any);
   });
 
-  async function createOrder(employeeId = 'employee') {
+  async function createDraft(employeeId = 'employee') {
     return service.create(
       {
         type: WorkOrderType.expense,
@@ -182,16 +196,27 @@ describe('WorkOrdersService phase 4 state machine', () => {
         occurredDate: '2026-07-11'
       },
       createActor(UserRole.employee, employeeId),
-      {}
+      {},
+      `create-${employeeId}`
     );
   }
 
-  it('creates directly in finance_reviewing and scopes employee lists to token user', async () => {
-    const first = await createOrder('employee_1');
+  async function createOrder(employeeId = 'employee') {
+    const draft = await createDraft(employeeId);
+    return service.submit(draft.id, createActor(UserRole.employee, employeeId), {});
+  }
+
+  it('creates a draft, submits it, and scopes employee lists to token user', async () => {
+    const draft = await createDraft('employee_1');
+    expect(draft.status).toBe(WorkOrderStatus.draft);
+    expect(draft.timeline).toHaveLength(1);
+    expect(notifications).toHaveLength(0);
+
+    const first = await service.submit(draft.id, createActor(UserRole.employee, 'employee_1'), {});
     await createOrder('employee_2');
 
     expect(first.status).toBe(WorkOrderStatus.finance_reviewing);
-    expect(first.timeline).toHaveLength(1);
+    expect(first.timeline).toHaveLength(2);
     expect(notifications[0].targetRole).toBe(UserRole.finance);
 
     const list = await service.findMany({}, createActor(UserRole.employee, 'employee_1'));
@@ -221,19 +246,21 @@ describe('WorkOrdersService phase 4 state machine', () => {
       created.id,
       { action: 'approve', comment: '老板通过' },
       createActor(UserRole.boss),
-      {}
+      {},
+      'boss-approve-key'
     );
     expect(completed.status).toBe(WorkOrderStatus.completed);
     expect(completed.generatedRecordId).toBe('business_record_1');
     expect(approvals).toHaveLength(3);
-    expect(timeline).toHaveLength(5);
-    expect(auditLogs.write).toHaveBeenCalledTimes(4);
+    expect(timeline).toHaveLength(6);
+    expect(auditLogs.write).toHaveBeenCalledTimes(5);
 
     const repeated = await service.bossApprove(
       created.id,
       { action: 'approve', comment: '重复点击' },
       createActor(UserRole.boss),
-      {}
+      {},
+      'boss-approve-key'
     );
     expect(repeated.generatedRecordId).toBe('business_record_1');
     expect(approvals).toHaveLength(3);

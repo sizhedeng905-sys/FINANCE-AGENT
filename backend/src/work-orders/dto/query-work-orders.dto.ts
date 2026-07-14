@@ -5,6 +5,7 @@ import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-
 export class QueryWorkOrdersDto {
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   projectId?: string;
 
   @IsOptional()
