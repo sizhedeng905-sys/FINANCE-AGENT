@@ -12,12 +12,13 @@ const boss = {
   role: UserRole.boss,
   department: '',
   phone: '',
-  status: UserStatus.active
+  status: UserStatus.active,
+  tokenVersion: 0
 };
 
 describe('phase 8 boss AI assistant', () => {
   it('routes questions only through approved structured-data tools', async () => {
-    const project = { id: 'project_1', name: '太和项目', customerName: '太和物流', status: 'active', createdAt: new Date() };
+    const project = { id: 'project_1', name: '太和项目', customerName: '太和物流', status: 'archived', createdAt: new Date() };
     const prisma: any = {
       project: { findMany: jest.fn(async () => [project]) },
       workOrder: { findUnique: jest.fn(async () => null) }
@@ -26,6 +27,7 @@ describe('phase 8 boss AI assistant', () => {
       boss: jest.fn(async () => ({ income: 1000, expense: 400, profit: 600, pendingApprovals: 1, anomalyCount: 1 })),
       finance: jest.fn(async () => ({ totalIncome: 1000, totalExpense: 400, estimatedProfit: 600 })),
       projectSummary: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 800, expense: 300, profit: 500, recordCount: 2 })),
+      projectMonthly: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 700, expense: 250, profit: 450, recordCount: 3 })),
       pendingApprovals: jest.fn(async () => [{ orderNo: 'WO1', projectName: project.name, amount: 200, riskLevel: 'medium' }])
     };
     const riskRules: any = {
@@ -39,6 +41,14 @@ describe('phase 8 boss AI assistant', () => {
 
     const projectResult = await tools.buildContext('太和项目收入成本利润如何', undefined, boss);
     expect(projectResult.find((item) => item.name === 'get_project_summary')?.data).toMatchObject({ profit: 500 });
+    const monthlyProject = await tools.buildContext('太和物流本月赚钱吗', undefined, boss);
+    expect(monthlyProject.find((item) => item.name === 'get_project_summary')?.data).toMatchObject({ profit: 450 });
+    expect(reports.projectMonthly).toHaveBeenCalledWith(project.id, {});
+
+    const monthlyRanking = await tools.buildContext('本月哪个项目利润最高', undefined, boss);
+    expect(monthlyRanking.map((item) => item.name)).toEqual(['get_today_report']);
+    expect(reports.boss).toHaveBeenCalledWith({ period: 'monthly' });
+    expect(prisma.project.findMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: expect.anything() }));
 
     const operations = await tools.buildContext('列出待审批和异常工单', undefined, boss);
     expect(operations.map((item) => item.name)).toEqual(['get_pending_approvals', 'get_anomalies']);
@@ -101,14 +111,21 @@ describe('phase 8 boss AI assistant', () => {
     const config: any = {
       get: jest.fn((key: string) => ({ 'ai.provider': 'mock', 'ai.model': 'unused' })[key])
     };
-    const service = new AiService(prisma, tools, provider, auditLogs as any, config);
+    const modelRuntime: any = {
+      resolve: jest.fn(async () => undefined),
+      resolveSecret: jest.fn(() => undefined)
+    };
+    const service = new AiService(prisma, tools, provider, auditLogs as any, config, modelRuntime);
 
     const result = await service.chat({ message: '今天经营情况', history: [] }, boss, {});
     expect(result.reply).toContain('收入1000元');
     expect(result.reply).toContain('利润600元');
     expect(result.toolsUsed).toEqual(['get_today_report']);
     expect(result.provider).toBe('mock');
+    expect(result.callLogId).toBe('call_1');
+    expect(result.toolCalls).toEqual([{ toolName: 'get_today_report' }]);
     expect(result.fallback).toBe(false);
+    expect(modelRuntime.resolve).toHaveBeenCalledWith('boss_chat');
     expect(messages.map((item) => item.role)).toEqual([AiMessageRole.user, AiMessageRole.assistant]);
     expect(callLogs).toHaveLength(1);
     expect(callLogs[0]).toMatchObject({ success: true, modelName: 'mock-structured-v1', provider: 'mock' });
@@ -119,10 +136,12 @@ describe('phase 8 boss AI assistant', () => {
       tools,
       { generate: jest.fn(async () => { throw new Error('provider unavailable'); }) } as any,
       auditLogs as any,
-      config
+      config,
+      modelRuntime
     );
     const failed = await failingService.chat({ message: '再查一次今日经营' }, boss, {});
     expect(failed.fallback).toBe(true);
+    expect(failed.callLogId).toBe('call_2');
     expect(failed.reply).toContain('需要人工确认');
     expect(callLogs).toHaveLength(2);
     expect(callLogs[1]).toMatchObject({ success: false, errorMessage: 'provider unavailable' });

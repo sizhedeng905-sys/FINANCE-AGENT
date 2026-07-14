@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiMessageRole, Prisma } from '@prisma/client';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiChatDto } from './dto/ai-chat.dto';
 import { QueryAiCallLogsDto } from './dto/query-ai-call-logs.dto';
@@ -25,7 +27,8 @@ export class AiService {
     private readonly tools: AiToolsService,
     private readonly provider: AiProviderService,
     private readonly auditLogs: AuditLogsService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly modelRuntime: ModelRuntimeService
   ) {}
 
   async chat(dto: AiChatDto, actor: CurrentUser, context: RequestContext) {
@@ -38,14 +41,21 @@ export class AiService {
       }
     });
 
-    const providerName = this.config.get<string>('ai.provider') || 'mock';
-    const runtimeModel = this.config.get<string>('ai.model') || 'gpt-5.4-mini';
+    const route = await this.modelRuntime.resolve('boss_chat');
+    const configuredProvider = this.config.get<string>('ai.provider') || 'mock';
+    const deployment = route?.deployment.provider === 'mock' && configuredProvider !== 'mock'
+      ? undefined
+      : route?.deployment;
+    const providerName = deployment?.provider || configuredProvider;
+    const runtimeModel = deployment?.modelName || this.config.get<string>('ai.model') || 'gpt-5.4-mini';
     const [modelConfig, promptVersion] = await Promise.all([
       this.prisma.aiModelConfig.findFirst({ where: { provider: providerName, isActive: true }, orderBy: { createdAt: 'desc' } }),
       this.prisma.aiPromptVersion.findFirst({ where: { promptKey: 'boss_chat', isActive: true }, orderBy: { versionNo: 'desc' } })
     ]);
     const model = providerName === 'mock' ? modelConfig?.modelName ?? 'mock-structured-v1' : runtimeModel || modelConfig?.modelName || 'gpt-5.4-mini';
+    const endpoint = deployment?.endpoint ?? modelConfig?.baseUrl ?? this.config.get<string>('ai.baseUrl');
     const instructions = promptVersion?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const correlationId = context.requestId || randomUUID();
     const startedAt = Date.now();
     let contexts: Awaited<ReturnType<AiToolsService['buildContext']>> = [];
     let reply = '';
@@ -59,7 +69,8 @@ export class AiService {
       const result = await this.provider.generate({
         provider: providerName,
         model,
-        baseUrl: modelConfig?.baseUrl ?? this.config.get<string>('ai.baseUrl'),
+        baseUrl: endpoint,
+        apiKey: this.modelRuntime.resolveSecret(deployment?.secretRef),
         instructions,
         question: dto.message,
         contexts
@@ -74,7 +85,7 @@ export class AiService {
     }
 
     const latencyMs = Date.now() - startedAt;
-    const assistantMessage = await this.prisma.$transaction(async (tx) => {
+    const persisted = await this.prisma.$transaction(async (tx) => {
       const message = await tx.aiMessage.create({
         data: {
           conversationId: conversation.id,
@@ -84,7 +95,7 @@ export class AiService {
         }
       });
       await tx.aiConversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
-      await tx.aiCallLog.create({
+      const callLog = await tx.aiCallLog.create({
         data: {
           conversationId: conversation.id,
           modelConfigId: modelConfig?.id,
@@ -98,6 +109,13 @@ export class AiService {
           latencyMs,
           success: errorMessage === null,
           errorMessage,
+          endpointSnapshot: endpoint,
+          inputHash: createHash('sha256')
+            .update(JSON.stringify({ message: dto.message, workOrderId: dto.workOrderId ?? null, contexts }))
+            .digest('hex'),
+          correlationId,
+          attemptNo: 1,
+          fallback: errorMessage !== null,
           createdBy: actor.id
         }
       });
@@ -110,23 +128,27 @@ export class AiService {
         { provider: providerName, model, tools: contexts.map((item) => item.name), success: errorMessage === null },
         context
       );
-      return message;
+      return { message, callLog };
     });
 
     return {
       conversationId: conversation.id,
       reply,
+      answer: reply,
       content: reply,
       message: {
-        id: assistantMessage.id,
-        role: assistantMessage.role,
-        content: assistantMessage.content,
-        createdAt: assistantMessage.createdAt.toISOString()
+        id: persisted.message.id,
+        role: persisted.message.role,
+        content: persisted.message.content,
+        createdAt: persisted.message.createdAt.toISOString()
       },
       toolsUsed: contexts.map((item) => item.name),
+      toolCalls: contexts.map((item) => ({ toolName: item.name })),
+      callLogId: persisted.callLog.id,
       provider: providerName,
       model,
-      fallback: errorMessage !== null
+      fallback: errorMessage !== null,
+      correlationId
     };
   }
 
@@ -159,6 +181,11 @@ export class AiService {
         latency: item.latencyMs,
         success: item.success,
         error: item.errorMessage ?? undefined,
+        inputHash: item.inputHash ?? undefined,
+        correlationId: item.correlationId ?? undefined,
+        endpointSnapshot: item.endpointSnapshot ?? undefined,
+        attemptNo: item.attemptNo,
+        fallback: item.fallback,
         createdAt: item.createdAt.toISOString()
       })),
       page,

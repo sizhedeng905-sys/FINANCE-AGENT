@@ -14,7 +14,33 @@ import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+function assertSafeSeedEnvironment() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required before running the development seed.');
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('The development seed is disabled when NODE_ENV=production.');
+  }
+
+  let databaseName = '';
+  try {
+    databaseName = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, ''));
+  } catch {
+    throw new Error('DATABASE_URL is not a valid PostgreSQL URL.');
+  }
+
+  const isDedicatedDevelopmentDatabase = /_(dev|test)$/.test(databaseName);
+  if (!isDedicatedDevelopmentDatabase && process.env.SEED_ALLOW_NONSTANDARD_DATABASE !== 'true') {
+    throw new Error(
+      `Refusing to seed database "${databaseName}". Use a database ending in _dev or _test, or explicitly set SEED_ALLOW_NONSTANDARD_DATABASE=true outside production.`
+    );
+  }
+}
+
 async function main() {
+  assertSafeSeedEnvironment();
   const passwordHash = await bcrypt.hash('123456', 10);
   const users = [
     {
@@ -575,7 +601,120 @@ async function main() {
     }
   });
 
-  console.log('Phase 8 seed complete: core users, data defaults, risk demo, and mock AI configuration are ready.');
+  const modelDeployments = [
+    {
+      id: 'model-deployment-mock-text',
+      deploymentKey: 'mock-text',
+      provider: 'mock',
+      modelName: 'mock-structured-v1',
+      modelVersion: '1',
+      endpoint: null,
+      secretRef: null,
+      taskTypes: ['boss_chat'],
+      maxConcurrency: 4,
+      timeoutMs: 5000,
+      isLocal: true,
+      isEnabled: true,
+      status: 'healthy' as const
+    },
+    {
+      id: 'model-deployment-qwen-text',
+      deploymentKey: 'qwen3-14b-awq',
+      provider: 'openai_compatible',
+      modelName: 'Qwen/Qwen3-14B-AWQ',
+      modelVersion: 'unverified',
+      endpoint: 'http://127.0.0.1:8000/v1',
+      secretRef: 'AI_API_KEY',
+      taskTypes: ['boss_chat', 'structured_extraction', 'risk_explanation'],
+      maxConcurrency: 1,
+      timeoutMs: 60000,
+      isLocal: true,
+      isEnabled: false,
+      status: 'disabled' as const
+    },
+    {
+      id: 'model-deployment-qwen-vl',
+      deploymentKey: 'qwen3-vl-8b-instruct',
+      provider: 'openai_compatible',
+      modelName: 'Qwen/Qwen3-VL-8B-Instruct',
+      modelVersion: 'unverified',
+      endpoint: 'http://127.0.0.1:8001/v1',
+      secretRef: 'VL_API_KEY',
+      taskTypes: ['ocr_ambiguity_review', 'document_vision'],
+      maxConcurrency: 1,
+      timeoutMs: 90000,
+      isLocal: true,
+      isEnabled: false,
+      status: 'disabled' as const
+    },
+    {
+      id: 'model-deployment-paddle-ocr',
+      deploymentKey: 'paddleocr-vl',
+      provider: 'local_paddle',
+      modelName: 'PaddlePaddle/PaddleOCR-VL',
+      modelVersion: 'unverified',
+      endpoint: 'http://127.0.0.1:8868',
+      secretRef: 'OCR_API_KEY',
+      taskTypes: ['ocr_document'],
+      maxConcurrency: 1,
+      timeoutMs: 60000,
+      isLocal: true,
+      isEnabled: false,
+      status: 'disabled' as const
+    },
+    {
+      id: 'model-deployment-qwen-embedding',
+      deploymentKey: 'qwen3-embedding-8b',
+      provider: 'openai_compatible',
+      modelName: 'Qwen/Qwen3-Embedding-8B',
+      modelVersion: 'unverified',
+      endpoint: 'http://127.0.0.1:8002/v1',
+      secretRef: 'EMBEDDING_API_KEY',
+      taskTypes: ['embedding'],
+      maxConcurrency: 1,
+      timeoutMs: 60000,
+      isLocal: true,
+      isEnabled: false,
+      status: 'disabled' as const
+    }
+  ];
+
+  for (const deployment of modelDeployments) {
+    await prisma.modelDeployment.upsert({
+      where: { deploymentKey: deployment.deploymentKey },
+      create: deployment,
+      update: {
+        provider: deployment.provider,
+        modelName: deployment.modelName,
+        modelVersion: deployment.modelVersion,
+        endpoint: deployment.endpoint,
+        secretRef: deployment.secretRef,
+        taskTypes: deployment.taskTypes,
+        maxConcurrency: deployment.maxConcurrency,
+        timeoutMs: deployment.timeoutMs,
+        isLocal: deployment.isLocal,
+        isEnabled: deployment.isEnabled,
+        status: deployment.status
+      }
+    });
+  }
+
+  const modelRoutes = [
+    ['boss_chat', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['boss_chat', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['ocr_document', 'model-deployment-paddle-ocr', 10, false, 'manual'],
+    ['ocr_ambiguity_review', 'model-deployment-qwen-vl', 10, false, 'manual'],
+    ['embedding', 'model-deployment-qwen-embedding', 10, false, 'manual']
+  ] as const;
+  for (const [taskType, deploymentId, priority, isEnabled, fallbackPolicy] of modelRoutes) {
+    await prisma.taskModelRoute.upsert({
+      where: { taskType_deploymentId: { taskType, deploymentId } },
+      create: { taskType, deploymentId, priority, isEnabled, fallbackPolicy },
+      update: { priority, isEnabled, fallbackPolicy }
+    });
+  }
+
+  console.log('Phase 10 seed complete: core data, mock AI/OCR, and disabled local model routes are ready.');
 }
 
 main()

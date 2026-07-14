@@ -1,11 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
+import { ResilientHttpClientService } from '../model-runtime/resilient-http-client.service';
 import { AiProviderRequest, AiProviderResult } from './ai.types';
 
 @Injectable()
 export class HttpAiProviderService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly http: ResilientHttpClientService,
+    private readonly gate: ModelExecutionGateService
+  ) {}
 
   async generate(request: AiProviderRequest): Promise<AiProviderResult> {
     if (request.provider === 'openai') return this.openAiResponses(request);
@@ -13,7 +19,7 @@ export class HttpAiProviderService {
   }
 
   private async openAiResponses(request: AiProviderRequest): Promise<AiProviderResult> {
-    const apiKey = this.apiKey();
+    const apiKey = this.apiKey(request);
     if (!apiKey) throw new Error('AI_API_KEY/OPENAI_API_KEY 未配置');
     const response = await this.post(`${this.baseUrl(request.baseUrl)}/responses`, apiKey, {
       model: request.model,
@@ -40,14 +46,16 @@ export class HttpAiProviderService {
   }
 
   private async openAiCompatible(request: AiProviderRequest): Promise<AiProviderResult> {
-    const response = await this.post(`${this.baseUrl(request.baseUrl)}/chat/completions`, this.apiKey(), {
+    const body: Record<string, unknown> = {
       model: request.model,
       temperature: 0,
       messages: [
         { role: 'system', content: request.instructions },
         { role: 'user', content: this.input(request) }
       ]
-    });
+    };
+    if (/qwen3/i.test(request.model)) body.chat_template_kwargs = { enable_thinking: false };
+    const response = await this.post(`${this.baseUrl(request.baseUrl)}/chat/completions`, this.apiKey(request), body);
     const text = response.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) throw new Error('模型未返回文本');
     return {
@@ -62,12 +70,15 @@ export class HttpAiProviderService {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const timeoutMs = this.config.get<number>('ai.timeoutMs') ?? 30000;
-    const response = await fetch(url, {
+    const maxConcurrency = this.config.get<number>('modelRuntime.aiMaxConcurrency') ?? 1;
+    const response = await this.gate.run('ai', maxConcurrency, () => this.http.request(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
+      body: JSON.stringify(body)
+    }, {
+      circuitKey: `ai:${new URL(url).origin}`,
+      timeoutMs
+    }));
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = payload?.error?.message || `AI provider HTTP ${response.status}`;
@@ -84,7 +95,7 @@ export class HttpAiProviderService {
     return (override || this.config.get<string>('ai.baseUrl') || 'https://api.openai.com/v1').replace(/\/+$/, '');
   }
 
-  private apiKey() {
-    return this.config.get<string>('ai.apiKey') || '';
+  private apiKey(request: AiProviderRequest) {
+    return request.apiKey || this.config.get<string>('ai.apiKey') || '';
   }
 }

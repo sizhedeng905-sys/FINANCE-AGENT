@@ -19,12 +19,18 @@ export class AiToolsService {
   async buildContext(question: string, workOrderId: string | undefined, user: CurrentUser) {
     const contexts: AiToolContext[] = [];
     const normalized = question.trim().toLowerCase();
+    const bossPeriod = /本月|这个月|月报/.test(normalized)
+      ? 'monthly'
+      : /本周|这周|周报/.test(normalized)
+        ? 'weekly'
+        : 'daily';
+    const financePeriod = bossPeriod === 'monthly' ? 'month' : bossPeriod === 'weekly' ? 'week' : 'today';
 
     if (workOrderId || /WO[A-Z0-9-]+/i.test(question)) {
       contexts.push(await this.workOrderContext(question, workOrderId, user));
     }
 
-    if (/项目|收入|成本|利润/.test(question)) {
+    if (/项目|客户|收入|成本|支出|利润|赚钱|亏损/.test(question)) {
       const projectContext = await this.projectContext(question);
       if (projectContext) contexts.push(projectContext);
     }
@@ -39,19 +45,19 @@ export class AiToolsService {
     }
 
     if (/财务日报|财务情况/.test(question)) {
-      contexts.push({ name: 'get_finance_report', data: await this.reports.finance({ period: 'today' }) });
+      contexts.push({ name: 'get_finance_report', data: await this.reports.finance({ period: financePeriod }) });
     }
 
-    if (/今天|今日|经营情况|日报/.test(question) || contexts.length === 0) {
-      contexts.push({ name: 'get_today_report', data: await this.reports.boss({ period: 'daily' }) });
+    if (/今天|今日|本周|这周|本月|这个月|经营情况|日报|周报|月报/.test(question) || contexts.length === 0) {
+      contexts.push({ name: 'get_today_report', data: await this.reports.boss({ period: bossPeriod }) });
     }
 
     return this.deduplicate(contexts);
   }
 
   private async projectContext(question: string): Promise<AiToolContext | null> {
+    if (/哪个(?:项目|客户)|(?:项目|客户).*(?:最高|最低|排行)/.test(question)) return null;
     const projects = await this.prisma.project.findMany({
-      where: { status: 'active' },
       orderBy: { createdAt: 'asc' },
       take: 500
     });
@@ -59,9 +65,12 @@ export class AiToolsService {
       (item) => question.includes(item.name) || question.includes(item.id) || question.includes(item.customerName)
     );
     if (project) {
-      return { name: 'get_project_summary', data: await this.reports.projectSummary(project.id) };
+      const data = /本月|这个月|月报/.test(question)
+        ? await this.reports.projectMonthly(project.id, {})
+        : await this.reports.projectSummary(project.id);
+      return { name: 'get_project_summary', data };
     }
-    if (/项目/.test(question)) {
+    if (/项目|客户|赚钱|亏损/.test(question)) {
       return { name: 'get_project_summary', data: { error: '项目不存在或问题中未提供可识别的项目名称' } };
     }
     return null;

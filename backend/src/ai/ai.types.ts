@@ -13,6 +13,7 @@ export interface AiProviderRequest {
   provider: string;
   model: string;
   baseUrl?: string | null;
+  apiKey?: string;
   instructions: string;
   question: string;
   contexts: AiToolContext[];

@@ -1,0 +1,129 @@
+name: finance-agent-models
+
+x-vllm-common: &vllm-common
+  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+  gpus: all
+  ipc: host
+  restart: unless-stopped
+  volumes:
+    - type: bind
+      source: ${MODEL_ROOT}
+      target: /models
+      read_only: true
+  environment:
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+
+services:
+  qwen-text:
+    <<: *vllm-common
+    ports:
+      - "127.0.0.1:8000:8000"
+    command:
+      - --model
+      - ${QWEN_TEXT_MODEL:-/models/Qwen3-14B-AWQ}
+      - --served-model-name
+      - Qwen/Qwen3-14B-AWQ
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --api-key
+      - ${LOCAL_MODEL_API_KEY}
+      - --max-model-len
+      - ${QWEN_TEXT_MAX_MODEL_LEN:-8192}
+      - --max-num-seqs
+      - "1"
+      - --gpu-memory-utilization
+      - ${QWEN_TEXT_GPU_MEMORY_UTILIZATION:-0.52}
+      - --reasoning-parser
+      - qwen3
+      - --enable-prefix-caching
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 10m
+
+  paddle-ocr:
+    image: finance-agent/paddle-ocr-adapter:local
+    build:
+      context: ./paddle-ocr-adapter
+      args:
+        PADDLE_OCR_BASE_IMAGE: ${PADDLE_OCR_BASE_IMAGE:-ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:latest-nvidia-gpu-sm120}
+    gpus: all
+    ipc: host
+    shm_size: "8gb"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8868:8868"
+    volumes:
+      - type: bind
+        source: ${MODEL_ROOT}
+        target: /models
+        read_only: true
+    environment:
+      MODEL_PATH: ${PADDLE_OCR_MODEL:-/models/PaddleOCR-VL}
+      PIPELINE_VERSION: ${PADDLE_OCR_PIPELINE_VERSION:-v1}
+      DEVICE: ${PADDLE_OCR_DEVICE:-gpu:0}
+      API_KEY: ${LOCAL_MODEL_API_KEY}
+      MAX_UPLOAD_SIZE_MB: ${OCR_MAX_UPLOAD_SIZE_MB:-50}
+      MAX_TEMPLATE_FIELDS: ${OCR_MAX_TEMPLATE_FIELDS:-200}
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8868/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 10m
+
+  qwen-vl:
+    <<: *vllm-common
+    profiles: ["vl"]
+    restart: "no"
+    ports:
+      - "127.0.0.1:8001:8000"
+    command:
+      - --model
+      - ${QWEN_VL_MODEL:-/models/Qwen3-VL-8B-Instruct}
+      - --served-model-name
+      - Qwen/Qwen3-VL-8B-Instruct
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --api-key
+      - ${LOCAL_MODEL_API_KEY}
+      - --max-model-len
+      - ${QWEN_VL_MAX_MODEL_LEN:-8192}
+      - --max-num-seqs
+      - "1"
+      - --gpu-memory-utilization
+      - ${ON_DEMAND_GPU_MEMORY_UTILIZATION:-0.88}
+
+  qwen-embedding:
+    <<: *vllm-common
+    profiles: ["embedding"]
+    restart: "no"
+    ports:
+      - "127.0.0.1:8002:8000"
+    command:
+      - --model
+      - ${QWEN_EMBEDDING_MODEL:-/models/Qwen3-Embedding-8B}
+      - --served-model-name
+      - Qwen/Qwen3-Embedding-8B
+      - --task
+      - embed
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --api-key
+      - ${LOCAL_MODEL_API_KEY}
+      - --max-model-len
+      - ${QWEN_EMBEDDING_MAX_MODEL_LEN:-8192}
+      - --max-num-seqs
+      - "1"
+      - --gpu-memory-utilization
+      - ${ON_DEMAND_GPU_MEMORY_UTILIZATION:-0.88}

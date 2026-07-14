@@ -1,13 +1,21 @@
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class QueryAiCallLogsDto {
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
+  @MinLength(1)
+  @MaxLength(50)
   provider?: string;
 
   @IsOptional()
-  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @Transform(({ obj, key, value }) => {
+    const rawValue = (obj as Record<string, unknown>)[key];
+    if (rawValue === true || rawValue === 'true') return true;
+    if (rawValue === false || rawValue === 'false') return false;
+    return rawValue ?? value;
+  })
   @IsBoolean()
   success?: boolean;
 

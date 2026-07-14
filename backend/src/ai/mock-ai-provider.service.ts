@@ -22,7 +22,15 @@ export class MockAiProviderService {
       const income = data.income ?? data.totalIncome ?? 0;
       const expense = data.expense ?? data.totalExpense ?? 0;
       const profit = data.profit ?? data.estimatedProfit ?? income - expense;
-      return `今日收入${income}元，支出${expense}元，利润${profit}元；待审批${data.pendingApprovals ?? 0}项，异常${data.anomalyCount ?? 0}项。`;
+      const periodLabel = data.period === 'monthly' || data.period === 'month'
+        ? '本月'
+        : data.period === 'weekly' || data.period === 'week'
+          ? '本周'
+          : '今日';
+      const ranking = Array.isArray(data.projectRanking) && data.projectRanking.length
+        ? ` 项目利润排行：${data.projectRanking.map((item: any) => `${item.projectName}${item.profit}元`).join('；')}。`
+        : '';
+      return `${periodLabel}收入${income}元，支出${expense}元，利润${profit}元；待审批${data.pendingApprovals ?? 0}项，异常${data.anomalyCount ?? 0}项。${ranking}`;
     }
     if (context.name === 'get_project_summary') {
       return `${data.project.name}：收入${data.income}元，成本${data.expense}元，利润${data.profit}元，共${data.recordCount}条经营记录。`;
