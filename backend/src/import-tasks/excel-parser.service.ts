@@ -18,6 +18,9 @@ const MAX_HEADER_SCAN_ROWS = 30;
 const MAX_HEADER_CANDIDATES = 5;
 const STREAMING_WORKBOOK_THRESHOLD_BYTES = 10 * 1024 * 1024;
 const STREAMING_HEADER_SNAPSHOT_ROWS = MAX_HEADER_SCAN_ROWS + 3;
+const MAX_BACKGROUND_ROWS = 50_000;
+const DEFAULT_ROW_BATCH_SIZE = 500;
+const MAX_ROW_BATCH_SIZE = 1_000;
 
 export type ParsedCellValue = string | number | boolean | null | Record<string, unknown>;
 export type WorkbookSheetState = 'visible' | 'hidden' | 'veryHidden';
@@ -51,6 +54,18 @@ export interface ParsedWorkbook {
   };
   columns: ParsedImportColumn[];
   rows: ParsedImportRow[];
+}
+
+export type ParsedWorkbookMetadata = Omit<ParsedWorkbook, 'rows'>;
+
+export interface ParsedRowBatchProgress {
+  processedRows: number;
+  totalRows: number;
+}
+
+export interface BatchedParseSettings {
+  maxRows?: number;
+  batchSize?: number;
 }
 
 export interface WorkbookHeaderCandidate {
@@ -129,11 +144,23 @@ interface StreamingInspectionState {
   observations: Map<number, StreamingSheetObservation>;
 }
 
+interface StreamingParseControls {
+  maxRows: number;
+  batchSize: number;
+  onRows?: (rows: ParsedImportRow[], progress: ParsedRowBatchProgress) => Promise<void>;
+}
+
 type StreamingWorksheetReader = ExcelJS.stream.xlsx.WorksheetReader & {
   name: string;
 };
 
 export class WorkbookSelectionRequiredException extends BadRequestException {}
+
+class RowBatchConsumerException extends Error {
+  constructor(readonly original: unknown) {
+    super('Excel row batch consumer failed');
+  }
+}
 
 @Injectable()
 export class ExcelParserService {
@@ -175,6 +202,26 @@ export class ExcelParserService {
       return this.parseStreaming(buffer, metadata, options);
     }
     return this.parseDocument(buffer, options);
+  }
+
+  async parseInBatches(
+    buffer: Buffer,
+    onRows: (rows: ParsedImportRow[], progress: ParsedRowBatchProgress) => Promise<void>,
+    options: ParseWorkbookOptions = {},
+    settings: BatchedParseSettings = {}
+  ): Promise<ParsedWorkbookMetadata> {
+    const maxRows = settings.maxRows ?? MAX_BACKGROUND_ROWS;
+    const batchSize = settings.batchSize ?? DEFAULT_ROW_BATCH_SIZE;
+    if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > MAX_BACKGROUND_ROWS) {
+      throw new BadRequestException(`Excel 后台数据行上限必须在 1-${MAX_BACKGROUND_ROWS} 之间`);
+    }
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_ROW_BATCH_SIZE) {
+      throw new BadRequestException(`Excel 分批行数必须在 1-${MAX_ROW_BATCH_SIZE} 之间`);
+    }
+    const metadata = await readXlsxPackageMetadata(buffer);
+    const parsed = await this.parseStreaming(buffer, metadata, options, { maxRows, batchSize, onRows });
+    const { rows: _rows, ...result } = parsed;
+    return result;
   }
 
   private async parseDocument(buffer: Buffer, options: ParseWorkbookOptions): Promise<ParsedWorkbook> {
@@ -417,7 +464,11 @@ export class ExcelParserService {
   private async parseStreaming(
     buffer: Buffer,
     metadata: XlsxPackageMetadata,
-    options: ParseWorkbookOptions
+    options: ParseWorkbookOptions,
+    controls: StreamingParseControls = {
+      maxRows: MAX_ROWS,
+      batchSize: DEFAULT_ROW_BATCH_SIZE
+    }
   ): Promise<ParsedWorkbook> {
     const state = await this.inspectStreaming(buffer, metadata);
     const selected = this.selectStreamingSheet(state.inspection.sheets, options);
@@ -436,8 +487,8 @@ export class ExcelParserService {
     const candidateForEnd = selected.headerCandidates.find((candidate) => candidate.endRowIndex === headerRowIndex);
     const headerStartRowIndex = options.headerStartRowIndex ?? candidateForEnd?.startRowIndex ?? headerRowIndex;
     this.validateHeaderRangeValues(headerStartRowIndex, headerRowIndex, selected.rowCount);
-    if (selected.rowCount - headerRowIndex > MAX_ROWS) {
-      throw new BadRequestException(`Excel 数据行不能超过 ${MAX_ROWS}`);
+    if (selected.rowCount - headerRowIndex > controls.maxRows) {
+      throw new BadRequestException(`Excel 数据行不能超过 ${controls.maxRows}`);
     }
 
     let parsed: ParsedWorkbook | undefined;
@@ -451,7 +502,8 @@ export class ExcelParserService {
             observation,
             headerStartRowIndex,
             headerRowIndex,
-            options
+            options,
+            controls
           );
         } else {
           for await (const _row of streamingWorksheet) {
@@ -460,6 +512,7 @@ export class ExcelParserService {
         }
       }
     } catch (error) {
+      if (error instanceof RowBatchConsumerException) throw error.original;
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Excel 流式解析失败');
     }
@@ -472,11 +525,14 @@ export class ExcelParserService {
     observation: StreamingSheetObservation,
     headerStartRowIndex: number,
     headerRowIndex: number,
-    options: ParseWorkbookOptions
+    options: ParseWorkbookOptions,
+    controls: StreamingParseControls
   ): Promise<ParsedWorkbook> {
     const headerWorkbook = new ExcelJS.Workbook();
     const headerSheet = headerWorkbook.addWorksheet(observation.metadata.sheetName);
     const rows: ParsedImportRow[] = [];
+    let pendingRows: ParsedImportRow[] = [];
+    let processedRows = 0;
     const seenHashes = new Set<string>();
     const dataMergesByRow = this.indexDataMerges(
       observation.metadata.mergeRanges,
@@ -485,6 +541,26 @@ export class ExcelParserService {
     );
     let columns: ParsedImportColumn[] | undefined;
     let nextDataRow = headerRowIndex + 1;
+    const totalRows = observation.rowCount - headerRowIndex;
+    const flushRows = async () => {
+      if (!controls.onRows || pendingRows.length === 0) return;
+      const batch = pendingRows;
+      pendingRows = [];
+      try {
+        await controls.onRows(batch, { processedRows, totalRows });
+      } catch (error) {
+        throw new RowBatchConsumerException(error);
+      }
+    };
+    const appendRow = async (row: ParsedImportRow) => {
+      processedRows += 1;
+      if (!controls.onRows) {
+        rows.push(row);
+        return;
+      }
+      pendingRows.push(row);
+      if (pendingRows.length >= controls.batchSize) await flushRows();
+    };
     const initializeColumns = () => {
       if (columns) return columns;
       this.applySnapshotMerges(
@@ -518,18 +594,18 @@ export class ExcelParserService {
       if (row.number > observation.rowCount) continue;
       const parsedColumns = initializeColumns();
       while (nextDataRow < row.number) {
-          rows.push(this.parseDataRow(
-            undefined,
-            nextDataRow,
-            parsedColumns,
-            dataMergesByRow,
-            options,
-            seenHashes,
-            observation.metadata.formulaOverrides
-          ));
+        await appendRow(this.parseDataRow(
+          undefined,
+          nextDataRow,
+          parsedColumns,
+          dataMergesByRow,
+          options,
+          seenHashes,
+          observation.metadata.formulaOverrides
+        ));
         nextDataRow += 1;
       }
-      rows.push(this.parseDataRow(
+      await appendRow(this.parseDataRow(
         row,
         row.number,
         parsedColumns,
@@ -542,7 +618,7 @@ export class ExcelParserService {
     }
     const parsedColumns = initializeColumns();
     while (nextDataRow <= observation.rowCount) {
-      rows.push(this.parseDataRow(
+      await appendRow(this.parseDataRow(
         undefined,
         nextDataRow,
         parsedColumns,
@@ -553,6 +629,7 @@ export class ExcelParserService {
       ));
       nextDataRow += 1;
     }
+    await flushRows();
     for (const column of parsedColumns) column.inferredType = this.inferType(column.sampleValues);
     return {
       processingMode: 'streaming',
@@ -560,7 +637,7 @@ export class ExcelParserService {
         sheetName: observation.metadata.sheetName,
         sheetIndex: observation.metadata.sheetIndex,
         headerRowIndex,
-        rowCount: rows.length
+        rowCount: processedRows
       },
       columns: parsedColumns,
       rows

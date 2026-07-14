@@ -79,7 +79,21 @@ describe('ExcelParserService phase 9', () => {
     const sheet = tall.addWorksheet('超长');
     sheet.addRow(['日期']);
     for (let index = 0; index < 5001; index += 1) sheet.addRow([`2026-07-${String((index % 28) + 1).padStart(2, '0')}`]);
-    await expect(parser.parse(Buffer.from(await tall.xlsx.writeBuffer()))).rejects.toThrow('Excel 数据行不能超过 5000');
+    const tallBuffer = Buffer.from(await tall.xlsx.writeBuffer());
+    await expect(parser.parse(tallBuffer)).rejects.toThrow('Excel 数据行不能超过 5000');
+
+    const batchSizes: number[] = [];
+    const progressValues: number[] = [];
+    const parsed = await parser.parseInBatches(tallBuffer, async (rows, progress) => {
+      batchSizes.push(rows.length);
+      progressValues.push(progress.processedRows);
+    });
+    expect(parsed).toMatchObject({
+      processingMode: 'streaming',
+      sheet: { sheetName: '超长', headerRowIndex: 1, rowCount: 5001 }
+    });
+    expect(batchSizes).toEqual([...Array(10).fill(500), 1]);
+    expect(progressValues.at(-1)).toBe(5001);
   });
 
   it('applies the same text limit to rich text and hyperlink cells', async () => {
