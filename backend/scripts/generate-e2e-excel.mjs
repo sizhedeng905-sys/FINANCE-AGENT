@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { PDFDocument, rgb } from 'pdf-lib';
+import * as XLSX from 'xlsx';
 
 const backendRoot = resolve(import.meta.dirname, '..');
 const fixtureDirectory = resolve(backendRoot, 'test-uploads/e2e-fixtures');
@@ -42,6 +43,15 @@ const formulaImageId = formulaWorkbook.addImage({
 formulaSheet.addImage(formulaImageId, { tl: { col: 5, row: 0 }, ext: { width: 1, height: 1 } });
 await formulaWorkbook.xlsx.writeFile(formulaFixturePath);
 console.log(`Generated E2E formula Excel fixture: ${formulaFixturePath}`);
+
+const legacyFixturePath = resolve(fixtureDirectory, 'E2E 旧版费用导入.xls');
+const legacyWorkbook = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(legacyWorkbook, XLSX.utils.aoa_to_sheet([
+  ['发生日期', '费用金额', '车牌', '司机'],
+  [validDate, 4321.09, '粤A24680', '旧版测试司机']
+]), '费用明细');
+await writeFile(legacyFixturePath, XLSX.write(legacyWorkbook, { type: 'buffer', bookType: 'biff8' }));
+console.log(`Generated E2E legacy Excel fixture: ${legacyFixturePath}`);
 
 const ocrFixturePath = resolve(fixtureDirectory, 'E2E OCR 标准票据.pdf');
 const pdf = await PDFDocument.create();

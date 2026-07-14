@@ -59,7 +59,7 @@ export default function DataImportPage() {
     const values = await form.validateFields();
     const file = fileList[0]?.originFileObj as RcFile | undefined;
     if (!file) {
-      message.warning('请选择 .xlsx 文件');
+      message.warning('请选择 .xls 或 .xlsx 文件');
       return;
     }
     const template = enabledTemplates.find((item) => item.id === values.templateId);
@@ -84,7 +84,7 @@ export default function DataImportPage() {
 
   return (
     <div>
-      <PageHeader title="Excel导入" description="标准单 Sheet .xlsx 导入" />
+      <PageHeader title="Excel导入" description="选择工作表、表头并确认字段映射" />
       {projectError ? <Alert type="error" showIcon message="项目列表加载失败" description={projectError} /> : null}
       {templateError || projectTemplateError ? <Alert type="error" showIcon message="模板列表加载失败" description={templateError || projectTemplateError} /> : null}
       {importError ? <Alert className="section-row" type="error" showIcon message="Excel 导入失败" description={importError} /> : null}
@@ -121,11 +121,11 @@ export default function DataImportPage() {
               beforeUpload={() => false}
               fileList={fileList}
               onChange={({ fileList: next }) => setFileList(next.slice(-1))}
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               maxCount={1}
             >
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-              <p className="ant-upload-text">选择 .xlsx 文件</p>
+              <p className="ant-upload-text">选择 .xls 或 .xlsx 文件</p>
             </Upload.Dragger>
           </Form.Item>
           <Button type="primary" loading={loading} onClick={() => void submit().catch((error) => message.error(error instanceof Error ? error.message : '解析失败'))}>

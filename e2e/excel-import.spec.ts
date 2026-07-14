@@ -156,3 +156,31 @@ test('API mode: finance explicitly accepts cached formula results before parsing
   expect(parsed.data.counts).toMatchObject({ total: 1, valid: 1, errors: 0 });
   await expect(page.getByText('所有列均已有明确处理决定')).toBeVisible();
 });
+
+test('API mode: finance uploads a legacy XLS through the data center', async ({ page }) => {
+  test.setTimeout(120_000);
+  const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E 旧版费用导入.xls');
+
+  await login(page, 'finance', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/import`);
+  await selectOption(page, '项目', '太和中转项目');
+  await selectOption(page, '模板', '运输费用模板');
+  const input = page.locator('input[type="file"]');
+  await expect(input).toHaveAttribute('accept', /\.xls,/);
+  await input.setInputFiles(fixture);
+
+  const createdResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/import-tasks'));
+  const parsedResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST' && /\/api\/import-tasks\/[^/]+\/parse$/.test(new URL(response.url()).pathname)
+  ));
+  await page.getByRole('button', { name: '上传并解析' }).click();
+
+  const created = await readEnvelope<ImportTaskDto>(await createdResponse);
+  const parsed = await readEnvelope<ImportTaskDto>(await parsedResponse);
+  expect(parsed.data).toMatchObject({
+    id: created.data.id,
+    counts: { total: 1, valid: 1, errors: 0, duplicates: 0, ignored: 0, imported: 0 }
+  });
+  expect(['mapping', 'pending_confirm']).toContain(parsed.data.status);
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/mapping$`));
+});
