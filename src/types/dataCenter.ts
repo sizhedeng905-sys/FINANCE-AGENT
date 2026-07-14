@@ -329,6 +329,40 @@ export interface ImportSheet {
   rowCount: number;
 }
 
+export interface ImportHeaderCandidate {
+  startRowIndex: number;
+  endRowIndex: number;
+  columnCount: number;
+  labels: string[];
+  score: number;
+  merged: boolean;
+}
+
+export interface ImportWorkbookSheetInspection {
+  sheetName: string;
+  sheetIndex: number;
+  state: 'visible' | 'hidden' | 'veryHidden';
+  rowCount: number;
+  columnCount: number;
+  nonEmpty: boolean;
+  mergeCount: number;
+  formulaCellCount: number;
+  headerCandidates: ImportHeaderCandidate[];
+}
+
+export interface ImportWorkbookInspection {
+  sheets: ImportWorkbookSheetInspection[];
+  requiresSheetSelection: boolean;
+  recommendedSelection?: ParseImportTaskPayload;
+}
+
+export interface ParseImportTaskPayload {
+  sheetIndex?: number;
+  headerStartRowIndex?: number;
+  headerRowIndex?: number;
+  allowHiddenSheet?: boolean;
+}
+
 export type ImportMappingType = 'profile' | 'field_key' | 'exact_name' | 'alias' | 'normalized' | 'fuzzy' | 'manual' | 'ignored';
 
 export interface MappingDecision {

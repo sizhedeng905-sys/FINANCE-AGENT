@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, App, Button, Card, Descriptions, Empty, Select, Space, Spin, Table, Tag } from 'antd';
+import { PlayCircleOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, Checkbox, Descriptions, Empty, InputNumber, Select, Space, Spin, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
@@ -26,10 +27,16 @@ export default function DataImportMappingPage() {
   const navigate = useNavigate();
   const { message } = App.useApp();
   const [selected, setSelected] = useState<Record<string, string>>({});
+  const [sheetIndex, setSheetIndex] = useState<number>();
+  const [headerRange, setHeaderRange] = useState<string>();
+  const [allowHiddenSheet, setAllowHiddenSheet] = useState(false);
   const task = useImportStore((state) => state.currentTask?.id === id ? state.currentTask : undefined);
+  const inspection = useImportStore((state) => state.inspectionTaskId === id ? state.inspection : undefined);
   const loading = useImportStore((state) => state.loading);
   const error = useImportStore((state) => state.error);
   const fetchTask = useImportStore((state) => state.fetchTask);
+  const inspectTask = useImportStore((state) => state.inspectTask);
+  const parseTask = useImportStore((state) => state.parseTask);
   const saveMappings = useImportStore((state) => state.saveMappings);
   const autoMatch = useImportStore((state) => state.autoMatch);
   const generateSuggestions = useImportStore((state) => state.generateSuggestions);
@@ -47,6 +54,25 @@ export default function DataImportMappingPage() {
     if (task?.templateId) void fetchTemplateFields(task.templateId).catch(() => undefined);
   }, [fetchTemplateFields, task?.templateId]);
 
+  useEffect(() => {
+    if (id && task?.status === 'uploaded' && !inspection) void inspectTask(id).catch(() => undefined);
+  }, [id, inspectTask, inspection, task?.status]);
+
+  useEffect(() => {
+    if (!inspection) return;
+    const recommended = inspection.recommendedSelection;
+    const initialSheet = recommended?.sheetIndex
+      ?? inspection.sheets.find((item) => item.nonEmpty && item.state === 'visible')?.sheetIndex
+      ?? inspection.sheets.find((item) => item.nonEmpty)?.sheetIndex;
+    const sheet = inspection.sheets.find((item) => item.sheetIndex === initialSheet);
+    const candidate = sheet?.headerCandidates.find((item) => (
+      item.startRowIndex === recommended?.headerStartRowIndex && item.endRowIndex === recommended?.headerRowIndex
+    )) ?? sheet?.headerCandidates[0];
+    setSheetIndex(initialSheet);
+    setHeaderRange(candidate ? `${candidate.startRowIndex}:${candidate.endRowIndex}` : undefined);
+    setAllowHiddenSheet(false);
+  }, [inspection]);
+
   const taskFieldIds = useMemo(
     () => new Set(templateFields.filter((item) => item.templateId === task?.templateId).map((item) => item.fieldId)),
     [task?.templateId, templateFields],
@@ -62,6 +88,16 @@ export default function DataImportMappingPage() {
     return column.decision?.targetFieldId;
   };
   const unresolved = task?.columns.filter((column) => !valueFor(column)) ?? [];
+  const selectedSheet = inspection?.sheets.find((item) => item.sheetIndex === sheetIndex);
+  const [headerStartRowIndex, headerRowIndex] = (headerRange ?? '')
+    .split(':')
+    .map((value) => Number(value));
+  const headerRangeValid = Number.isInteger(headerStartRowIndex)
+    && Number.isInteger(headerRowIndex)
+    && headerStartRowIndex >= 1
+    && headerRowIndex >= headerStartRowIndex
+    && headerRowIndex - headerStartRowIndex <= 2
+    && headerRowIndex < (selectedSheet?.rowCount ?? 1);
 
   const columns: ColumnsType<ImportColumn> = [
     {
@@ -119,6 +155,24 @@ export default function DataImportMappingPage() {
     message.success('映射已保存并可供后续同模板复用');
   };
 
+  const parseSelection = async () => {
+    if (!task || sheetIndex === undefined || !headerRangeValid) {
+      message.warning('请选择有效的工作表和表头');
+      return;
+    }
+    if (selectedSheet?.state !== 'visible' && !allowHiddenSheet) {
+      message.warning('隐藏工作表必须显式确认');
+      return;
+    }
+    await parseTask(task.id, {
+      sheetIndex,
+      headerStartRowIndex,
+      headerRowIndex,
+      allowHiddenSheet,
+    });
+    message.success('工作表已解析，请确认字段映射');
+  };
+
   if (!id) return <Card><Empty description="导入任务不存在" /></Card>;
 
   return (
@@ -137,12 +191,88 @@ export default function DataImportMappingPage() {
                 <Descriptions.Item label="状态">{importStatusMap[task.status]}</Descriptions.Item>
               </Descriptions>
             </Card>
-            {unresolved.length ? (
+            {task.status === 'uploaded' ? (
+              <Card className="section-row" title="选择导入区域">
+                <Space direction="vertical" size="middle" className="full-width">
+                  {inspection?.requiresSheetSelection ? (
+                    <Alert type="warning" showIcon message="工作簿包含多个非空工作表，必须明确选择" />
+                  ) : null}
+                  <Select
+                    className="full-width"
+                    placeholder="选择工作表"
+                    loading={loading && !inspection}
+                    value={sheetIndex}
+                    onChange={(value) => {
+                      const sheet = inspection?.sheets.find((item) => item.sheetIndex === value);
+                      const candidate = sheet?.headerCandidates[0];
+                      setSheetIndex(value);
+                      setHeaderRange(candidate ? `${candidate.startRowIndex}:${candidate.endRowIndex}` : undefined);
+                      setAllowHiddenSheet(false);
+                    }}
+                    options={(inspection?.sheets ?? []).map((sheet) => ({
+                      value: sheet.sheetIndex,
+                      disabled: !sheet.nonEmpty,
+                      label: `${sheet.sheetName} · ${sheet.rowCount} 行 × ${sheet.columnCount} 列${sheet.state === 'visible' ? '' : ' · 隐藏'}`,
+                    }))}
+                  />
+                  <Space wrap>
+                    <InputNumber
+                      addonBefore="表头起始行"
+                      min={1}
+                      max={Math.min(1000, Math.max(1, (selectedSheet?.rowCount ?? 2) - 1))}
+                      precision={0}
+                      value={Number.isInteger(headerStartRowIndex) ? headerStartRowIndex : undefined}
+                      onChange={(value) => setHeaderRange(`${value ?? ''}:${Number.isInteger(headerRowIndex) ? headerRowIndex : ''}`)}
+                    />
+                    <InputNumber
+                      addonBefore="表头结束行"
+                      min={1}
+                      max={Math.min(1000, Math.max(1, (selectedSheet?.rowCount ?? 2) - 1))}
+                      precision={0}
+                      value={Number.isInteger(headerRowIndex) ? headerRowIndex : undefined}
+                      onChange={(value) => setHeaderRange(`${Number.isInteger(headerStartRowIndex) ? headerStartRowIndex : ''}:${value ?? ''}`)}
+                    />
+                  </Space>
+                  <Select
+                    className="full-width"
+                    placeholder="选择表头范围"
+                    value={headerRange}
+                    disabled={!selectedSheet}
+                    onChange={setHeaderRange}
+                    options={(selectedSheet?.headerCandidates ?? []).map((candidate) => ({
+                      value: `${candidate.startRowIndex}:${candidate.endRowIndex}`,
+                      label: `第 ${candidate.startRowIndex === candidate.endRowIndex ? candidate.endRowIndex : `${candidate.startRowIndex}-${candidate.endRowIndex}`} 行 · ${candidate.labels.slice(0, 4).join(' | ')}`,
+                    }))}
+                  />
+                  {selectedSheet && selectedSheet.state !== 'visible' ? (
+                    <>
+                      <Alert type="warning" showIcon message="当前选择的是隐藏工作表" />
+                      <Checkbox checked={allowHiddenSheet} onChange={(event) => setAllowHiddenSheet(event.target.checked)}>
+                        确认导入隐藏工作表
+                      </Checkbox>
+                    </>
+                  ) : null}
+                  {selectedSheet && selectedSheet.headerCandidates.length === 0 ? (
+                    <Alert type="error" showIcon message="未检测到可用表头，请先整理工作簿" />
+                  ) : null}
+                  <Button
+                    type="primary"
+                    icon={<PlayCircleOutlined />}
+                    loading={loading}
+                    disabled={!headerRangeValid || Boolean(selectedSheet && selectedSheet.state !== 'visible' && !allowHiddenSheet)}
+                    onClick={() => void parseSelection().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '解析失败'))}
+                  >
+                    解析所选区域
+                  </Button>
+                </Space>
+              </Card>
+            ) : null}
+            {task.columns.length > 0 && unresolved.length ? (
               <Alert className="section-row" type="warning" showIcon message={`还有 ${unresolved.length} 列需要人工处理`} />
-            ) : (
+            ) : task.columns.length > 0 ? (
               <Alert className="section-row" type="success" showIcon message="所有列均已有明确处理决定" />
-            )}
-            <Card className="section-row" title="字段映射表">
+            ) : null}
+            {task.columns.length > 0 ? <Card className="section-row" title="字段映射表">
               <Table rowKey="id" columns={columns} dataSource={task.columns} pagination={false} scroll={{ x: 1050 }} />
               <Space className="form-actions" wrap>
                 <Button loading={loading} onClick={() => void save().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '保存失败'))}>保存映射</Button>
@@ -160,7 +290,7 @@ export default function DataImportMappingPage() {
                   下一步确认
                 </Button>
               </Space>
-            </Card>
+            </Card> : null}
           </>
         ) : null}
       </Spin>

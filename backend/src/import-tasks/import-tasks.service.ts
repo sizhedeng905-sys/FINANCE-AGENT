@@ -31,10 +31,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
 import { ApproveFieldSuggestionDto, MapFieldSuggestionDto, QueryFieldSuggestionsDto } from './dto/field-suggestion.dto';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
+import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { MappingInputDto, SaveMappingsDto } from './dto/save-mappings.dto';
-import { ExcelParserService } from './excel-parser.service';
+import { ExcelParserService, WorkbookSelectionRequiredException } from './excel-parser.service';
 import {
   importTaskDetailInclude,
   ImportTaskDetail,
@@ -208,7 +209,26 @@ export class ImportTasksService {
     return toImportTask(await this.findDetailOrThrow(id));
   }
 
-  async parse(id: string, actor: CurrentUser, context: RequestContext) {
+  async inspect(id: string, actor: CurrentUser, context: RequestContext) {
+    const task = await this.findDetailOrThrow(id);
+    if (task.status === ImportTaskStatus.cancelled) throw new ConflictException('已取消任务不能检查工作簿');
+    const file = await this.files.readForProcessing(task.rawFileId, actor);
+    const inspection = await this.excelParser.inspect(file.buffer);
+    await this.prisma.$transaction(async (tx) => {
+      await this.auditLogs.write(tx, actor, 'import_task.inspect', 'import_task', id, {
+        rawFileId: task.rawFileId,
+        sheetCount: inspection.sheets.length,
+        requiresSheetSelection: inspection.requiresSheetSelection
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'import_task_inspected', 'import_task', id, {
+        rawFileId: task.rawFileId,
+        sheetCount: inspection.sheets.length
+      });
+    });
+    return inspection;
+  }
+
+  async parse(id: string, dto: ParseImportTaskDto, actor: CurrentUser, context: RequestContext) {
     const prepared = await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
       const task = await tx.importTask.findUnique({ where: { id }, include: importTaskDetailInclude });
@@ -247,7 +267,14 @@ export class ImportTasksService {
         'import_task.parse_started',
         'import_task',
         id,
-        { leaseToken, previousStatus: task.status },
+        {
+          leaseToken,
+          previousStatus: task.status,
+          sheetIndex: dto.sheetIndex,
+          headerStartRowIndex: dto.headerStartRowIndex,
+          headerRowIndex: dto.headerRowIndex,
+          allowHiddenSheet: dto.allowHiddenSheet ?? false
+        },
         context
       );
       return { skipped: false as const, task, leaseToken };
@@ -257,30 +284,38 @@ export class ImportTasksService {
     let parsed;
     try {
       const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
-      parsed = await this.excelParser.parse(file.buffer);
+      parsed = await this.excelParser.parse(file.buffer, dto);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Excel 解析失败';
+      const selectionRequired = error instanceof WorkbookSelectionRequiredException;
       await this.prisma.$transaction(async (tx) => {
         await this.lockTask(tx, id);
         const updated = await tx.importTask.updateMany({
           where: { id, status: ImportTaskStatus.parsing, leaseToken: prepared.leaseToken },
           data: {
-            status: ImportTaskStatus.failed,
-            errorMessage: message,
+            status: selectionRequired ? ImportTaskStatus.uploaded : ImportTaskStatus.failed,
+            errorMessage: selectionRequired ? null : message,
             leaseToken: null,
             leaseUntil: null,
             version: { increment: 1 }
           }
         });
         if (updated.count === 1) {
-          await tx.rawFile.update({ where: { id: prepared.task.rawFileId }, data: { status: RawFileStatus.failed } });
+          await tx.rawFile.update({
+            where: { id: prepared.task.rawFileId },
+            data: { status: selectionRequired ? RawFileStatus.uploaded : RawFileStatus.failed }
+          });
           await this.auditLogs.write(
             tx,
             actor,
-            'import_task.parse_failed',
+            selectionRequired ? 'import_task.parse_selection_required' : 'import_task.parse_failed',
             'import_task',
             id,
-            { error: message },
+            selectionRequired ? {
+              sheetIndex: dto.sheetIndex,
+              headerStartRowIndex: dto.headerStartRowIndex,
+              headerRowIndex: dto.headerRowIndex
+            } : { error: message },
             context
           );
         }
@@ -353,7 +388,8 @@ export class ImportTasksService {
       });
       await tx.rawFile.update({ where: { id: current.rawFileId }, data: { status: RawFileStatus.parsed } });
       await this.auditLogs.write(tx, actor, 'import_task.parse', 'import_task', id, {
-        sheet: parsed.sheet.sheetName,
+        sheetIndex: parsed.sheet.sheetIndex,
+        headerRowIndex: parsed.sheet.headerRowIndex,
         columns: columns.length,
         rows: parsed.rows.length,
         ...counts

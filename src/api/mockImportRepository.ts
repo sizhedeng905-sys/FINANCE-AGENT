@@ -19,6 +19,8 @@ import type {
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
+  ImportWorkbookInspection,
+  ParseImportTaskPayload,
   PaginatedFieldSuggestions,
   PaginatedImportRows,
   PaginatedImportTasks,
@@ -177,7 +179,35 @@ export async function mockGetImportTask(id: string) {
   return cloneTask(findTask(id));
 }
 
-export async function mockParseImportTask(id: string) {
+export async function mockInspectImportTask(id: string): Promise<ImportWorkbookInspection> {
+  await assertFinance();
+  await delay();
+  findTask(id);
+  return {
+    requiresSheetSelection: false,
+    recommendedSelection: { sheetIndex: 0, headerStartRowIndex: 1, headerRowIndex: 1 },
+    sheets: [{
+      sheetName: 'Sheet1',
+      sheetIndex: 0,
+      state: 'visible',
+      rowCount: 3,
+      columnCount: mockExcelColumns.length,
+      nonEmpty: true,
+      mergeCount: 0,
+      formulaCellCount: 0,
+      headerCandidates: [{
+        startRowIndex: 1,
+        endRowIndex: 1,
+        columnCount: mockExcelColumns.length,
+        labels: mockExcelColumns.map((column) => column.name),
+        score: 100,
+        merged: false,
+      }],
+    }],
+  };
+}
+
+export async function mockParseImportTask(id: string, _payload: ParseImportTaskPayload = {}) {
   await assertFinance();
   await delay();
   const task = findTask(id);

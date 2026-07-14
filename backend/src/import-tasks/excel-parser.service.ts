@@ -5,8 +5,11 @@ import ExcelJS from 'exceljs';
 const MAX_COLUMNS = 200;
 const MAX_ROWS = 5000;
 const MAX_CELL_TEXT_LENGTH = 10000;
+const MAX_HEADER_SCAN_ROWS = 30;
+const MAX_HEADER_CANDIDATES = 5;
 
 export type ParsedCellValue = string | number | boolean | null | Record<string, unknown>;
+export type WorkbookSheetState = 'visible' | 'hidden' | 'veryHidden';
 
 export interface ParsedImportColumn {
   columnIndex: number;
@@ -38,6 +41,44 @@ export interface ParsedWorkbook {
   rows: ParsedImportRow[];
 }
 
+export interface WorkbookHeaderCandidate {
+  startRowIndex: number;
+  endRowIndex: number;
+  columnCount: number;
+  labels: string[];
+  score: number;
+  merged: boolean;
+}
+
+export interface WorkbookSheetInspection {
+  sheetName: string;
+  sheetIndex: number;
+  state: WorkbookSheetState;
+  rowCount: number;
+  columnCount: number;
+  nonEmpty: boolean;
+  mergeCount: number;
+  formulaCellCount: number;
+  headerCandidates: WorkbookHeaderCandidate[];
+}
+
+export interface WorkbookInspection {
+  sheets: WorkbookSheetInspection[];
+  requiresSheetSelection: boolean;
+  recommendedSelection?: {
+    sheetIndex: number;
+    headerStartRowIndex: number;
+    headerRowIndex: number;
+  };
+}
+
+export interface ParseWorkbookOptions {
+  sheetIndex?: number;
+  headerStartRowIndex?: number;
+  headerRowIndex?: number;
+  allowHiddenSheet?: boolean;
+}
+
 interface NormalizedCell {
   value: ParsedCellValue;
   displayValue: string | number | boolean | null;
@@ -45,35 +86,71 @@ interface NormalizedCell {
   error?: string;
 }
 
+interface CellRange {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+export class WorkbookSelectionRequiredException extends BadRequestException {}
+
 @Injectable()
 export class ExcelParserService {
-  async parse(buffer: Buffer): Promise<ParsedWorkbook> {
-    const workbook = new ExcelJS.Workbook();
-    try {
-      await workbook.xlsx.load(buffer as any);
-    } catch {
-      throw new BadRequestException('Excel 文件内容损坏或不是有效的 .xlsx 文件');
+  async inspect(buffer: Buffer): Promise<WorkbookInspection> {
+    const workbook = await this.loadWorkbook(buffer);
+    const sheets = workbook.worksheets.map((worksheet, sheetIndex) => this.inspectSheet(worksheet, sheetIndex));
+    const nonEmptySheets = sheets.filter((sheet) => sheet.nonEmpty);
+    const visibleSheets = nonEmptySheets.filter((sheet) => sheet.state === 'visible');
+    const recommendedSheet = visibleSheets.length === 1 ? visibleSheets[0] : undefined;
+    const candidate = recommendedSheet?.headerCandidates[0];
+
+    return {
+      sheets,
+      requiresSheetSelection: nonEmptySheets.length !== 1 || nonEmptySheets[0]?.state !== 'visible',
+      recommendedSelection: recommendedSheet && candidate ? {
+        sheetIndex: recommendedSheet.sheetIndex,
+        headerStartRowIndex: candidate.startRowIndex,
+        headerRowIndex: candidate.endRowIndex
+      } : undefined
+    };
+  }
+
+  async parse(buffer: Buffer, options: ParseWorkbookOptions = {}): Promise<ParsedWorkbook> {
+    const workbook = await this.loadWorkbook(buffer);
+    const nonEmptySheets = workbook.worksheets
+      .map((worksheet, sheetIndex) => ({ worksheet, sheetIndex }))
+      .filter(({ worksheet }) => worksheet.actualRowCount > 0 && worksheet.actualColumnCount > 0);
+    if (nonEmptySheets.length === 0) throw new BadRequestException('Excel 文件没有可解析的工作表');
+
+    const selected = this.selectWorksheet(workbook, nonEmptySheets, options);
+    const worksheet = selected.worksheet;
+    if (worksheet.state !== 'visible' && !options.allowHiddenSheet) {
+      throw new WorkbookSelectionRequiredException('隐藏工作表必须显式确认后才能导入');
     }
 
-    const nonEmptySheets = workbook.worksheets.filter((sheet) => sheet.actualRowCount > 0);
-    if (nonEmptySheets.length === 0) throw new BadRequestException('Excel 文件没有可解析的工作表');
-    if (nonEmptySheets.length > 1) throw new BadRequestException('第一版仅支持一个非空 Sheet');
-
-    const worksheet = nonEmptySheets[0];
-    const merges = (worksheet.model as { merges?: string[] }).merges ?? [];
-    if (merges.length > 0) throw new BadRequestException('第一版不支持合并单元格，请先整理为标准单行表头');
-
-    const header = worksheet.getRow(1);
-    const columnCount = Math.max(header.cellCount, worksheet.actualColumnCount);
-    if (columnCount === 0) throw new BadRequestException('Excel 第一行必须是表头');
+    const columnCount = worksheet.actualColumnCount;
+    if (columnCount === 0) throw new BadRequestException('Excel 表头不能为空');
     if (columnCount > MAX_COLUMNS) throw new BadRequestException(`Excel 列数不能超过 ${MAX_COLUMNS}`);
-    if (worksheet.actualRowCount - 1 > MAX_ROWS) throw new BadRequestException(`Excel 数据行不能超过 ${MAX_ROWS}`);
+    const inspection = this.inspectSheet(worksheet, selected.sheetIndex);
+    const recommended = inspection.headerCandidates[0];
+    const headerRowIndex = options.headerRowIndex ?? recommended?.endRowIndex;
+    if (!headerRowIndex) throw new WorkbookSelectionRequiredException('请选择有效的表头行');
+    const candidateForEnd = inspection.headerCandidates.find((candidate) => candidate.endRowIndex === headerRowIndex);
+    const headerStartRowIndex = options.headerStartRowIndex ?? candidateForEnd?.startRowIndex ?? headerRowIndex;
+    this.validateHeaderRange(worksheet, headerStartRowIndex, headerRowIndex);
 
-    const columns = this.parseHeaders(header, columnCount);
+    if (worksheet.actualRowCount - headerRowIndex > MAX_ROWS) {
+      throw new BadRequestException(`Excel 数据行不能超过 ${MAX_ROWS}`);
+    }
+
+    const ranges = this.mergeRanges(worksheet);
+    const columns = this.parseHeaders(worksheet, headerStartRowIndex, headerRowIndex, columnCount, ranges);
     const rows: ParsedImportRow[] = [];
     const seenHashes = new Set<string>();
+    const dataMergesByRow = this.indexDataMerges(ranges, headerRowIndex + 1, worksheet.actualRowCount);
 
-    for (let rowNumber = 2; rowNumber <= worksheet.actualRowCount; rowNumber += 1) {
+    for (let rowNumber = headerRowIndex + 1; rowNumber <= worksheet.actualRowCount; rowNumber += 1) {
       const row = worksheet.getRow(rowNumber);
       const rawData: Record<string, ParsedCellValue> = {};
       const errors: string[] = [];
@@ -81,7 +158,14 @@ export class ExcelParserService {
       let hasValue = false;
 
       for (const column of columns) {
-        const normalized = this.normalizeCell(row.getCell(column.columnIndex));
+        const merge = dataMergesByRow.get(rowNumber)?.find((range) => (
+          column.columnIndex >= range.left && column.columnIndex <= range.right
+        ));
+        const cell = row.getCell(column.columnIndex);
+        const isMergeMaster = !merge || (rowNumber === merge.top && column.columnIndex === merge.left);
+        const normalized = merge && !isMergeMaster
+          ? { value: null, displayValue: null, formula: false }
+          : this.normalizeCell(cell);
         rawData[column.sourceKey] = normalized.value;
         if (normalized.displayValue !== null && normalized.displayValue !== '') {
           hasValue = true;
@@ -89,6 +173,7 @@ export class ExcelParserService {
         }
         if (normalized.formula) hasFormula = true;
         if (normalized.error) errors.push(`${column.sourceName}：${normalized.error}`);
+        if (merge) errors.push(`第 ${rowNumber} 行包含数据区合并单元格，必须人工处理`);
       }
 
       const rowHash = createHash('sha256')
@@ -112,15 +197,13 @@ export class ExcelParserService {
       rows.push({ rowNumber, rawData, rowHash, status, errors: [...new Set(errors)], warnings });
     }
 
-    for (const column of columns) {
-      column.inferredType = this.inferType(column.sampleValues);
-    }
+    for (const column of columns) column.inferredType = this.inferType(column.sampleValues);
 
     return {
       sheet: {
         sheetName: worksheet.name,
-        sheetIndex: worksheet.id - 1,
-        headerRowIndex: 1,
+        sheetIndex: selected.sheetIndex,
+        headerRowIndex,
         rowCount: rows.length
       },
       columns,
@@ -133,17 +216,158 @@ export class ExcelParserService {
       .normalize('NFKC')
       .trim()
       .toLowerCase()
-      .replace(/[\s_\-—/\\()（）\[\]【】:：,.，。]+/g, '');
+      .replace(/[\s_\-—/\\()（）\[\]【】、:：,.，。]+/g, '');
   }
 
-  private parseHeaders(header: ExcelJS.Row, columnCount: number): ParsedImportColumn[] {
+  private async loadWorkbook(buffer: Buffer) {
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(buffer as any);
+      return workbook;
+    } catch {
+      throw new BadRequestException('Excel 文件内容损坏或不是有效的 .xlsx 文件');
+    }
+  }
+
+  private inspectSheet(worksheet: ExcelJS.Worksheet, sheetIndex: number): WorkbookSheetInspection {
+    const ranges = this.mergeRanges(worksheet);
+    let formulaCellCount = 0;
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const value = cell.value;
+        if (value && typeof value === 'object' && ('formula' in value || 'sharedFormula' in value)) {
+          formulaCellCount += 1;
+        }
+      });
+    });
+    return {
+      sheetName: worksheet.name,
+      sheetIndex,
+      state: worksheet.state,
+      rowCount: worksheet.actualRowCount,
+      columnCount: worksheet.actualColumnCount,
+      nonEmpty: worksheet.actualRowCount > 0 && worksheet.actualColumnCount > 0,
+      mergeCount: ranges.length,
+      formulaCellCount,
+      headerCandidates: this.headerCandidates(worksheet, ranges)
+    };
+  }
+
+  private selectWorksheet(
+    workbook: ExcelJS.Workbook,
+    nonEmptySheets: Array<{ worksheet: ExcelJS.Worksheet; sheetIndex: number }>,
+    options: ParseWorkbookOptions
+  ) {
+    if (options.sheetIndex === undefined) {
+      if (nonEmptySheets.length !== 1) {
+        throw new WorkbookSelectionRequiredException('工作簿包含多个非空工作表，请选择要导入的工作表');
+      }
+      return nonEmptySheets[0];
+    }
+    if (!Number.isInteger(options.sheetIndex) || options.sheetIndex < 0) {
+      throw new WorkbookSelectionRequiredException('工作表序号不合法');
+    }
+    const worksheet = workbook.worksheets[options.sheetIndex];
+    if (!worksheet || worksheet.actualRowCount === 0 || worksheet.actualColumnCount === 0) {
+      throw new WorkbookSelectionRequiredException('选择的工作表不存在或为空');
+    }
+    return { worksheet, sheetIndex: options.sheetIndex };
+  }
+
+  private validateHeaderRange(worksheet: ExcelJS.Worksheet, start: number, end: number) {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
+      throw new WorkbookSelectionRequiredException('表头行范围不合法');
+    }
+    if (end >= worksheet.actualRowCount) {
+      throw new WorkbookSelectionRequiredException('表头之后没有可导入的数据行');
+    }
+    if (end - start > 2) throw new WorkbookSelectionRequiredException('表头范围最多支持连续三行');
+  }
+
+  private headerCandidates(worksheet: ExcelJS.Worksheet, ranges: CellRange[]): WorkbookHeaderCandidate[] {
+    if (worksheet.actualRowCount === 0 || worksheet.actualColumnCount === 0) return [];
+    const lastRow = Math.min(worksheet.actualRowCount - 1, MAX_HEADER_SCAN_ROWS);
+    const columnCount = Math.min(worksheet.actualColumnCount, MAX_COLUMNS);
+    const candidates = new Map<string, WorkbookHeaderCandidate>();
+
+    for (let end = 1; end <= lastRow; end += 1) {
+      this.addHeaderCandidate(candidates, worksheet, ranges, end, end, columnCount);
+      for (let start = Math.max(1, end - 2); start < end; start += 1) {
+        const merged = ranges.some((range) => range.top <= end && range.bottom >= start);
+        if (merged) this.addHeaderCandidate(candidates, worksheet, ranges, start, end, columnCount);
+      }
+    }
+    return [...candidates.values()]
+      .sort((left, right) => right.score - left.score || left.endRowIndex - right.endRowIndex || left.startRowIndex - right.startRowIndex)
+      .slice(0, MAX_HEADER_CANDIDATES);
+  }
+
+  private addHeaderCandidate(
+    target: Map<string, WorkbookHeaderCandidate>,
+    worksheet: ExcelJS.Worksheet,
+    ranges: CellRange[],
+    start: number,
+    end: number,
+    columnCount: number
+  ) {
+    const labels = this.headerLabels(worksheet, start, end, columnCount, ranges, false);
+    const meaningful = labels.filter((label) => !label.startsWith('未命名列')).length;
+    if (meaningful === 0) return;
+    const merged = ranges.some((range) => range.top <= end && range.bottom >= start);
+    const score = this.headerScore(worksheet, labels, end, meaningful, merged, start !== end);
+    target.set(`${start}:${end}`, {
+      startRowIndex: start,
+      endRowIndex: end,
+      columnCount,
+      labels,
+      score,
+      merged
+    });
+  }
+
+  private headerScore(
+    worksheet: ExcelJS.Worksheet,
+    labels: string[],
+    endRow: number,
+    meaningful: number,
+    merged: boolean,
+    multiRow: boolean
+  ) {
+    const unique = new Set(labels.filter((label) => !label.startsWith('未命名列')).map((label) => this.normalizeHeader(label))).size;
+    let followingRows = 0;
+    let followingValues = 0;
+    for (let rowIndex = endRow + 1; rowIndex <= Math.min(worksheet.actualRowCount, endRow + 3); rowIndex += 1) {
+      const row = worksheet.getRow(rowIndex);
+      let values = 0;
+      for (let columnIndex = 1; columnIndex <= labels.length; columnIndex += 1) {
+        if (this.headerCellText(row.getCell(columnIndex))) values += 1;
+      }
+      if (values > 0) {
+        followingRows += 1;
+        followingValues += values;
+      }
+    }
+    return meaningful * 10
+      + unique * 3
+      + followingRows * 4
+      + Math.min(followingValues, meaningful * 3)
+      + Number(merged && multiRow) * 5
+      - endRow * 5;
+  }
+
+  private parseHeaders(
+    worksheet: ExcelJS.Worksheet,
+    startRowIndex: number,
+    endRowIndex: number,
+    columnCount: number,
+    ranges: CellRange[]
+  ): ParsedImportColumn[] {
+    const sourceNames = this.headerLabels(worksheet, startRowIndex, endRowIndex, columnCount, ranges, true);
     const occurrences = new Map<string, number>();
     const columns: ParsedImportColumn[] = [];
 
-    for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
-      const cell = this.normalizeCell(header.getCell(columnIndex));
-      if (cell.formula || cell.error) throw new BadRequestException(`第 ${columnIndex} 列表头不合法`);
-      const sourceName = String(cell.displayValue ?? '').trim() || `未命名列${columnIndex}`;
+    sourceNames.forEach((sourceName, offset) => {
+      const columnIndex = offset + 1;
       if (sourceName.length > 128) throw new BadRequestException(`第 ${columnIndex} 列表头不能超过 128 个字符`);
       const normalizedName = this.normalizeHeader(sourceName);
       const occurrence = (occurrences.get(normalizedName) ?? 0) + 1;
@@ -157,15 +381,80 @@ export class ExcelParserService {
         inferredType: 'text',
         duplicateName: false
       });
-    }
+    });
 
     const duplicateNames = new Set(
       [...occurrences.entries()].filter(([, count]) => count > 1).map(([name]) => name)
     );
-    columns.forEach((column) => {
-      column.duplicateName = duplicateNames.has(column.normalizedName);
-    });
+    columns.forEach((column) => { column.duplicateName = duplicateNames.has(column.normalizedName); });
     return columns;
+  }
+
+  private headerLabels(
+    worksheet: ExcelJS.Worksheet,
+    startRowIndex: number,
+    endRowIndex: number,
+    columnCount: number,
+    ranges: CellRange[],
+    strict: boolean
+  ) {
+    return Array.from({ length: columnCount }, (_, offset) => {
+      const columnIndex = offset + 1;
+      const parts: string[] = [];
+      for (let rowIndex = startRowIndex; rowIndex <= endRowIndex; rowIndex += 1) {
+        const range = ranges.find((candidate) => (
+          rowIndex >= candidate.top && rowIndex <= candidate.bottom
+          && columnIndex >= candidate.left && columnIndex <= candidate.right
+        ));
+        if (range && range.left === 1 && range.right >= columnCount && rowIndex < endRowIndex) continue;
+        const cell = worksheet.getRow(rowIndex).getCell(columnIndex);
+        const normalized = this.normalizeCell(cell.isMerged ? cell.master : cell);
+        if (strict && (normalized.formula || normalized.error)) {
+          throw new BadRequestException(`第 ${columnIndex} 列表头不合法`);
+        }
+        const text = normalized.displayValue === null ? '' : String(normalized.displayValue).trim();
+        if (text && parts.at(-1) !== text) parts.push(text);
+      }
+      return parts.join(' / ') || `未命名列${columnIndex}`;
+    });
+  }
+
+  private mergeRanges(worksheet: ExcelJS.Worksheet) {
+    const values = (worksheet.model as { merges?: string[] }).merges ?? [];
+    return values.flatMap((value) => {
+      const [start, end = start] = value.split(':');
+      const first = this.cellReference(start);
+      const last = this.cellReference(end);
+      return first && last ? [{
+        top: Math.min(first.row, last.row),
+        left: Math.min(first.column, last.column),
+        bottom: Math.max(first.row, last.row),
+        right: Math.max(first.column, last.column)
+      }] : [];
+    });
+  }
+
+  private cellReference(value: string) {
+    const match = value.match(/^\$?([A-Z]+)\$?(\d+)$/i);
+    if (!match) return undefined;
+    let column = 0;
+    for (const letter of match[1].toUpperCase()) column = column * 26 + letter.charCodeAt(0) - 64;
+    return { column, row: Number(match[2]) };
+  }
+
+  private indexDataMerges(ranges: CellRange[], firstDataRow: number, lastDataRow: number) {
+    const result = new Map<number, CellRange[]>();
+    for (const range of ranges) {
+      for (let row = Math.max(firstDataRow, range.top); row <= Math.min(lastDataRow, range.bottom); row += 1) {
+        result.set(row, [...(result.get(row) ?? []), range]);
+      }
+    }
+    return result;
+  }
+
+  private headerCellText(cell: ExcelJS.Cell) {
+    const normalized = this.normalizeCell(cell.isMerged ? cell.master : cell);
+    return normalized.displayValue === null ? '' : String(normalized.displayValue).trim();
   }
 
   private normalizeCell(cell: ExcelJS.Cell): NormalizedCell {
@@ -175,9 +464,7 @@ export class ExcelParserService {
       const date = this.formatDate(value);
       return { value: date, displayValue: date, formula: false };
     }
-    if (typeof value === 'string') {
-      return this.normalizeTextCell(value);
-    }
+    if (typeof value === 'string') return this.normalizeTextCell(value);
     if (typeof value === 'number' || typeof value === 'boolean') {
       return { value, displayValue: value, formula: false };
     }
@@ -190,14 +477,8 @@ export class ExcelParserService {
         formula: true
       };
     }
-    if ('richText' in value) {
-      const text = value.richText.map((part) => part.text).join('');
-      return this.normalizeTextCell(text);
-    }
-    if ('hyperlink' in value) {
-      const text = value.text || value.hyperlink;
-      return this.normalizeTextCell(text);
-    }
+    if ('richText' in value) return this.normalizeTextCell(value.richText.map((part) => part.text).join(''));
+    if ('hyperlink' in value) return this.normalizeTextCell(value.text || value.hyperlink);
     if ('error' in value) {
       return { value: { error: value.error }, displayValue: value.error, formula: false, error: 'Excel 单元格错误' };
     }

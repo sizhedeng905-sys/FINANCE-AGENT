@@ -11,6 +11,7 @@ import {
   getImportRows,
   getImportTask,
   getImportTasks,
+  inspectImportTask,
   mapFieldSuggestion as mapFieldSuggestionRequest,
   parseImportTask,
   rejectFieldSuggestion as rejectFieldSuggestionRequest,
@@ -25,6 +26,8 @@ import type {
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
+  ImportWorkbookInspection,
+  ParseImportTaskPayload,
   SaveImportMappingsPayload,
 } from '@/types/dataCenter';
 
@@ -33,6 +36,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 interface ImportState {
   tasks: ImportTask[];
   currentTask?: ImportTask;
+  inspection?: ImportWorkbookInspection;
+  inspectionTaskId?: string;
   rows: ImportStateRow[];
   preview?: ImportPreview;
   suggestions: FieldSuggestion[];
@@ -44,7 +49,8 @@ interface ImportState {
   fetchTasks: (query?: ImportTaskListQuery) => Promise<void>;
   fetchTask: (id: string) => Promise<ImportTask>;
   createAndParse: (file: File, payload: CreateImportTaskPayload) => Promise<ImportTask>;
-  parseTask: (id: string) => Promise<ImportTask>;
+  inspectTask: (id: string) => Promise<ImportWorkbookInspection>;
+  parseTask: (id: string, payload?: ParseImportTaskPayload) => Promise<ImportTask>;
   fetchRows: (id: string, query?: ImportRowsQuery) => Promise<void>;
   saveMappings: (id: string, payload: SaveImportMappingsPayload) => Promise<ImportTask>;
   autoMatch: (id: string) => Promise<ImportTask>;
@@ -85,6 +91,8 @@ export const useImportStore = create<ImportState>((set, get) => {
   return {
     tasks: [],
     currentTask: undefined,
+    inspection: undefined,
+    inspectionTaskId: undefined,
     rows: [],
     preview: undefined,
     suggestions: [],
@@ -105,17 +113,37 @@ export const useImportStore = create<ImportState>((set, get) => {
     },
     fetchTask: (id) => runTask(() => getImportTask(id)),
     createAndParse: async (file, payload) => {
-      set({ loading: true, error: null, preview: undefined });
+      set({ loading: true, error: null, preview: undefined, inspection: undefined, inspectionTaskId: undefined });
       try {
         const created = await createImportTask(file, payload);
         upsertTask(created);
-        return upsertTask(await parseImportTask(created.id));
+        const inspection = await inspectImportTask(created.id);
+        set({ inspection, inspectionTaskId: created.id });
+        if (inspection.requiresSheetSelection || !inspection.recommendedSelection) return created;
+        const parsed = upsertTask(await parseImportTask(created.id, inspection.recommendedSelection));
+        set({ inspection: undefined, inspectionTaskId: undefined });
+        return parsed;
       } catch (error) {
         set({ loading: false, error: errorMessage(error) });
         throw error;
       }
     },
-    parseTask: (id) => runTask(() => parseImportTask(id)),
+    inspectTask: async (id) => {
+      set({ loading: true, error: null });
+      try {
+        const inspection = await inspectImportTask(id);
+        set({ inspection, inspectionTaskId: id, loading: false });
+        return inspection;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    parseTask: async (id, payload = {}) => {
+      const task = await runTask(() => parseImportTask(id, payload));
+      set({ inspection: undefined, inspectionTaskId: undefined });
+      return task;
+    },
     fetchRows: async (id, query = {}) => {
       set({ loading: true, error: null });
       try {

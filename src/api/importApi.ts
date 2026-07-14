@@ -8,6 +8,8 @@ import type {
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
+  ImportWorkbookInspection,
+  ParseImportTaskPayload,
   PaginatedFieldSuggestions,
   PaginatedImportRows,
   PaginatedImportTasks,
@@ -26,6 +28,7 @@ import {
   mockGetImportRows,
   mockGetImportTask,
   mockGetImportTasks,
+  mockInspectImportTask,
   mockMapFieldSuggestion,
   mockParseImportTask,
   mockRejectFieldSuggestion,
@@ -71,10 +74,16 @@ export function getImportTask(id: string): Promise<ImportTask> {
     : mockGetImportTask(id);
 }
 
-export function parseImportTask(id: string): Promise<ImportTask> {
+export function inspectImportTask(id: string): Promise<ImportWorkbookInspection> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.post<ImportTask>(`/import-tasks/${encodeURIComponent(id)}/parse`)
-    : mockParseImportTask(id);
+    ? httpClient.post<ImportWorkbookInspection>(`/import-tasks/${encodeURIComponent(id)}/inspect`)
+    : mockInspectImportTask(id);
+}
+
+export function parseImportTask(id: string, payload: ParseImportTaskPayload = {}): Promise<ImportTask> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<ImportTask>(`/import-tasks/${encodeURIComponent(id)}/parse`, payload)
+    : mockParseImportTask(id, payload);
 }
 
 export function getImportRows(id: string, query: ImportRowsQuery = {}): Promise<PaginatedImportRows> {

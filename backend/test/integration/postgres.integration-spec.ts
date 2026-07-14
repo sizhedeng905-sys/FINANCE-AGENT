@@ -15,6 +15,7 @@ import {
   OcrTaskStatus,
   Prisma,
   ProjectStatus,
+  RawFileStatus,
   RecordSourceType,
   SemanticType,
   UserRole,
@@ -2980,6 +2981,24 @@ describe('real PostgreSQL integration', () => {
     const formulaRow = sheet.addRow(['2026/07/03', null, '粤D20002', '赵师傅', 200, '公式金额']);
     formulaRow.getCell(2).value = { formula: 'SUM(4000,4000)', result: 8000 };
     const xlsx = Buffer.from(await workbook.xlsx.writeBuffer());
+    const multiWorkbook = new ExcelJS.Workbook();
+    multiWorkbook.addWorksheet('汇总').addRows([
+      ['月份', '合计'],
+      ['2026-07', 200]
+    ]);
+    const multiDetail = multiWorkbook.addWorksheet('费用明细');
+    multiDetail.addRow(['发生日期', '费用', null]);
+    multiDetail.addRow([null, '金额', '说明']);
+    multiDetail.addRow(['2026-07-01', 200, '合成明细']);
+    multiDetail.mergeCells('A1:A2');
+    multiDetail.mergeCells('B1:C1');
+    const hiddenArchive = multiWorkbook.addWorksheet('历史归档');
+    hiddenArchive.state = 'hidden';
+    hiddenArchive.addRows([
+      ['日期', '金额'],
+      ['2025-01-01', 10]
+    ]);
+    const multiXlsx = Buffer.from(await multiWorkbook.xlsx.writeBuffer());
 
     try {
       const project = await prisma.project.create({
@@ -3033,14 +3052,14 @@ describe('real PostgreSQL integration', () => {
         .attach('file', xlsx, { filename: 'employee.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
         .expect(403);
 
-      const createTask = (key: string, filename: string) => request(app.getHttpServer())
+      const createTask = (key: string, filename: string, contents = xlsx) => request(app.getHttpServer())
         .post('/api/import-tasks')
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('Idempotency-Key', key)
         .field('projectId', project.id)
         .field('templateId', activeTemplateId!)
         .field('importType', DataRecordType.cost)
-        .attach('file', xlsx, { filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        .attach('file', contents, { filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
       const created = await createTask(`integration-import-${suffix}-one`, '费用导入.xlsx').expect(201);
       const taskId = created.body.data.id as string;
@@ -3053,6 +3072,68 @@ describe('real PostgreSQL integration', () => {
         status: ImportTaskStatus.uploaded,
         rawFile: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/), fileSize: xlsx.length }
       });
+
+      const multiCreated = await createTask(
+        `integration-import-${suffix}-multi`,
+        '多工作表导入.xlsx',
+        multiXlsx
+      ).expect(201);
+      const multiTaskId = multiCreated.body.data.id as string;
+      const multiRawFileId = multiCreated.body.data.rawFileId as string;
+      taskIds.push(multiTaskId);
+      rawFileIds.push(multiRawFileId);
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${multiTaskId}/inspect`)
+        .set('Authorization', `Bearer ${tokens.employee}`)
+        .expect(403);
+      const inspected = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${multiTaskId}/inspect`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('X-Request-Id', `integration-import-inspect-${suffix}`)
+        .expect(201);
+      expect(inspected.body.data).toMatchObject({
+        requiresSheetSelection: true,
+        sheets: [
+          { sheetIndex: 0, sheetName: '汇总', state: 'visible' },
+          { sheetIndex: 1, sheetName: '费用明细', state: 'visible' },
+          { sheetIndex: 2, sheetName: '历史归档', state: 'hidden' }
+        ]
+      });
+      expect(await prisma.auditLog.count({ where: { action: 'import_task.inspect', resourceId: multiTaskId } })).toBe(1);
+      expect(await prisma.ledgerEvent.count({ where: { eventType: 'import_task_inspected', aggregateId: multiTaskId } })).toBe(1);
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${multiTaskId}/parse`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({})
+        .expect(400);
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: multiTaskId } })).toMatchObject({
+        status: ImportTaskStatus.uploaded,
+        errorMessage: null
+      });
+      expect(await prisma.rawFile.findUniqueOrThrow({ where: { id: multiRawFileId } })).toMatchObject({
+        status: RawFileStatus.uploaded
+      });
+
+      const selectedParse = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${multiTaskId}/parse`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({ sheetIndex: 1, headerStartRowIndex: 1, headerRowIndex: 2 })
+        .expect(201);
+      expect(selectedParse.body.data).toMatchObject({
+        status: ImportTaskStatus.mapping,
+        sheets: [{ index: 1, headerRowIndex: 2, rowCount: 1 }]
+      });
+      expect(selectedParse.body.data.columns.map((column: { sourceName: string }) => column.sourceName)).toEqual([
+        '发生日期',
+        '费用 / 金额',
+        '费用 / 说明'
+      ]);
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${multiTaskId}/cancel`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(201);
 
       const parsed = await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/parse`)
@@ -3168,8 +3249,8 @@ describe('real PostgreSQL integration', () => {
         expect.objectContaining({ fieldId: suggestedFieldId, usageCount: 1 })
       ]));
       expect(projectStructure.body.data.logicalTablesSummary).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tableName: 'import_tasks', relatedCount: 1 }),
-        expect.objectContaining({ tableName: 'import_rows', relatedCount: 6 })
+        expect.objectContaining({ tableName: 'import_tasks', relatedCount: 2 }),
+        expect.objectContaining({ tableName: 'import_rows', relatedCount: 7 })
       ]));
       const projectReport = await request(app.getHttpServer())
         .get(`/api/reports/projects/${project.id}/daily?date=2026-07-01`)

@@ -30,11 +30,11 @@ describe('ExcelParserService phase 9', () => {
     expect(parsed.rows[4].errors).toContain('公式单元格不自动执行，请转换为静态值后重新上传');
   });
 
-  it('rejects multi-sheet and merged-header workbooks instead of silently dropping data', async () => {
+  it('rejects an unselected multi-sheet workbook instead of silently dropping data', async () => {
     const multi = new ExcelJS.Workbook();
     multi.addWorksheet('一').addRow(['日期']);
     multi.addWorksheet('二').addRow(['金额']);
-    await expect(parser.parse(Buffer.from(await multi.xlsx.writeBuffer()))).rejects.toThrow('仅支持一个非空 Sheet');
+    await expect(parser.parse(Buffer.from(await multi.xlsx.writeBuffer()))).rejects.toThrow('请选择要导入的工作表');
 
     const merged = new ExcelJS.Workbook();
     const sheet = merged.addWorksheet('合并表头');
@@ -72,5 +72,71 @@ describe('ExcelParserService phase 9', () => {
     ]));
     expect(String(parsed.rows[0].rawData['说明'])).toHaveLength(10_000);
     expect(String(parsed.rows[0].rawData['链接'])).toHaveLength(10_000);
+  });
+
+  it('inspects every sheet and requires an explicit selection for multi-sheet workbooks', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const detail = workbook.addWorksheet('Detail');
+    detail.addRow(['Date', 'Cost', null]);
+    detail.addRow([null, 'Transport', 'Labor']);
+    detail.addRow(['2026-07-01', 120, 80]);
+    detail.mergeCells('A1:A2');
+    detail.mergeCells('B1:C1');
+    const archive = workbook.addWorksheet('Archive');
+    archive.state = 'hidden';
+    archive.addRow(['Legacy date', 'Legacy amount']);
+    archive.addRow(['2025-01-01', 10]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const inspection = await parser.inspect(buffer);
+
+    expect(inspection.requiresSheetSelection).toBe(true);
+    expect(inspection.sheets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sheetIndex: 0, sheetName: 'Detail', state: 'visible', rowCount: 3 }),
+      expect.objectContaining({ sheetIndex: 1, sheetName: 'Archive', state: 'hidden', rowCount: 2 })
+    ]));
+    expect(inspection.sheets[0].headerCandidates).toContainEqual(expect.objectContaining({
+      startRowIndex: 1,
+      endRowIndex: 2,
+      labels: ['Date', 'Cost / Transport', 'Cost / Labor']
+    }));
+    await expect(parser.parse(buffer)).rejects.toThrow('请选择要导入的工作表');
+  });
+
+  it('parses a selected merged header range and keeps hidden sheets opt-in', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const detail = workbook.addWorksheet('Detail');
+    detail.addRow(['Date', 'Cost', null]);
+    detail.addRow([null, 'Transport', 'Labor']);
+    detail.addRow(['2026-07-01', 120, 80]);
+    detail.mergeCells('A1:A2');
+    detail.mergeCells('B1:C1');
+    const archive = workbook.addWorksheet('Archive');
+    archive.state = 'veryHidden';
+    archive.addRow(['Date', 'Amount']);
+    archive.addRow(['2025-01-01', 10]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const parsed = await parser.parse(buffer, {
+      sheetIndex: 0,
+      headerStartRowIndex: 1,
+      headerRowIndex: 2
+    });
+
+    expect(parsed.sheet).toMatchObject({ sheetName: 'Detail', sheetIndex: 0, headerRowIndex: 2, rowCount: 1 });
+    expect(parsed.columns.map((column) => column.sourceName)).toEqual([
+      'Date',
+      'Cost / Transport',
+      'Cost / Labor'
+    ]);
+    expect(parsed.rows[0]).toMatchObject({ rowNumber: 3, status: 'pending' });
+    await expect(parser.parse(buffer, { sheetIndex: 1, headerRowIndex: 1 })).rejects.toThrow(
+      '隐藏工作表必须显式确认'
+    );
+    await expect(parser.parse(buffer, {
+      sheetIndex: 1,
+      headerRowIndex: 1,
+      allowHiddenSheet: true
+    })).resolves.toMatchObject({ sheet: { sheetName: 'Archive', sheetIndex: 1 } });
   });
 });

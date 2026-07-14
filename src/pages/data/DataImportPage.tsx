@@ -72,7 +72,7 @@ export default function DataImportPage() {
       templateId: template.id,
       importType: template.recordType,
     });
-    message.success('文件已解析，请确认字段映射');
+    message.success(task.status === 'uploaded' ? '工作簿已检查，请选择工作表和表头' : '文件已解析，请确认字段映射');
     navigate(`/data/import/${task.id}/mapping`);
   };
 

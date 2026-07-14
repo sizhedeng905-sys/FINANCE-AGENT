@@ -25,6 +25,7 @@ import { getRequestContext } from '../common/utils/request-context';
 import { secureUploadOptions } from '../files/secure-upload-options';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
+import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { SaveMappingsDto } from './dto/save-mappings.dto';
@@ -73,9 +74,19 @@ export class ImportTasksController {
     return this.imports.findOne(id);
   }
 
+  @Post(':id/inspect')
+  inspect(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
+    return this.imports.inspect(id, user, getRequestContext(request));
+  }
+
   @Post(':id/parse')
-  parse(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
-    return this.imports.parse(id, user, getRequestContext(request));
+  parse(
+    @Param('id') id: string,
+    @Body() dto: ParseImportTaskDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.imports.parse(id, dto ?? {}, user, getRequestContext(request));
   }
 
   @Get(':id/columns')
