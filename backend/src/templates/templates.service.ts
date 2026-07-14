@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AccountingDirection, DataRecordType, FieldDefinition, FieldType, Prisma } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
@@ -23,35 +23,23 @@ export class TemplatesService {
   async findMany(query: QueryTemplatesDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const where: Prisma.TemplateWhereInput = {
-      recordType: query.recordType
-    };
-
+    const where: Prisma.TemplateWhereInput = { recordType: query.recordType };
     if (query.keyword) {
       where.OR = [
         { name: { contains: query.keyword, mode: 'insensitive' } },
         { description: { contains: query.keyword, mode: 'insensitive' } }
       ];
     }
-
     const [items, total] = await Promise.all([
       this.prisma.template.findMany({
         where,
-        orderBy: {
-          createdAt: 'desc'
-        },
+        orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize
       }),
       this.prisma.template.count({ where })
     ]);
-
-    return {
-      items: items.map(toTemplate),
-      page,
-      pageSize,
-      total
-    };
+    return { items: items.map(toTemplate), page, pageSize, total };
   }
 
   async findOne(id: string) {
@@ -64,14 +52,13 @@ export class TemplatesService {
         data: {
           name: dto.name,
           recordType: dto.recordType,
+          accountingDirection: dto.accountingDirection ?? this.defaultDirection(dto.recordType),
           description: dto.description,
-          isSystem: dto.isSystem ?? false,
+          isSystem: false,
           createdBy: actor.username
         }
       });
-
       await this.auditLogs.write(tx, actor, 'template.create', 'template', template.id, { after: toTemplate(template) }, context);
-
       return toTemplate(template);
     });
   }
@@ -79,13 +66,39 @@ export class TemplatesService {
   async update(id: string, dto: UpdateTemplateDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findTemplateOrThrow(id, tx);
-      const template = await tx.template.update({
-        where: {
-          id
-        },
-        data: dto
-      });
+      await this.assertTemplateMutable(id, tx);
+      if (dto.primaryAmountFieldId) {
+        await this.assertPrimaryField(id, dto.primaryAmountFieldId, FieldType.money, tx);
+      }
+      if (dto.primaryDateFieldId) {
+        await this.assertPrimaryField(id, dto.primaryDateFieldId, FieldType.date, tx);
+      }
 
+      const template = await tx.template.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          recordType: dto.recordType,
+          accountingDirection:
+            dto.accountingDirection ??
+            (dto.recordType !== undefined && dto.recordType !== before.recordType
+              ? this.defaultDirection(dto.recordType)
+              : undefined),
+          primaryAmountFieldId: dto.primaryAmountFieldId,
+          primaryDateFieldId: dto.primaryDateFieldId,
+          description: dto.description,
+          version: { increment: 1 }
+        }
+      });
+      const primaryIds = [dto.primaryAmountFieldId, dto.primaryDateFieldId].filter(
+        (value): value is string => Boolean(value)
+      );
+      if (primaryIds.length) {
+        await tx.templateField.updateMany({
+          where: { templateId: id, fieldId: { in: primaryIds } },
+          data: { isRequired: true, isVisible: true }
+        });
+      }
       await this.auditLogs.write(
         tx,
         actor,
@@ -95,7 +108,6 @@ export class TemplatesService {
         { before: toTemplate(before), after: toTemplate(template) },
         context
       );
-
       return toTemplate(template);
     });
   }
@@ -103,54 +115,40 @@ export class TemplatesService {
   async remove(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findTemplateOrThrow(id, tx);
-      await tx.template.delete({
-        where: {
-          id
-        }
-      });
-
+      if (before.isSystem) throw new ConflictException('系统内置模板不能删除');
+      const referenceCount = await this.countReferences(id, tx);
+      if (referenceCount > 0) throw new ConflictException('模板已被项目或业务数据引用，不能删除');
+      await tx.template.delete({ where: { id } });
       await this.auditLogs.write(tx, actor, 'template.delete', 'template', id, { before: toTemplate(before) }, context);
-
-      return {
-        id
-      };
+      return { id };
     });
   }
 
   async clone(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
-      const source = await tx.template.findUnique({
-        where: {
-          id
-        },
-        include: {
-          templateFields: true
-        }
-      });
-
-      if (!source) {
-        throw new NotFoundException('资源不存在');
-      }
-
+      const source = await tx.template.findUnique({ where: { id }, include: { templateFields: true } });
+      if (!source) throw new NotFoundException('资源不存在');
       const template = await tx.template.create({
         data: {
           name: `${source.name} 副本`,
           recordType: source.recordType,
+          accountingDirection: source.accountingDirection,
+          primaryAmountFieldId: source.primaryAmountFieldId,
+          primaryDateFieldId: source.primaryDateFieldId,
           description: source.description,
           isSystem: false,
           createdBy: actor.username,
           templateFields: {
-            create: source.templateFields.map((templateField) => ({
-              fieldId: templateField.fieldId,
-              isRequired: templateField.isRequired,
-              isVisible: templateField.isVisible,
-              displayOrder: templateField.displayOrder,
-              defaultValue: templateField.defaultValue
+            create: source.templateFields.map((item) => ({
+              fieldId: item.fieldId,
+              isRequired: item.isRequired,
+              isVisible: item.isVisible,
+              displayOrder: item.displayOrder,
+              defaultValue: item.defaultValue
             }))
           }
         }
       });
-
       await this.auditLogs.write(
         tx,
         actor,
@@ -160,34 +158,35 @@ export class TemplatesService {
         { sourceTemplateId: source.id, after: toTemplate(template) },
         context
       );
-
       return toTemplate(template);
     });
   }
 
   async getFields(templateId: string) {
     await this.findTemplateOrThrow(templateId);
-    const templateFields = await this.prisma.templateField.findMany({
-      where: {
-        templateId
-      },
-      include: {
-        field: true
-      },
-      orderBy: {
-        displayOrder: 'asc'
-      }
+    const fields = await this.prisma.templateField.findMany({
+      where: { templateId },
+      include: { field: true },
+      orderBy: { displayOrder: 'asc' }
     });
-
-    return templateFields.map(toTemplateField);
+    return fields.map(toTemplateField);
   }
 
   async addField(templateId: string, dto: CreateTemplateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       await this.findTemplateOrThrow(templateId, tx);
-      await this.findFieldOrThrow(dto.fieldId, tx);
-
-      const displayOrder = dto.displayOrder ?? (await this.getNextDisplayOrder(templateId, tx));
+      await this.assertStructureMutable(templateId, tx);
+      const field = await this.findFieldOrThrow(dto.fieldId, tx);
+      if (!field.isActive) throw new ConflictException('停用字段不能加入模板');
+      this.validateDefaultValue(field, dto.defaultValue);
+      const fieldCount = await tx.templateField.count({ where: { templateId } });
+      const displayOrder = Math.min(dto.displayOrder ?? fieldCount + 1, fieldCount + 1);
+      if (displayOrder <= fieldCount) {
+        await tx.templateField.updateMany({
+          where: { templateId, displayOrder: { gte: displayOrder } },
+          data: { displayOrder: { increment: 1 } }
+        });
+      }
       const templateField = await tx.templateField.create({
         data: {
           templateId,
@@ -197,61 +196,92 @@ export class TemplatesService {
           displayOrder,
           defaultValue: dto.defaultValue
         },
-        include: {
-          field: true
-        }
+        include: { field: true }
       });
-
+      await this.refreshCanonicalFields(templateId, tx);
+      const after = await this.findTemplateFieldOrThrow(templateField.id, tx);
       await this.auditLogs.write(
         tx,
         actor,
         'template_field.add',
         'template_field',
         templateField.id,
-        { after: toTemplateField(templateField) },
+        { after: toTemplateField(after) },
         context
       );
-
-      return toTemplateField(templateField);
+      return toTemplateField(after);
     });
   }
 
   async updateTemplateField(id: string, dto: UpdateTemplateFieldDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findTemplateFieldOrThrow(id, tx);
-      const templateField = await tx.templateField.update({
-        where: {
-          id
-        },
-        data: dto,
-        include: {
-          field: true
+      await this.assertStructureMutable(before.templateId, tx);
+      const template = await this.findTemplateOrThrow(before.templateId, tx);
+      const isPrimary =
+        before.fieldId === template.primaryAmountFieldId || before.fieldId === template.primaryDateFieldId;
+      if (isPrimary && (dto.isRequired === false || dto.isVisible === false)) {
+        throw new ConflictException('模板主金额和主日期字段必须保持启用、可见且必填');
+      }
+      this.validateDefaultValue(before.field, dto.defaultValue);
+      let displayOrder = dto.displayOrder;
+      if (displayOrder !== undefined && displayOrder !== before.displayOrder) {
+        const siblingCount = await tx.templateField.count({ where: { templateId: before.templateId } });
+        displayOrder = Math.min(displayOrder, siblingCount);
+        if (displayOrder < before.displayOrder) {
+          await tx.templateField.updateMany({
+            where: {
+              templateId: before.templateId,
+              id: { not: id },
+              displayOrder: { gte: displayOrder, lt: before.displayOrder }
+            },
+            data: { displayOrder: { increment: 1 } }
+          });
+        } else {
+          await tx.templateField.updateMany({
+            where: {
+              templateId: before.templateId,
+              id: { not: id },
+              displayOrder: { gt: before.displayOrder, lte: displayOrder }
+            },
+            data: { displayOrder: { decrement: 1 } }
+          });
+        }
+      }
+      await tx.templateField.update({
+        where: { id },
+        data: {
+          isRequired: dto.isRequired,
+          isVisible: dto.isVisible,
+          displayOrder,
+          defaultValue: dto.defaultValue
         }
       });
-
+      await this.refreshCanonicalFields(before.templateId, tx);
+      const after = await this.findTemplateFieldOrThrow(id, tx);
       await this.auditLogs.write(
         tx,
         actor,
         'template_field.update',
         'template_field',
-        templateField.id,
-        { before: toTemplateField(before), after: toTemplateField(templateField) },
+        id,
+        { before: toTemplateField(before), after: toTemplateField(after) },
         context
       );
-
-      return toTemplateField(templateField);
+      return toTemplateField(after);
     });
   }
 
   async removeTemplateField(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findTemplateFieldOrThrow(id, tx);
-      await tx.templateField.delete({
-        where: {
-          id
-        }
+      await this.assertStructureMutable(before.templateId, tx);
+      await tx.templateField.delete({ where: { id } });
+      await tx.templateField.updateMany({
+        where: { templateId: before.templateId, displayOrder: { gt: before.displayOrder } },
+        data: { displayOrder: { decrement: 1 } }
       });
-
+      await this.refreshCanonicalFields(before.templateId, tx);
       await this.auditLogs.write(
         tx,
         actor,
@@ -261,68 +291,141 @@ export class TemplatesService {
         { before: toTemplateField(before) },
         context
       );
-
-      return {
-        id
-      };
+      return { id };
     });
   }
 
-  private async getNextDisplayOrder(templateId: string, prisma: PrismaWriter) {
-    const latest = await prisma.templateField.findFirst({
-      where: {
-        templateId
-      },
-      orderBy: {
-        displayOrder: 'desc'
+  private defaultDirection(recordType: DataRecordType) {
+    return recordType === DataRecordType.revenue ? AccountingDirection.income : AccountingDirection.expense;
+  }
+
+  private async assertTemplateMutable(templateId: string, prisma: PrismaWriter) {
+    if ((await this.countReferences(templateId, prisma)) > 0) {
+      throw new ConflictException('已发布或已被业务流程引用的模板版本不可原地修改，请克隆新模板后切换');
+    }
+  }
+
+  private async assertStructureMutable(templateId: string, prisma: PrismaWriter) {
+    const publishedCount = await prisma.projectTemplate.count({ where: { templateId } });
+    if (publishedCount > 0) {
+      throw new ConflictException('已发布到项目的模板版本不可原地修改字段，请克隆模板后切换');
+    }
+  }
+
+  private async countReferences(templateId: string, prisma: PrismaWriter) {
+    const counts = await Promise.all([
+      prisma.projectTemplate.count({ where: { templateId } }),
+      prisma.businessRecord.count({ where: { templateId } }),
+      prisma.workOrder.count({ where: { templateId } }),
+      prisma.importTask.count({ where: { templateId } }),
+      prisma.ocrTask.count({ where: { templateId } })
+    ]);
+    return counts.reduce((sum, count) => sum + count, 0);
+  }
+
+  private async assertPrimaryField(
+    templateId: string,
+    fieldId: string,
+    expectedType: FieldType,
+    prisma: PrismaWriter
+  ) {
+    const relation = await prisma.templateField.findUnique({
+      where: { templateId_fieldId: { templateId, fieldId } },
+      include: { field: true }
+    });
+    if (!relation || relation.field.fieldType !== expectedType || !relation.field.isActive) {
+      throw new BadRequestException(`主字段必须是当前模板中启用的 ${expectedType} 字段`);
+    }
+  }
+
+  private async refreshCanonicalFields(templateId: string, prisma: PrismaWriter) {
+    const template = await prisma.template.findUnique({
+      where: { id: templateId },
+      include: {
+        templateFields: {
+          include: { field: true },
+          orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }]
+        }
       }
     });
+    if (!template) throw new NotFoundException('资源不存在');
+    const usable = template.templateFields.filter((item) => item.isVisible && item.field.isActive);
+    const currentAmount = usable.find(
+      (item) => item.fieldId === template.primaryAmountFieldId && item.field.fieldType === FieldType.money
+    );
+    const currentDate = usable.find(
+      (item) => item.fieldId === template.primaryDateFieldId && item.field.fieldType === FieldType.date
+    );
+    const amountCandidate = currentAmount ?? this.rankCanonicalField(usable, FieldType.money, ['incomeAmount', 'amount']);
+    const dateCandidate = currentDate ?? this.rankCanonicalField(usable, FieldType.date, ['date']);
+    const primaryIds = [amountCandidate?.fieldId, dateCandidate?.fieldId].filter(
+      (value): value is string => Boolean(value)
+    );
+    if (primaryIds.length) {
+      await prisma.templateField.updateMany({
+        where: { templateId, fieldId: { in: primaryIds } },
+        data: { isRequired: true, isVisible: true }
+      });
+    }
+    await prisma.template.update({
+      where: { id: templateId },
+      data: {
+        primaryAmountFieldId: amountCandidate?.fieldId ?? null,
+        primaryDateFieldId: dateCandidate?.fieldId ?? null,
+        version: { increment: 1 }
+      }
+    });
+  }
 
-    return (latest?.displayOrder ?? 0) + 1;
+  private rankCanonicalField<T extends { fieldId: string; field: FieldDefinition }>(
+    fields: T[],
+    fieldType: FieldType,
+    preferredKeys: string[]
+  ) {
+    const candidates = fields.filter((item) => item.field.fieldType === fieldType);
+    for (const key of preferredKeys) {
+      const preferred = candidates.find((item) => item.field.fieldKey === key);
+      if (preferred) return preferred;
+    }
+    return candidates[0];
+  }
+
+  private validateDefaultValue(field: FieldDefinition, value: string | undefined) {
+    if (value === undefined || value === '') return;
+    if (field.fieldType === FieldType.money || field.fieldType === FieldType.number) {
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) {
+        throw new BadRequestException('默认值与数字字段类型不匹配');
+      }
+      try {
+        if (new Prisma.Decimal(value).decimalPlaces() > 4) throw new Error('precision');
+      } catch {
+        throw new BadRequestException('默认值与数字字段类型不匹配');
+      }
+    }
+    if (field.fieldType === FieldType.date) {
+      const date = new Date(`${value}T00:00:00.000Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+        throw new BadRequestException('默认值与日期字段类型不匹配');
+      }
+    }
+    if (field.fieldType === FieldType.file) throw new BadRequestException('文件字段不能配置文本默认值');
   }
 
   private async findTemplateOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
-    const template = await prisma.template.findUnique({
-      where: {
-        id
-      }
-    });
-
-    if (!template) {
-      throw new NotFoundException('资源不存在');
-    }
-
+    const template = await prisma.template.findUnique({ where: { id } });
+    if (!template) throw new NotFoundException('资源不存在');
     return template;
   }
 
   private async findFieldOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
-    const field = await prisma.fieldDefinition.findUnique({
-      where: {
-        id
-      }
-    });
-
-    if (!field) {
-      throw new NotFoundException('资源不存在');
-    }
-
+    const field = await prisma.fieldDefinition.findUnique({ where: { id } });
+    if (!field) throw new NotFoundException('资源不存在');
     return field;
   }
 
   private async findTemplateFieldOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
-    const templateField = await prisma.templateField.findUnique({
-      where: {
-        id
-      },
-      include: {
-        field: true
-      }
-    });
-
-    if (!templateField) {
-      throw new NotFoundException('资源不存在');
-    }
-
-    return templateField;
+    const field = await prisma.templateField.findUnique({ where: { id }, include: { field: true } });
+    if (!field) throw new NotFoundException('资源不存在');
+    return field;
   }
 }

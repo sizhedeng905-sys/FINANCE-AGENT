@@ -90,7 +90,7 @@ select {
 }
 
 .notification-panel {
-  width: 360px;
+  width: min(360px, calc(100vw - 24px));
   max-height: 460px;
   overflow: auto;
   padding: 10px;
@@ -107,6 +107,10 @@ select {
   padding: 4px 4px 8px;
 }
 
+.notification-error {
+  margin: 8px 12px;
+}
+
 .notification-item {
   margin-bottom: 8px;
   padding: 10px !important;
@@ -118,6 +122,12 @@ select {
 .notification-item.unread {
   border-color: #bfdbfe;
   background: #eff6ff;
+}
+
+@media (max-width: 480px) {
+  .notification-overlay {
+    inset-inline-end: 12px !important;
+  }
 }
 
 .app-content {
@@ -142,6 +152,18 @@ select {
 
 .metric-card .ant-statistic-title {
   color: #64748b;
+}
+
+.structure-stat-card {
+  height: 100%;
+  min-height: 112px;
+}
+
+.structure-stat-card-text .ant-statistic-content {
+  font-size: 20px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .stacked-card {
@@ -243,6 +265,31 @@ select {
   background: #f8fafc;
 }
 
+.attachment-name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.attachment-actions {
+  flex: 0 0 auto;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  height: 70vh;
+  border: 0;
+}
+
 .ai-placeholder {
   display: flex;
   min-height: 160px;
@@ -331,8 +378,29 @@ select {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.boss-ai-card {
+  height: calc(100vh - 190px);
+  min-height: 560px;
+}
+
+.boss-ai-card .ant-card-body,
+.chat-box {
+  height: 100%;
+}
+
+.chat-box {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.chat-box.compact {
+  min-height: 500px;
+}
+
 .chat-list {
-  height: calc(100% - 146px);
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: 20px;
   background: #f8fafc;
@@ -371,6 +439,14 @@ select {
 
 .chat-bubble .ant-typography {
   margin-bottom: 4px;
+}
+
+.chat-message-meta {
+  margin-bottom: 4px;
+}
+
+.chat-error {
+  margin-top: 12px;
 }
 
 .chat-input {
@@ -530,6 +606,16 @@ select {
     display: none;
   }
 
+  .header-user-name,
+  .header-role-tag,
+  .header-logout > span:not(.ant-btn-icon) {
+    display: none;
+  }
+
+  .header-logout {
+    padding-inline: 8px;
+  }
+
   .app-content {
     padding: 14px;
   }
@@ -574,4 +660,9 @@ select {
   .account-hints {
     grid-template-columns: 1fr;
   }
+}
+.app-route-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
 }

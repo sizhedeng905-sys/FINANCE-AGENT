@@ -1,15 +1,15 @@
 # 物流企业 AI 财务运营审核系统
 
-这是一个物流企业 AI 财务运营管理系统的前端原型，用于梳理工单、财务审核、复核、老板审批、项目数据中心、日报和 AI 辅助分析等业务流程。
+这是一个物流企业 AI 财务运营管理系统。项目正在按可验证批次从前端原型升级为真实 PostgreSQL、真实后端与可替换 AI/OCR Provider 的工程系统。
 
 当前仓库包含前端原型和分阶段后端实现：
 
-- 前端页面仍默认使用 `src/mock` 数据
-- 后端已新增 `backend/`，完成阶段 0 项目骨架、阶段 1 登录/用户权限、阶段 2 数据中心基础、阶段 3 业务记录手工补录
+- 登录和用户管理已支持显式 Mock/API 双模式并接通真实后端
+- 后端已完成阶段 0–10：基础骨架、权限、数据中心、业务记录、工单审批、附件通知、规则异常、实时报表、老板 AI 助手、Excel 导入和 OCR 人工确认框架
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
-- 不调用真实 AI API
-- 工单、项目、附件、报表、AI 助手等业务接口仍待后续阶段实现
-- 所有未来接口统一预留在 `src/api`
+- AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
+- 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
+- 已校验 Qwen3-14B-AWQ、PaddleOCR-VL、Qwen3-VL-8B-Instruct 和 Qwen3-Embedding-8B 全部本地权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
 
 ## 技术栈
 
@@ -17,8 +17,8 @@
 - Ant Design
 - Zustand
 - React Router
-- ECharts
 - dayjs
+- Playwright
 
 后端：
 
@@ -52,14 +52,47 @@
 - 复核员审核：复核任务、审核历史
 - 老板审批：最终审批、AI建议、风险等级、询问 AI
 - 通知提醒：催办通知、审核提醒、系统提醒、老板审批提醒
-- AI助手：类 ChatGPT 对话界面，当前为 mock 回复
+- AI助手：boss-only 持久化会话、六个结构化工具、调用日志，以及显式 Mock/API Provider
 - 日报中心：财务日报、老板经营日报
 - 项目数据中心：项目、模板、字段、手工补录、Excel 导入、字段建议、数据记录
+- OCR中心：票据/PDF任务、识别证据与置信度、人工纠错、确认入库
 - 员工管理：财务和老板可新增、编辑、禁用、重置用户
+
+## 2026-07-14 审计修复状态
+
+针对 PR #2 的 15 项 P1、12 项 P2 和 5 项 P3 审计结果，本分支已完成财务方向、金额精度、并发状态、审批快照、文件隔离、模板版本、AI 可信边界、风险异常闭环、认证与供应链等修复，并补充攻击型回归测试。
+
+主要收口项：
+
+- 模板版本固定 `income/expense` 会计方向和主金额/主日期字段；手工、工单、Excel、OCR 复用同一记录策略，报表不再根据中文分类猜测方向。
+- 所有正式金额 API 使用固定小数位字符串，数据库和聚合路径保持 `Prisma.Decimal`，已验证 `90071992547409.91` 分币无损往返。
+- 经营记录和工单使用版本/CAS、事务锁、互斥时间戳、提交快照和附件 SHA-256 清单；并发确认、作废、修改、上传、删除和提交均有最终数据库断言。
+- 文件先授权、后进入隔离区并 fail-closed 扫描；生产强制 ClamAV，PDF/OOXML/CSV/图片做结构校验，上传下载流式处理，并有用户/项目配额与磁盘水位保护。
+- Excel/OCR 任务具备 lease、取消和过期恢复；OCR 使用原子上传建任务接口；不可变模板发生字段扩展时自动克隆新版本。
+- Cookie 登录使用 HttpOnly、SameSite 和双提交 CSRF；生产环境校验可信代理、远程 PostgreSQL TLS、JWT 熵和受保护 seed。
+- AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
+- 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
+
+按用户当前决定暂缓两项，不应视为已解决：
+
+- **P1-07**：Excel、OCR、手工录入之间的跨来源业务去重策略和统一幂等键。
+- **P1-08**：4999/5000/5001 行 Excel 的后台分块处理、内存/耗时基准和恢复压测。
+
+因此当前版本适合隔离开发和合成数据验收；在上述两项完成、真实模型/ClamAV/反向代理部署验收及脱敏业务样本校准前，不标记为生产就绪。
 
 ## 启动方式
 
 ### 前端启动
+
+先复制 `.env.example` 为 `.env.local`。本地真实联调使用：
+
+```env
+VITE_APP_DATA_MODE=api
+VITE_API_BASE_URL=http://127.0.0.1:3001/api
+VITE_API_TIMEOUT_MS=15000
+```
+
+只运行前端演示时将 `VITE_APP_DATA_MODE` 改为 `mock`。API 模式失败不会回退到 Mock。
 
 ```bash
 npm install
@@ -130,7 +163,16 @@ http://localhost:3001/api/health
 | 阶段 1 | 已完成 | 用户表、审计日志、JWT 登录、当前用户、退出、用户管理、finance/boss 权限 |
 | 阶段 2 | 已完成 | 项目、模板、字段、项目启用模板、项目结构可视化 |
 | 阶段 3 | 已完成 | 业务记录、动态字段值、手工补录、记录确认、ledger_events 简化事件 |
-| 阶段 4+ | 待实现 | 工单主流程、附件、通知、规则审核、报表、AI 助手 |
+| 阶段 4 | 已完成 | 工单主流程、角色数据范围、审批状态机、时间线、催办 |
+| 阶段 5 | 已完成 | 本地附件上传、预览下载、SHA-256、软删除、通知未读闭环 |
+| 阶段 6 | 已完成 | 可配置规则审核、自动风险检查、异常记录与追溯 |
+| 阶段 7 | 已完成 | 老板审批幂等生成经营记录、财务/老板/项目实时报表 |
+| 阶段 8 | 已完成 | 老板 AI 助手、六个结构化工具、mock/OpenAI-compatible provider、AI 调用日志 |
+| 阶段 9 | 已完成 | 真实 `.xlsx` 解析、映射、逐行错误、字段建议和幂等事务入库 |
+| 阶段 10 | 程序完成 | OCR Task、可构建 PaddleOCR 适配器、证据/置信度、人工纠错、重试和幂等入库；真实准确率待样本校准 |
+| 真实化批次 D-H | 已完成 | 26 条 PostgreSQL、12 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
+| PR #2 审计修复 | 基本完成 | 除用户暂缓的 P1-07 跨来源去重、P1-08 超大 Excel 性能外，其余 P1/P2/P3 已修复并回归 |
+| 本地模型部署 | 待系统环境 | 四套模型资产和常驻/按需编排已校验；当前环境没有可用 Docker，真实 GPU 推理尚未验收 |
 
 阶段 1 后端测试账号：
 
@@ -187,6 +229,58 @@ http://localhost:3001/api/health
 - `DELETE /api/records/:id`
 - `POST /api/records/:id/confirm`
 - `GET /api/projects/:projectId/records`
+- `GET /api/work-orders`
+- `POST /api/work-orders`
+- `GET /api/work-orders/:id`
+- `PATCH /api/work-orders/:id`
+- `POST /api/work-orders/:id/submit`
+- `POST /api/work-orders/:id/finance-review`
+- `POST /api/work-orders/:id/reviewer-review`
+- `POST /api/work-orders/:id/run-rules`
+- `POST /api/work-orders/:id/boss-approve`
+- `POST /api/work-orders/:id/urge`
+- `GET /api/work-orders/:id/timeline`
+- `POST /api/work-orders/:id/generate-record`
+- `POST /api/files/upload`
+- `GET /api/files/:id`
+- `GET /api/files/:id/preview`
+- `GET /api/files/:id/download`
+- `DELETE /api/files/:id`
+- `GET /api/notifications`
+- `PATCH /api/notifications/:id/read`
+- `PATCH /api/notifications/read-all`
+- `GET /api/risk-rules`
+- `POST /api/risk-rules`
+- `PATCH /api/risk-rules/:id`
+- `GET /api/reports/anomalies`
+- `GET /api/reports/finance`
+- `GET /api/reports/boss`
+- `GET /api/reports/projects/:projectId/daily`
+- `GET /api/reports/projects/:projectId/monthly`
+- `POST /api/ai/chat`
+- `GET /api/ai/conversations`
+- `GET /api/ai/conversations/:id/messages`
+- `GET /api/ai/call-logs`
+- `GET/POST /api/import-tasks`
+- `POST /api/import-tasks/:id/parse`
+- `PUT /api/import-tasks/:id/mappings`
+- `GET /api/import-tasks/:id/rows`
+- `GET /api/import-tasks/:id/errors`
+- `GET /api/import-tasks/:id/preview`
+- `POST /api/import-tasks/:id/confirm`
+- `GET /api/field-suggestions`
+- `POST /api/field-suggestions/:id/{approve|map|reject}`
+- `GET/POST /api/ocr-tasks`
+- `POST /api/ocr-tasks/upload`
+- `POST /api/ocr-tasks/:id/run`
+- `POST /api/ocr-tasks/:id/retry`
+- `PUT /api/ocr-tasks/:id/corrections`
+- `POST /api/ocr-tasks/:id/confirm`
+- `GET /api/model-runtime/deployments`
+- `GET /api/model-runtime/routes`
+- `GET /api/model-runtime/health`
+- `GET /api/health/live`
+- `GET /api/health/ready`
 
 ## 构建
 
@@ -205,6 +299,25 @@ build.bat
 ```text
 dist/
 ```
+
+## 自动化验收
+
+后端单元测试和真实 PostgreSQL 集成测试：
+
+```bash
+npm test --prefix backend
+npm run test:integration --prefix backend
+```
+
+当前审计修复基线为 13/13 Jest suites、73/73 tests，以及 26/26 真实 PostgreSQL 集成测试。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
+
+完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
+
+```bash
+npm run test:e2e
+```
+
+覆盖范围、清理规则和失败 trace 用法见 `docs/E2E_ACCEPTANCE.md`。GitHub Actions 的 `postgres-e2e` job 会自动运行构建、单测、数据库集成和核心 E2E。
 
 ## 常用调试命令
 
@@ -235,7 +348,7 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 .
 ├── docs/                         # 后端接入计划
 ├── src/
-│   ├── api/                      # 未来后端接口统一入口，当前返回 mock Promise
+│   ├── api/                      # 显式 Mock/API Repository 与统一 HTTP client
 │   ├── components/               # 通用组件、工单组件、通知组件、AI组件
 │   ├── layouts/                  # 主后台 Layout
 │   ├── mock/                     # mock 用户、项目、工单、通知、日报、数据中心
@@ -270,31 +383,32 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 | `src/layouts/MainLayout.tsx` | 后台主布局 |
 | `src/store/authStore.ts` | 登录用户状态 |
 | `src/store/workOrderStore.ts` | 工单和审批状态 |
-| `src/store/dataCenterStore.ts` | 项目、模板、字段、数据记录、导入任务 |
+| `src/store/dataCenterStore.ts` | 项目、模板、字段和数据记录 |
+| `src/store/importStore.ts`、`src/store/ocrStore.ts` | Excel 与 OCR 任务工作流 |
 | `src/store/notificationStore.ts` | 通知提醒 |
 | `src/store/userStore.ts` | 员工管理 |
-| `src/api/` | 未来真实后端接口替换位置 |
+| `src/api/` | 统一 HTTP/Repository 边界；C-1 至 C-11、Excel 和 OCR 已接真实 API |
 | `src/mock/` | 当前原型 mock 数据 |
 | `src/types/` | 全局类型定义 |
 
 ## 后端接入位置
 
-真实后端开发时，优先替换 `src/api` 下的 mock Promise，页面和 Zustand store 尽量保持现有调用方式。
+真实后端切换必须经过 `src/api` 的 Repository 边界，页面不得直接依赖 `src/mock`。下表模块均已接通，Mock 只由环境变量显式选择。
 
 | 模块 | 前端接口文件 | 预留方向 |
 | --- | --- | --- |
-| 登录认证 | `src/api/authApi.ts` | `POST /api/auth/login`、`GET /api/auth/me`、刷新 token |
-| 用户管理 | `src/api/userApi.ts` | 用户列表、新增、编辑、禁用、重置密码 |
+| 登录认证 | `src/api/authApi.ts` | 已接真实 login、me、logout 和 Token 失效 |
+| 用户管理 | `src/api/userApi.ts` | 已接真实分页、增改、启停、软删除和重置密码 |
 | 工单审批 | `src/api/workOrderApi.ts` | 工单 CRUD、审核流转、催办、生成业务记录 |
 | 通知 | `src/api/notificationApi.ts` | 通知列表、已读、全部已读 |
-| 项目管理 | `src/api/projectApi.ts` | 项目列表、详情、结构、经营汇总 |
-| 模板字段 | `src/api/templateApi.ts`、`src/api/fieldApi.ts` | 模板、字段字典、模板字段关系 |
-| 业务记录 | `src/api/recordApi.ts` | 手工补录、数据记录、记录确认 |
-| Excel 导入 | `src/api/importApi.ts`、`src/api/mappingApi.ts` | 导入任务、字段映射、确认导入 |
+| 项目管理 | `src/api/projectApi.ts` | 已接真实列表、详情、创建、更新、归档、汇总和结构聚合 |
+| 模板字段 | `src/api/templateApi.ts`、`src/api/fieldApi.ts` | 模板、字段字典与模板字段关系已接真实 API |
+| 业务记录 | `src/api/recordApi.ts` | 手工补录、分页记录、动态值、编辑、确认和软作废已接真实 API |
+| Excel 导入 | `src/api/importApi.ts`、`src/api/mappingApi.ts` | 已接真实文件、映射、逐行错误与确认导入 |
 | 文件附件 | `src/api/fileApi.ts` | 上传、预览、下载 |
 | 报表 | `src/api/reportApi.ts` | 财务日报、老板经营日报、异常统计 |
 | AI | `src/api/aiApi.ts`、`src/api/dataAiApi.ts` | `POST /api/ai/chat`、风险检测、字段映射建议 |
-| OCR | `src/api/ocrApi.ts` | OCR任务、识别结果确认 |
+| OCR | `src/api/ocrApi.ts` | 已接任务、证据、人工纠错与确认入库 |
 
 ## 后端与数据库文档
 
@@ -323,21 +437,22 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 
 ## 当前限制
 
-- 当前前端仍默认使用 mock 数据，刷新页面后部分状态依赖 localStorage。
-- AI、OCR、Excel 文件解析均为前端 mock，不代表真实识别能力。
-- 权限由前端路由控制，真实上线必须由后端再次校验。
-- 文件上传当前只是原型交互，不会真正存储到对象存储。
-- 报表数据来自 mock 汇总，不是实时财务数据。
+- 认证、用户管理和 C-1 至 C-11 已完成显式 Mock/API 切换；API 失败不会静默回退 Mock。
+- Excel 已使用真实解析器和 PostgreSQL；OCR 适配器和容器配置已完成，但默认仍使用确定性 Mock Provider，真实模型尚未在 Docker/GPU 上启动并用企业样本校准。
+- 后端权限已经按 JWT 角色和数据归属强制校验，前端路由仅用于界面体验。
+- 文件当前真实存储在 `backend/uploads`；开发可用基础扫描，生产配置强制使用 ClamAV 且只允许 `clean` 文件进入预览、下载、Excel 或 OCR。对象存储、备份和实际 ClamAV 服务部署仍需在目标环境完成。
+- 后端报表只聚合 PostgreSQL 中已确认经营记录，前端财务/老板/项目报表均已切换真实接口。
+- AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。四套本地模型权重均已通过完整性检查，但当前系统没有可用 Docker 命令，尚未完成容器推理、显存和延迟验收。
+- 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、ClamAV 服务、集中监控和备份仍待部署。
+- 跨 Excel/OCR/手工来源的业务去重，以及 5000 行级 Excel 的后台分块与性能基准，按用户决定暂缓。
 
 ## 推荐后续开发顺序
 
-1. 后端基础：用户、登录、权限、JWT、审计日志。
-2. 数据中心基础：项目、模板、字段、项目启用模板。
-3. 文件上传和追加式账本：`raw_files` + 完整 `ledger_events`。
-4. Excel 导入：导入任务、原始行、字段映射、确认入库事务。
-5. 工单审批：员工提交、财务审核、复核、AI复核、老板终审、催办。
-6. 通知、日报、AI基础。
-7. OCR 图片/PDF 识别和人工确认入库。
+1. 经用户确认后安装 WSL 2 和 Docker Desktop，按 `docs/MODEL_DEPLOYMENT.md` 启动文本与 OCR 常驻服务，并实测 32 GB 单卡显存、延迟和服务恢复。
+2. 定义跨 Excel/OCR/手工来源的业务唯一性政策，再实现统一幂等键和重复入账攻击测试。
+3. 将大 Excel 改为后台分块任务，完成 4999/5000/5001 行的耗时、RSS、响应大小和失败恢复基准。
+4. 收集脱敏 Excel、票据/PDF、字段真值、审批规则和老板问题标准答案，校准准确率与回答口径。
+5. 上线前部署对象存储、ClamAV、共享限流、密钥托管、监控和备份，并在真实反向代理/PostgreSQL TLS 拓扑演练。
 
 ## GitHub
 

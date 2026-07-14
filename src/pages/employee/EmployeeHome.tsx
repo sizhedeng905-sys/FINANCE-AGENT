@@ -51,10 +51,10 @@ export default function EmployeeHome() {
       />
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="待财务审核" value={count((item) => ['submitted', 'finance_reviewing'].includes(item.status))} />
+          <MetricCard title="待财务审核" value={count((item) => ['finance_reviewing', 'reviewer_rejected'].includes(item.status))} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="待复核" value={count((item) => ['finance_approved', 'reviewer_reviewing'].includes(item.status))} />
+          <MetricCard title="待复核" value={count((item) => item.status === 'reviewer_reviewing')} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
           <MetricCard title="AI复核中" value={count((item) => item.status === 'ai_reviewing')} />

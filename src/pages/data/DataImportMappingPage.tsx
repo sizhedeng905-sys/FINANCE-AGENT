@@ -1,158 +1,169 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, App, Button, Card, Descriptions, Select, Space, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Empty, Select, Space, Spin, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
-import { useAuthStore } from '@/store/authStore';
 import { useDataCenterStore } from '@/store/dataCenterStore';
-import type { MappingRule } from '@/types/dataCenter';
+import { useImportStore } from '@/store/importStore';
+import type { ImportColumn, ImportMappingType } from '@/types/dataCenter';
 import { fieldTypeMap, importStatusMap } from '@/utils/dataCenterMaps';
 
-interface ColumnRow {
-  name: string;
-  sample: string | number;
-}
+const IGNORE_VALUE = '__ignore__';
+
+const mappingTypeLabels: Record<ImportMappingType, string> = {
+  profile: '历史人工规则',
+  field_key: '系统识别名',
+  exact_name: '字段名精确匹配',
+  alias: '字段别名',
+  normalized: '规范化名称',
+  fuzzy: '确定性模糊匹配',
+  manual: '人工确认',
+  ignored: '明确忽略',
+};
 
 export default function DataImportMappingPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { message } = App.useApp();
-  const user = useAuthStore((state) => state.user);
-  const [selectedFields, setSelectedFields] = useState<Record<string, string>>({});
-  const importTasks = useDataCenterStore((state) => state.importTasks);
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const task = useImportStore((state) => state.currentTask?.id === id ? state.currentTask : undefined);
+  const loading = useImportStore((state) => state.loading);
+  const error = useImportStore((state) => state.error);
+  const fetchTask = useImportStore((state) => state.fetchTask);
+  const saveMappings = useImportStore((state) => state.saveMappings);
+  const autoMatch = useImportStore((state) => state.autoMatch);
+  const generateSuggestions = useImportStore((state) => state.generateSuggestions);
   const fields = useDataCenterStore((state) => state.fields);
   const templateFields = useDataCenterStore((state) => state.templateFields);
-  const mappingRules = useDataCenterStore((state) => state.mappingRules);
-  const excelColumns = useDataCenterStore((state) => state.excelColumns);
-  const saveMappingRules = useDataCenterStore((state) => state.saveMappingRules);
-  const autoMatchColumns = useDataCenterStore((state) => state.autoMatchColumns);
-  const generateFieldSuggestionsFromTask = useDataCenterStore((state) => state.generateFieldSuggestionsFromTask);
-  const updateImportTask = useDataCenterStore((state) => state.updateImportTask);
-  const task = importTasks.find((item) => item.id === id);
-  const taskTemplateFieldIds = useMemo(
-    () => templateFields.filter((item) => item.templateId === task?.templateId).map((item) => item.fieldId),
+  const fetchFields = useDataCenterStore((state) => state.fetchFields);
+  const fetchTemplateFields = useDataCenterStore((state) => state.fetchTemplateFields);
+
+  useEffect(() => {
+    if (id) void fetchTask(id).catch(() => undefined);
+    void fetchFields({ page: 1, pageSize: 100, isActive: true }).catch(() => undefined);
+  }, [fetchFields, fetchTask, id]);
+
+  useEffect(() => {
+    if (task?.templateId) void fetchTemplateFields(task.templateId).catch(() => undefined);
+  }, [fetchTemplateFields, task?.templateId]);
+
+  const taskFieldIds = useMemo(
+    () => new Set(templateFields.filter((item) => item.templateId === task?.templateId).map((item) => item.fieldId)),
     [task?.templateId, templateFields],
   );
   const candidateFields = useMemo(
-    () => fields.filter((item) => item.isActive && taskTemplateFieldIds.includes(item.id)),
-    [fields, taskTemplateFieldIds],
+    () => fields.filter((item) => item.isActive && taskFieldIds.has(item.id)),
+    [fields, taskFieldIds],
   );
-  const ruleByColumn = useMemo(() => {
-    const map = new Map<string, MappingRule>();
-    if (!task) return map;
-    mappingRules
-      .filter((item) => item.importTaskId === task.id || item.templateId === task.templateId)
-      .forEach((rule) => {
-        const current = map.get(rule.sourceColumnName);
-        if (!current || rule.importTaskId === task.id) {
-          map.set(rule.sourceColumnName, rule);
-        }
-      });
-    return map;
-  }, [mappingRules, task]);
 
-  const getSelectedField = (columnName: string) => selectedFields[columnName] ?? ruleByColumn.get(columnName)?.targetFieldId;
+  const valueFor = (column: ImportColumn) => {
+    if (Object.prototype.hasOwnProperty.call(selected, column.id)) return selected[column.id];
+    if (column.decision?.ignored) return IGNORE_VALUE;
+    return column.decision?.targetFieldId;
+  };
+  const unresolved = task?.columns.filter((column) => !valueFor(column)) ?? [];
 
-  const columns: ColumnsType<ColumnRow> = [
-    { title: 'Excel列名', dataIndex: 'name' },
-    { title: '样例值', dataIndex: 'sample' },
+  const columns: ColumnsType<ImportColumn> = [
+    {
+      title: 'Excel 列',
+      render: (_, column) => (
+        <Space>
+          <span>{column.sourceName}</span>
+          {column.duplicateName ? <Tag color="error">重复列名</Tag> : null}
+        </Space>
+      ),
+    },
+    { title: '样例值', render: (_, column) => column.sampleValues.slice(0, 3).join('、') || '-' },
+    { title: '推断类型', dataIndex: 'inferredType' },
     {
       title: '系统字段',
-      render: (_, record) => (
+      width: 300,
+      render: (_, column) => (
         <Select
           className="full-width"
-          allowClear
-          placeholder="选择字段"
-          value={getSelectedField(record.name)}
-          onChange={(value) => setSelectedFields((state) => ({ ...state, [record.name]: value }))}
-          options={candidateFields.map((item) => ({ label: `${item.fieldName}（${fieldTypeMap[item.fieldType]}）`, value: item.id }))}
+          placeholder="请选择字段或忽略"
+          value={valueFor(column)}
+          onChange={(value) => setSelected((state) => ({ ...state, [column.id]: value }))}
+          options={[
+            { label: '明确忽略此列', value: IGNORE_VALUE },
+            ...candidateFields.map((field) => ({ label: `${field.fieldName}（${fieldTypeMap[field.fieldType]}）`, value: field.id })),
+          ]}
         />
       ),
     },
     {
-      title: '匹配方式',
-      render: (_, record) => {
-        const selected = getSelectedField(record.name);
-        const rule = ruleByColumn.get(record.name);
-        if (selected === '') return <Tag color="default">忽略字段</Tag>;
-        if (selected || rule) return <Tag color="green">已映射：{rule?.targetFieldName ?? candidateFields.find((item) => item.id === selected)?.fieldName}</Tag>;
-        return <Tag color="orange">未知字段</Tag>;
-      },
-    },
-    { title: '置信度', render: (_, record) => ruleByColumn.get(record.name) ? `${Math.round((ruleByColumn.get(record.name)?.confidence ?? 0) * 100)}%` : '42%' },
-    {
-      title: '操作',
-      render: (_, record) => (
-        <Space>
-          {!ruleByColumn.get(record.name) && getSelectedField(record.name) !== '' ? <Tag color="warning">建议人工确认</Tag> : null}
-          <Button size="small" onClick={() => setSelectedFields((state) => ({ ...state, [record.name]: '' }))}>忽略</Button>
+      title: '当前决定',
+      render: (_, column) => column.decision ? (
+        <Space direction="vertical" size={2}>
+          <Tag color={column.decision.ignored ? 'default' : 'green'}>{mappingTypeLabels[column.decision.mappingType]}</Tag>
+          {!column.decision.ignored ? <span>{column.decision.targetFieldName}</span> : null}
         </Space>
-      ),
+      ) : <Tag color="warning">等待人工处理</Tag>,
     },
+    { title: '置信度', render: (_, column) => column.decision ? `${Math.round(column.decision.confidence * 100)}%` : '-' },
   ];
 
-  if (!task) return <Card>导入任务不存在</Card>;
-
-  const save = () => {
-    const rules: MappingRule[] = excelColumns
-      .map((column) => {
-        const field = candidateFields.find((item) => item.id === selectedFields[column.name] || item.fieldName === column.name || item.aliases.includes(column.name));
-        if (selectedFields[column.name] === '') return null;
-        if (!field) return null;
-        return {
-          id: `mr-${Date.now()}-${column.name}`,
-          importTaskId: task.id,
-          templateId: task.templateId,
-          sourceColumnName: column.name,
-          targetFieldId: field.id,
-          targetFieldName: field.fieldName,
-          mappingType: selectedFields[column.name] ? 'manual' : 'auto',
-          confidence: selectedFields[column.name] ? 0.9 : 0.98,
-          createdBy: user?.name ?? '财务',
-          createdAt: new Date().toLocaleString('zh-CN'),
-        } as MappingRule;
-      })
-      .filter(Boolean) as MappingRule[];
-    saveMappingRules(task.id, rules);
-    message.success('映射已保存');
+  const save = async () => {
+    if (!task) return;
+    const mappings = task.columns.flatMap((column) => {
+      const value = valueFor(column);
+      if (!value) return [];
+      return [{ columnId: column.id, ...(value === IGNORE_VALUE ? { ignore: true } : { targetFieldId: value }) }];
+    });
+    if (mappings.length !== task.columns.length) {
+      message.warning('每一列都必须映射或明确忽略');
+      return;
+    }
+    await saveMappings(task.id, { mappings, saveToProfile: true });
+    setSelected({});
+    message.success('映射已保存并可供后续同模板复用');
   };
+
+  if (!id) return <Card><Empty description="导入任务不存在" /></Card>;
 
   return (
     <div>
-      <PageHeader title="导入字段映射" description="已知列映射到字段字典，未知列生成字段建议" />
-      <Card>
-        <Descriptions bordered size="small" column={4}>
-          <Descriptions.Item label="文件名">{task.fileName}</Descriptions.Item>
-          <Descriptions.Item label="项目">{task.projectName}</Descriptions.Item>
-          <Descriptions.Item label="模板">{task.templateName}</Descriptions.Item>
-          <Descriptions.Item label="状态">{importStatusMap[task.status]}</Descriptions.Item>
-        </Descriptions>
-      </Card>
-      <Alert className="section-row" type="warning" showIcon message="发现未知字段，建议人工确认。" />
-      <Card className="section-row" title="字段映射表">
-        <Table rowKey="name" columns={columns} dataSource={excelColumns} pagination={false} scroll={{ x: 900 }} />
-        <Space className="form-actions">
-          <Button onClick={save}>保存映射</Button>
-          <Button
-            onClick={() => {
-              autoMatchColumns(task.id);
-              message.success('已重新自动匹配');
-            }}
-          >
-            重新自动匹配
-          </Button>
-          <Button onClick={() => { generateFieldSuggestionsFromTask(task.id); message.success('字段建议已生成'); }}>生成字段建议</Button>
-          <Button
-            type="primary"
-            onClick={() => {
-              updateImportTask(task.id, { status: 'pending_confirm' });
-              navigate(`/data/import/${task.id}/confirm`);
-            }}
-          >
-            下一步确认
-          </Button>
-        </Space>
-      </Card>
+      <PageHeader title="导入字段映射" description="确认本次任务的字段映射" />
+      {error ? <Alert type="error" showIcon message="导入任务请求失败" description={error} /> : null}
+      <Spin spinning={loading && !task}>
+        {!task && !loading ? <Card><Empty description="导入任务不存在" /></Card> : null}
+        {task ? (
+          <>
+            <Card>
+              <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
+                <Descriptions.Item label="文件名">{task.fileName}</Descriptions.Item>
+                <Descriptions.Item label="项目">{task.projectName}</Descriptions.Item>
+                <Descriptions.Item label="模板">{task.templateName}</Descriptions.Item>
+                <Descriptions.Item label="状态">{importStatusMap[task.status]}</Descriptions.Item>
+              </Descriptions>
+            </Card>
+            {unresolved.length ? (
+              <Alert className="section-row" type="warning" showIcon message={`还有 ${unresolved.length} 列需要人工处理`} />
+            ) : (
+              <Alert className="section-row" type="success" showIcon message="所有列均已有明确处理决定" />
+            )}
+            <Card className="section-row" title="字段映射表">
+              <Table rowKey="id" columns={columns} dataSource={task.columns} pagination={false} scroll={{ x: 1050 }} />
+              <Space className="form-actions" wrap>
+                <Button loading={loading} onClick={() => void save().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '保存失败'))}>保存映射</Button>
+                <Button loading={loading} onClick={() => void autoMatch(task.id).then(() => message.success('自动匹配已重新执行')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '匹配失败'))}>重新自动匹配</Button>
+                <Button loading={loading} onClick={() => void generateSuggestions(task.id).then((items) => message.success(`已保留 ${items.length} 条字段建议`)).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '生成失败'))}>生成字段建议</Button>
+                <Button onClick={() => navigate('/data/field-suggestions')}>查看字段建议</Button>
+                <Button
+                  type="primary"
+                  disabled={unresolved.length > 0}
+                  loading={loading}
+                  onClick={() => void save()
+                    .then(() => navigate(`/data/import/${task.id}/confirm`))
+                    .catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '保存失败'))}
+                >
+                  下一步确认
+                </Button>
+              </Space>
+            </Card>
+          </>
+        ) : null}
+      </Spin>
     </div>
   );
 }

@@ -1,59 +1,75 @@
-import { useUserStore, type CreateUserPayload } from '@/store/userStore';
-import type { ApiResponse } from '@/types/dataCenter';
-import type { UserAccount } from '@/types/user';
+import { runtimeConfig } from '@/config/runtime';
+import type {
+  CreateUserPayload,
+  PaginatedUsers,
+  UpdateUserPayload,
+  UserAccount,
+  UserListQuery,
+} from '@/types/user';
+import { getAccessToken } from './authSession';
+import { httpClient } from './httpClient';
+import {
+  mockCreateUser,
+  mockDeleteUser,
+  mockGetUser,
+  mockListUsers,
+  mockResetPassword,
+  mockUpdateStatus,
+  mockUpdateUser,
+} from './mockIdentityRepository';
 
-const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
-const ok = <T,>(data: T, message = 'success'): ApiResponse<T> => ({ code: 0, message, data });
-
-// GET /api/users
-export async function getUsers(): Promise<ApiResponse<UserAccount[]>> {
-  await delay();
-  return ok(useUserStore.getState().users);
+function createQueryString(query: UserListQuery): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : '';
 }
 
-// POST /api/users
-export async function createUser(payload: CreateUserPayload): Promise<ApiResponse<UserAccount>> {
-  await delay();
-  return ok(useUserStore.getState().createUser(payload), '员工已创建');
+export function getUsers(query: UserListQuery = {}): Promise<PaginatedUsers> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedUsers>(`/users${createQueryString(query)}`)
+    : mockListUsers(getAccessToken(), query);
 }
 
-// GET /api/users/:id
-export async function getUser(id: string): Promise<ApiResponse<UserAccount | undefined>> {
-  await delay();
-  return ok(useUserStore.getState().users.find((item) => item.id === id));
+export function createUser(payload: CreateUserPayload): Promise<UserAccount> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<UserAccount>('/users', payload)
+    : mockCreateUser(getAccessToken(), payload);
 }
 
-// PATCH /api/users/:id
-export async function updateUser(id: string, payload: Partial<UserAccount>): Promise<ApiResponse<{ id: string }>> {
-  await delay();
-  useUserStore.getState().updateUser(id, payload);
-  return ok({ id }, '员工信息已更新');
+export function getUser(id: string): Promise<UserAccount> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<UserAccount>(`/users/${encodeURIComponent(id)}`)
+    : mockGetUser(getAccessToken(), id);
 }
 
-// PATCH /api/users/:id/password
-export async function resetUserPassword(id: string, newPassword: string): Promise<ApiResponse<{ id: string }>> {
-  await delay();
-  useUserStore.getState().resetPassword(id, newPassword);
-  return ok({ id }, '密码已重置');
+export function updateUser(id: string, payload: UpdateUserPayload): Promise<UserAccount> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<UserAccount>(`/users/${encodeURIComponent(id)}`, payload)
+    : mockUpdateUser(getAccessToken(), id, payload);
 }
 
-// PATCH /api/users/:id/status
-export async function updateUserStatus(
+export function resetUserPassword(id: string, newPassword: string): Promise<{ id: string }> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<{ id: string }>(`/users/${encodeURIComponent(id)}/password`, { newPassword })
+    : mockResetPassword(getAccessToken(), id, newPassword);
+}
+
+export function updateUserStatus(
   id: string,
   status: UserAccount['status'],
-): Promise<ApiResponse<{ id: string; status: UserAccount['status'] }>> {
-  await delay();
-  if (status === 'active') {
-    useUserStore.getState().enableUser(id);
-  } else {
-    useUserStore.getState().disableUser(id);
-  }
-  return ok({ id, status }, '账号状态已更新');
+): Promise<{ id: string; status: UserAccount['status'] }> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<{ id: string; status: UserAccount['status'] }>(`/users/${encodeURIComponent(id)}/status`, {
+        status,
+      })
+    : mockUpdateStatus(getAccessToken(), id, status);
 }
 
-// DELETE /api/users/:id
-export async function deleteUser(id: string): Promise<ApiResponse<{ id: string }>> {
-  await delay();
-  useUserStore.getState().deleteUser(id);
-  return ok({ id }, '员工已删除');
+export function deleteUser(id: string): Promise<{ id: string; status: UserAccount['status'] }> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.delete<{ id: string; status: UserAccount['status'] }>(`/users/${encodeURIComponent(id)}`)
+    : mockDeleteUser(getAccessToken(), id);
 }

@@ -1,47 +1,55 @@
-import { mockAnomalies, mockBossReports, mockFinanceReport } from '@/mock/mockReports';
-import type { BossReport } from '@/types/report';
+import { runtimeConfig } from '@/config/runtime';
+import type { BossReport, BossReportPeriod, FinanceReport, FinanceReportPeriod, ProjectReport } from '@/types/report';
+import { httpClient } from './httpClient';
+import {
+  mockFetchBossReport,
+  mockFetchFinanceReport,
+  mockFetchProjectDailyReport,
+  mockFetchProjectMonthlyReport,
+} from './mockReportRepository';
 
-const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-// GET /api/reports/finance?period=today
-export async function fetchFinanceReportApi() {
-  await delay();
-  return mockFinanceReport;
+function reportQuery(periodKey: string, period: string, dateKey?: string, date?: string): string {
+  const params = new URLSearchParams({ [periodKey]: period });
+  if (dateKey && date) params.set(dateKey, date);
+  return `?${params.toString()}`;
 }
 
-// GET /api/reports/finance?period=:period
-export async function fetchFinanceReportByPeriodApi(period: 'today' | 'week' | 'month') {
-  await delay();
-  const ratioMap = { today: 1, week: 5, month: 22 };
-  const ratio = ratioMap[period];
-  return {
-    ...mockFinanceReport,
-    id: `${mockFinanceReport.id}-${period}`,
-    newWorkOrders: mockFinanceReport.newWorkOrders * ratio,
-    approvedCount: mockFinanceReport.approvedCount * ratio,
-    rejectedCount: mockFinanceReport.rejectedCount * ratio,
-    totalIncome: mockFinanceReport.totalIncome * ratio,
-    totalExpense: mockFinanceReport.totalExpense * ratio,
-    estimatedProfit: mockFinanceReport.estimatedProfit * ratio,
-  };
+export function fetchFinanceReportApi(
+  period: FinanceReportPeriod = 'today',
+  date?: string,
+): Promise<FinanceReport> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<FinanceReport>(`/reports/finance${reportQuery('period', period, 'date', date)}`)
+    : mockFetchFinanceReport(period);
 }
 
-// GET /api/reports/boss
-export async function fetchBossReportsApi() {
-  await delay();
-  return mockBossReports;
+export const fetchFinanceReportByPeriodApi = fetchFinanceReportApi;
+
+export function fetchBossReportByPeriodApi(
+  period: BossReportPeriod,
+  date?: string,
+): Promise<BossReport> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<BossReport>(`/reports/boss${reportQuery('period', period, 'date', date)}`)
+    : mockFetchBossReport(period);
 }
 
-// GET /api/reports/boss?period=:period
-export async function fetchBossReportByPeriodApi(
-  period: BossReport['period'],
-): Promise<BossReport | undefined> {
-  await delay();
-  return mockBossReports.find((item) => item.period === period);
+export function fetchBossReportsApi(): Promise<BossReport[]> {
+  return Promise.all(
+    (['daily', 'weekly', 'monthly'] as BossReportPeriod[]).map((period) => fetchBossReportByPeriodApi(period)),
+  );
 }
 
-// GET /api/reports/anomalies
-export async function fetchAIAnomaliesApi() {
-  await delay();
-  return mockAnomalies;
+export function fetchProjectDailyReportApi(projectId: string, date?: string): Promise<ProjectReport> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<ProjectReport>(`/reports/projects/${encodeURIComponent(projectId)}/daily${query}`)
+    : mockFetchProjectDailyReport(projectId, date);
+}
+
+export function fetchProjectMonthlyReportApi(projectId: string, month?: string): Promise<ProjectReport> {
+  const query = month ? `?month=${encodeURIComponent(month)}` : '';
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<ProjectReport>(`/reports/projects/${encodeURIComponent(projectId)}/monthly${query}`)
+    : mockFetchProjectMonthlyReport(projectId, month);
 }

@@ -1,14 +1,12 @@
+import { formatMoney } from '@/utils/format';
+
 interface MoneyTextProps {
-  value: number;
+  value: string | number;
   strong?: boolean;
 }
 
 export default function MoneyText({ value, strong }: MoneyTextProps) {
-  const text = new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-    maximumFractionDigits: 0,
-  }).format(value);
+  const text = formatMoney(value);
 
   return strong ? <strong>{text}</strong> : <span>{text}</span>;
 }

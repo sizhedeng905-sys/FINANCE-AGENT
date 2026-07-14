@@ -1,141 +1,130 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import type { UserAccount } from '@/types/user';
-
-const now = () => new Date().toLocaleString('zh-CN', { hour12: false });
-
-const initialUsers: UserAccount[] = [
-  {
-    id: 'u-employee',
-    username: 'employee',
-    password: '123456',
-    name: '员工张三',
-    role: 'employee',
-    department: '运营部',
-    phone: '13800000001',
-    status: 'active',
-    createdAt: '2026-07-09 09:00',
-    updatedAt: '2026-07-09 09:00',
-    createdBy: '系统',
-  },
-  {
-    id: 'u-finance',
-    username: 'finance',
-    password: '123456',
-    name: '财务林雪',
-    role: 'finance',
-    department: '财务部',
-    phone: '13800000002',
-    status: 'active',
-    createdAt: '2026-07-09 09:00',
-    updatedAt: '2026-07-09 09:00',
-    createdBy: '系统',
-  },
-  {
-    id: 'u-reviewer',
-    username: 'reviewer',
-    password: '123456',
-    name: '复核员赵明',
-    role: 'reviewer',
-    department: '内控部',
-    phone: '13800000003',
-    status: 'active',
-    createdAt: '2026-07-09 09:00',
-    updatedAt: '2026-07-09 09:00',
-    createdBy: '系统',
-  },
-  {
-    id: 'u-boss',
-    username: 'boss',
-    password: '123456',
-    name: '老板',
-    role: 'boss',
-    department: '管理层',
-    phone: '13800000004',
-    status: 'active',
-    createdAt: '2026-07-09 09:00',
-    updatedAt: '2026-07-09 09:00',
-    createdBy: '系统',
-  },
-];
-
-export interface CreateUserPayload {
-  username: string;
-  password: string;
-  name: string;
-  role: UserAccount['role'];
-  department: string;
-  phone: string;
-  createdBy?: string;
-}
+import {
+  createUser as createUserRequest,
+  deleteUser as deleteUserRequest,
+  getUsers,
+  resetUserPassword,
+  updateUser as updateUserRequest,
+  updateUserStatus,
+} from '@/api/userApi';
+import type {
+  CreateUserPayload,
+  UpdateUserPayload,
+  UserAccount,
+  UserListQuery,
+} from '@/types/user';
 
 interface UserState {
   users: UserAccount[];
-  getUsers: () => UserAccount[];
-  createUser: (payload: CreateUserPayload) => UserAccount;
-  updateUser: (id: string, payload: Partial<Omit<UserAccount, 'id' | 'username' | 'password' | 'createdAt' | 'createdBy'>>) => void;
-  resetPassword: (id: string, newPassword: string) => void;
-  disableUser: (id: string) => void;
-  enableUser: (id: string) => void;
-  deleteUser: (id: string) => void;
+  page: number;
+  pageSize: number;
+  total: number;
+  loading: boolean;
+  error: string | null;
+  lastQuery: UserListQuery;
+  fetchUsers: (query?: UserListQuery) => Promise<void>;
+  createUser: (payload: CreateUserPayload) => Promise<UserAccount>;
+  updateUser: (id: string, payload: UpdateUserPayload) => Promise<UserAccount>;
+  resetPassword: (id: string, newPassword: string) => Promise<void>;
+  updateStatus: (id: string, status: UserAccount['status']) => Promise<void>;
+  deleteUser: (id: string) => Promise<void>;
+  clearUsers: () => void;
 }
 
-function assertCreatePayload(payload: CreateUserPayload, users: UserAccount[]) {
-  if (!payload.username?.trim()) throw new Error('登录账号不能为空');
-  if (!payload.password?.trim()) throw new Error('初始密码不能为空');
-  if (!payload.name?.trim()) throw new Error('姓名不能为空');
-  if (!payload.role) throw new Error('角色不能为空');
-  if (users.some((item) => item.username === payload.username.trim())) {
-    throw new Error('登录账号已存在');
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '请求失败';
+}
+
+async function refreshCurrentPage(get: () => UserState, page?: number): Promise<void> {
+  try {
+    await get().fetchUsers({ ...get().lastQuery, page: page ?? get().lastQuery.page });
+  } catch {
+    // The write already succeeded. fetchUsers keeps the refresh error visible.
   }
 }
 
-export const useUserStore = create<UserState>()(
-  persist(
-    (set, get) => ({
-      users: initialUsers,
-      getUsers: () => get().users,
-      createUser: (payload) => {
-        assertCreatePayload(payload, get().users);
-        const user: UserAccount = {
-          id: `u-${Date.now()}`,
-          username: payload.username.trim(),
-          password: payload.password,
-          name: payload.name.trim(),
-          role: payload.role,
-          department: payload.department?.trim() || '-',
-          phone: payload.phone?.trim() || '-',
-          status: 'active',
-          createdAt: now(),
-          updatedAt: now(),
-          createdBy: payload.createdBy || '当前用户',
-        };
-        set((state) => ({ users: [user, ...state.users] }));
-        return user;
-      },
-      updateUser: (id, payload) =>
-        set((state) => ({
-          users: state.users.map((item) => (item.id === id ? { ...item, ...payload, updatedAt: now() } : item)),
-        })),
-      resetPassword: (id, newPassword) => {
-        if (!newPassword.trim()) throw new Error('新密码不能为空');
-        set((state) => ({
-          users: state.users.map((item) => (item.id === id ? { ...item, password: newPassword, updatedAt: now() } : item)),
-        }));
-      },
-      disableUser: (id) =>
-        set((state) => ({
-          users: state.users.map((item) => (item.id === id ? { ...item, status: 'disabled', updatedAt: now() } : item)),
-        })),
-      enableUser: (id) =>
-        set((state) => ({
-          users: state.users.map((item) => (item.id === id ? { ...item, status: 'active', updatedAt: now() } : item)),
-        })),
-      deleteUser: (id) => set((state) => ({ users: state.users.filter((item) => item.id !== id) })),
-    }),
-    {
-      name: 'audit-user-store-v1',
-      partialize: (state) => ({ users: state.users }),
-    },
-  ),
-);
+export const useUserStore = create<UserState>((set, get) => ({
+  users: [],
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  loading: false,
+  error: null,
+  lastQuery: { page: 1, pageSize: 20 },
+  fetchUsers: async (query = get().lastQuery) => {
+    const normalizedQuery = {
+      page: query.page ?? 1,
+      pageSize: query.pageSize ?? get().pageSize,
+      keyword: query.keyword,
+      role: query.role,
+      status: query.status,
+    };
+    set({ loading: true, error: null, lastQuery: normalizedQuery });
+    try {
+      const result = await getUsers(normalizedQuery);
+      set({
+        users: result.items,
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+        loading: false,
+      });
+    } catch (error) {
+      set({ loading: false, error: errorMessage(error) });
+      throw error;
+    }
+  },
+  createUser: async (payload) => {
+    set({ error: null });
+    try {
+      const user = await createUserRequest(payload);
+      await refreshCurrentPage(get, 1);
+      return user;
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
+  },
+  updateUser: async (id, payload) => {
+    set({ error: null });
+    try {
+      const user = await updateUserRequest(id, payload);
+      await refreshCurrentPage(get);
+      return user;
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
+  },
+  resetPassword: async (id, newPassword) => {
+    set({ error: null });
+    try {
+      await resetUserPassword(id, newPassword);
+      await refreshCurrentPage(get);
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
+  },
+  updateStatus: async (id, status) => {
+    set({ error: null });
+    try {
+      await updateUserStatus(id, status);
+      await refreshCurrentPage(get);
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
+  },
+  deleteUser: async (id) => {
+    set({ error: null });
+    try {
+      await deleteUserRequest(id);
+      await refreshCurrentPage(get);
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
+  },
+  clearUsers: () => set({ users: [], page: 1, total: 0, error: null }),
+}));

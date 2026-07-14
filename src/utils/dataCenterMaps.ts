@@ -1,4 +1,4 @@
-import type { DataRecordType, FieldDefinition, ImportTask, Project, BusinessRecord, FieldSuggestion } from '@/types/dataCenter';
+import type { DataRecordType, FieldDefinition, ImportTask, Project, BusinessRecord, FieldSuggestion, OCRTaskStatus } from '@/types/dataCenter';
 
 export const recordTypeMap: Record<DataRecordType, string> = {
   cost: '成本',
@@ -40,7 +40,7 @@ export const recordStatusMap: Record<BusinessRecord['status'], string> = {
   draft: '草稿',
   pending_confirm: '待确认',
   confirmed: '已确认',
-  rejected: '已拒绝',
+  rejected: '已作废',
 };
 
 export const sourceTypeMap: Record<BusinessRecord['sourceType'], string> = {
@@ -52,11 +52,13 @@ export const sourceTypeMap: Record<BusinessRecord['sourceType'], string> = {
 
 export const importStatusMap: Record<ImportTask['status'], string> = {
   uploaded: '已上传',
+  parsing: '解析中',
   parsed: '已解析',
   mapping: '待映射',
   pending_confirm: '待确认',
   confirmed: '已确认',
   failed: '失败',
+  cancelled: '已取消',
 };
 
 export const suggestionStatusMap: Record<FieldSuggestion['status'], string> = {
@@ -64,4 +66,14 @@ export const suggestionStatusMap: Record<FieldSuggestion['status'], string> = {
   approved: '已批准',
   rejected: '已拒绝',
   mapped_to_existing: '已映射',
+};
+
+export const ocrStatusMap: Record<OCRTaskStatus, string> = {
+  uploaded: '已上传',
+  queued: '排队中',
+  processing: '识别中',
+  pending_confirm: '待人工确认',
+  confirmed: '已确认',
+  failed: '识别失败',
+  cancelled: '已取消',
 };
