@@ -257,6 +257,10 @@ export const mockImportTasks: ImportTask[] = [
     status: 'uploaded',
     uploadedBy: '林雪',
     createdAt: '2026-07-08 10:00',
+    counts: { total: 0, valid: 0, errors: 0, duplicates: 0, ignored: 0, imported: 0 },
+    rawFile: { id: 'rf-002', fileName: '得物收入明细.xlsx', fileSize: 0, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', sha256: '' },
+    sheets: [],
+    columns: [],
   },
   {
     id: 'it-002',
@@ -270,6 +274,10 @@ export const mockImportTasks: ImportTask[] = [
     status: 'mapping',
     uploadedBy: '林雪',
     createdAt: '2026-07-08 11:00',
+    counts: { total: 2, valid: 1, errors: 0, duplicates: 0, ignored: 0, imported: 0 },
+    rawFile: { id: 'rf-001', fileName: '太和运输费用7月.xlsx', fileSize: 0, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', sha256: '' },
+    sheets: [],
+    columns: [],
   },
   {
     id: 'it-003',
@@ -284,6 +292,10 @@ export const mockImportTasks: ImportTask[] = [
     uploadedBy: '林雪',
     createdAt: '2026-07-08 13:00',
     confirmedAt: '2026-07-08 13:20',
+    counts: { total: 12, valid: 12, errors: 0, duplicates: 0, ignored: 0, imported: 12 },
+    rawFile: { id: 'rf-003', fileName: '旧衣场地费用.xlsx', fileSize: 0, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', sha256: '' },
+    sheets: [],
+    columns: [],
   },
 ];
 
@@ -294,7 +306,10 @@ export const mockImportRows: ImportRow[] = [
     rowNumber: 1,
     rawData: { 日期: '2026-07-01', 车牌号: '沪A12345', 司机: '王师傅', 金额: 8200, 夜班补贴: 300 },
     mappedData: { 日期: '2026-07-01', 车牌号: '沪A12345', 司机: '王师傅', 金额: 8200 },
+    rowHash: 'mock-row-001',
     status: 'mapped',
+    errors: [],
+    warnings: [],
   },
   {
     id: 'ir-002',
@@ -302,7 +317,10 @@ export const mockImportRows: ImportRow[] = [
     rowNumber: 2,
     rawData: { 日期: '2026-07-02', 车牌号: '沪B77889', 司机: '刘师傅', 金额: 9100, 上楼费: 500 },
     mappedData: { 日期: '2026-07-02', 车牌号: '沪B77889', 司机: '刘师傅', 金额: 9100 },
+    rowHash: 'mock-row-002',
     status: 'pending',
+    errors: [],
+    warnings: [],
   },
 ];
 

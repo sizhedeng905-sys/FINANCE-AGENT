@@ -1,25 +1,67 @@
-import { mockFieldDefinitions, mockFieldSuggestions } from '@/mock/mockDataCenter';
-import type { FieldDefinition } from '@/types/dataCenter';
+import { runtimeConfig } from '@/config/runtime';
+import { mockFieldSuggestions } from '@/mock/mockDataCenter';
+import type {
+  CreateFieldPayload,
+  FieldDefinition,
+  FieldListQuery,
+  FieldUsage,
+  PaginatedFields,
+  UpdateFieldPayload,
+} from '@/types/dataCenter';
 import { delay, ok } from './dataApiUtils';
+import { httpClient } from './httpClient';
+import {
+  mockCreateField,
+  mockDisableField,
+  mockGetField,
+  mockGetFields,
+  mockGetFieldUsage,
+  mockUpdateField,
+} from './mockFieldRepository';
 
-export async function getFields() {
-  await delay();
-  return ok(mockFieldDefinitions);
+function queryString(query: FieldListQuery): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+  const value = params.toString();
+  return value ? `?${value}` : '';
 }
 
-export async function createField(payload: Partial<FieldDefinition>) {
-  await delay();
-  return ok({ ...payload, id: `f-${Date.now()}` } as FieldDefinition, '字段已创建');
+export function getFields(query: FieldListQuery = {}): Promise<PaginatedFields> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedFields>(`/fields${queryString(query)}`)
+    : mockGetFields(query);
 }
 
-export async function updateField(id: string, payload: Partial<FieldDefinition>) {
-  await delay();
-  return ok({ id, ...payload } as FieldDefinition, '字段已更新');
+export function getField(id: string): Promise<FieldDefinition> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<FieldDefinition>(`/fields/${encodeURIComponent(id)}`)
+    : mockGetField(id);
 }
 
-export async function deleteField(id: string) {
-  await delay();
-  return ok({ id }, '字段已停用');
+export function createField(payload: CreateFieldPayload): Promise<FieldDefinition> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<FieldDefinition>('/fields', payload)
+    : mockCreateField(payload);
+}
+
+export function updateField(id: string, payload: UpdateFieldPayload): Promise<FieldDefinition> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<FieldDefinition>(`/fields/${encodeURIComponent(id)}`, payload)
+    : mockUpdateField(id, payload);
+}
+
+export function disableField(id: string): Promise<FieldDefinition> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<FieldDefinition>(`/fields/${encodeURIComponent(id)}/disable`)
+    : mockDisableField(id);
+}
+
+export function getFieldUsage(id: string): Promise<FieldUsage> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<FieldUsage>(`/fields/${encodeURIComponent(id)}/usage`)
+    : mockGetFieldUsage(id);
 }
 
 export async function getFieldSuggestions() {

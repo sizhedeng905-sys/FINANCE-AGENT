@@ -1,15 +1,11 @@
-import { useUserStore } from '@/store/userStore';
-import type { Role, User } from '@/types/auth';
+import { runtimeConfig } from '@/config/runtime';
+import type { AuthSession, Role, User } from '@/types/auth';
 import type { UserAccount } from '@/types/user';
+import { getAccessToken } from './authSession';
+import { httpClient } from './httpClient';
+import { mockLogin, mockLogout, mockMe } from './mockIdentityRepository';
 
-const delay = (ms = 250) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-const titleMap: Record<Role, string> = {
-  employee: '员工',
-  finance: '财务审核',
-  reviewer: '复核员',
-  boss: '老板',
-};
+type AuthUserDto = Pick<User, 'id' | 'username' | 'name' | 'role' | 'department' | 'title'>;
 
 const avatarColorMap: Record<Role, string> = {
   employee: '#1677ff',
@@ -18,27 +14,34 @@ const avatarColorMap: Record<Role, string> = {
   boss: '#722ed1',
 };
 
-function toAuthUser(account: UserAccount): User {
+function toAuthUser(user: AuthUserDto | UserAccount): User {
   return {
-    id: account.id,
-    username: account.username,
-    password: account.password,
-    name: account.name,
-    role: account.role,
-    title: titleMap[account.role],
-    department: account.department,
-    avatarColor: avatarColorMap[account.role],
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    title: user.title ?? user.role,
+    department: user.department,
+    avatarColor: avatarColorMap[user.role],
   };
 }
 
-export async function loginApi(username: string, password: string): Promise<User> {
-  await delay();
-  const account = useUserStore.getState().users.find((item) => item.username === username && item.password === password);
-  if (!account) {
-    throw new Error('账号或密码错误');
-  }
-  if (account.status === 'disabled') {
-    throw new Error('该账号已停用，请联系管理员。');
-  }
-  return toAuthUser(account);
+export async function loginApi(username: string, password: string): Promise<AuthSession> {
+  const session = runtimeConfig.dataMode === 'api'
+    ? await httpClient.post<{ accessToken: string; user: AuthUserDto }>('/auth/login', { username, password })
+    : await mockLogin(username, password);
+  return { accessToken: session.accessToken, user: toAuthUser(session.user) };
+}
+
+export async function getCurrentUserApi(): Promise<User> {
+  const user = runtimeConfig.dataMode === 'api'
+    ? await httpClient.get<AuthUserDto>('/auth/me')
+    : await mockMe(getAccessToken());
+  return toAuthUser(user);
+}
+
+export async function logoutApi(): Promise<{ success: boolean }> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<{ success: boolean }>('/auth/logout')
+    : mockLogout(getAccessToken());
 }

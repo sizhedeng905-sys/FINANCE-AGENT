@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Key } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -14,9 +14,11 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
+  Spin,
   Statistic,
   Table,
   Tabs,
@@ -27,10 +29,10 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import MoneyText from '@/components/MoneyText';
+import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
 import { useDataCenterStore } from '@/store/dataCenterStore';
-import type { BusinessRecord, FieldDefinition, ProjectTemplate, TemplateField } from '@/types/dataCenter';
+import type { BusinessRecord, CreateFieldPayload, ProjectTemplate, TemplateField } from '@/types/dataCenter';
 import { fieldTypeMap, importStatusMap, projectStatusMap, recordStatusMap, recordTypeMap, semanticTypeMap, sourceTypeMap } from '@/utils/dataCenterMaps';
-import { createSystemFieldName } from '@/utils/fieldName';
 import { getProjectStructure, type FieldUsageStat, type LogicalTableSummary } from '@/utils/projectStructure';
 
 interface StructureNode {
@@ -60,15 +62,30 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   const [renameTemplate, setRenameTemplate] = useState<ProjectTemplate | null>(null);
   const [enableForm] = Form.useForm<{ templateId: string; customName: string }>();
   const [renameForm] = Form.useForm<{ customName: string }>();
-  const [fieldForm] = Form.useForm<Omit<FieldDefinition, 'id' | 'createdAt' | 'updatedAt' | 'isActive'>>();
+  const [fieldForm] = Form.useForm<CreateFieldPayload>();
   const [fieldId, setFieldId] = useState<string>();
+  const [fieldOperation, setFieldOperation] = useState<string | null>(null);
+  const [projectTemplateOperation, setProjectTemplateOperation] = useState<string | null>(null);
 
   const projects = useDataCenterStore((state) => state.projects);
+  const projectLoading = useDataCenterStore((state) => state.projectLoading);
+  const projectError = useDataCenterStore((state) => state.projectError);
+  const fetchProject = useDataCenterStore((state) => state.fetchProject);
   const templates = useDataCenterStore((state) => state.templates);
+  const fetchTemplates = useDataCenterStore((state) => state.fetchTemplates);
   const fields = useDataCenterStore((state) => state.fields);
+  const fieldError = useDataCenterStore((state) => state.fieldError);
+  const templateFieldError = useDataCenterStore((state) => state.templateFieldError);
+  const fetchFields = useDataCenterStore((state) => state.fetchFields);
+  const fetchTemplateFields = useDataCenterStore((state) => state.fetchTemplateFields);
   const templateFields = useDataCenterStore((state) => state.templateFields);
   const projectTemplates = useDataCenterStore((state) => state.projectTemplates);
+  const projectTemplateLoading = useDataCenterStore((state) => state.projectTemplateLoading);
+  const projectTemplateError = useDataCenterStore((state) => state.projectTemplateError);
+  const fetchProjectTemplates = useDataCenterStore((state) => state.fetchProjectTemplates);
   const records = useDataCenterStore((state) => state.records);
+  const recordError = useDataCenterStore((state) => state.recordError);
+  const fetchProjectRecords = useDataCenterStore((state) => state.fetchProjectRecords);
   const rawFiles = useDataCenterStore((state) => state.rawFiles);
   const importTasks = useDataCenterStore((state) => state.importTasks);
   const importRows = useDataCenterStore((state) => state.importRows);
@@ -80,6 +97,23 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
   const addExistingFieldToTemplate = useDataCenterStore((state) => state.addExistingFieldToTemplate);
   const removeTemplateField = useDataCenterStore((state) => state.removeTemplateField);
   const createField = useDataCenterStore((state) => state.createField);
+
+  useEffect(() => {
+    if (id) {
+      void fetchProject(id).catch(() => undefined);
+      void fetchProjectTemplates(id).catch(() => undefined);
+      void fetchProjectRecords(id).catch(() => undefined);
+    }
+    if (!readOnly) void fetchTemplates({ page: 1, pageSize: 100 }).catch(() => undefined);
+  }, [fetchProject, fetchProjectRecords, fetchProjectTemplates, fetchTemplates, id, readOnly]);
+
+  useEffect(() => {
+    if (!readOnly) void fetchFields({ page: 1, pageSize: 100, isActive: true }).catch(() => undefined);
+    const templateIds = projectTemplates
+      .filter((item) => item.projectId === id && item.isActive)
+      .map((item) => item.templateId);
+    void Promise.all(templateIds.map((templateId) => fetchTemplateFields(templateId))).catch(() => undefined);
+  }, [fetchFields, fetchTemplateFields, id, projectTemplates, readOnly]);
 
   const structure = useMemo(
     () =>
@@ -184,53 +218,107 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     });
   };
 
-  const submitEnableTemplate = () => {
+  const submitEnableTemplate = async () => {
     if (!id) return;
-    enableForm.validateFields().then((values) => {
-      const template = templates.find((item) => item.id === values.templateId);
-      enableTemplateForProject(id, values.templateId, values.customName || template?.name);
+    try {
+      const values = await enableForm.validateFields();
+      setProjectTemplateOperation('enable');
+      await enableTemplateForProject(id, values.templateId, values.customName || undefined);
       message.success('模板已启用');
       setEnableOpen(false);
       enableForm.resetFields();
-    });
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setProjectTemplateOperation(null);
+    }
   };
 
-  const submitRenameTemplate = () => {
+  const submitRenameTemplate = async () => {
     if (!renameTemplate) return;
-    renameForm.validateFields().then((values) => {
-      updateProjectTemplate(renameTemplate.id, values);
+    try {
+      const values = await renameForm.validateFields();
+      setProjectTemplateOperation(`rename:${renameTemplate.id}`);
+      await updateProjectTemplate(renameTemplate.id, values);
       message.success('项目模板名称已更新');
       setRenameTemplate(null);
       renameForm.resetFields();
-    });
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setProjectTemplateOperation(null);
+    }
   };
 
-  const submitAddField = () => {
+  const disableProjectTemplate = async (projectTemplateId: string) => {
+    try {
+      setProjectTemplateOperation(`disable:${projectTemplateId}`);
+      await disableTemplateForProject(projectTemplateId);
+      message.success('项目模板已停用');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '项目模板停用失败');
+    } finally {
+      setProjectTemplateOperation(null);
+    }
+  };
+
+  const submitAddField = async () => {
     if (!addTemplateId || !fieldId) return;
-    addExistingFieldToTemplate(addTemplateId, fieldId);
-    message.success('字段已加入模板，项目结构已更新');
-    setAddTemplateId(undefined);
-    setFieldId(undefined);
+    try {
+      setFieldOperation('add');
+      await addExistingFieldToTemplate(addTemplateId, fieldId);
+      message.success('字段已加入模板，项目结构已更新');
+      setAddTemplateId(undefined);
+      setFieldId(undefined);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '添加字段失败');
+    } finally {
+      setFieldOperation(null);
+    }
   };
 
-  const submitNewField = () => {
+  const submitNewField = async () => {
     if (!newTemplateId) return;
-    fieldForm.validateFields().then((values) => {
-      const field = createField({
-        ...values,
-        fieldKey: values.fieldKey || createSystemFieldName(values.fieldName),
-        aliases: values.aliases ?? [],
-      });
-      addExistingFieldToTemplate(newTemplateId, field.id);
+    try {
+      const values = await fieldForm.validateFields();
+      setFieldOperation('create');
+      const field = await createField({ ...values, fieldKey: values.fieldKey || undefined, aliases: values.aliases ?? [] });
+      await addExistingFieldToTemplate(newTemplateId, field.id);
       message.success('新字段已加入字段字典和模板，项目结构已更新');
       setNewTemplateId(undefined);
       fieldForm.resetFields();
-    });
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setFieldOperation(null);
+    }
   };
+
+  const removeFieldRelation = async (record: TemplateField) => {
+    try {
+      setFieldOperation(`remove:${record.id}`);
+      await removeTemplateField(record.id);
+      message.success('字段关系已移除，字段字典定义仍保留');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '移除字段失败');
+    } finally {
+      setFieldOperation(null);
+    }
+  };
+
+  if (projectLoading && !structure.project) {
+    return <Card><Spin size="large" /></Card>;
+  }
+
+  if (projectError && !structure.project) {
+    return <Alert type="error" showIcon message="项目加载失败" description={projectError} />;
+  }
 
   if (!structure.project) {
     return <Card><Empty description="项目不存在" /></Card>;
   }
+
+  const canManageStructure = !readOnly && structure.project.status === 'active';
 
   const recordColumns: ColumnsType<BusinessRecord> = [
     { title: '日期', dataIndex: 'recordDate' },
@@ -262,8 +350,8 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
     {
       title: '操作',
       render: (_, record) =>
-        readOnly ? null : (
-          <Button size="small" danger onClick={() => removeTemplateField(record.id)}>
+        !canManageStructure ? null : (
+          <Button size="small" danger loading={fieldOperation === `remove:${record.id}`} onClick={() => void removeFieldRelation(record)}>
             移除字段
           </Button>
         ),
@@ -306,7 +394,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
 
   const usageColumns: ColumnsType<FieldUsageStat> = [
     { title: '字段名称', dataIndex: 'fieldName' },
-    { title: '字段类型', dataIndex: 'fieldType', render: (value) => fieldTypeMap[value as FieldDefinition['fieldType']] },
+    { title: '字段类型', dataIndex: 'fieldType', render: (value: FieldUsageStat['fieldType']) => fieldTypeMap[value] },
     { title: '所属模板', dataIndex: 'templateNames', render: (value: string[]) => value.join('、') },
     { title: '使用记录数', dataIndex: 'usageCount' },
     { title: '来源类型', dataIndex: 'sourceTypes', render: (value: BusinessRecord['sourceType'][]) => value.length ? value.map((item) => <Tag key={item} color={sourceTagColor[item]}>{sourceTypeMap[item]}</Tag>) : '-' },
@@ -336,11 +424,15 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
         description="展示该项目当前启用的模板、字段、数据来源和记录数量。新增字段后会自动反映在这里。"
         extra={
           <Space>
-            {!readOnly ? <Button onClick={() => setEnableOpen(true)}>启用模板</Button> : null}
+            {canManageStructure ? <Button loading={projectTemplateLoading} onClick={() => setEnableOpen(true)}>启用模板</Button> : null}
             <Button onClick={() => navigate(readOnly ? '/boss/data/projects' : '/data/projects')}>返回项目列表</Button>
           </Space>
         }
       />
+
+      {fieldError || templateFieldError || projectTemplateError || recordError ? (
+        <Alert type="error" showIcon message="项目结构数据加载失败" description={fieldError || templateFieldError || projectTemplateError || recordError} />
+      ) : null}
 
       <Alert
         className="section-row"
@@ -350,14 +442,14 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
       />
 
       <Row gutter={[16, 16]} className="section-row">
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="项目名称" value={structure.project.name} /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="客户" value={structure.project.customerName} /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="负责人" value={structure.project.ownerName} /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="状态" value={projectStatusMap[structure.project.status]} /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="启用模板" value={structure.enabledTemplates.length} suffix="个" /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="字段总数" value={structure.fieldUsageStats.length} suffix="个" /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="数据记录" value={structure.records.length} suffix="条" /></Card></Col>
-        <Col xs={12} md={6} xl={3}><Card><Statistic title="待确认" value={structure.records.filter((item) => item.status === 'pending_confirm').length} suffix="条" /></Card></Col>
+        <Col xs={24} sm={12} lg={8} xl={6}><Card className="structure-stat-card structure-stat-card-text"><Statistic title="项目名称" value={structure.project.name} /></Card></Col>
+        <Col xs={24} sm={12} lg={8} xl={6}><Card className="structure-stat-card structure-stat-card-text"><Statistic title="客户" value={structure.project.customerName} /></Card></Col>
+        <Col xs={24} sm={12} lg={8} xl={6}><Card className="structure-stat-card structure-stat-card-text"><Statistic title="负责人" value={structure.project.ownerName} /></Card></Col>
+        <Col xs={12} sm={8} lg={6} xl={3}><Card className="structure-stat-card"><Statistic title="状态" value={projectStatusMap[structure.project.status]} /></Card></Col>
+        <Col xs={12} sm={8} lg={6} xl={3}><Card className="structure-stat-card"><Statistic title="启用模板" value={structure.enabledTemplates.length} suffix="个" /></Card></Col>
+        <Col xs={12} sm={8} lg={6} xl={3}><Card className="structure-stat-card"><Statistic title="字段总数" value={structure.fieldUsageStats.length} suffix="个" /></Card></Col>
+        <Col xs={12} sm={8} lg={6} xl={3}><Card className="structure-stat-card"><Statistic title="数据记录" value={structure.records.length} suffix="条" /></Card></Col>
+        <Col xs={12} sm={8} lg={6} xl={3}><Card className="structure-stat-card"><Statistic title="待确认" value={structure.records.filter((item) => item.status === 'pending_confirm').length} suffix="条" /></Card></Col>
       </Row>
 
       <Card className="section-row">
@@ -392,13 +484,21 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
                   items={structure.enabledTemplates.map((templateInfo) => ({
                     key: templateInfo.projectTemplate.id,
                     label: `${templateInfo.projectTemplate.customName || templateInfo.template.name} · ${recordTypeMap[templateInfo.template.recordType]}`,
-                    extra: readOnly ? null : (
+                    extra: !canManageStructure ? null : (
                       <Space onClick={(event) => event.stopPropagation()}>
                         <Button size="small" onClick={() => navigate(`/data/templates/${templateInfo.template.id}`)}>编辑模板</Button>
                         <Button size="small" onClick={() => setAddTemplateId(templateInfo.template.id)}>添加字段</Button>
                         <Button size="small" onClick={() => setNewTemplateId(templateInfo.template.id)}>新建字段并加入</Button>
-                        <Button size="small" onClick={() => { setRenameTemplate(templateInfo.projectTemplate); renameForm.setFieldsValue({ customName: templateInfo.projectTemplate.customName }); }}>改名</Button>
-                        <Button size="small" danger onClick={() => disableTemplateForProject(templateInfo.projectTemplate.id)}>停用模板</Button>
+                        <Button size="small" loading={projectTemplateOperation === `rename:${templateInfo.projectTemplate.id}`} onClick={() => { setRenameTemplate(templateInfo.projectTemplate); renameForm.setFieldsValue({ customName: templateInfo.projectTemplate.customName }); }}>改名</Button>
+                        <Popconfirm
+                          title="停用项目模板"
+                          description="历史记录会保留，后续不能再用该关系新增记录。"
+                          okText="确认停用"
+                          cancelText="取消"
+                          onConfirm={() => disableProjectTemplate(templateInfo.projectTemplate.id)}
+                        >
+                          <Button size="small" danger loading={projectTemplateOperation === `disable:${templateInfo.projectTemplate.id}`}>停用模板</Button>
+                        </Popconfirm>
                       </Space>
                     ),
                     children: (
@@ -499,7 +599,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
               <Descriptions.Item label="状态">{recordStatusMap[recordDetail.status]}</Descriptions.Item>
               <Descriptions.Item label="创建时间">{recordDetail.createdAt}</Descriptions.Item>
               <Descriptions.Item label="确认时间">{recordDetail.confirmedAt || '-'}</Descriptions.Item>
-              <Descriptions.Item label="附件">{recordDetail.attachments.join('、') || '-'}</Descriptions.Item>
+              <Descriptions.Item label="附件"><AttachmentPreview attachments={recordDetail.attachments} /></Descriptions.Item>
             </Descriptions>
             <Table
               size="small"
@@ -509,14 +609,20 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
               columns={[
                 { title: 'fieldId', dataIndex: 'fieldId' },
                 { title: '字段', dataIndex: 'fieldName' },
-                { title: '值', dataIndex: 'value', render: (value) => Array.isArray(value) ? value.join('、') : String(value ?? '-') },
+                {
+                  title: '值',
+                  dataIndex: 'value',
+                  render: (value, item) => item.fieldType === 'file' && Array.isArray(value)
+                    ? `已关联 ${value.length} 个原始文件`
+                    : Array.isArray(value) ? value.join('、') : String(value ?? '-'),
+                },
               ]}
             />
           </Space>
         ) : null}
       </Drawer>
 
-      <Modal title="启用模板" open={enableOpen} onCancel={() => setEnableOpen(false)} onOk={submitEnableTemplate}>
+      <Modal title="启用模板" open={enableOpen} confirmLoading={projectTemplateOperation === 'enable'} onCancel={() => setEnableOpen(false)} onOk={() => void submitEnableTemplate()}>
         <Form form={enableForm} layout="vertical">
           <Form.Item label="模板" name="templateId" rules={[{ required: true }]}>
             <Select options={availableTemplates.map((item) => ({ label: item.name, value: item.id }))} />
@@ -527,7 +633,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
         </Form>
       </Modal>
 
-      <Modal title="修改项目模板名称" open={Boolean(renameTemplate)} onCancel={() => setRenameTemplate(null)} onOk={submitRenameTemplate}>
+      <Modal title="修改项目模板名称" open={Boolean(renameTemplate)} confirmLoading={projectTemplateOperation?.startsWith('rename:')} onCancel={() => setRenameTemplate(null)} onOk={() => void submitRenameTemplate()}>
         <Form form={renameForm} layout="vertical">
           <Form.Item label="显示名称" name="customName" rules={[{ required: true }]}>
             <Input />
@@ -535,7 +641,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
         </Form>
       </Modal>
 
-      <Modal title="添加已有字段" open={Boolean(addTemplateId)} onCancel={() => setAddTemplateId(undefined)} onOk={submitAddField}>
+      <Modal title="添加已有字段" open={Boolean(addTemplateId)} confirmLoading={fieldOperation === 'add'} onCancel={() => setAddTemplateId(undefined)} onOk={() => void submitAddField()}>
         <Select
           className="full-width"
           placeholder="选择字段"
@@ -547,7 +653,7 @@ export default function DataProjectStructurePage({ readOnly = false }: { readOnl
         />
       </Modal>
 
-      <Modal title="新建字段并加入模板" open={Boolean(newTemplateId)} onCancel={() => setNewTemplateId(undefined)} onOk={submitNewField}>
+      <Modal title="新建字段并加入模板" open={Boolean(newTemplateId)} confirmLoading={fieldOperation === 'create'} onCancel={() => setNewTemplateId(undefined)} onOk={() => void submitNewField()}>
         <Form form={fieldForm} layout="vertical">
           <Form.Item label="字段名" name="fieldName" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item

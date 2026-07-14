@@ -11,7 +11,7 @@ import { workOrderTypeMap } from '@/utils/statusMap';
 export default function ReviewerTasksPage() {
   const navigate = useNavigate();
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const data = workOrders.filter((item) => ['reviewer_reviewing', 'finance_approved'].includes(item.status));
+  const data = workOrders.filter((item) => item.status === 'reviewer_reviewing');
 
   const columns: ColumnsType<WorkOrder> = [
     { title: '工单编号', dataIndex: 'orderNo' },

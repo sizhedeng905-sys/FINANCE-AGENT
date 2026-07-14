@@ -4,12 +4,11 @@ const now = '2026-07-08 09:00';
 
 function stepFromStatus(status: WorkOrderStatus) {
   if (status === 'completed') return 5;
-  if (status === 'boss_pending' || status === 'boss_approved' || status === 'boss_rejected') return 4;
+  if (status === 'boss_pending' || status === 'boss_rejected') return 4;
   if (status === 'ai_reviewing' || status === 'ai_passed' || status === 'ai_flagged') return 3;
-  if (status === 'reviewer_reviewing' || status === 'reviewer_approved' || status === 'reviewer_rejected') return 2;
+  if (status === 'reviewer_reviewing' || status === 'reviewer_rejected') return 2;
   if (
     status === 'finance_reviewing' ||
-    status === 'finance_approved' ||
     status === 'finance_rejected' ||
     status === 'returned_for_supplement'
   ) {
@@ -69,19 +68,15 @@ function base(
     profit,
     status,
     riskLevel,
+    occurredDate: `2026-07-${String(Math.max(1, index)).padStart(2, '0')}`,
     createdAt: `2026-07-${String(Math.max(1, index)).padStart(2, '0')} 08:30`,
     updatedAt: now,
     currentStep: stepFromStatus(status),
     description: '用于物流项目运营结算和费用审核的 mock 工单。',
+    extraValues: {},
     attachments: ['回单照片.jpg', '费用凭证.pdf'],
-    financeOpinion:
-      stepFromStatus(status) >= 2 || status === 'finance_approved'
-        ? '票据与项目匹配，金额基本合理。'
-        : undefined,
-    reviewerOpinion:
-      stepFromStatus(status) >= 3 || status === 'reviewer_approved'
-        ? '复核通过，建议进入 AI 自动复核。'
-        : undefined,
+    financeOpinion: stepFromStatus(status) >= 2 ? '票据与项目匹配，金额基本合理。' : undefined,
+    reviewerOpinion: stepFromStatus(status) >= 3 ? '复核通过，建议进入 AI 自动复核。' : undefined,
     aiSummary:
       riskLevel === 'high'
         ? 'AI 检测到该工单金额偏高或附件说明不足，建议重点关注。'
@@ -160,9 +155,9 @@ function other(index: number, status: WorkOrderStatus, riskLevel: WorkOrder['ris
 }
 
 export const mockWorkOrders: WorkOrder[] = [
-  transport(1, 'submitted', 'low', 12800),
+  transport(1, 'finance_reviewing', 'low', 12800),
   expense(2, 'finance_reviewing', 'medium', 8600),
-  transport(3, 'finance_approved', 'low', 15600),
+  transport(3, 'reviewer_reviewing', 'low', 15600),
   transport(4, 'reviewer_reviewing', 'medium', 21800),
   other(5, 'ai_reviewing', 'medium', 3200),
   transport(6, 'boss_pending', 'low', 19600),

@@ -5,21 +5,21 @@ import type { WorkOrder, WorkOrderStatus } from '@/types/workOrder';
 
 export interface AuditActionPayload {
   status: WorkOrderStatus;
-  action: string;
+  action: 'approve' | 'reject' | 'supplement' | 'reject_to_finance';
   comment: string;
 }
 
 interface PendingAction {
   label: string;
   status: WorkOrderStatus;
-  action: string;
+  action: AuditActionPayload['action'];
   placeholder: string;
 }
 
 interface AuditActionBarProps {
   role: Role;
   workOrder: WorkOrder;
-  onAction: (payload: AuditActionPayload) => void;
+  onAction: (payload: AuditActionPayload) => void | Promise<void>;
   onAskAI?: () => void;
   onSimulateAI?: () => void;
 }
@@ -33,26 +33,32 @@ export default function AuditActionBar({
 }: AuditActionBarProps) {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const open = (action: PendingAction) => {
     setPending(action);
     setComment('');
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!pending) return;
-    onAction({
-      status: pending.status,
-      action: pending.action,
-      comment: comment.trim() || pending.placeholder,
-    });
-    setPending(null);
-    setComment('');
+    setSubmitting(true);
+    try {
+      await onAction({
+        status: pending.status,
+        action: pending.action,
+        comment: comment.trim(),
+      });
+      setPending(null);
+      setComment('');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const buttons: JSX.Element[] = [];
 
-  if (role === 'finance' && ['submitted', 'finance_reviewing'].includes(workOrder.status)) {
+  if (role === 'finance' && ['finance_reviewing', 'reviewer_rejected'].includes(workOrder.status)) {
     buttons.push(
       <Button
         key="finance-pass"
@@ -61,7 +67,7 @@ export default function AuditActionBar({
           open({
             label: '财务通过',
             status: 'reviewer_reviewing',
-            action: '财务通过',
+            action: 'approve',
             placeholder: '财务通过，进入复核员复核。',
           })
         }
@@ -75,7 +81,7 @@ export default function AuditActionBar({
           open({
             label: '财务驳回',
             status: 'finance_rejected',
-            action: '财务驳回',
+            action: 'reject',
             placeholder: '请输入驳回原因。',
           })
         }
@@ -88,7 +94,7 @@ export default function AuditActionBar({
           open({
             label: '要求补充材料',
             status: 'returned_for_supplement',
-            action: '要求补充材料',
+            action: 'supplement',
             placeholder: '请补充费用发生原因、发票或回单。',
           })
         }
@@ -98,7 +104,7 @@ export default function AuditActionBar({
     );
   }
 
-  if (role === 'reviewer' && ['finance_approved', 'reviewer_reviewing'].includes(workOrder.status)) {
+  if (role === 'reviewer' && workOrder.status === 'reviewer_reviewing') {
     buttons.push(
       <Button
         key="review-pass"
@@ -107,7 +113,7 @@ export default function AuditActionBar({
           open({
             label: '复核通过',
             status: 'ai_reviewing',
-            action: '复核通过',
+            action: 'approve',
             placeholder: '复核通过，进入 AI 自动复核。',
           })
         }
@@ -121,7 +127,7 @@ export default function AuditActionBar({
           open({
             label: '驳回给财务',
             status: 'reviewer_rejected',
-            action: '复核驳回',
+            action: 'reject_to_finance',
             placeholder: '请财务重新核对金额或附件。',
           })
         }
@@ -134,7 +140,7 @@ export default function AuditActionBar({
           open({
             label: '驳回给员工补充材料',
             status: 'returned_for_supplement',
-            action: '要求员工补充材料',
+            action: 'supplement',
             placeholder: '请员工补充材料后重新提交。',
           })
         }
@@ -144,10 +150,10 @@ export default function AuditActionBar({
     );
   }
 
-  if (role === 'reviewer' && workOrder.status === 'ai_reviewing') {
+  if (role === 'finance' && workOrder.status === 'ai_reviewing') {
     buttons.push(
       <Button key="simulate-ai" type="primary" onClick={onSimulateAI}>
-        模拟AI复核完成
+        运行规则复核
       </Button>,
     );
   }
@@ -161,7 +167,7 @@ export default function AuditActionBar({
           open({
             label: '最终通过',
             status: 'completed',
-            action: '老板最终通过',
+            action: 'approve',
             placeholder: '最终通过，归档完成。',
           })
         }
@@ -175,7 +181,7 @@ export default function AuditActionBar({
           open({
             label: '最终驳回',
             status: 'boss_rejected',
-            action: '老板最终驳回',
+            action: 'reject',
             placeholder: '请输入老板驳回原因。',
           })
         }
@@ -202,7 +208,7 @@ export default function AuditActionBar({
           open({
             label: '补充材料',
             status: 'finance_reviewing',
-            action: '员工补充材料',
+            action: 'supplement',
             placeholder: '已补充材料，重新提交财务审核。',
           })
         }
@@ -219,7 +225,9 @@ export default function AuditActionBar({
         title={pending?.label}
         open={Boolean(pending)}
         onCancel={() => setPending(null)}
-        onOk={submit}
+        onOk={() => void submit()}
+        confirmLoading={submitting}
+        okButtonProps={{ disabled: pending?.action !== 'approve' && !comment.trim() }}
         okText="确认"
         cancelText="取消"
       >
