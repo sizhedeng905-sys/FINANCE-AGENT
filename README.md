@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0/B1 门禁已完成；B2 已支持多 Sheet、1-3 行合并表头、隐藏 Sheet 二次确认、公式缓存显式复核，以及大于 10 MiB/含媒体 XLSX 的流式行解析和媒体隔离；超大行数后台分块与旧 `.xls` 仍在推进
+- 真实业务数据 B0/B1 门禁已完成；B2 已支持多 Sheet、合并表头、隐藏 Sheet 二次确认、公式缓存显式复核、媒体隔离，以及 5001-50000 行后台分批/进度/取消/租约恢复；旧 `.xls` 仍在推进
 - 已校验 Qwen3-14B-AWQ、PaddleOCR-VL、Qwen3-VL-8B-Instruct 和 Qwen3-Embedding-8B 全部本地权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
 
 ## 技术栈
@@ -74,10 +74,11 @@
 - AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
 - 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
 
-按用户当前决定暂缓两项，不应视为已解决：
+当前仍按用户决定暂缓一项，不应视为已解决：
 
 - **P1-07**：Excel、OCR、手工录入之间的跨来源业务去重策略和统一幂等键。
-- **P1-08**：4999/5000/5001 行 Excel 的后台分块处理、内存/耗时基准和恢复压测。
+
+**P1-08 已完成**：同步接口保持 5000 行上限，5001-50000 行自动进入后台流式任务；每 500 行提交并刷新租约，前端展示进度且支持取消，过期租约从第 0 行幂等重放，最多自动恢复三次。5001 与 30196 行已通过真实 PostgreSQL 无重复/无漏行验证，确认前不会生成 `BusinessRecord`。
 
 因此当前版本适合隔离开发和合成数据验收；在上述两项完成、真实模型/ClamAV/反向代理部署验收及脱敏业务样本校准前，不标记为生产就绪。
 
@@ -172,8 +173,8 @@ http://localhost:3001/api/health
 | 阶段 9 | 已完成 | 真实 `.xlsx` 解析、映射、逐行错误、字段建议和幂等事务入库 |
 | 阶段 10 | 程序完成 | OCR Task、可构建 PaddleOCR 适配器、证据/置信度、人工纠错、重试和幂等入库；真实准确率待样本校准 |
 | 真实化批次 D-H | 已完成 | 26 条 PostgreSQL、13 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
-| PR #2 审计修复 | 基本完成 | 除用户暂缓的 P1-07 跨来源去重、P1-08 超大 Excel 性能外，其余 P1/P2/P3 已修复并回归 |
-| 真实业务数据 B0-B2 | 进行中 | 112 个文件只读匿名基线、文件安全边界、Sheet/表头/公式、稀疏行列、共享公式和媒体隔离已验收；19.67/46.35 MiB 样本在 512 MiB 堆限制下通过，超大行数后台分块与 `.xls` 待完成；详见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` |
+| PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
+| 真实业务数据 B0-B2 | 进行中 | 112 个文件只读匿名基线、文件安全边界、Sheet/表头/公式、媒体隔离和 30196 行后台数据库门禁已验收；旧 `.xls` 与超过 50 MiB 通道待完成；详见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` |
 | 本地模型部署 | 待系统环境 | 四套模型资产和常驻/按需编排已校验；当前环境没有可用 Docker，真实 GPU 推理尚未验收 |
 
 阶段 1 后端测试账号：
@@ -311,7 +312,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前验收基线为 14/14 Jest suites、87/87 tests、26/26 真实 PostgreSQL 集成测试和 13/13 Playwright。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
+当前验收基线为 14/14 Jest suites、87/87 tests、27/27 真实 PostgreSQL 集成测试和 13/13 Playwright。测试库已应用 16/16 Prisma migrations；根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 
@@ -446,13 +447,13 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 - 后端报表只聚合 PostgreSQL 中已确认经营记录，前端财务/老板/项目报表均已切换真实接口。
 - AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。四套本地模型权重均已通过完整性检查，但当前系统没有可用 Docker 命令，尚未完成容器推理、显存和延迟验收。
 - 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、ClamAV 服务、集中监控和备份仍待部署。
-- 跨 Excel/OCR/手工来源的业务去重，以及 5000 行级 Excel 的后台分块与性能基准，按用户决定暂缓。
+- 跨 Excel/OCR/手工来源的业务去重仍按用户决定暂缓；后台 XLSX 当前只接受 50000 行以内且仍受 50 MiB 上传上限约束，旧 `.xls` 尚未进入隔离转换通道。
 
 ## 推荐后续开发顺序
 
 1. 经用户确认后安装 WSL 2 和 Docker Desktop，按 `docs/MODEL_DEPLOYMENT.md` 启动文本与 OCR 常驻服务，并实测 32 GB 单卡显存、延迟和服务恢复。
 2. 定义跨 Excel/OCR/手工来源的业务唯一性政策，再实现统一幂等键和重复入账攻击测试。
-3. 将大 Excel 改为后台分块任务，完成 4999/5000/5001 行的耗时、RSS、响应大小和失败恢复基准。
+3. 为旧 `.xls` 建立不依赖 Excel/COM 的隔离转换通道，并决定超过 50 MiB 文件保持 413 或进入独立大文件通道。
 4. 收集脱敏 Excel、票据/PDF、字段真值、审批规则和老板问题标准答案，校准准确率与回答口径。
 5. 上线前部署对象存储、ClamAV、共享限流、密钥托管、监控和备份，并在真实反向代理/PostgreSQL TLS 拓扑演练。
 
