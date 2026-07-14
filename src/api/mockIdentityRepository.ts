@@ -147,7 +147,7 @@ export async function mockCreateUser(token: string | null, payload: CreateUserPa
   if (users.some((user) => user.username === username)) throw new Error('登录账号已存在');
   const now = new Date().toISOString();
   const user: UserAccount = {
-    id: `mock-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `mock-user-${window.crypto.randomUUID()}`,
     username,
     name: payload.name.trim(),
     role: payload.role,

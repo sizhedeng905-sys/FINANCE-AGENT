@@ -12,6 +12,8 @@ __pycache__/
 *.py[cod]
 backend/uploads/
 backend/test-uploads/
+# Local company source documents must never be committed.
+数据文件/
 playwright-report/
 test-results/
 model/

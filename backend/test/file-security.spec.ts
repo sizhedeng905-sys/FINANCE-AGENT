@@ -1,9 +1,11 @@
 import { BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { PDFDocument } from 'pdf-lib';
 
 import { FileSecurityService } from '../src/files/file-security.service';
+import { resolveQuarantinedUploadPath } from '../src/files/secure-upload-options';
 
 describe('FileSecurityService', () => {
   const config = {
@@ -41,5 +43,13 @@ describe('FileSecurityService', () => {
     sheet.getCell('A1').value = { text: '外部链接', hyperlink: 'https://example.invalid/data' };
     await expect(security.scan('external.xlsx', Buffer.from(await workbook.xlsx.writeBuffer())))
       .rejects.toThrow('Office 文件包含外部关系');
+  });
+
+  it('only resolves server-generated files inside the quarantine directory', () => {
+    const filename = '123e4567-e89b-42d3-a456-426614174000';
+    const expected = resolve(process.cwd(), '.upload-quarantine', filename);
+    expect(resolveQuarantinedUploadPath({ filename, path: expected })).toBe(expected);
+    expect(() => resolveQuarantinedUploadPath({ filename: '../outside', path: expected })).toThrow();
+    expect(() => resolveQuarantinedUploadPath({ filename, path: resolve(process.cwd(), filename) })).toThrow();
   });
 });

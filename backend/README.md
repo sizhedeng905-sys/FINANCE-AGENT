@@ -63,7 +63,7 @@ The preparation and cleanup scripts reject database names that do not end in `_t
 Current verification baseline (2026-07-14):
 
 - Backend build and Prisma validation pass with 15 applied migrations.
-- Jest: 13/13 suites and 72/72 tests.
+- Jest: 13/13 suites and 73/73 tests.
 - Real PostgreSQL integration: 26/26 tests.
 - Root Playwright acceptance: 12/12 tests.
 - Root and backend dependency audits: 0 vulnerabilities.

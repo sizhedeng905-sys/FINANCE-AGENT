@@ -309,7 +309,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前审计修复基线为 13/13 Jest suites、72/72 tests，以及 26/26 真实 PostgreSQL 集成测试。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
+当前审计修复基线为 13/13 Jest suites、73/73 tests，以及 26/26 真实 PostgreSQL 集成测试。根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

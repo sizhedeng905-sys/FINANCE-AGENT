@@ -162,7 +162,6 @@ async function requireAssets(scope, environment) {
 }
 
 function printAssetReport(report) {
-  console.log(`Model root: ${report.modelRoot}`);
   for (const model of report.models) {
     console.log(`${model.ok ? 'OK' : 'FAIL'} ${model.key}${model.sizeGiB === undefined ? '' : ` (${model.sizeGiB} GiB)`}`);
     for (const warning of model.warnings) console.log(`  warning: ${warning}`);

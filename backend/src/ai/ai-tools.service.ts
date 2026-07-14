@@ -57,7 +57,11 @@ export class AiToolsService {
   }
 
   private async projectContext(question: string): Promise<AiToolContext | null> {
-    if (/哪个(?:项目|客户)|(?:项目|客户).*(?:最高|最低|排行)/.test(question)) return null;
+    const mentionsProject = question.includes('项目') || question.includes('客户');
+    const asksRanking = question.includes('哪个项目')
+      || question.includes('哪个客户')
+      || (mentionsProject && ['最高', '最低', '排行'].some((word) => question.includes(word)));
+    if (asksRanking) return null;
     const matches = await this.findProjectMatches(question);
     const top = matches[0];
     const ambiguous = top

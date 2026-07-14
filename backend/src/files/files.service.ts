@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { UploadFileDto } from './dto/upload-file.dto';
 import { FileSecurityService } from './file-security.service';
+import { resolveQuarantinedUploadPath } from './secure-upload-options';
 import { toRawFile } from './file.presenter';
 import { FILE_STORAGE, FileStorage } from './file-storage';
 import { VoidFileDto } from './dto/void-file.dto';
@@ -350,8 +351,9 @@ export class FilesService {
       throw new BadRequestException('文件扩展名与 MIME 类型不匹配');
     }
     if ((!file.buffer || file.buffer.length === 0) && file.path) {
-      await chmod(file.path, 0o600);
-      file.buffer = await readFile(file.path);
+      const quarantinedPath = resolveQuarantinedUploadPath(file);
+      await chmod(quarantinedPath, 0o600);
+      file.buffer = await readFile(quarantinedPath);
     }
     if (!file.buffer || file.buffer.length === 0) throw new BadRequestException('不能上传空文件');
     if (file.size !== file.buffer.length) throw new BadRequestException('文件内容长度不一致');

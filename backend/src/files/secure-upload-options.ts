@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import { diskStorage } from 'multer';
 
@@ -13,6 +13,17 @@ const fileSizeLimit =
   Number.isInteger(configuredLimitMb) && configuredLimitMb >= 1 && configuredLimitMb <= 50
     ? configuredLimitMb * 1024 * 1024
     : 10 * 1024 * 1024;
+const quarantineFilePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function resolveQuarantinedUploadPath(file: Pick<Express.Multer.File, 'filename' | 'path'>) {
+  const leafName = basename(file.filename);
+  if (leafName !== file.filename || !quarantineFilePattern.test(leafName)) {
+    throw new Error('Invalid quarantined upload name');
+  }
+  const expectedPath = resolve(quarantineRoot, leafName);
+  if (resolve(file.path) !== expectedPath) throw new Error('Upload path escaped quarantine');
+  return expectedPath;
+}
 
 export const secureUploadOptions: MulterOptions = {
   storage: diskStorage({
