@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
+import * as XLSX from 'xlsx';
 
 import { FileSecurityService } from '../src/files/file-security.service';
 import { resolveQuarantinedUploadPath } from '../src/files/secure-upload-options';
@@ -21,6 +22,11 @@ describe('FileSecurityService', () => {
     const workbook = new ExcelJS.Workbook();
     workbook.addWorksheet('Sheet1').addRow(['日期', '金额']);
     await expect(security.scan('records.xlsx', Buffer.from(await workbook.xlsx.writeBuffer()))).resolves.toBeUndefined();
+
+    const legacyWorkbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(legacyWorkbook, XLSX.utils.aoa_to_sheet([['日期', '金额']]), 'Data');
+    const legacy = XLSX.write(legacyWorkbook, { type: 'buffer', bookType: 'biff8' }) as Buffer;
+    await expect(security.scan('records.xls', legacy)).resolves.toBeUndefined();
   });
 
   it('rejects EICAR, forged PDFs, and PDF active content', async () => {
@@ -71,6 +77,26 @@ describe('FileSecurityService', () => {
     sheet.getCell('A1').value = { text: '外部链接', hyperlink: 'https://example.invalid/data' };
     await expect(security.scan('external.xlsx', Buffer.from(await workbook.xlsx.writeBuffer())))
       .rejects.toThrow('Office 文件包含外部关系');
+  });
+
+  it('rejects forged or structurally inconsistent legacy XLS containers', async () => {
+    await expect(security.scan('forged.xls', Buffer.alloc(512))).rejects.toBeInstanceOf(BadRequestException);
+    const forged = Buffer.alloc(512);
+    Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(forged);
+    forged.writeUInt16LE(3, 26);
+    forged.writeUInt16LE(0xfffe, 28);
+    forged.writeUInt16LE(9, 30);
+    forged.writeUInt16LE(6, 32);
+    forged.writeUInt32LE(4096, 56);
+    await expect(security.scan('forged.xls', forged)).rejects.toThrow('FAT');
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[1]]), 'Data');
+    const legacy = XLSX.write(workbook, { type: 'buffer', bookType: 'biff8' }) as Buffer;
+    const container = XLSX.CFB.read(legacy, { type: 'buffer' });
+    XLSX.CFB.utils.cfb_add(container, 'VBA_PROJECT', Buffer.from('synthetic macro marker'));
+    const active = XLSX.CFB.write(container, { type: 'buffer' }) as Buffer;
+    await expect(security.scan('active.xls', active)).rejects.toThrow('宏、嵌入对象或加密内容');
   });
 
   it('only resolves server-generated files inside the quarantine directory', () => {

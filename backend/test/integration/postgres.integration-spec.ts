@@ -25,8 +25,10 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import ExcelJS from 'exceljs';
+import { createHash } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
 import request from 'supertest';
+import * as XLSX from 'xlsx';
 
 import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
@@ -3386,6 +3388,119 @@ describe('real PostgreSQL integration', () => {
       const resourceIds = [...taskIds, ...rawFileIds, ...recordIds, projectId, ...templateIds, suggestedFieldId].filter(
         (id): id is string => Boolean(id)
       );
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+      await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+    }
+  });
+
+  it('keeps legacy XLS evidence intact while importing only a sanitized in-memory workbook', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const token = login.body.data.accessToken as string;
+    const enabled = await prisma.projectTemplate.findFirstOrThrow({
+      where: { isActive: true, project: { status: ProjectStatus.active } }
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['日期', '金额'],
+      ['2026-07-01', 120],
+      ['2026-07-02', 230]
+    ]), 'Data');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['归档标记'],
+      ['internal']
+    ]), 'Archive');
+    workbook.Workbook = {
+      Sheets: [{ name: 'Data', Hidden: 0 }, { name: 'Archive', Hidden: 1 }]
+    };
+    const xls = XLSX.write(workbook, { type: 'buffer', bookType: 'biff8' }) as Buffer;
+    const expectedHash = createHash('sha256').update(xls).digest('hex');
+    const key = `integration-legacy-xls-${Date.now()}`;
+    let taskId: string | undefined;
+    let rawFileId: string | undefined;
+
+    try {
+      const created = await request(app.getHttpServer())
+        .post('/api/import-tasks')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', key)
+        .field('projectId', enabled.projectId)
+        .field('templateId', enabled.templateId)
+        .field('importType', enabled.recordType)
+        .attach('file', xls, { filename: 'synthetic-legacy.xls', contentType: 'application/vnd.ms-excel' })
+        .expect(201);
+      taskId = created.body.data.id as string;
+      rawFileId = created.body.data.rawFileId as string;
+
+      const rawFile = await prisma.rawFile.findUniqueOrThrow({ where: { id: rawFileId } });
+      expect(rawFile).toMatchObject({
+        originalFileName: 'synthetic-legacy.xls',
+        mimeType: 'application/vnd.ms-excel',
+        fileType: 'excel',
+        sha256: expectedHash,
+        fileSize: BigInt(xls.length),
+        status: RawFileStatus.uploaded
+      });
+      expect(Buffer.compare(
+        Buffer.from(await fileStorage.read(rawFile.storagePath)),
+        Buffer.from(xls)
+      )).toBe(0);
+
+      const inspected = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/inspect`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(inspected.body.data).toMatchObject({
+        requiresSheetSelection: true,
+        sheets: [
+          { sheetIndex: 0, sheetName: 'Data', state: 'visible' },
+          { sheetIndex: 1, sheetName: 'Archive', state: 'hidden' }
+        ]
+      });
+
+      const parsed = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/parse`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ sheetIndex: 0, headerStartRowIndex: 1, headerRowIndex: 1 })
+        .expect(201);
+      expect(parsed.body.data).toMatchObject({
+        counts: { total: 2, valid: 2, errors: 0, duplicates: 0, ignored: 0, imported: 0 }
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+
+      const [createAudit, inspectAudit, parseAudit, createLedger, parseLedger] = await Promise.all([
+        prisma.auditLog.findFirstOrThrow({ where: { action: 'import_task.create', resourceId: taskId } }),
+        prisma.auditLog.findFirstOrThrow({ where: { action: 'import_task.inspect', resourceId: taskId } }),
+        prisma.auditLog.findFirstOrThrow({ where: { action: 'import_task.parse', resourceId: taskId } }),
+        prisma.ledgerEvent.findFirstOrThrow({ where: { eventType: 'import_task_created', aggregateId: taskId } }),
+        prisma.ledgerEvent.findFirstOrThrow({ where: { eventType: 'import_task_parsed', aggregateId: taskId } })
+      ]);
+      for (const event of [createAudit.metadata, inspectAudit.metadata, parseAudit.metadata, createLedger.payload, parseLedger.payload]) {
+        expect(event).toMatchObject({
+          sourceFormat: 'xls',
+          conversion: {
+            sourceFormat: 'xls',
+            outputFormat: 'xlsx',
+            converter: 'sheetjs-sanitizer',
+            converterVersion: '0.20.3',
+            sheetCount: 2,
+            hiddenSheetCount: 1
+          }
+        });
+      }
+    } finally {
+      const rawFile = rawFileId
+        ? await prisma.rawFile.findUnique({ where: { id: rawFileId }, select: { storagePath: true } })
+        : undefined;
+      if (taskId) {
+        await prisma.businessRecord.deleteMany({ where: { importTaskId: taskId } });
+        await prisma.importTask.deleteMany({ where: { id: taskId } });
+      }
+      if (rawFile) await fileStorage.remove(rawFile.storagePath);
+      if (rawFileId) await prisma.rawFile.deleteMany({ where: { id: rawFileId } });
+      const resourceIds = [taskId, rawFileId].filter((id): id is string => Boolean(id));
       await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
       await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
     }

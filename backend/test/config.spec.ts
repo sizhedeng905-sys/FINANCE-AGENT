@@ -19,7 +19,9 @@ describe('environment validation', () => {
     [{ ...valid, PORT: '3001invalid' }, 'PORT'],
     [{ ...valid, AI_PROVIDER: 'unknown' }, 'AI_PROVIDER'],
     [{ ...valid, MAX_FILE_SIZE_MB: '0' }, 'MAX_FILE_SIZE_MB'],
-    [{ ...valid, MAX_FILE_SIZE_MB: '51' }, 'MAX_FILE_SIZE_MB']
+    [{ ...valid, MAX_FILE_SIZE_MB: '51' }, 'MAX_FILE_SIZE_MB'],
+    [{ ...valid, XLS_CONVERTER_TIMEOUT_MS: '999' }, 'XLS_CONVERTER_TIMEOUT_MS'],
+    [{ ...valid, XLS_CONVERTER_MAX_OUTPUT_MB: '101' }, 'XLS_CONVERTER_MAX_OUTPUT_MB']
   ])('rejects an invalid required setting', (environment, expectedMessage) => {
     expect(() => validateEnvironment(environment)).toThrow(expectedMessage);
   });

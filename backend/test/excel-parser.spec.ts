@@ -6,6 +6,18 @@ import { ExcelParserService } from '../src/import-tasks/excel-parser.service';
 describe('ExcelParserService phase 9', () => {
   const parser = new ExcelParserService();
 
+  it('counts a merged formula only once at its master cell', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Merged formula');
+    sheet.addRow(['金额', '说明']);
+    sheet.getCell('A2').value = { formula: 'SUM(1,2)', result: 3 };
+    sheet.mergeCells('A2:B2');
+
+    const inspection = await parser.inspect(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(inspection.sheets[0]).toMatchObject({ formulaCellCount: 1, mergeCount: 1 });
+  });
+
   it('preserves real rows and flags empty, duplicate, and formula rows deterministically', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('费用明细');

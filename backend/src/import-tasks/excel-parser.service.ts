@@ -775,12 +775,13 @@ export class ExcelParserService {
   private inspectSheet(worksheet: ExcelJS.Worksheet, sheetIndex: number): WorkbookSheetInspection {
     const ranges = this.mergeRanges(worksheet);
     const bounds = this.worksheetBounds(worksheet, ranges);
-    let formulaCellCount = 0;
+    const formulaCells = new Set<string>();
     worksheet.eachRow({ includeEmpty: false }, (row) => {
       row.eachCell({ includeEmpty: false }, (cell) => {
-        const value = cell.value;
+        const formulaCell = cell.isMerged ? cell.master : cell;
+        const value = formulaCell.value;
         if (value && typeof value === 'object' && ('formula' in value || 'sharedFormula' in value)) {
-          formulaCellCount += 1;
+          formulaCells.add(formulaCell.address);
         }
       });
     });
@@ -790,7 +791,7 @@ export class ExcelParserService {
       state: worksheet.state,
       ...bounds,
       mergeCount: ranges.length,
-      formulaCellCount,
+      formulaCellCount: formulaCells.size,
       headerCandidates: this.headerCandidates(worksheet, ranges, bounds.rowCount, bounds.columnCount)
     };
   }

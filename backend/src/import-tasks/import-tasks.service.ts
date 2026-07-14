@@ -55,6 +55,8 @@ import {
   toImportRow,
   toImportTask
 } from './import.presenter';
+import { XlsConverterService } from './xls-converter.service';
+import { XlsConversionMetadata } from './xls-sanitizer';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 
@@ -131,7 +133,13 @@ interface BackgroundParseJob {
   context: RequestContext;
   options: ParseWorkbookOptions;
   attempt: number;
-  buffer?: Buffer;
+  workbook?: PreparedWorkbook;
+}
+
+interface PreparedWorkbook {
+  buffer: Buffer;
+  sourceFormat: 'xls' | 'xlsx';
+  conversion?: XlsConversionMetadata;
 }
 
 @Injectable()
@@ -145,6 +153,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly files: FilesService,
     private readonly excelParser: ExcelParserService,
+    private readonly xlsConverter: XlsConverterService,
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService
@@ -175,8 +184,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (existing) return toImportTask(existing);
     }
     if (!file) throw new BadRequestException('请选择 Excel 文件');
-    if (extname(file.originalname).toLowerCase() !== '.xlsx') {
-      throw new BadRequestException('第一版仅支持 .xlsx 文件');
+    const sourceExtension = extname(file.originalname).toLowerCase();
+    if (!['.xls', '.xlsx'].includes(sourceExtension)) {
+      throw new BadRequestException('仅支持 .xls 和 .xlsx 文件');
     }
 
     const template = await this.recordPolicy.getWritableTemplate(
@@ -188,6 +198,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
     const rawFile = await this.files.upload(file, { relatedProjectId: dto.projectId }, actor, context);
     try {
+      const validatedWorkbook = sourceExtension === '.xls'
+        ? await this.prepareWorkbook(await this.files.readForProcessing(rawFile.id, actor))
+        : undefined;
       const taskId = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
         await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId, dto.importType);
@@ -210,14 +223,22 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           'import_task.create',
           'import_task',
           task.id,
-          { projectId: dto.projectId, templateId: dto.templateId, rawFileId: rawFile.id },
+          {
+            projectId: dto.projectId,
+            templateId: dto.templateId,
+            rawFileId: rawFile.id,
+            sourceFormat: sourceExtension.slice(1),
+            conversion: validatedWorkbook?.conversion
+          },
           context
         );
         await this.ledgerEvents.write(tx, actor, 'import_task_created', 'import_task', task.id, {
           projectId: dto.projectId,
           templateId: dto.templateId,
           rawFileId: rawFile.id,
-          sha256: rawFile.sha256
+          sha256: rawFile.sha256,
+          sourceFormat: sourceExtension.slice(1),
+          conversion: validatedWorkbook?.conversion
         });
         return task.id;
       });
@@ -260,7 +281,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const task = await this.findDetailOrThrow(id);
     if (task.status === ImportTaskStatus.cancelled) throw new ConflictException('已取消任务不能检查工作簿');
     const file = await this.files.readForProcessing(task.rawFileId, actor);
-    const inspection = await this.excelParser.inspect(file.buffer);
+    const workbook = await this.prepareWorkbook(file);
+    const inspection = await this.excelParser.inspect(workbook.buffer);
     await this.prisma.$transaction(async (tx) => {
       await this.auditLogs.write(tx, actor, 'import_task.inspect', 'import_task', id, {
         rawFileId: task.rawFileId,
@@ -268,13 +290,15 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         requiresSheetSelection: inspection.requiresSheetSelection,
         processingMode: inspection.processingMode,
         mediaCount: inspection.mediaCount,
-        mediaExpandedBytes: inspection.mediaExpandedBytes
+        mediaExpandedBytes: inspection.mediaExpandedBytes,
+        ...this.workbookProvenance(workbook)
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_inspected', 'import_task', id, {
         rawFileId: task.rawFileId,
         sheetCount: inspection.sheets.length,
         processingMode: inspection.processingMode,
-        mediaCount: inspection.mediaCount
+        mediaCount: inspection.mediaCount,
+        ...this.workbookProvenance(workbook)
       });
     });
     return inspection;
@@ -350,15 +374,16 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     });
     if (prepared.skipped) return toImportTask(prepared.task);
 
-    let file: Awaited<ReturnType<FilesService['readForProcessing']>>;
+    let workbook: PreparedWorkbook;
     try {
-      file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
+      const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
+      workbook = await this.prepareWorkbook(file);
     } catch (error) {
       await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error);
       throw error;
     }
 
-    const inspection = await this.excelParser.inspect(file.buffer).catch(() => undefined);
+    const inspection = await this.excelParser.inspect(workbook.buffer).catch(() => undefined);
     const estimatedRows = inspection ? this.estimateDataRows(inspection, dto) : undefined;
     if (estimatedRows !== undefined && estimatedRows > IMPORT_BACKGROUND_MAX_ROWS) {
       const error = new BadRequestException(`Excel 数据行不能超过 ${IMPORT_BACKGROUND_MAX_ROWS}`);
@@ -382,7 +407,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         await this.auditLogs.write(tx, actor, 'import_task.parse_scheduled', 'import_task', id, {
           attempt: prepared.attempt,
           estimatedRows,
-          batchSize: IMPORT_ROW_BATCH_SIZE
+          batchSize: IMPORT_ROW_BATCH_SIZE,
+          ...this.workbookProvenance(workbook)
         }, context);
         await this.ledgerEvents.write(
           tx,
@@ -390,7 +416,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           'import_task_parse_scheduled',
           'import_task',
           id,
-          { attempt: prepared.attempt, estimatedRows, batchSize: IMPORT_ROW_BATCH_SIZE },
+          {
+            attempt: prepared.attempt,
+            estimatedRows,
+            batchSize: IMPORT_ROW_BATCH_SIZE,
+            ...this.workbookProvenance(workbook)
+          },
           `import_task:${id}:parse_attempt:${prepared.attempt}:scheduled`
         );
         return true;
@@ -403,7 +434,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         context,
         options: dto,
         attempt: prepared.attempt,
-        buffer: file.buffer
+        workbook
       });
       return toImportTask(await this.findDetailOrThrow(id));
     }
@@ -414,7 +445,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     });
     let parsed;
     try {
-      parsed = await this.excelParser.parse(file.buffer, dto);
+      parsed = await this.excelParser.parse(workbook.buffer, dto);
     } catch (error) {
       await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error, dto);
       throw error;
@@ -496,6 +527,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         columns: columns.length,
         rows: parsed.rows.length,
+        ...this.workbookProvenance(workbook),
         ...counts
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_parsed', 'import_task', id, {
@@ -505,7 +537,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         processingMode: parsed.processingMode,
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         rowCount: parsed.rows.length,
-        columnCount: columns.length
+        columnCount: columns.length,
+        ...this.workbookProvenance(workbook)
       }, `import_task:${id}:parse_attempt:${prepared.attempt}:parsed`);
     });
 
@@ -663,13 +696,15 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         throw new ImportParseLeaseLostError();
       }
       rawFileId = task.rawFileId;
-      const buffer = job.buffer ?? (await this.files.readForProcessing(task.rawFileId, job.actor)).buffer;
+      const workbook = job.workbook ?? await this.prepareWorkbook(
+        await this.files.readForProcessing(task.rawFileId, job.actor)
+      );
       let sheetId: string | undefined;
       let processedRows = 0;
       let counts = { valid: 0, errors: 0, duplicates: 0, ignored: 0 };
 
       const parsed = await this.excelParser.parseInBatches(
-        buffer,
+        workbook.buffer,
         async (rows, progress) => {
           if (this.stopping) throw new ImportParseWorkerStoppingError();
           if (!sheetId || progress.processedRows !== processedRows + rows.length) {
@@ -740,7 +775,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (!sheetId || processedRows !== parsed.sheet.rowCount) {
         throw new Error('Excel 后台解析行数与持久化进度不一致');
       }
-      await this.completeBackgroundParse(job, rawFileId, sheetId, parsed, counts);
+      await this.completeBackgroundParse(job, rawFileId, sheetId, parsed, counts, workbook);
     } catch (error) {
       if (error instanceof ImportParseLeaseLostError) return;
       if (error instanceof ImportParseWorkerStoppingError) {
@@ -768,7 +803,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     rawFileId: string,
     sheetId: string,
     parsed: ParsedWorkbookMetadata,
-    counts: { valid: number; errors: number; duplicates: number; ignored: number }
+    counts: { valid: number; errors: number; duplicates: number; ignored: number },
+    workbook: PreparedWorkbook
   ) {
     await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, job.taskId);
@@ -831,6 +867,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         columns: refreshedColumns.length,
         rows: parsed.sheet.rowCount,
         batchSize: IMPORT_ROW_BATCH_SIZE,
+        ...this.workbookProvenance(workbook),
         ...counts
       }, job.context);
       await this.ledgerEvents.write(
@@ -846,7 +883,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           processingMode: parsed.processingMode,
           allowCachedFormulaResults: job.options.allowCachedFormulaResults ?? false,
           rowCount: parsed.sheet.rowCount,
-          columnCount: refreshedColumns.length
+          columnCount: refreshedColumns.length,
+          ...this.workbookProvenance(workbook)
         },
         `import_task:${job.taskId}:parse_attempt:${job.attempt}:parsed`
       );
@@ -2046,6 +2084,25 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private optionalBoolean(value: Prisma.JsonValue | undefined): boolean | undefined | null {
     if (value === undefined) return undefined;
     return typeof value === 'boolean' ? value : null;
+  }
+
+  private async prepareWorkbook(
+    file: Awaited<ReturnType<FilesService['readForProcessing']>>
+  ): Promise<PreparedWorkbook> {
+    const extension = extname(file.fileName).toLowerCase();
+    if (extension === '.xlsx') return { buffer: file.buffer, sourceFormat: 'xlsx' };
+    if (extension === '.xls') {
+      const converted = await this.xlsConverter.convert(file.buffer);
+      return { buffer: converted.buffer, sourceFormat: 'xls', conversion: converted.metadata };
+    }
+    throw new BadRequestException('导入源文件必须是 .xls 或 .xlsx');
+  }
+
+  private workbookProvenance(workbook: PreparedWorkbook) {
+    return {
+      sourceFormat: workbook.sourceFormat,
+      ...(workbook.conversion ? { conversion: workbook.conversion } : {})
+    };
   }
 
   private estimateDataRows(inspection: WorkbookInspection, options: ParseWorkbookOptions) {

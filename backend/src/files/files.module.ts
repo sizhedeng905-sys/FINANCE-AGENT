@@ -25,6 +25,6 @@ import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor'
     JwtAuthGuard,
     RolesGuard
   ],
-  exports: [FilesService]
+  exports: [FilesService, FileSecurityService]
 })
 export class FilesModule {}

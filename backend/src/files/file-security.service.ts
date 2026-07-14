@@ -12,6 +12,7 @@ import * as yauzl from 'yauzl';
 
 import { isStructurallyValidJpeg, isStructurallyValidPng } from './image-security';
 import { hasActivePdfContent } from './pdf-security';
+import { inspectOleCompoundFile, OleCompoundPolicyError } from './ole-compound-security';
 
 const EICAR_SIGNATURE = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
 const MAX_ARCHIVE_ENTRIES = 2_000;
@@ -65,6 +66,10 @@ export class FileSecurityService {
       await this.validatePdf(buffer);
       return;
     }
+    if (extension === '.xls') {
+      this.validateLegacyExcel(buffer);
+      return;
+    }
     if (extension === '.xlsx' || extension === '.docx') {
       await this.validateOoxml(buffer, extension);
       return;
@@ -95,6 +100,15 @@ export class FileSecurityService {
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('PDF 无法安全解析或已加密');
+    }
+  }
+
+  private validateLegacyExcel(buffer: Buffer) {
+    try {
+      inspectOleCompoundFile(buffer);
+    } catch (error) {
+      if (error instanceof OleCompoundPolicyError) throw new BadRequestException(error.message);
+      throw new BadRequestException('XLS OLE 结构无法安全检查');
     }
   }
 

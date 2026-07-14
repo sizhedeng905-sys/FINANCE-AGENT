@@ -18,6 +18,10 @@ export default () => ({
     clamavPort: Number.parseInt(process.env.CLAMAV_PORT ?? '3310', 10),
     timeoutMs: Number.parseInt(process.env.FILE_SCAN_TIMEOUT_MS ?? '15000', 10)
   },
+  xlsConverter: {
+    timeoutMs: Number.parseInt(process.env.XLS_CONVERTER_TIMEOUT_MS ?? '30000', 10),
+    maxOutputMb: Number.parseInt(process.env.XLS_CONVERTER_MAX_OUTPUT_MB ?? '50', 10)
+  },
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:4173,http://127.0.0.1:4174')
     .split(',')
     .map((origin) => origin.trim())

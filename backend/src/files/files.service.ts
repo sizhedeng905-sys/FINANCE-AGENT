@@ -33,6 +33,7 @@ const ALLOWED_MIME_TYPES: Record<string, string[]> = {
   '.jpeg': ['image/jpeg'],
   '.webp': ['image/webp'],
   '.pdf': ['application/pdf'],
+  '.xls': ['application/vnd.ms-excel', 'application/xls', 'application/x-excel'],
   '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   '.csv': ['text/csv', 'application/vnd.ms-excel'],
   '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document']
@@ -392,7 +393,7 @@ export class FilesService {
     const extension = extname(fileName).slice(1).toLowerCase();
     if (['png', 'jpg', 'jpeg', 'webp'].includes(extension)) return 'image';
     if (extension === 'pdf') return 'pdf';
-    if (['xlsx', 'csv'].includes(extension)) return 'excel';
+    if (['xls', 'xlsx', 'csv'].includes(extension)) return 'excel';
     if (extension === 'docx') return 'word';
     return 'other';
   }
