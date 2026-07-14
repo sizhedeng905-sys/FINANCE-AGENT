@@ -2,6 +2,8 @@ name: Build and acceptance
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
