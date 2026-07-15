@@ -1886,6 +1886,13 @@ describe('real PostgreSQL integration', () => {
       generatedRecordId = firstApproval.body.data.generatedRecordId as string;
       expect(generatedRecordId).toBeTruthy();
       expect(secondApproval.body.data.generatedRecordId).toBe(generatedRecordId);
+      expect(secondApproval.body).toEqual(firstApproval.body);
+      await request(app.getHttpServer())
+        .post(`/api/work-orders/${workOrderId}/boss-approve`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .set('Idempotency-Key', approvalKey)
+        .send({ action: 'reject', comment: '同键改变审批动作' })
+        .expect(409);
 
       const storedWorkOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: workOrderId } });
       expect(storedWorkOrder).toMatchObject({
@@ -1949,6 +1956,7 @@ describe('real PostgreSQL integration', () => {
         )
       ).toBe(true);
     } finally {
+      await prisma.idempotencyKey.deleteMany({ where: { key: { contains: suffix } } });
       const workOrderIds = [workOrderId, raceWorkOrderId].filter((id): id is string => Boolean(id));
       if (workOrderIds.length) await prisma.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
       const projectRecordIds = projectId
@@ -3514,7 +3522,7 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(cachedFormulaPreview.body.data).toMatchObject({
         summary: { total: 1, valid: 1, errors: 0, duplicates: 0, ignored: 0 },
-        rows: [{ amount: '200', warnings: ['费用 / 金额：使用公式缓存结果，确认前必须复核'] }]
+        rows: [{ amount: '200.00', warnings: ['费用 / 金额：使用公式缓存结果，确认前必须复核'] }]
       });
       await request(app.getHttpServer())
         .post(`/api/import-tasks/${multiTaskId}/cancel`)
@@ -3786,9 +3794,9 @@ describe('real PostgreSQL integration', () => {
     });
 
     afterAll(async () => {
-      const records = taskIds.length
+      const records = projectId
         ? await prisma.businessRecord.findMany({
-          where: { importTaskId: { in: taskIds } },
+          where: { projectId },
           select: { id: true }
         })
         : [];
@@ -3798,8 +3806,8 @@ describe('real PostgreSQL integration', () => {
           select: { id: true, storagePath: true }
         })
         : [];
+      if (projectId) await prisma.businessRecord.deleteMany({ where: { projectId } });
       if (taskIds.length) {
-        await prisma.businessRecord.deleteMany({ where: { importTaskId: { in: taskIds } } });
         await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
       }
       for (const file of files) await fileStorage.remove(file.storagePath);
@@ -4091,6 +4099,431 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.ledgerEvent.count({
         where: { eventType: 'import_task_cancelled', aggregateId: confirmWins.taskId }
       })).toBe(0);
+    });
+  });
+
+  describe('B8-02 Excel preview and confirmation consistency', () => {
+    let financeToken: string;
+    let projectId: string;
+    let templateId: string;
+    let dateFieldId: string;
+    let amountFieldId: string;
+    let defaultFieldId: string;
+    let hiddenFieldId: string;
+    let inactiveFieldId: string;
+    let externalFieldId: string;
+    let precisionFieldId: string;
+    let precisionTemplateFieldId: string;
+    const taskIds: string[] = [];
+    const rawFileIds: string[] = [];
+    const suffix = Date.now().toString(36);
+
+    beforeAll(async () => {
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      financeToken = login.body.data.accessToken as string;
+      const [dateField, amountField, defaultField] = await Promise.all([
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } }),
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'costCategory' } })
+      ]);
+      dateFieldId = dateField.id;
+      amountFieldId = amountField.id;
+      defaultFieldId = defaultField.id;
+      const [hiddenField, inactiveField, externalField, precisionField] = await Promise.all([
+        prisma.fieldDefinition.create({
+          data: {
+            fieldKey: `b8_hidden_${suffix}`,
+            fieldName: 'B8 hidden field',
+            fieldType: FieldType.text,
+            semanticType: SemanticType.category
+          }
+        }),
+        prisma.fieldDefinition.create({
+          data: {
+            fieldKey: `b8_inactive_${suffix}`,
+            fieldName: 'B8 inactive field',
+            fieldType: FieldType.text,
+            semanticType: SemanticType.category,
+            isActive: false
+          }
+        }),
+        prisma.fieldDefinition.create({
+          data: {
+            fieldKey: `b8_external_${suffix}`,
+            fieldName: 'B8 external field',
+            fieldType: FieldType.text,
+            semanticType: SemanticType.category
+          }
+        }),
+        prisma.fieldDefinition.create({
+          data: {
+            fieldKey: `b8_precision_${suffix}`,
+            fieldName: 'B8 precision default',
+            fieldType: FieldType.number,
+            semanticType: SemanticType.amount
+          }
+        })
+      ]);
+      hiddenFieldId = hiddenField.id;
+      inactiveFieldId = inactiveField.id;
+      externalFieldId = externalField.id;
+      precisionFieldId = precisionField.id;
+
+      const project = await prisma.project.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_preview_${suffix}`,
+          customerName: 'B8 preview customer',
+          ownerName: 'B8 preview owner',
+          createdBy: 'finance'
+        }
+      });
+      projectId = project.id;
+      const template = await prisma.template.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_preview_template_${suffix}`,
+          recordType: DataRecordType.cost,
+          primaryDateFieldId: dateFieldId,
+          primaryAmountFieldId: amountFieldId,
+          createdBy: 'finance'
+        }
+      });
+      templateId = template.id;
+      const templateFields = await Promise.all([
+        prisma.templateField.create({
+          data: { templateId, fieldId: dateFieldId, isRequired: true, isVisible: true, displayOrder: 1 }
+        }),
+        prisma.templateField.create({
+          data: { templateId, fieldId: amountFieldId, isRequired: true, isVisible: true, displayOrder: 2 }
+        }),
+        prisma.templateField.create({
+          data: {
+            templateId,
+            fieldId: defaultFieldId,
+            isRequired: true,
+            isVisible: true,
+            displayOrder: 3,
+            defaultValue: '运输成本'
+          }
+        }),
+        prisma.templateField.create({
+          data: { templateId, fieldId: hiddenFieldId, isRequired: false, isVisible: false, displayOrder: 4 }
+        }),
+        prisma.templateField.create({
+          data: { templateId, fieldId: inactiveFieldId, isRequired: false, isVisible: true, displayOrder: 5 }
+        }),
+        prisma.templateField.create({
+          data: { templateId, fieldId: precisionFieldId, isRequired: false, isVisible: true, displayOrder: 6 }
+        })
+      ]);
+      precisionTemplateFieldId = templateFields[5].id;
+      await prisma.projectTemplate.create({
+        data: { projectId, templateId, recordType: DataRecordType.cost }
+      });
+    });
+
+    afterAll(async () => {
+      const records = projectId
+        ? await prisma.businessRecord.findMany({
+          where: { projectId },
+          select: { id: true }
+        })
+        : [];
+      const files = projectId
+        ? await prisma.rawFile.findMany({
+          where: { relatedProjectId: projectId },
+          select: { id: true, storagePath: true }
+        })
+        : [];
+      if (projectId) {
+        await prisma.businessRecord.deleteMany({ where: { projectId } });
+        await prisma.importTask.deleteMany({ where: { projectId } });
+      }
+      for (const file of files) await fileStorage.remove(file.storagePath);
+      if (files.length) await prisma.rawFile.deleteMany({ where: { id: { in: files.map((file) => file.id) } } });
+      await prisma.idempotencyKey.deleteMany({ where: { key: { startsWith: 'b8-' } } });
+      if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
+      if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+      const customFieldIds = [hiddenFieldId, inactiveFieldId, externalFieldId, precisionFieldId].filter(Boolean);
+      if (customFieldIds.length) {
+        await prisma.fieldDefinition.deleteMany({ where: { id: { in: customFieldIds } } });
+      }
+      const resourceIds = [
+        ...taskIds,
+        ...rawFileIds,
+        ...records.map((record) => record.id),
+        projectId,
+        templateId,
+        ...customFieldIds
+      ].filter((id): id is string => Boolean(id));
+      if (resourceIds.length) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+      }
+    });
+
+    const createAndParse = async (label: string, headers: string[], rows: unknown[][]) => {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('B8 preview');
+      sheet.addRow(headers);
+      for (const row of rows) sheet.addRow(row);
+      const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+      const created = await request(app.getHttpServer())
+        .post('/api/import-tasks')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-${label}`)
+        .field('projectId', projectId)
+        .field('templateId', templateId)
+        .field('importType', DataRecordType.cost)
+        .attach('file', buffer, {
+          filename: `${label}.xlsx`,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        })
+        .expect(201);
+      const taskId = created.body.data.id as string;
+      taskIds.push(taskId);
+      rawFileIds.push(created.body.data.rawFileId as string);
+      const parsed = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/parse`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({})
+        .expect(201);
+      return { taskId, parsed: parsed.body.data as { status: ImportTaskStatus; columns: Array<{
+        id: string;
+        sourceName: string;
+        decision?: { targetFieldId?: string };
+      }> } };
+    };
+
+    it('applies typed defaults and rejects canonical row errors before confirmation', async () => {
+      const { taskId, parsed } = await createAndParse('defaults-boundaries', ['date', 'amount'], [
+        ['2026-07-15', 8765.43],
+        ['2026-07-16', 0],
+        ['2026-07-17', -10],
+        ['2026-07-18', 1.234],
+        ['2026-02-30', 500]
+      ]);
+      expect(parsed.status).toBe(ImportTaskStatus.pending_confirm);
+
+      const preview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(preview.body.data.summary).toEqual({ total: 5, valid: 1, errors: 4, duplicates: 0, ignored: 0 });
+      expect(preview.body.data.rows[0]).toMatchObject({
+        status: ImportRowStatus.mapped,
+        amount: '8765.43',
+        recordDate: '2026-07-15',
+        values: expect.arrayContaining([
+          expect.objectContaining({ fieldId: defaultFieldId, value: '运输成本' })
+        ])
+      });
+      for (const row of preview.body.data.rows.slice(1)) {
+        expect(row.status).toBe(ImportRowStatus.error);
+        expect(row.errors.length).toBeGreaterThan(0);
+      }
+
+      const confirmed = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(201);
+      expect(confirmed.body.data).toMatchObject({ importedRows: 1, errorRows: 4, alreadyConfirmed: false });
+      const record = await prisma.businessRecord.findFirstOrThrow({
+        where: { importTaskId: taskId },
+        include: { values: true }
+      });
+      expect(record.amount.toFixed(2)).toBe('8765.43');
+      expect(record.values.find((value) => value.fieldId === defaultFieldId)).toMatchObject({
+        valueText: '运输成本'
+      });
+      expect(record.confirmationSnapshot).toMatchObject({
+        amount: '8765.43',
+        recordDate: '2026-07-15',
+        values: expect.arrayContaining([
+          expect.objectContaining({ fieldId: defaultFieldId, value: '运输成本' })
+        ])
+      });
+    });
+
+    it('never maps hidden, inactive, or non-template fields', async () => {
+      const hiddenKey = `b8_hidden_${suffix}`;
+      const inactiveKey = `b8_inactive_${suffix}`;
+      const { taskId, parsed } = await createAndParse(
+        'field-boundaries',
+        ['date', 'amount', hiddenKey, inactiveKey],
+        [['2026-07-15', 100, 'hidden', 'inactive']]
+      );
+      expect(parsed.status).toBe(ImportTaskStatus.mapping);
+      const hiddenColumn = parsed.columns.find((column) => column.sourceName === hiddenKey)!;
+      const inactiveColumn = parsed.columns.find((column) => column.sourceName === inactiveKey)!;
+      expect(hiddenColumn.decision).toBeUndefined();
+      expect(inactiveColumn.decision).toBeUndefined();
+
+      for (const [columnId, targetFieldId] of [
+        [hiddenColumn.id, hiddenFieldId],
+        [inactiveColumn.id, inactiveFieldId],
+        [hiddenColumn.id, externalFieldId]
+      ]) {
+        const response = await request(app.getHttpServer())
+          .put(`/api/import-tasks/${taskId}/mappings`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .send({ mappings: [{ columnId, targetFieldId }] })
+          .expect(400);
+        expect(response.body).toMatchObject({ code: 40001, data: {} });
+      }
+    });
+
+    it('binds import creation keys to the original canonical upload request and response', async () => {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('B8 import idempotency');
+      sheet.addRow(['date', 'amount']);
+      sheet.addRow(['2026-07-15', 100]);
+      const originalBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+      sheet.addRow(['2026-07-16', 200]);
+      const changedBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+      const key = `b8-import-create-${suffix}`;
+      const upload = (buffer: Buffer) => request(app.getHttpServer())
+        .post('/api/import-tasks')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key)
+        .field('projectId', projectId)
+        .field('templateId', templateId)
+        .field('importType', DataRecordType.cost)
+        .attach('file', buffer, {
+          filename: 'b8-idempotency.xlsx',
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+
+      const first = await upload(originalBuffer).expect(201);
+      const taskId = first.body.data.id as string;
+      taskIds.push(taskId);
+      rawFileIds.push(first.body.data.rawFileId as string);
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/parse`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({})
+        .expect(201);
+      const replay = await upload(originalBuffer).expect(201);
+      const conflict = await upload(changedBuffer).expect(409);
+      expect(replay.body).toEqual(first.body);
+      expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.importTask.count({ where: { idempotencyKey: key } })).toBe(1);
+    });
+
+    const manualRecordPayload = (amount = '250.00', description = 'B8 manual idempotency') => ({
+      projectId,
+      templateId,
+      recordType: DataRecordType.cost,
+      recordDate: '2026-07-15',
+      amount,
+      sourceType: RecordSourceType.manual,
+      sourceId: 'manual',
+      status: BusinessRecordStatus.pending_confirm,
+      description,
+      values: [
+        { fieldId: dateFieldId, value: '2026-07-15' },
+        { fieldId: amountFieldId, value: amount }
+      ],
+      attachments: []
+    });
+
+    const createManualRecord = (key: string, amount = '250.00') => request(app.getHttpServer())
+      .post('/api/records')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .set('Idempotency-Key', key)
+      .send(manualRecordPayload(amount, key));
+
+    it('persists manual record creation idempotency and rejects key reuse with another body', async () => {
+      const key = `b8-record-create-${suffix}`;
+      const first = await createManualRecord(key).expect(201);
+      const replay = await createManualRecord(key).expect(201);
+      const conflict = await createManualRecord(key, '251.00').expect(409);
+      expect(replay.body).toEqual(first.body);
+      expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.businessRecord.count({
+        where: { projectId, sourceType: RecordSourceType.manual, description: key }
+      })).toBe(1);
+    });
+
+    it('serializes concurrent manual record creation under one idempotency key', async () => {
+      const key = `b8-record-create-race-${suffix}`;
+      const [first, second] = await Promise.all([
+        createManualRecord(key),
+        createManualRecord(key)
+      ]);
+      expect([first.status, second.status]).toEqual([201, 201]);
+      expect(first.body).toEqual(second.body);
+      expect(await prisma.businessRecord.count({
+        where: { projectId, sourceType: RecordSourceType.manual, description: key }
+      })).toBe(1);
+    });
+
+    it('scopes record confirmation keys to one canonical target', async () => {
+      const firstRecord = await createManualRecord(`b8-record-confirm-source-a-${suffix}`).expect(201);
+      const secondRecord = await createManualRecord(`b8-record-confirm-source-b-${suffix}`, '300.00').expect(201);
+      const key = `b8-record-confirm-${suffix}`;
+      const confirm = (id: string) => request(app.getHttpServer())
+        .post(`/api/records/${id}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key);
+      const first = await confirm(firstRecord.body.data.id).expect(201);
+      const replay = await confirm(firstRecord.body.data.id).expect(201);
+      const conflict = await confirm(secondRecord.body.data.id).expect(409);
+      expect(replay.body).toEqual(first.body);
+      expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.businessRecord.count({
+        where: { id: { in: [firstRecord.body.data.id, secondRecord.body.data.id] }, status: BusinessRecordStatus.confirmed }
+      })).toBe(1);
+    });
+
+    it('scopes Excel confirmation keys to one import task', async () => {
+      const firstTask = await createAndParse(
+        'confirm-idempotency-a',
+        ['date', 'amount'],
+        [['2026-07-20', 410]]
+      );
+      const secondTask = await createAndParse(
+        'confirm-idempotency-b',
+        ['date', 'amount'],
+        [['2026-07-21', 420]]
+      );
+      const key = `b8-import-confirm-${suffix}`;
+      const confirm = (taskId: string) => request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key);
+      const first = await confirm(firstTask.taskId).expect(201);
+      const replay = await confirm(firstTask.taskId).expect(201);
+      const conflict = await confirm(secondTask.taskId).expect(409);
+      expect(replay.body).toEqual(first.body);
+      expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.businessRecord.count({
+        where: { importTaskId: { in: [firstTask.taskId, secondTask.taskId] } }
+      })).toBe(1);
+    });
+
+    it('marks an invalid typed template default as a preview error', async () => {
+      await prisma.templateField.update({
+        where: { id: precisionTemplateFieldId },
+        data: { isRequired: true, defaultValue: '1.23456' }
+      });
+      const { taskId } = await createAndParse(
+        'invalid-default',
+        ['date', 'amount'],
+        [['2026-07-15', 100]]
+      );
+      const preview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(preview.body.data.summary).toEqual({ total: 1, valid: 0, errors: 1, duplicates: 0, ignored: 0 });
+      expect(preview.body.data.rows[0]).toMatchObject({
+        status: ImportRowStatus.error,
+        errors: expect.arrayContaining([expect.stringContaining('B8 precision default')])
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
     });
   });
 
@@ -4627,7 +5060,13 @@ describe('real PostgreSQL integration', () => {
         .set('Idempotency-Key', `integration-ocr-${suffix}-low`)
         .send(createPayload)
         .expect(201);
-      expect(repeatedCreate.body.data.id).toBe(taskId);
+      expect(repeatedCreate.body).toEqual(created.body);
+      await request(app.getHttpServer())
+        .post('/api/ocr-tasks')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('Idempotency-Key', `integration-ocr-${suffix}-low`)
+        .send({ ...createPayload, mockScenario: 'failure_once' })
+        .expect(409);
 
       await request(app.getHttpServer())
         .get(`/api/ocr-tasks/${taskId}`)
@@ -4698,10 +5137,16 @@ describe('real PostgreSQL integration', () => {
         .send({ acknowledgeLowConfidence: true });
       const [firstConfirm, secondConfirm] = await Promise.all([
         confirm(`integration-ocr-confirm-${suffix}-a`),
-        confirm(`integration-ocr-confirm-${suffix}-b`)
+        confirm(`integration-ocr-confirm-${suffix}-a`)
       ]);
       expect([firstConfirm.status, secondConfirm.status]).toEqual([201, 201]);
-      expect(firstConfirm.body.data.record.id).toBe(secondConfirm.body.data.record.id);
+      expect(secondConfirm.body).toEqual(firstConfirm.body);
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('Idempotency-Key', `integration-ocr-confirm-${suffix}-a`)
+        .send({ acknowledgeLowConfidence: false })
+        .expect(409);
       const recordId = firstConfirm.body.data.record.id as string;
       recordIds.push(recordId);
       expect(firstConfirm.body.data).toMatchObject({
@@ -4773,6 +5218,7 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(201);
     } finally {
+      await prisma.idempotencyKey.deleteMany({ where: { key: { contains: suffix } } });
       const records = taskIds.length
         ? await prisma.businessRecord.findMany({ where: { sourceType: RecordSourceType.ocr, sourceId: { in: taskIds } }, select: { id: true } })
         : [];

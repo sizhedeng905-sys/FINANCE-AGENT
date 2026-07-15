@@ -144,8 +144,13 @@ export class ImportTasksController {
   }
 
   @Post(':id/confirm')
-  confirm(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
-    return this.imports.confirm(id, user, getRequestContext(request));
+  confirm(
+    @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.imports.confirm(id, user, getRequestContext(request), idempotencyKey);
   }
 
   @Post(':id/cancel')

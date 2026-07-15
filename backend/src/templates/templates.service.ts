@@ -400,7 +400,16 @@ export class TemplatesService {
         throw new BadRequestException('默认值与数字字段类型不匹配');
       }
       try {
-        if (new Prisma.Decimal(value).decimalPlaces() > 4) throw new Error('precision');
+        const decimal = new Prisma.Decimal(value);
+        const maxDecimals = field.fieldType === FieldType.money ? 2 : 4;
+        const maxValue = field.fieldType === FieldType.money ? '9999999999999999.99' : '99999999999999.9999';
+        if (
+          decimal.decimalPlaces() > maxDecimals ||
+          decimal.abs().greaterThan(maxValue) ||
+          (field.fieldType === FieldType.money && decimal.isNegative())
+        ) {
+          throw new Error('range');
+        }
       } catch {
         throw new BadRequestException('默认值与数字字段类型不匹配');
       }

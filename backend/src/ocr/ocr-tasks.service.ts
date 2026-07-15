@@ -18,6 +18,7 @@ import {
   OcrTaskStatus,
   Prisma,
   ProjectStatus,
+  RawFile,
   RecordSourceType,
   SemanticType
 } from '@prisma/client';
@@ -27,6 +28,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { FilesService } from '../files/files.service';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
@@ -61,6 +63,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService,
+    private readonly idempotency: IdempotencyService,
     config: ConfigService
   ) {
     this.lowConfidenceThreshold = config.get<number>('ocr.lowConfidenceThreshold') ?? 0.8;
@@ -123,83 +126,23 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey);
-    if (idempotencyKey) {
-      const existing = await this.prisma.ocrTask.findUnique({
-        where: { idempotencyKey },
-        include: ocrTaskDetailInclude
-      });
-      if (existing) return toOcrTask(existing);
-    }
-
-    const template = await this.recordPolicy.getWritableTemplate(
-      this.prisma,
-      dto.projectId,
-      dto.templateId
-    );
     const rawFile = await this.prisma.rawFile.findUnique({ where: { id: dto.rawFileId } });
     if (!rawFile || rawFile.isVoided) throw new NotFoundException('原始文件不存在');
     if (rawFile.relatedProjectId !== dto.projectId) throw new BadRequestException('原始文件与 OCR 项目不一致');
-
-    const provider = await this.providers.current();
-    if (dto.mockScenario && provider.name !== 'mock') {
-      throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
-    }
-    const file = await this.files.readForProcessing(dto.rawFileId, actor);
-    const pageSelection = this.pageSelectionFromDto(dto);
-    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
-    const snapshot = provider.snapshot();
-    const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
-
-    try {
-      const taskId = await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
-        await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
-        const task = await tx.ocrTask.create({
-          data: {
-            rawFileId: dto.rawFileId,
-            projectId: dto.projectId,
-            templateId: dto.templateId,
-            templateVersion: template.version,
-            templateSnapshot: this.recordPolicy.toSnapshot(template),
-            provider: snapshot.provider,
-            modelName: snapshot.modelName,
-            modelVersion: snapshot.modelVersion,
-            endpointSnapshot: snapshot.endpoint,
-            providerOptions: providerOptions ? this.json(providerOptions) : undefined,
-            pages: this.json(pages),
-            pageCount: pages.length,
-            uploadedBy: actor.id,
-            idempotencyKey
-          }
-        });
-        await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, this.json({
-          rawFileId: task.rawFileId,
-          projectId: task.projectId,
-          templateId: task.templateId,
-          provider: task.provider,
-          pageCount: task.pageCount,
-          pageRange: pageSelection.pageStart ? pageSelection : null
-        }), context);
-        await this.ledgerEvents.write(tx, actor, 'ocr_task_created', 'ocr_task', task.id, this.json({
-          rawFileId: task.rawFileId,
-          sha256: rawFile.sha256,
-          provider: task.provider,
-          pageRange: pageSelection.pageStart ? pageSelection : null
-        }));
-        return task.id;
-      });
-      return toOcrTask(await this.findDetailOrThrow(taskId));
-    } catch (error) {
-      if (idempotencyKey && this.isUniqueConflict(error)) {
-        const existing = await this.prisma.ocrTask.findUnique({
-          where: { idempotencyKey },
-          include: ocrTaskDetailInclude
-        });
-        if (existing) return toOcrTask(existing);
-      }
-      throw error;
-    }
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/ocr-tasks',
+      idempotencyKey,
+      { ...dto, rawFileSha256: rawFile.sha256 },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(
+      tx,
+      scope,
+      201,
+      () => this.createTaskWithinTransaction(tx, dto, rawFile, actor, context, idempotencyKey)
+    ));
   }
 
   async createFromUpload(
@@ -209,14 +152,6 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey);
-    if (idempotencyKey) {
-      const existing = await this.prisma.ocrTask.findUnique({
-        where: { idempotencyKey },
-        include: ocrTaskDetailInclude
-      });
-      if (existing) return toOcrTask(existing);
-    }
     if (!file) throw new BadRequestException('请选择 OCR 原始文件');
 
     const rawFile = await this.files.upload(
@@ -225,20 +160,32 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       actor,
       context
     );
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/ocr-tasks/upload',
+      idempotencyKey,
+      {
+        ...dto,
+        file: {
+          name: rawFile.originalFileName,
+          size: rawFile.fileSize,
+          sha256: rawFile.sha256
+        }
+      },
+      false
+    );
     try {
-      const task = await this.create(
-        {
+      const task = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, () =>
+        this.createTaskWithinTransaction(tx, {
           rawFileId: rawFile.id,
           projectId: dto.projectId,
           templateId: dto.templateId,
           mockScenario: dto.mockScenario,
           pageStart: dto.pageStart,
           pageEnd: dto.pageEnd
-        },
-        actor,
-        context,
-        idempotencyKey
-      );
+        }, rawFile, actor, context, idempotencyKey)
+      ));
       if (task.rawFileId !== rawFile.id) {
         await this.files.discardFailedUpload(
           rawFile.id,
@@ -257,6 +204,62 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       ).catch(() => undefined);
       throw error;
     }
+  }
+
+  private async createTaskWithinTransaction(
+    tx: Prisma.TransactionClient,
+    dto: CreateOcrTaskDto,
+    rawFile: Pick<RawFile, 'sha256'>,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const template = await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
+    const provider = await this.providers.current();
+    if (dto.mockScenario && provider.name !== 'mock') {
+      throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
+    }
+    const file = await this.files.readForProcessing(dto.rawFileId, actor);
+    const pageSelection = this.pageSelectionFromDto(dto);
+    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
+    const snapshot = provider.snapshot();
+    const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
+
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
+    await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
+    const task = await tx.ocrTask.create({
+      data: {
+        rawFileId: dto.rawFileId,
+        projectId: dto.projectId,
+        templateId: dto.templateId,
+        templateVersion: template.version,
+        templateSnapshot: this.recordPolicy.toSnapshot(template),
+        provider: snapshot.provider,
+        modelName: snapshot.modelName,
+        modelVersion: snapshot.modelVersion,
+        endpointSnapshot: snapshot.endpoint,
+        providerOptions: providerOptions ? this.json(providerOptions) : undefined,
+        pages: this.json(pages),
+        pageCount: pages.length,
+        uploadedBy: actor.id,
+        idempotencyKey
+      }
+    });
+    await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, this.json({
+      rawFileId: task.rawFileId,
+      projectId: task.projectId,
+      templateId: task.templateId,
+      provider: task.provider,
+      pageCount: task.pageCount,
+      pageRange: pageSelection.pageStart ? pageSelection : null
+    }), context);
+    await this.ledgerEvents.write(tx, actor, 'ocr_task_created', 'ocr_task', task.id, this.json({
+      rawFileId: task.rawFileId,
+      sha256: rawFile.sha256,
+      provider: task.provider,
+      pageRange: pageSelection.pageStart ? pageSelection : null
+    }));
+    return toOcrTask(await this.findDetailOrThrow(task.id, tx));
   }
 
   async findMany(query: QueryOcrTasksDto) {
@@ -596,12 +599,22 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey, true);
-    const result = await this.prisma.$transaction(async (tx) => {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/ocr-tasks/:id/confirm',
+      idempotencyKey,
+      { ocrTaskId: id, ...dto }
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
       if (task.status === OcrTaskStatus.confirmed && task.generatedRecordId) {
-        return { recordId: task.generatedRecordId, alreadyConfirmed: true };
+        return {
+          task: toOcrTask(task),
+          record: toBusinessRecord(await this.findRecordOrThrow(task.generatedRecordId, tx)),
+          alreadyConfirmed: true
+        };
       }
       if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('OCR 结果尚未进入人工确认状态');
 
@@ -708,12 +721,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         accountingDirection: canonical.accountingDirection,
         amount: canonical.amount.toFixed(2)
       }, `ocr_task:${id}:business_record_created`);
-      return { recordId: record.id, alreadyConfirmed: false, record: toBusinessRecord(record) };
-    });
-
-    const task = toOcrTask(await this.findDetailOrThrow(id));
-    const record = result.record ?? toBusinessRecord(await this.findRecordOrThrow(result.recordId));
-    return { task, record, alreadyConfirmed: result.alreadyConfirmed };
+      return {
+        task: toOcrTask(await this.findDetailOrThrow(id, tx)),
+        record: toBusinessRecord(record),
+        alreadyConfirmed: false
+      };
+    }));
   }
 
   async cancel(id: string, actor: CurrentUser, context: RequestContext) {
@@ -1006,13 +1019,6 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
   }
 
-  private validateIdempotencyKey(value: string | undefined, required = false) {
-    if (required && !value) throw new BadRequestException('Idempotency-Key 请求头不能为空');
-    if (value && !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) {
-      throw new BadRequestException('Idempotency-Key 格式不合法');
-    }
-  }
-
   private async lockTask(tx: Prisma.TransactionClient, id: string) {
     await tx.$executeRaw`SELECT id FROM ocr_tasks WHERE id = ${id} FOR UPDATE`;
   }
@@ -1023,8 +1029,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     return task;
   }
 
-  private async findRecordOrThrow(id: string) {
-    const record = await this.prisma.businessRecord.findUnique({
+  private async findRecordOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
+    const record = await prisma.businessRecord.findUnique({
       where: { id },
       include: {
         project: true,
@@ -1036,7 +1042,4 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     return record;
   }
 
-  private isUniqueConflict(error: unknown) {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-  }
 }

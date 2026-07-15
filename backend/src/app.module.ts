@@ -10,6 +10,7 @@ import { RequestRateLimitMiddleware } from './common/middleware/request-rate-lim
 import { FieldsModule } from './fields/fields.module';
 import { FilesModule } from './files/files.module';
 import { HealthModule } from './health/health.module';
+import { IdempotencyModule } from './idempotency/idempotency.module';
 import { ImportTasksModule } from './import-tasks/import-tasks.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -32,6 +33,7 @@ import { WorkOrdersModule } from './work-orders/work-orders.module';
       validate: validateEnvironment
     }),
     PrismaModule,
+    IdempotencyModule,
     HealthModule,
     AuthModule,
     UsersModule,

@@ -16,6 +16,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PolicyValueInput, RecordPolicyService } from '../record-policy/record-policy.service';
 import { CreateRecordDto } from './dto/create-record.dto';
@@ -40,7 +41,8 @@ export class RecordsService {
     private readonly prisma: PrismaService,
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
-    private readonly recordPolicy: RecordPolicyService
+    private readonly recordPolicy: RecordPolicyService,
+    private readonly idempotency: IdempotencyService
   ) {}
 
   async findMany(query: QueryRecordsDto) {
@@ -68,7 +70,12 @@ export class RecordsService {
     return toBusinessRecord(await this.findRecordOrThrow(id));
   }
 
-  async create(dto: CreateRecordDto, actor: CurrentUser, context: RequestContext) {
+  async create(
+    dto: CreateRecordDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
     if (dto.sourceType && dto.sourceType !== RecordSourceType.manual) {
       throw new BadRequestException('手工补录只允许 manual 来源');
     }
@@ -79,7 +86,15 @@ export class RecordsService {
       throw new BadRequestException('新建记录不能直接进入已确认或已作废状态');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/records',
+      idempotencyKey,
+      this.canonicalCreateRequest(dto),
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       const status = dto.status ?? BusinessRecordStatus.pending_confirm;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
       const template = await this.recordPolicy.getWritableTemplate(
@@ -159,7 +174,7 @@ export class RecordsService {
         `business_record:${record.id}:created`
       );
       return presented;
-    });
+    }));
   }
 
   async update(id: string, dto: UpdateRecordDto, actor: CurrentUser, context: RequestContext) {
@@ -303,8 +318,21 @@ export class RecordsService {
     });
   }
 
-  async confirm(id: string, actor: CurrentUser, context: RequestContext) {
-    return this.prisma.$transaction(async (tx) => {
+  async confirm(
+    id: string,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/records/:id/confirm',
+      idempotencyKey,
+      { recordId: id },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       const before = await this.findRecordOrThrow(id, tx);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${before.projectId}, 22))`;
       if (before.status === BusinessRecordStatus.confirmed) return toBusinessRecord(before);
@@ -381,7 +409,15 @@ export class RecordsService {
         `business_record:${id}:confirmed`
       );
       return toBusinessRecord(record);
-    });
+    }));
+  }
+
+  private canonicalCreateRequest(dto: CreateRecordDto) {
+    return {
+      ...dto,
+      attachments: dto.attachments ? [...dto.attachments].sort() : undefined,
+      values: [...dto.values].sort((left, right) => left.fieldId.localeCompare(right.fieldId))
+    };
   }
 
   private buildWhere(query: QueryRecordsDto): Prisma.BusinessRecordWhereInput {

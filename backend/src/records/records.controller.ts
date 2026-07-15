@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -30,10 +30,11 @@ export class RecordsController {
   @Roles(UserRole.finance)
   create(
     @Body() dto: CreateRecordDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.create(dto, user, getRequestContext(request));
+    return this.recordsService.create(dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Get(':id')
@@ -67,9 +68,10 @@ export class RecordsController {
   @Roles(UserRole.finance)
   confirm(
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.confirm(id, user, getRequestContext(request));
+    return this.recordsService.confirm(id, user, getRequestContext(request), idempotencyKey);
   }
 }

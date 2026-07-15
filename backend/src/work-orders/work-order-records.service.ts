@@ -17,6 +17,7 @@ import {
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -53,11 +54,25 @@ export class WorkOrderRecordsService {
     private readonly prisma: PrismaService,
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
-    private readonly recordPolicy: RecordPolicyService
+    private readonly recordPolicy: RecordPolicyService,
+    private readonly idempotency: IdempotencyService
   ) {}
 
-  async generate(id: string, actor: CurrentUser, context: RequestContext) {
-    return this.prisma.$transaction(async (tx) => {
+  async generate(
+    id: string,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/work-orders/:id/generate-record',
+      idempotencyKey,
+      { workOrderId: id },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))`;
       const workOrder = await tx.workOrder.findUnique({ where: { id }, include: workOrderInclude });
       if (!workOrder) throw new NotFoundException('资源不存在');
@@ -72,7 +87,7 @@ export class WorkOrderRecordsService {
         });
       }
       return toBusinessRecord(record);
-    });
+    }));
   }
 
   async prepareSubmission(tx: Prisma.TransactionClient, workOrder: WorkOrderWithRelations) {

@@ -30,6 +30,7 @@ import { extname } from 'node:path';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { FilesService } from '../files/files.service';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
@@ -157,7 +158,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly xlsConverter: XlsConverterService,
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
-    private readonly recordPolicy: RecordPolicyService
+    private readonly recordPolicy: RecordPolicyService,
+    private readonly idempotency: IdempotencyService
   ) {}
 
   onModuleInit() {
@@ -179,30 +181,38 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey);
-    if (idempotencyKey) {
-      const existing = await this.prisma.importTask.findUnique({ where: { idempotencyKey }, include: importTaskDetailInclude });
-      if (existing) return toImportTask(existing);
-    }
     if (!file) throw new BadRequestException('请选择 Excel 文件');
     const sourceExtension = extname(file.originalname).toLowerCase();
     if (!['.xls', '.xlsx'].includes(sourceExtension)) {
       throw new BadRequestException('仅支持 .xls 和 .xlsx 文件');
     }
-
     const template = await this.recordPolicy.getWritableTemplate(
       this.prisma,
       dto.projectId,
       dto.templateId,
       dto.importType
     );
-
     const rawFile = await this.files.upload(file, { relatedProjectId: dto.projectId }, actor, context);
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/import-tasks',
+      idempotencyKey,
+      {
+        ...dto,
+        file: {
+          name: rawFile.originalFileName,
+          size: rawFile.fileSize,
+          sha256: rawFile.sha256
+        }
+      },
+      false
+    );
     try {
-      const validatedWorkbook = sourceExtension === '.xls'
-        ? await this.prepareWorkbook(await this.files.readForProcessing(rawFile.id, actor))
-        : undefined;
-      const taskId = await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
+        const validatedWorkbook = sourceExtension === '.xls'
+          ? await this.prepareWorkbook(await this.files.readForProcessing(rawFile.id, actor))
+          : undefined;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
         await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId, dto.importType);
         const task = await tx.importTask.create({
@@ -241,15 +251,29 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           sourceFormat: sourceExtension.slice(1),
           conversion: validatedWorkbook?.conversion
         });
-        return task.id;
-      });
-      return toImportTask(await this.findDetailOrThrow(taskId));
-    } catch (error) {
-      await this.files.void(rawFile.id, { reason: '导入任务创建失败，原文件已作废' }, actor, context).catch(() => undefined);
-      if (idempotencyKey && this.isUniqueConflict(error)) {
-        const existing = await this.prisma.importTask.findUnique({ where: { idempotencyKey }, include: importTaskDetailInclude });
-        if (existing) return toImportTask(existing);
+        const detail = await tx.importTask.findUnique({
+          where: { id: task.id },
+          include: importTaskDetailInclude
+        });
+        if (!detail) throw new NotFoundException('资源不存在');
+        return toImportTask(detail);
+      }));
+      if (result.rawFileId !== rawFile.id) {
+        await this.files.discardFailedUpload(
+          rawFile.id,
+          actor,
+          context,
+          '导入幂等请求已绑定既有任务，重复上传文件已清理'
+        );
       }
+      return result;
+    } catch (error) {
+      await this.files.discardFailedUpload(
+        rawFile.id,
+        actor,
+        context,
+        '导入任务创建失败，原文件已作废'
+      ).catch(() => undefined);
       throw error;
     }
   }
@@ -951,7 +975,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         throw new BadRequestException('同一系统字段不能映射多个 Excel 列');
       }
       const templateFields = await tx.templateField.findMany({
-        where: { templateId: task.templateId, fieldId: { in: targetFieldIds }, field: { isActive: true } },
+        where: {
+          templateId: task.templateId,
+          fieldId: { in: targetFieldIds },
+          isVisible: true,
+          field: { isActive: true }
+        },
         include: { field: true }
       });
       if (templateFields.length !== targetFieldIds.length) {
@@ -1075,14 +1104,36 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async confirm(id: string, actor: CurrentUser, context: RequestContext) {
-    const result = await this.prisma.$transaction(async (tx) => {
+  async confirm(
+    id: string,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/import-tasks/:id/confirm',
+      idempotencyKey,
+      { importTaskId: id },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       await this.lockTask(tx, id);
       const current = await tx.importTask.findUnique({ where: { id } });
       if (!current) throw new NotFoundException('资源不存在');
       if (current.status === ImportTaskStatus.confirmed) {
         const records = await tx.businessRecord.findMany({ where: { importTaskId: id }, select: { id: true } });
-        return { alreadyConfirmed: true, recordIds: records.map((record) => record.id) };
+        const task = await this.findDetailOrThrow(id, tx);
+        return {
+          task: toImportTask(task),
+          recordIds: records.map((record) => record.id),
+          importedRows: task.importedRows,
+          errorRows: task.errorRows,
+          duplicateRows: task.duplicateRows,
+          ignoredRows: task.ignoredRows,
+          alreadyConfirmed: true
+        };
       }
       if (current.status !== ImportTaskStatus.pending_confirm) {
         throw new ConflictException('仅待确认任务可以确认');
@@ -1231,19 +1282,17 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         duplicateRows,
         ignoredRows
       });
-      return { alreadyConfirmed: false, recordIds };
-    });
-
-    const task = await this.findDetailOrThrow(id);
-    return {
-      task: toImportTask(task),
-      recordIds: result.recordIds,
-      importedRows: task.importedRows,
-      errorRows: task.errorRows,
-      duplicateRows: task.duplicateRows,
-      ignoredRows: task.ignoredRows,
-      alreadyConfirmed: result.alreadyConfirmed
-    };
+      const task = await this.findDetailOrThrow(id, tx);
+      return {
+        task: toImportTask(task),
+        recordIds,
+        importedRows: task.importedRows,
+        errorRows: task.errorRows,
+        duplicateRows: task.duplicateRows,
+        ignoredRows: task.ignoredRows,
+        alreadyConfirmed: false
+      };
+    }));
   }
 
   async cancel(id: string, actor: CurrentUser, context: RequestContext) {
@@ -1417,7 +1466,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     actor: CurrentUser
   ) {
     const templateFields = await tx.templateField.findMany({
-      where: { templateId: task.templateId, field: { isActive: true } },
+      where: { templateId: task.templateId, isVisible: true, field: { isActive: true } },
       include: { field: true },
       orderBy: { displayOrder: 'asc' }
     });
@@ -1540,10 +1589,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const unresolvedColumns = task.columns
       .filter((column) => !column.decision)
       .map((column) => ({ id: column.id, sourceName: column.sourceName, sourceKey: column.sourceKey }));
-    const requiredFields = task.template.templateFields.filter((item) => item.isRequired);
-    const mappedFields = task.columns.flatMap((column) => column.decision?.targetField ? [column.decision.targetField] : []);
-    const amountField = mappedFields.find((field) => field.id === task.template.primaryAmountFieldId);
-    const dateField = mappedFields.find((field) => field.id === task.template.primaryDateFieldId);
+    const templateFields = task.template.templateFields;
+    const templateFieldById = new Map(templateFields.map((item) => [item.fieldId, item]));
+    const requiredFields = templateFields.filter((item) => item.isRequired);
     const category = task.template.accountingDirection === 'income' ? '收入' : '成本';
     const rows: PreviewRow[] = task.rows.map((row) => {
       const parserErrors = this.stringArray(row.errors);
@@ -1556,6 +1604,15 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       for (const column of task.columns) {
         const decision = column.decision;
         if (!decision || decision.ignored || !decision.targetField) continue;
+        const templateField = templateFieldById.get(decision.targetField.id);
+        if (!templateField) {
+          errors.push(`${column.sourceName}：映射字段不属于当前模板`);
+          continue;
+        }
+        if (!templateField.isVisible || !decision.targetField.isActive) {
+          errors.push(`${column.sourceName}：停用或隐藏字段不能写入`);
+          continue;
+        }
         const result = this.normalizeFieldValue(decision.targetField, rawData[column.sourceKey]);
         if (result.error) errors.push(`${column.sourceName}：${result.error}`);
         if (result.value !== undefined) {
@@ -1564,19 +1621,47 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      for (const templateField of templateFields) {
+        if (templateField.fieldId in normalizedData || !this.hasPreviewValue(templateField.defaultValue)) continue;
+        if (!templateField.field.isActive) {
+          errors.push(`${templateField.field.fieldName}：停用字段不能应用默认值`);
+          continue;
+        }
+        const result = this.normalizeFieldValue(templateField.field, templateField.defaultValue);
+        if (result.error) {
+          errors.push(`${templateField.field.fieldName}默认值：${result.error}`);
+          continue;
+        }
+        if (result.value !== undefined) {
+          normalizedData[templateField.fieldId] = result.value;
+          values.push({ field: templateField.field, value: result.value });
+        }
+      }
+
       for (const required of requiredFields) {
-        if (!(required.fieldId in normalizedData) && !required.defaultValue) {
+        if (!(required.fieldId in normalizedData)) {
           errors.push(`缺少必填字段：${required.field.fieldName}`);
         }
       }
-      if (!task.template.primaryAmountFieldId) errors.push('模板未配置主金额字段');
-      else if (!amountField) errors.push('未映射模板主金额字段');
-      if (!task.template.primaryDateFieldId) errors.push('模板未配置主日期字段');
-      else if (!dateField) errors.push('未映射模板主日期字段');
-      const amount = amountField ? normalizedData[amountField.id] : undefined;
-      const recordDate = dateField ? normalizedData[dateField.id] : undefined;
-      if (amountField && typeof amount !== 'string') errors.push('金额字段为空或格式错误');
-      if (dateField && typeof recordDate !== 'string') errors.push('日期字段为空或格式错误');
+
+      let amount = task.template.primaryAmountFieldId
+        ? normalizedData[task.template.primaryAmountFieldId]
+        : undefined;
+      let recordDate = task.template.primaryDateFieldId
+        ? normalizedData[task.template.primaryDateFieldId]
+        : undefined;
+      try {
+        const canonical = this.recordPolicy.resolveCanonicalValues(
+          task.template,
+          values.map((value) => ({ fieldId: value.field.id, value: value.value })),
+          { requireValues: true }
+        );
+        amount = canonical.amount.toFixed(2);
+        recordDate = canonical.recordDate.toISOString().slice(0, 10);
+      } catch (error) {
+        if (!(error instanceof HttpException) || error.getStatus() >= 500) throw error;
+        errors.push(this.errorMessage(error));
+      }
 
       let status = row.status;
       const fixedStatuses: ImportRowStatus[] = [
@@ -1647,12 +1732,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         if (typeof raw === 'number' && !Number.isSafeInteger(raw * 10 ** maxDecimals)) {
           return { error: '高精度数字必须在 Excel 中保存为文本' };
         }
-        const decimal = new Prisma.Decimal(normalized);
-        if (decimal.abs().greaterThan('99999999999999.99')) return { error: '数字超出允许范围' };
-        if (decimal.decimalPlaces() > maxDecimals) return { error: `最多允许 ${maxDecimals} 位小数` };
-        return { value: decimal.toString() };
-      } catch {
-        return { error: '数字格式错误' };
+        const decimal = field.fieldType === FieldType.money
+          ? this.recordPolicy.parseMoney(normalized, field.fieldName)
+          : this.recordPolicy.parseNumericValue(normalized, field.fieldName, maxDecimals);
+        return { value: field.fieldType === FieldType.money ? decimal.toFixed(2) : decimal.toString() };
+      } catch (error) {
+        return { error: this.errorMessage(error) };
       }
     }
     if (field.fieldType === FieldType.date) {
@@ -1774,7 +1859,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   ) {
     const templateId = suggestion.templateId;
     const existing = await tx.templateField.findUnique({ where: { templateId_fieldId: { templateId, fieldId } } });
-    if (existing) return templateId;
+    if (existing) {
+      if (!existing.isVisible) throw new BadRequestException('隐藏字段不能用于导入映射');
+      return templateId;
+    }
 
     await this.lockTask(tx, suggestion.importTaskId);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${suggestion.projectId}, 22))`;
@@ -2195,6 +2283,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return error instanceof Error && error.message ? error.message : 'Excel 解析失败';
   }
 
+  private hasPreviewValue(value: unknown) {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  }
+
   private safeParseErrorMessage(error: unknown) {
     if (error instanceof HttpException && error.getStatus() < 500) return this.errorMessage(error);
     return 'Excel 后台解析失败，请重试或联系管理员';
@@ -2292,8 +2387,11 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async findDetailOrThrow(id: string): Promise<ImportTaskDetail> {
-    const task = await this.prisma.importTask.findUnique({ where: { id }, include: importTaskDetailInclude });
+  private async findDetailOrThrow(
+    id: string,
+    prisma: PrismaWriter = this.prisma
+  ): Promise<ImportTaskDetail> {
+    const task = await prisma.importTask.findUnique({ where: { id }, include: importTaskDetailInclude });
     if (!task) throw new NotFoundException('资源不存在');
     return task;
   }
@@ -2333,12 +2431,4 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 9))`;
   }
 
-  private validateIdempotencyKey(value?: string) {
-    if (value === undefined) return;
-    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(value)) throw new BadRequestException('Idempotency-Key 格式不合法');
-  }
-
-  private isUniqueConflict(error: unknown) {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-  }
 }

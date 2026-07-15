@@ -118,7 +118,11 @@ export function getImportPreview(id: string): Promise<ImportPreview> {
 
 export function confirmImportTask(id: string): Promise<ImportConfirmResult> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.post<ImportConfirmResult>(`/import-tasks/${encodeURIComponent(id)}/confirm`)
+    ? httpClient.post<ImportConfirmResult>(
+      `/import-tasks/${encodeURIComponent(id)}/confirm`,
+      undefined,
+      { headers: { 'Idempotency-Key': idempotencyKey() } },
+    )
     : mockConfirmImportTask(id);
 }
 

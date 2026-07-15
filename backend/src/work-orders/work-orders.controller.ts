@@ -96,10 +96,11 @@ export class WorkOrdersController {
   @Roles(UserRole.finance, UserRole.boss)
   generateRecord(
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.workOrders.generateRecord(id, user, getRequestContext(request));
+    return this.workOrders.generateRecord(id, user, getRequestContext(request), idempotencyKey);
   }
 
   @Post(':id/urge')

@@ -45,6 +45,19 @@
 | 数据库迁移 | 无 |
 | 真实业务文件 | 未读取、未修改 |
 
+## B8-02 验证证据
+
+| 门禁 | 结果 |
+| --- | --- |
+| 金额可见性 | Playwright 断言确认页显示 `¥8,765.43` |
+| 默认值与边界矩阵 | typed default 同时进入预览、RecordValue 和 confirmationSnapshot；零、负数、精度、日期、隐藏/停用/非模板字段在预览阻断 |
+| 请求级幂等 | `idempotency_keys` 持久化操作者、稳定接口、请求哈希和原响应；相同、改体、并发请求均有 PostgreSQL 用例 |
+| 资金入口覆盖 | 手工、Excel、OCR、老板终审及工单补生成均接入统一幂等服务 |
+| 后端构建/单元 | build 通过；17/17 suites，184/184 tests |
+| PostgreSQL integration | 40/40 tests；19 migrations，无 pending migration |
+| Playwright | 14/14 tests；包含真实金额断言，teardown 后文件残留 0 |
+| 真实业务文件 | 未读取、未修改；测试仅使用合成工作簿和 PDF |
+
 ## 问题矩阵
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
@@ -52,7 +65,7 @@
 | B8-ENV-001 | P1 | B8-00 | `backend/test/app.spec.ts` | 调用者 `NODE_ENV=production` 时，静态 `AppModule` 导入先触发生产配置校验 | 测试环境在导入 `AppModule` 前设置，使用通过熵校验的测试密钥，关闭钩子容忍初始化失败并恢复调用者环境 | 污染环境 16/16、完整 unit 184/184 | verified | 无 |
 | B8-EXCEL-001 | P0 | B8-01 | `ImportTasksService.confirm()` 与映射入口 | `cancelled/failed/parsing/mapping` 任务仍可越过状态门禁；字段建议可改写 cancelled 任务 | 首次确认只接受 `pending_confirm`；`confirmed` 仅幂等返回；所有映射入口锁内校验终态 | 真实 PostgreSQL 非法状态矩阵与字段建议旁路 | verified | 无 |
 | B8-EXCEL-002 | P0 | B8-01 | `confirm()` / `cancel()` | 取消和确认缺少已证明的同锁终态测试 | 共用任务事务锁，终态互斥，audit/ledger/记录一致 | 真实 PostgreSQL 两种锁顺序与并发请求 | verified | 无 |
-| B8-EXCEL-003 | P1 | B8-02 | Excel preview/confirm | 金额显示、默认值、边界值和统一幂等尚未按 B8 门禁证明 | canonical values 与统一幂等策略 | E2E、PostgreSQL 边界矩阵 | queued | H-02 |
+| B8-EXCEL-003 | P1 | B8-02 | Excel preview/confirm | 金额显示、默认值、边界值和统一幂等尚未按 B8 门禁证明 | canonical values 与统一幂等策略 | E2E、PostgreSQL 边界矩阵 | verified | H-02 保留为冲销业务政策输入；当前正数规则已一致实现 |
 | B8-EXCEL-004 | P0 | B8-03 | 大批量确认 | 30,196 行只证明解析，未证明最终入账 | 短事务确认 Worker、lease、恢复和原子发布 | 5,001/30,196/49,999 完整闭环 | queued | H-03 |
 | B8-OCR-001 | P0 | B8-04 | OCR 金额与执行任务 | Provider 精度和长同步 HTTP 尚未满足 B8 要求 | Decimal 字符串、异步队列、续租、恢复和 attempt 快照 | Mock/真实 Provider 并发与恢复 | queued | H-04/H-05 |
 | B8-AI-001 | P0 | B8-05 | 老板 AI grounding | 仅验证数字出现，未绑定 scope/period/metric/sourcePath | 结构化 Claim、确定性 renderer、PostgreSQL 黄金数据 | 错位数字攻击与黄金测试 | queued | H-08/H-12 |

@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { ReportsService } from '../src/reports/reports.service';
+import { IdempotencyService } from '../src/idempotency/idempotency.service';
 import { dayRange, reportRange, shiftMonthDate } from '../src/reports/report-period';
 import { RecordPolicyService } from '../src/record-policy/record-policy.service';
 import { WorkOrderRecordsService } from '../src/work-orders/work-order-records.service';
@@ -184,7 +185,8 @@ describe('phase 7 record generation and reports', () => {
       prisma,
       auditLogs as any,
       ledgerEvents as any,
-      new RecordPolicyService()
+      new RecordPolicyService(),
+      new IdempotencyService()
     );
 
     template.dataLayer = RecordDataLayer.budget;

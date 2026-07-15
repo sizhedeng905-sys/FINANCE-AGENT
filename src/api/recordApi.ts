@@ -25,6 +25,13 @@ function queryString(query: RecordListQuery): string {
   return value ? `?${value}` : '';
 }
 
+function idempotencyKey(operation: 'create' | 'confirm') {
+  const id = typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `record-${operation}-${id}`;
+}
+
 export function getRecords(query: RecordListQuery = {}): Promise<PaginatedRecords> {
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<PaginatedRecords>(`/records${queryString(query)}`)
@@ -39,7 +46,11 @@ export function getProjectRecords(projectId: string, query: RecordListQuery = {}
 
 export function createRecord(payload: CreateRecordPayload): Promise<BusinessRecord> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.post<BusinessRecord>('/records', payload)
+    ? httpClient.post<BusinessRecord>(
+      '/records',
+      payload,
+      { headers: { 'Idempotency-Key': idempotencyKey('create') } },
+    )
     : mockCreateRecord(payload);
 }
 
@@ -63,6 +74,10 @@ export function deleteRecord(id: string): Promise<{ id: string; status: Business
 
 export function confirmRecord(id: string): Promise<BusinessRecord> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.post<BusinessRecord>(`/records/${encodeURIComponent(id)}/confirm`)
+    ? httpClient.post<BusinessRecord>(
+      `/records/${encodeURIComponent(id)}/confirm`,
+      undefined,
+      { headers: { 'Idempotency-Key': idempotencyKey('confirm') } },
+    )
     : mockConfirmRecord(id);
 }

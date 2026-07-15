@@ -1,8 +1,9 @@
-import { UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { DataRecordType, Prisma, RiskLevel, UserRole, UserStatus, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 
 import { WorkOrdersService } from '../src/work-orders/work-orders.service';
 import { toWorkOrder } from '../src/work-orders/work-order.presenter';
+import { IdempotencyService } from '../src/idempotency/idempotency.service';
 
 function createActor(role: UserRole, id: string = role) {
   return {
@@ -36,6 +37,7 @@ describe('WorkOrdersService phase 4 state machine', () => {
     approvals = [];
     notifications = [];
     timeline = [];
+    const idempotencyRows: any[] = [];
     let counter = 0;
 
     const includeRelations = (workOrder: any) => ({
@@ -175,6 +177,27 @@ describe('WorkOrdersService phase 4 state machine', () => {
       },
       aiAnomaly: {
         updateMany: jest.fn(async () => ({ count: 0 }))
+      },
+      idempotencyKey: {
+        findUnique: jest.fn(async ({ where }) => {
+          const key = where.createdBy_requestMethod_requestPath_key;
+          return idempotencyRows.find((item) =>
+            item.createdBy === key.createdBy &&
+            item.requestMethod === key.requestMethod &&
+            item.requestPath === key.requestPath &&
+            item.key === key.key
+          ) ?? null;
+        }),
+        create: jest.fn(async ({ data }) => {
+          const item = { id: `idempotency_${idempotencyRows.length + 1}`, status: 'processing', responseBody: null, ...data };
+          idempotencyRows.push(item);
+          return item;
+        }),
+        update: jest.fn(async ({ where, data }) => {
+          const item = idempotencyRows.find((entry) => entry.id === where.id);
+          Object.assign(item, data);
+          return item;
+        })
       }
     };
     tx.$transaction = jest.fn(async (callback) => callback(tx));
@@ -215,7 +238,13 @@ describe('WorkOrdersService phase 4 state machine', () => {
       createWithinTransaction: jest.fn(async () => ({ id: 'business_record_1' })),
       generate: jest.fn(async () => ({ id: 'business_record_1' }))
     };
-    service = new WorkOrdersService(tx, auditLogs as any, riskRules as any, workOrderRecords as any);
+    service = new WorkOrdersService(
+      tx,
+      auditLogs as any,
+      riskRules as any,
+      workOrderRecords as any,
+      new IdempotencyService()
+    );
   });
 
   async function createDraft(employeeId = 'employee') {
@@ -289,13 +318,20 @@ describe('WorkOrdersService phase 4 state machine', () => {
 
     const repeated = await service.bossApprove(
       created.id,
-      { action: 'approve', comment: '重复点击' },
+      { action: 'approve', comment: '老板通过' },
       createActor(UserRole.boss),
       {},
       'boss-approve-key'
     );
     expect(repeated.generatedRecordId).toBe('business_record_1');
     expect(approvals).toHaveLength(3);
+    await expect(service.bossApprove(
+      created.id,
+      { action: 'reject', comment: '改变审批动作' },
+      createActor(UserRole.boss),
+      {},
+      'boss-approve-key'
+    )).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('rejects illegal transitions and limits urges to once per 30 minutes', async () => {

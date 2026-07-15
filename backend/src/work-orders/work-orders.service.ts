@@ -18,6 +18,7 @@ import {
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RiskRulesService } from '../risk-rules/risk-rules.service';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
@@ -59,7 +60,8 @@ export class WorkOrdersService {
     private readonly prisma: PrismaService,
     private readonly auditLogs: AuditLogsService,
     private readonly riskRules: RiskRulesService,
-    private readonly workOrderRecords: WorkOrderRecordsService
+    private readonly workOrderRecords: WorkOrderRecordsService,
+    private readonly idempotency: IdempotencyService
   ) {}
 
   async findMany(query: QueryWorkOrdersDto, user: CurrentUser) {
@@ -95,22 +97,20 @@ export class WorkOrdersService {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey, false);
     this.validateExtraValues(dto.extraValues);
-    if (idempotencyKey) {
-      const existing = await this.prisma.workOrder.findUnique({
-        where: { creationIdempotencyKey: idempotencyKey },
-        include: workOrderInclude
-      });
-      if (existing) {
-        if (existing.creatorId !== actor.id) throw new ConflictException('Idempotency-Key 已被其他请求使用');
-        return toWorkOrder(existing);
-      }
-    }
-
-    try {
-      return await this.prisma.$transaction(
-        async (tx) => {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/work-orders',
+      idempotencyKey,
+      {
+        ...dto,
+        attachments: dto.attachments ? [...dto.attachments].sort() : undefined
+      },
+      false
+    );
+    return this.prisma.$transaction(
+      (tx) => this.idempotency.execute(tx, scope, 201, async () => {
           const project = await tx.project.findUnique({ where: { id: dto.projectId } });
           if (!project || project.status !== 'active') {
             throw new UnprocessableEntityException('项目不存在或未启用');
@@ -166,19 +166,9 @@ export class WorkOrdersService {
             context
           );
           return toWorkOrder(workOrder);
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-      );
-    } catch (error) {
-      if (idempotencyKey && this.isConcurrentWriteConflict(error)) {
-        const existing = await this.prisma.workOrder.findUnique({
-          where: { creationIdempotencyKey: idempotencyKey },
-          include: workOrderInclude
-        });
-        if (existing?.creatorId === actor.id) return toWorkOrder(existing);
-      }
-      throw error;
-    }
+      }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
   }
 
   async update(id: string, dto: UpdateWorkOrderDto, actor: CurrentUser, context: RequestContext) {
@@ -460,15 +450,19 @@ export class WorkOrdersService {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    this.validateIdempotencyKey(idempotencyKey, true);
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/work-orders/:id/boss-approve',
+      idempotencyKey,
+      { workOrderId: id, ...dto }
+    );
     const next = dto.action === 'approve' ? WorkOrderStatus.completed : WorkOrderStatus.boss_rejected;
-    try {
-      return await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
         await this.lockWorkOrder(tx, id);
         const before = await this.findByIdOrThrow(id, tx);
-        if (before.status === WorkOrderStatus.completed && before.generatedRecordId) return toWorkOrder(before);
-        if (before.status === WorkOrderStatus.boss_rejected && before.approvalIdempotencyKey === idempotencyKey) {
-          return toWorkOrder(before);
+        if (before.status === WorkOrderStatus.completed || before.status === WorkOrderStatus.boss_rejected) {
+          throw new ConflictException('工单已经完成老板审批');
         }
         this.assertStatus(before.status, [WorkOrderStatus.boss_pending]);
         const generatedRecord =
@@ -525,17 +519,7 @@ export class WorkOrdersService {
           context
         );
         return toWorkOrder(await this.findByIdOrThrow(id, tx));
-      });
-    } catch (error) {
-      if (this.isConcurrentWriteConflict(error)) {
-        const current = await this.findByIdOrThrow(id);
-        if (current.status === WorkOrderStatus.completed && current.generatedRecordId) return toWorkOrder(current);
-        if (current.status === WorkOrderStatus.boss_rejected && current.approvalIdempotencyKey === idempotencyKey) {
-          return toWorkOrder(current);
-        }
-      }
-      throw error;
-    }
+    }));
   }
 
   async urge(id: string, dto: UrgeWorkOrderDto, actor: CurrentUser, context: RequestContext) {
@@ -595,8 +579,13 @@ export class WorkOrdersService {
     return workOrder.timeline.map(toTimelineItem);
   }
 
-  generateRecord(id: string, actor: CurrentUser, context: RequestContext) {
-    return this.workOrderRecords.generate(id, actor, context);
+  generateRecord(
+    id: string,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    return this.workOrderRecords.generate(id, actor, context, idempotencyKey);
   }
 
   private async reviewTransition(
@@ -761,13 +750,6 @@ export class WorkOrdersService {
     }
   }
 
-  private validateIdempotencyKey(value: string | undefined, required: boolean) {
-    if (required && !value) throw new BadRequestException('缺少 Idempotency-Key');
-    if (value && (value.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(value))) {
-      throw new BadRequestException('Idempotency-Key 格式不正确');
-    }
-  }
-
   private applyRoleScope(where: Prisma.WorkOrderWhereInput, user: CurrentUser) {
     if (user.role === UserRole.employee) where.creatorId = user.id;
     if (user.role === UserRole.reviewer) {
@@ -833,8 +815,4 @@ export class WorkOrdersService {
     return `WO${date}${suffix}`;
   }
 
-  private isConcurrentWriteConflict(error: unknown) {
-    if (!error || typeof error !== 'object' || !('code' in error)) return false;
-    return ['P2002', 'P2034'].includes(String((error as { code: unknown }).code));
-  }
 }

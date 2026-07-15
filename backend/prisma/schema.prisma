@@ -1257,3 +1257,24 @@ model LedgerEvent {
   @@index([eventType])
   @@map("ledger_events")
 }
+
+model IdempotencyKey {
+  id             String    @id @default(cuid())
+  key            String    @db.VarChar(128)
+  requestMethod  String    @map("request_method") @db.VarChar(16)
+  requestPath    String    @map("request_path")
+  requestHash    String    @map("request_hash") @db.VarChar(64)
+  responseStatus Int?      @map("response_status")
+  responseBody   Json?     @map("response_body")
+  status         String    @default("processing") @db.VarChar(32)
+  lockedUntil    DateTime? @map("locked_until")
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  @@unique([createdBy, requestMethod, requestPath, key], map: "uq_idempotency_actor_operation_key")
+  @@index([status], map: "idx_idempotency_status")
+  @@index([expiresAt], map: "idx_idempotency_expires")
+  @@map("idempotency_keys")
+}
