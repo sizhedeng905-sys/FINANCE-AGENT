@@ -4,9 +4,21 @@ import { ProjectStatus } from '@prisma/client';
 import { CurrentUser } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
+import { formatChinaDate, shiftMonthDate } from '../reports/report-period';
 import { RiskRulesService } from '../risk-rules/risk-rules.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { AiToolContext } from './ai.types';
+
+type ComparisonKind = 'month_over_month' | 'year_over_year';
+const WORK_ORDER_NUMBER_PATTERN = /\bWO(?=[A-Z0-9-]*\d)[A-Z0-9-]+\b/i;
+
+interface PeriodIntent {
+  bossPeriod: 'daily' | 'weekly' | 'monthly';
+  financePeriod: 'today' | 'week' | 'month';
+  date?: string;
+  month?: string;
+  scoped: boolean;
+}
 
 @Injectable()
 export class AiToolsService {
@@ -20,43 +32,82 @@ export class AiToolsService {
   async buildContext(question: string, workOrderId: string | undefined, user: CurrentUser) {
     const contexts: AiToolContext[] = [];
     const normalized = question.trim().toLowerCase();
-    const bossPeriod = /本月|这个月|月报/.test(normalized)
-      ? 'monthly'
-      : /本周|这周|周报/.test(normalized)
-        ? 'weekly'
-        : 'daily';
-    const financePeriod = bossPeriod === 'monthly' ? 'month' : bossPeriod === 'weekly' ? 'week' : 'today';
+    const comparisonKind = this.comparisonKind(normalized);
+    const period = this.periodIntent(question, comparisonKind !== undefined);
 
-    if (workOrderId || /WO[A-Z0-9-]+/i.test(question)) {
+    if (workOrderId || WORK_ORDER_NUMBER_PATTERN.test(question)) {
       contexts.push(await this.workOrderContext(question, workOrderId, user));
     }
 
     if (/项目|客户|收入|成本|支出|利润|赚钱|亏损/.test(question)) {
-      const projectContext = await this.projectContext(question);
+      const projectContext = await this.projectContext(
+        question,
+        period,
+        comparisonKind,
+        /异常|风险|可疑|待审批/.test(question)
+      );
       if (projectContext) contexts.push(projectContext);
+    }
+
+    if (
+      comparisonKind
+      && !contexts.some((context) => context.name === 'get_period_comparison' || context.name === 'get_project_summary')
+    ) {
+      contexts.push({
+        name: 'get_period_comparison',
+        data: await this.reports.bossComparison(comparisonKind, period.date)
+      });
     }
 
     if (/待审批|待老板|需要审批|审批哪些/.test(question)) {
       contexts.push({ name: 'get_pending_approvals', data: await this.reports.pendingApprovals() });
     }
 
-    if (/异常|风险|可疑/.test(question)) {
+    const hasWorkOrderContext = contexts.some((context) => context.name === 'get_work_order_detail');
+    if (
+      /异常|风险|可疑/.test(question)
+      && (!hasWorkOrderContext || /异常列表|异常工单|有哪些.*(?:异常|风险)|全部.*风险/.test(question))
+    ) {
       const anomalies = await this.riskRules.findAnomalies({ page: 1, pageSize: 100 });
       contexts.push({ name: 'get_anomalies', data: anomalies.items });
     }
 
     if (/财务日报|财务情况/.test(question)) {
-      contexts.push({ name: 'get_finance_report', data: await this.reports.finance({ period: financePeriod }) });
+      contexts.push({
+        name: 'get_finance_report',
+        data: await this.reports.finance(
+          period.date ? { period: period.financePeriod, date: period.date } : { period: period.financePeriod }
+        )
+      });
     }
 
-    if (/今天|今日|本周|这周|本月|这个月|经营情况|日报|周报|月报/.test(question) || contexts.length === 0) {
-      contexts.push({ name: 'get_today_report', data: await this.reports.boss({ period: bossPeriod }) });
+    if (
+      !comparisonKind
+      && !contexts.some((context) => [
+        'get_project_summary',
+        'get_finance_report',
+        'get_work_order_detail'
+      ].includes(context.name))
+      && (/今天|今日|本周|这周|本月|这个月|上月|上个月|经营情况|日报|周报|月报|\d{4}\s*年/.test(question)
+        || contexts.length === 0)
+    ) {
+      contexts.push({
+        name: 'get_today_report',
+        data: await this.reports.boss(
+          period.date ? { period: period.bossPeriod, date: period.date } : { period: period.bossPeriod }
+        )
+      });
     }
 
     return this.deduplicate(contexts);
   }
 
-  private async projectContext(question: string): Promise<AiToolContext | null> {
+  private async projectContext(
+    question: string,
+    period: PeriodIntent,
+    comparisonKind?: ComparisonKind,
+    suppressMissingProjectError = false
+  ): Promise<AiToolContext | null> {
     const mentionsProject = question.includes('项目') || question.includes('客户');
     const asksRanking = question.includes('哪个项目')
       || question.includes('哪个客户')
@@ -80,15 +131,47 @@ export class AiToolsService {
     }
     const project = top;
     if (project) {
-      const data = /本月|这个月|月报/.test(question)
-        ? await this.reports.projectMonthly(project.id, {})
+      if (comparisonKind) {
+        return {
+          name: 'get_period_comparison',
+          data: await this.reports.projectComparison(project.id, comparisonKind, period.month)
+        };
+      }
+      const data = period.scoped
+        ? await this.reports.projectPeriodSummary(project.id, period.financePeriod, period.date)
         : await this.reports.projectSummary(project.id);
       return { name: 'get_project_summary', data };
     }
-    if (/项目|客户|赚钱|亏损/.test(question)) {
+    if (!suppressMissingProjectError && /项目|客户/.test(question)) {
       return { name: 'get_project_summary', data: { error: '项目不存在或问题中未提供可识别的项目名称' } };
     }
     return null;
+  }
+
+  private comparisonKind(question: string): ComparisonKind | undefined {
+    if (/同比|去年同期/.test(question)) return 'year_over_year';
+    if (/环比|较上月|比上月|比上个月|与上月相比|和上月相比/.test(question)) return 'month_over_month';
+    return undefined;
+  }
+
+  private periodIntent(question: string, comparison: boolean): PeriodIntent {
+    const monthMatch = /(\d{4})\s*年\s*(1[0-2]|0?[1-9])\s*月/.exec(question);
+    let date = monthMatch
+      ? `${monthMatch[1]}-${String(Number(monthMatch[2])).padStart(2, '0')}-01`
+      : undefined;
+    if (!date && !comparison && /上月|上个月/.test(question)) {
+      date = shiftMonthDate(formatChinaDate(new Date()), -1);
+    }
+    const monthly = comparison || Boolean(date) || /本月|这个月|月报/.test(question);
+    const bossPeriod = monthly ? 'monthly' : /本周|这周|周报/.test(question) ? 'weekly' : 'daily';
+    const scoped = monthly || /今天|今日|本周|这周|周报/.test(question);
+    return {
+      bossPeriod,
+      financePeriod: bossPeriod === 'monthly' ? 'month' : bossPeriod === 'weekly' ? 'week' : 'today',
+      date,
+      month: date?.slice(0, 7),
+      scoped
+    };
   }
 
   private async findProjectMatches(question: string) {
@@ -149,7 +232,7 @@ export class AiToolsService {
   private async workOrderContext(question: string, explicitId: string | undefined, user: CurrentUser): Promise<AiToolContext> {
     let id = explicitId;
     if (!id) {
-      const orderNo = question.match(/WO[A-Z0-9-]+/i)?.[0];
+      const orderNo = question.match(WORK_ORDER_NUMBER_PATTERN)?.[0];
       if (orderNo) {
         const workOrder = await this.prisma.workOrder.findUnique({ where: { orderNo: orderNo.toUpperCase() }, select: { id: true } });
         id = workOrder?.id;

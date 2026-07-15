@@ -3,6 +3,7 @@ export interface AiToolContext {
     | 'get_today_report'
     | 'get_finance_report'
     | 'get_project_summary'
+    | 'get_period_comparison'
     | 'get_pending_approvals'
     | 'get_anomalies'
     | 'get_work_order_detail';

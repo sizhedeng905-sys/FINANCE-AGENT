@@ -1,6 +1,7 @@
 import { AiMessageRole, UserRole, UserStatus } from '@prisma/client';
 
 import { AiProviderService } from '../src/ai/ai-provider.service';
+import { AiAnswerGroundingService } from '../src/ai/ai-answer-grounding.service';
 import { AiService } from '../src/ai/ai.service';
 import { AiToolsService } from '../src/ai/ai-tools.service';
 import { MockAiProviderService } from '../src/ai/mock-ai-provider.service';
@@ -28,6 +29,9 @@ describe('phase 8 boss AI assistant', () => {
       finance: jest.fn(async () => ({ totalIncome: 1000, totalExpense: 400, estimatedProfit: 600 })),
       projectSummary: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 800, expense: 300, profit: 500, recordCount: 2 })),
       projectMonthly: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 700, expense: 250, profit: 450, recordCount: 3 })),
+      projectPeriodSummary: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 700, expense: 250, profit: 450, recordCount: 3 })),
+      bossComparison: jest.fn(async () => ({ current: { recordCount: 1 }, baseline: { recordCount: 1 } })),
+      projectComparison: jest.fn(async () => ({ current: { recordCount: 1 }, baseline: { recordCount: 1 } })),
       pendingApprovals: jest.fn(async () => [{ orderNo: 'WO1', projectName: project.name, amount: 200, riskLevel: 'medium' }])
     };
     const riskRules: any = {
@@ -43,7 +47,7 @@ describe('phase 8 boss AI assistant', () => {
     expect(projectResult.find((item) => item.name === 'get_project_summary')?.data).toMatchObject({ profit: 500 });
     const monthlyProject = await tools.buildContext('太和物流本月赚钱吗', undefined, boss);
     expect(monthlyProject.find((item) => item.name === 'get_project_summary')?.data).toMatchObject({ profit: 450 });
-    expect(reports.projectMonthly).toHaveBeenCalledWith(project.id, {});
+    expect(reports.projectPeriodSummary).toHaveBeenCalledWith(project.id, 'month', undefined);
 
     const monthlyRanking = await tools.buildContext('本月哪个项目利润最高', undefined, boss);
     expect(monthlyRanking.map((item) => item.name)).toEqual(['get_today_report']);
@@ -106,7 +110,7 @@ describe('phase 8 boss AI assistant', () => {
       buildContext: jest.fn(async () => [
         {
           name: 'get_today_report',
-          data: { income: 1000, expense: 400, profit: 600, pendingApprovals: 2, anomalyCount: 1 }
+          data: { income: 1000, expense: 400, profit: 600, recordCount: 2, pendingApprovals: 2, anomalyCount: 1 }
         }
       ])
     };
@@ -119,7 +123,8 @@ describe('phase 8 boss AI assistant', () => {
       resolve: jest.fn(async () => undefined),
       resolveSecret: jest.fn(() => undefined)
     };
-    const service = new AiService(prisma, tools, provider, auditLogs as any, config, modelRuntime);
+    const grounding = new AiAnswerGroundingService();
+    const service = new AiService(prisma, tools, provider, auditLogs as any, config, modelRuntime, grounding);
 
     const result = await service.chat({ message: '今天经营情况', history: [] }, boss, {});
     expect(result.reply).toContain('收入1000元');
@@ -141,7 +146,8 @@ describe('phase 8 boss AI assistant', () => {
       { generate: jest.fn(async () => { throw new Error('provider unavailable'); }) } as any,
       auditLogs as any,
       config,
-      modelRuntime
+      modelRuntime,
+      grounding
     );
     const failed = await failingService.chat({ message: '再查一次今日经营' }, boss, {});
     expect(failed.fallback).toBe(true);
@@ -151,7 +157,7 @@ describe('phase 8 boss AI assistant', () => {
     expect(callLogs[1]).toMatchObject({ success: false, errorMessage: 'provider unavailable' });
 
     const historyProvider = {
-      generate: jest.fn(async () => ({ text: '上个月需要人工确认。', inputTokens: 20, outputTokens: 8, raw: {} }))
+      generate: jest.fn(async () => ({ text: '上个月利润600元。', inputTokens: 20, outputTokens: 8, raw: {} }))
     };
     const historyService = new AiService(
       prisma,
@@ -159,7 +165,8 @@ describe('phase 8 boss AI assistant', () => {
       historyProvider as any,
       auditLogs as any,
       config,
-      modelRuntime
+      modelRuntime,
+      grounding
     );
     await historyService.chat(
       { message: '那上个月呢？', conversationId: result.conversationId },

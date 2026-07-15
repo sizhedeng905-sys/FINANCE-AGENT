@@ -10,7 +10,7 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryBossReportDto, QueryDailyReportDto, QueryFinanceReportDto, QueryMonthlyReportDto } from './dto/query-reports.dto';
-import { dayRange, formatChinaDate, monthRange, reportRange } from './report-period';
+import { dayRange, formatChinaDate, monthRange, reportRange, shiftMonthDate } from './report-period';
 
 type RecordWithProject = Prisma.BusinessRecordGetPayload<{ include: { project: true } }>;
 type AnomalyWithWorkOrder = Prisma.AiAnomalyGetPayload<{ include: { workOrder: true } }>;
@@ -86,6 +86,7 @@ export class ReportsService {
       pendingFinanceReview,
       newRecords,
       confirmedRecords,
+      recordCount: records.length,
       anomalyCount,
       totalIncome: totals.income,
       totalExpense: totals.expense,
@@ -158,6 +159,7 @@ export class ReportsService {
       approvedCount,
       rejectedCount,
       projectRanking: this.projectRanking(records, anomalies),
+      expenseCategories: this.expenseCategories(records),
       aiSummary: `本周期确认收入${totals.income}元，确认支出${totals.expense}元，利润${totals.profit}元。`,
       aiSuggestion: suggestions.join('；'),
       aiSuggestions: suggestions
@@ -239,6 +241,63 @@ export class ReportsService {
     };
   }
 
+  async projectPeriodSummary(
+    projectId: string,
+    period: 'today' | 'week' | 'month',
+    date?: string
+  ) {
+    const project = await this.findProject(projectId);
+    const range = reportRange(period, date);
+    const records = await this.findRecords(range.start, range.end, projectId);
+    return {
+      project: { id: project.id, name: project.name, customerName: project.customerName },
+      period,
+      range: this.rangeMetadata(range),
+      ...this.totals(records),
+      recordCount: records.length,
+      expenseCategories: this.expenseCategories(records)
+    };
+  }
+
+  async bossComparison(kind: 'month_over_month' | 'year_over_year', date?: string) {
+    const current = await this.boss({ period: 'monthly', date });
+    const baselineDate = shiftMonthDate(current.range.startDate, kind === 'month_over_month' ? -1 : -12);
+    const baseline = await this.boss({ period: 'monthly', date: baselineDate });
+    return {
+      kind,
+      label: kind === 'month_over_month' ? '月环比' : '月同比',
+      current: this.comparisonSnapshot(current),
+      baseline: this.comparisonSnapshot(baseline),
+      changes: {
+        income: this.comparisonChange(current.income, baseline.income),
+        expense: this.comparisonChange(current.expense, baseline.expense),
+        profit: this.comparisonChange(current.profit, baseline.profit)
+      }
+    };
+  }
+
+  async projectComparison(
+    projectId: string,
+    kind: 'month_over_month' | 'year_over_year',
+    month?: string
+  ) {
+    const current = await this.projectMonthly(projectId, { month });
+    const baselineMonth = shiftMonthDate(`${current.month}-01`, kind === 'month_over_month' ? -1 : -12).slice(0, 7);
+    const baseline = await this.projectMonthly(projectId, { month: baselineMonth });
+    return {
+      kind,
+      label: kind === 'month_over_month' ? '月环比' : '月同比',
+      project: current.project,
+      current: this.comparisonSnapshot(current),
+      baseline: this.comparisonSnapshot(baseline),
+      changes: {
+        income: this.comparisonChange(current.income, baseline.income),
+        expense: this.comparisonChange(current.expense, baseline.expense),
+        profit: this.comparisonChange(current.profit, baseline.profit)
+      }
+    };
+  }
+
   async pendingApprovals() {
     const items = await this.prisma.workOrder.findMany({
       where: { status: WorkOrderStatus.boss_pending },
@@ -280,6 +339,33 @@ export class ReportsService {
       income: this.toMoney(income),
       expense: this.toMoney(expense),
       profit: this.toMoney(income.minus(expense))
+    };
+  }
+
+  private comparisonSnapshot(report: {
+    range: { startDate: string; endDate: string; timezone: string };
+    income: string;
+    expense: string;
+    profit: string;
+    recordCount: number;
+  }) {
+    return {
+      range: report.range,
+      income: report.income,
+      expense: report.expense,
+      profit: report.profit,
+      recordCount: report.recordCount
+    };
+  }
+
+  private comparisonChange(currentValue: string, baselineValue: string) {
+    const current = new Prisma.Decimal(currentValue);
+    const baseline = new Prisma.Decimal(baselineValue);
+    return {
+      delta: this.toMoney(current.minus(baseline)),
+      rate: baseline.isZero()
+        ? null
+        : current.minus(baseline).dividedBy(baseline.abs()).toDecimalPlaces(4).toString()
     };
   }
 

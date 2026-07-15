@@ -3005,7 +3005,8 @@ describe('real PostgreSQL integration', () => {
 
       const today = await chat('今天经营情况怎么样', 1);
       expect(today).toMatchObject({ provider: 'mock', fallback: false, toolsUsed: ['get_today_report'] });
-      expect(today.reply).toMatch(/收入.*元.*支出.*元.*利润.*元/);
+      expect(today.reply).toContain('没有已确认实绩经营记录');
+      expect(today.reply).not.toMatch(/收入\d+(?:\.\d+)?元.*利润\d+(?:\.\d+)?元/);
 
       const project = await chat('太和中转项目收入成本利润如何', 2);
       expect(project.toolsUsed).toEqual(['get_project_summary']);
@@ -3020,13 +3021,21 @@ describe('real PostgreSQL integration', () => {
       expect(anomalies.reply).toContain('异常工单');
 
       const workOrder = await chat('解释这张工单的风险', 5, { workOrderId: 'wo-seed-boss-pending' });
-      expect(workOrder.toolsUsed).toEqual(['get_work_order_detail', 'get_anomalies']);
+      expect(workOrder.toolsUsed).toEqual(['get_work_order_detail']);
       expect(workOrder.reply).toContain('WO202607110001');
 
       const missing = await chat('不存在项目利润多少', 6);
       expect(missing.toolsUsed).toEqual(['get_project_summary']);
       expect(missing.reply).toContain('需要人工确认');
       expect(missing.reply).not.toMatch(/不存在项目.*\d+元/);
+
+      const companyComparison = await chat('2026年7月利润环比如何', 7);
+      expect(companyComparison.toolsUsed).toEqual(['get_period_comparison']);
+      expect(companyComparison.reply).toContain('月环比');
+
+      const projectComparison = await chat('太和中转项目2026年7月利润同比如何', 8);
+      expect(projectComparison.toolsUsed).toEqual(['get_period_comparison']);
+      expect(projectComparison.reply).toContain('月同比');
 
       await request(app.getHttpServer())
         .post('/api/ai/chat')
@@ -3043,13 +3052,13 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(ownConversations.body.data).toMatchObject({ page: 1, pageSize: 1 });
       expect(ownConversations.body.data.items).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: conversationId, messageCount: 12 })
+        expect.objectContaining({ id: conversationId, messageCount: 16 })
       ]));
       const ownMessages = await request(app.getHttpServer())
         .get(`/api/ai/conversations/${conversationId}/messages?page=1&pageSize=5`)
         .set('Authorization', `Bearer ${tokens.boss}`)
         .expect(200);
-      expect(ownMessages.body.data).toMatchObject({ page: 1, pageSize: 5, total: 12 });
+      expect(ownMessages.body.data).toMatchObject({ page: 1, pageSize: 5, total: 16 });
       expect(ownMessages.body.data.items).toHaveLength(5);
       await request(app.getHttpServer())
         .get(`/api/ai/conversations/${conversationId}/messages`)
@@ -3076,21 +3085,21 @@ describe('real PostgreSQL integration', () => {
         prisma.aiCallLog.findMany({ where: { id: { in: callLogIds } } }),
         prisma.auditLog.findMany({ where: { resourceId: conversationId, action: 'ai.chat' } })
       ]);
-      expect(messages).toHaveLength(12);
-      expect(messages.filter((item) => item.role === AiMessageRole.user)).toHaveLength(6);
-      expect(messages.filter((item) => item.role === AiMessageRole.assistant)).toHaveLength(6);
-      expect(logs).toHaveLength(6);
-      expect(new Set(callLogIds).size).toBe(6);
+      expect(messages).toHaveLength(16);
+      expect(messages.filter((item) => item.role === AiMessageRole.user)).toHaveLength(8);
+      expect(messages.filter((item) => item.role === AiMessageRole.assistant)).toHaveLength(8);
+      expect(logs).toHaveLength(8);
+      expect(new Set(callLogIds).size).toBe(8);
       expect(logs.every((item) => item.success && item.provider === 'mock' && item.createdBy === bossUser.id)).toBe(true);
       expect(logs.every((item) => /^[a-f0-9]{64}$/.test(item.inputHash ?? ''))).toBe(true);
       expect(logs.map((item) => item.correlationId)).toEqual(expect.arrayContaining(
-        Array.from({ length: 6 }, (_, index) => `${requestPrefix}-${index + 1}`)
+        Array.from({ length: 8 }, (_, index) => `${requestPrefix}-${index + 1}`)
       ));
       expect(logs.every((item) => item.attemptNo === 1 && item.fallback === false)).toBe(true);
       expect(JSON.stringify(logs.map((item) => item.requestPayload))).not.toMatch(/Bearer|123456|JWT_SECRET/i);
-      expect(audits).toHaveLength(6);
+      expect(audits).toHaveLength(8);
       expect(audits.map((item) => item.requestId)).toEqual(expect.arrayContaining(
-        Array.from({ length: 6 }, (_, index) => `${requestPrefix}-${index + 1}`)
+        Array.from({ length: 8 }, (_, index) => `${requestPrefix}-${index + 1}`)
       ));
     } finally {
       if (callLogIds.length) await prisma.aiCallLog.deleteMany({ where: { id: { in: callLogIds } } });

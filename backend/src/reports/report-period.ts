@@ -82,3 +82,9 @@ export function formatChinaDate(date: Date) {
   const local = new Date(date.getTime() + CHINA_OFFSET_MS);
   return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}`;
 }
+
+export function shiftMonthDate(date: string, offset: number) {
+  const parts = dateParts(date);
+  const shifted = new Date(Date.UTC(parts.year, parts.month + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}

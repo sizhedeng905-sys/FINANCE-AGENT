@@ -43,6 +43,7 @@ export interface FinanceReport {
   pendingFinanceReview: number;
   newRecords: number;
   confirmedRecords: number;
+  recordCount: number;
   anomalyCount: number;
   totalIncome: string;
   totalExpense: string;
@@ -83,6 +84,7 @@ export interface BossReport {
   approvedCount: number;
   rejectedCount: number;
   projectRanking: ProjectRankingItem[];
+  expenseCategories: ExpenseCategory[];
   aiSummary: string;
   aiSuggestion: string;
   aiSuggestions: string[];

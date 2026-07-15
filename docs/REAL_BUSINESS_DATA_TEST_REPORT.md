@@ -266,3 +266,34 @@ npm run realdata:xls-profile
 2026-07-15 完成上传上限收口。此前 Multer 在模块加载期直接读取 `process.env`，可能与 Nest 从 `.env` 加载的业务配置漂移；同时 Busboy 在达到 `fileSize` 时即触发截断，会误拒绝恰好位于上限的文件。现改为由 `ConfigService` 动态注入统一配置，并将传输截断点设置为业务上限加 1 字节，`FilesService` 保留第二道上限检查。
 
 真实 multipart/PostgreSQL 门禁使用测试环境 5 MiB 配置验证同一边界语义：上限减 1 字节和恰好上限均成功；上限加 1 字节返回 `{ code: 41301, message: "文件大小超过上传限制", data: {} }`。失败请求未新增 `raw_files`、`audit_logs` 或 `ledger_events`，隔离目录前后一致。配置测试同时确认生产允许的最大值严格对应含边界 50 MiB，51 MiB 配置继续启动失败。B2 至此完成。
+
+## B3 OCR 页范围与模型长稳
+
+- 17 份匿名 OCR 样本已建立本地标签骨架，校准 10/10、验证 2/2 Provider 调用通过，5 份盲测未提前运行。
+- 35 页 PDF 以 1-20 和 21-35 两段完整覆盖，原页码保留，原文件哈希前后不变，不持久化派生 PDF。
+- Qwen3-14B-AWQ 与 PaddleOCR-VL 连续常驻 1,800 秒，共 61 次健康采样；容器无重启、OOM 或 fatal。GPU 最大已用 28,911 MiB、最低空闲 3,277 MiB、最高温度 39 摄氏度。
+- 人工标签尚未复核，字段准确率门禁为 `awaiting_labels`；当前仅允许人工纠错后确认，不宣称自动入账准确率达标。
+
+## B4 统一经营记录与数据层
+
+- Excel、OCR、手工补录和工单终审统一写入 `templateSnapshot`、`sourceSnapshot` 和 confirmed 时的 `confirmationSnapshot`，保留模板版本、字段定义、来源任务/文件、确认人和确认值。
+- 模板与经营记录增加 `actual/reconciliation/budget`。数据层不接受记录请求直接传值，只由后端模板推导；工单只允许 actual 模板。
+- 财务/老板/项目报表、项目汇总和风险趋势仅统计 confirmed actual；对账和预算记录仍可筛选查看，但不会重复计入实际收入、成本和利润。
+- 18 个 migration、177 个单元测试中的相关规则及 29 个 PostgreSQL 集成测试通过。真实 L3 逐条会计真值仍等待财务抽样签字。
+
+## B5 老板 AI 标准问题集
+
+- 固化 72 条匿名标准问题，覆盖日/周/月、上月、指定月份、项目下钻、排行、成本结构、月环比/月同比、待审批、异常、工单、空数据和 6 条 Prompt Injection。
+- 工具选择、有效回答数字与标准事实、空数据、Prompt Injection 和输出 Schema 均为 100%。employee、finance、reviewer 的 boss AI 访问继续由真实 API 返回 403。
+- Qwen3-14B-AWQ 本地运行 72 次，0 Provider 错误；P50 433 ms、P95 1,038 ms、最大 1,254 ms。
+- 原始模型 grounding 通过率为 26.39%，53 次触发受控 fallback：44 次工具外数字、5 次未引用结构化数字、3 次敏感指令词、1 次未说明无数据。fallback 后有效 grounding 和确定性事实均为 100%。
+- 发布结论：B5 以“Qwen 问题理解 + 后端结构化工具 + 数字溯源 + 受控 renderer”通过；不得关闭 grounding，也不得把原始模型文本直接作为财务结论。
+
+复现命令：
+
+```powershell
+npm run realdata:ai-benchmark -- --provider mock
+npm run realdata:ai-benchmark -- --provider local
+```
+
+本地报告 `.realdata-test/reports/ai-benchmark.local.json` 只保存聚合指标、fallback 原因和失败用例 ID，不保存模型回答或真实业务值。

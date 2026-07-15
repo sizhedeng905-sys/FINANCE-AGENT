@@ -17,7 +17,7 @@ import {
 } from '@prisma/client';
 
 import { ReportsService } from '../src/reports/reports.service';
-import { dayRange, reportRange } from '../src/reports/report-period';
+import { dayRange, reportRange, shiftMonthDate } from '../src/reports/report-period';
 import { RecordPolicyService } from '../src/record-policy/record-policy.service';
 import { WorkOrderRecordsService } from '../src/work-orders/work-order-records.service';
 
@@ -48,6 +48,7 @@ describe('phase 7 record generation and reports', () => {
     expect(month.start.toISOString()).toBe('2026-06-30T16:00:00.000Z');
     expect(month.end.toISOString()).toBe('2026-07-31T16:00:00.000Z');
     expect(() => dayRange('2026-02-30')).toThrow('日期无效');
+    expect(shiftMonthDate('2026-01-31', -1)).toBe('2025-12-01');
   });
 
   it('generates a confirmed record with typed values exactly once', async () => {
@@ -279,5 +280,31 @@ describe('phase 7 record generation and reports', () => {
       })
     }));
     expect(await service.pendingApprovals()).toHaveLength(1);
+  });
+
+  it('computes month comparisons from report values without model arithmetic', async () => {
+    const service = new ReportsService({} as any);
+    const report = (startDate: string, endDate: string, income: string, expense: string, profit: string) => ({
+      range: { startDate, endDate, timezone: 'Asia/Shanghai' },
+      income,
+      expense,
+      profit,
+      recordCount: 2
+    });
+    const boss = jest.spyOn(service, 'boss')
+      .mockResolvedValueOnce(report('2026-07-01', '2026-07-31', '1200.00', '450.00', '750.00') as any)
+      .mockResolvedValueOnce(report('2026-06-01', '2026-06-30', '1000.00', '450.00', '550.00') as any);
+
+    const comparison = await service.bossComparison('month_over_month', '2026-07-15');
+    expect(boss).toHaveBeenNthCalledWith(1, { period: 'monthly', date: '2026-07-15' });
+    expect(boss).toHaveBeenNthCalledWith(2, { period: 'monthly', date: '2026-06-01' });
+    expect(comparison).toMatchObject({
+      kind: 'month_over_month',
+      changes: {
+        income: { delta: '200.00', rate: '0.2' },
+        expense: { delta: '0.00', rate: '0' },
+        profit: { delta: '200.00', rate: '0.3636' }
+      }
+    });
   });
 });
