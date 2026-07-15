@@ -4,7 +4,7 @@
 
 项目已不是纯前端原型。阶段 0-10 的真实 PostgreSQL/API 主链路已完成，当前按 `docs/REAL_BUSINESS_DATA_TEST_PLAN.md` 推进真实业务数据门禁。详细证据见 `docs/IMPLEMENTATION_PROGRESS.md` 和 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`。
 
-## 当前门禁：B7 财务 UAT 与最终回归
+## 当前门禁：B7 工程交付完成，等待财务签字
 
 已完成：
 
@@ -45,11 +45,17 @@
 - Qwen 文本重启、按需 VL、文本恢复及 Qwen/OCR 同时推理通过；272 次切换期 OCR 健康采样 0 失败，Embedding 未启动。
 - 修复 E2E teardown 目录漂移，清理 50 个历史孤儿测试文件；隔离目录和 E2E 运行目录收口后均为 0 残留。
 
-### B7 财务 UAT 与最终交付（进行中）
+### B7 财务 UAT 与最终交付（工程完成）
 
-- 生成可签字的财务 UAT 清单，保留入账粒度、L3 金额、OCR 标签和重复提示政策为外部确认项，不伪造签字。
-- 全量运行 build、unit、integration、14 条 Playwright、hygiene、依赖审计、模型资产和原始文件哈希复核。
-- 检查 Git diff 与敏感信息，提交并推送 `agent/real-business-data-validation`，更新 PR #3；真实文件、模型、`.env` 和用户未跟踪文档永不提交。
+- 已生成 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`；入账粒度、L3 金额、OCR 标签和重复政策明确保留为外部签字项。
+- 已通过前后端 build、183 单测、30 PostgreSQL、14 Playwright、Prisma、hygiene、依赖审计、模型资产和 112 份原件哈希复核。
+- GitHub 提交、CI 与审查状态统一以 Draft PR #3 为准；财务/OCR 外部门禁关闭前不 merge、不标记生产就绪。
+
+### 财务下一步
+
+- 按 UAT-01 至 UAT-07 执行真实业务抽样，不把逐字段真值或敏感值提交 Git。
+- 签署入账粒度、负数/冲销、主表/凭证、35 页拆分和重复处置政策。
+- 完成 17 份 OCR 标签与 L3 逐分对账后，再决定是否从人工辅助模式升级。
 
 ## 每批提交条件
 

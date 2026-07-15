@@ -9,8 +9,8 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B2 门禁已完成；B2 支持多 Sheet、合并表头、隐藏 Sheet 二次确认、公式缓存显式复核、媒体隔离、5001-50000 行后台分批/恢复、旧 `.xls` 安全转换和含边界 50 MiB 上传策略
-- 已校验 Qwen3-14B-AWQ、PaddleOCR-VL、Qwen3-VL-8B-Instruct 和 Qwen3-Embedding-8B 全部本地权重，并实现文本/OCR 常驻、VL/Embedding 按需的容器编排；当前机器仍需安装 WSL 2/Docker 后做真实推理验收
+- 真实业务数据 B0-B7 工程门禁已完成：112 份原件保持只读和哈希不变，文件/Excel/OCR/经营记录/老板 AI/故障恢复均有自动化证据；财务 L3 对账和 OCR 人工标签仍待外部签字
+- Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行并通过 30 分钟稳定性、服务切换和并发推理；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 按需启动
 
 ## 技术栈
 
@@ -172,10 +172,10 @@ http://localhost:3001/api/health
 | 阶段 8 | 已完成 | 老板 AI 助手、六个结构化工具、mock/OpenAI-compatible provider、AI 调用日志 |
 | 阶段 9 | 已完成 | 真实 `.xlsx` 解析、映射、逐行错误、字段建议和幂等事务入库 |
 | 阶段 10 | 程序完成 | OCR Task、可构建 PaddleOCR 适配器、证据/置信度、人工纠错、重试和幂等入库；真实准确率待样本校准 |
-| 真实化批次 D-H | 已完成 | 26 条 PostgreSQL、13 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
+| 真实化批次 D-H | 已完成 | 30 条 PostgreSQL、14 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
-| 真实业务数据 B0-B2 | 完成 | 112 个文件只读匿名基线、Sheet/表头/公式、媒体隔离、30196 行后台门禁、15 份旧 `.xls` 和 50 MiB 精确上传边界已验收；详见 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` |
-| 本地模型部署 | 待系统环境 | 四套模型资产和常驻/按需编排已校验；当前环境没有可用 Docker，真实 GPU 推理尚未验收 |
+| 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
+| 本地模型部署 | 稳定性通过 | 四套资产完整；文本/OCR 常驻和 VL 按需切换已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
 
@@ -312,7 +312,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前验收基线为 15/15 Jest suites、94/94 tests、28/28 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 16/16 Prisma migrations；根目录和 `backend/` 的 `npm audit --audit-level=high` 均为 0 vulnerabilities。
+当前 B7 验收基线为 17/17 Jest suites、183/183 tests、30/30 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 18/18 Prisma migrations，40 张预期业务表核对一致；根目录和 `backend/` 的生产依赖审计均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 
@@ -441,19 +441,19 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 ## 当前限制
 
 - 认证、用户管理和 C-1 至 C-11 已完成显式 Mock/API 切换；API 失败不会静默回退 Mock。
-- Excel 已使用真实解析器和 PostgreSQL；OCR 适配器和容器配置已完成，但默认仍使用确定性 Mock Provider，真实模型尚未在 Docker/GPU 上启动并用企业样本校准。
+- Excel 已使用真实解析器和 PostgreSQL；Qwen/Paddle 服务已在 Docker/GPU 上完成稳定性验证。默认开发配置仍使用确定性 Mock Provider，真实 OCR 准确率必须在财务复核 17 份标签后才能声明达标。
 - 后端权限已经按 JWT 角色和数据归属强制校验，前端路由仅用于界面体验。
 - 文件当前真实存储在 `backend/uploads`；开发可用基础扫描，生产配置强制使用 ClamAV 且只允许 `clean` 文件进入预览、下载、Excel 或 OCR。对象存储、备份和实际 ClamAV 服务部署仍需在目标环境完成。
 - 后端报表只聚合 PostgreSQL 中已确认经营记录，前端财务/老板/项目报表均已切换真实接口。
-- AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。四套本地模型权重均已通过完整性检查，但当前系统没有可用 Docker 命令，尚未完成容器推理、显存和延迟验收。
+- AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。真实 Qwen 72 条基准暴露较高 grounding fallback，因此财务数字继续由结构化工具和受控 renderer 提供，模型不能自由生成金额。
 - 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、ClamAV 服务、集中监控和备份仍待部署。
 - 跨 Excel/OCR/手工来源的业务去重仍按用户决定暂缓；Excel 当前只接受 50000 行以内，50 MiB 为含边界硬上限，超过时统一返回 413。旧 `.xls` 已进入隔离转换通道，但不会执行公式或接受缺失缓存的公式行。
 
 ## 推荐后续开发顺序
 
-1. 经用户确认后安装 WSL 2 和 Docker Desktop，按 `docs/MODEL_DEPLOYMENT.md` 启动文本与 OCR 常驻服务，并实测 32 GB 单卡显存、延迟和服务恢复。
+1. 财务按 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` 完成 L3 逐分对账、入账粒度和负数/冲销政策签字，并复核 17 份 OCR 字段标签。
 2. 定义跨 Excel/OCR/手工来源的业务唯一性政策，再实现统一幂等键和重复入账攻击测试。
-3. 收集脱敏票据/PDF、字段真值、审批规则和老板问题标准答案，校准准确率与回答口径。
+3. 根据已签字标签校准 OCR 字段准确率、低置信度召回率和人工复核时长；达标前保持人工辅助模式。
 4. 上线前部署对象存储、ClamAV、共享限流、密钥托管、监控和备份，并在真实反向代理/PostgreSQL TLS 拓扑演练。
 
 ## GitHub

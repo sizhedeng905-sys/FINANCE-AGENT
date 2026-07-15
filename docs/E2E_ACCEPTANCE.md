@@ -1,6 +1,6 @@
 # E2E 验收说明
 
-更新日期：2026-07-12
+更新日期：2026-07-15
 
 ## 目标
 
@@ -12,6 +12,7 @@
 - `backend/scripts/prepare-e2e.mjs` 按 generate、migrate deploy、清理 E2E 数据、seed 的顺序初始化。
 - E2E 数据的工单说明、Excel 和 OCR 文件名统一以 `E2E ` 开头；全局 teardown 只清理对应工单、导入/OCR任务、生成记录、审计、ledger 和测试文件。
 - 测试上传目录固定在 `backend/test-uploads/e2e` 并被 Git 忽略。
+- teardown 即使数据库中没有匹配行，也会在确认目录位于 `backend/test-uploads` 的专用子目录后清理残留文件，避免数据库提前返回留下磁盘孤儿。
 - 测试单 worker 执行，测试场景不依赖其他测试产生的数据。
 
 ## 本地运行
@@ -45,7 +46,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 
 ## 自动化覆盖
 
-后端真实 PostgreSQL 集成测试共 26 条，覆盖：
+后端真实 PostgreSQL 集成测试共 30 条，覆盖：
 
 - 四角色权限、员工资源归属、finance/boss 管理边界；
 - 无 Token、伪造 Token、过期 Token、旧 `tokenVersion`、停用和登出失效；
@@ -75,13 +76,14 @@ Playwright 共 14 条，覆盖：
 
 ## 当前证据
 
-2026-07-14 本地验收结果：
+2026-07-15 B7 本地验收结果：
 
 - 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：14 suites，87 tests，失败 0；
-- PostgreSQL 集成：1 suite，26 tests，失败 0；
+- 后端单测：17 suites，183 tests，失败 0；
+- PostgreSQL 集成：1 suite，30 tests，失败 0；
 - Playwright：14 tests，失败 0；
-- E2E teardown：成功清理测试工单、导入/OCR任务、生成记录和上传文件；
-- Prisma：15 个 migration，41 张业务表，无缺失或意外表；
-- 仓库卫生：398 个 tracked/candidate 文件通过。
+- E2E teardown：测试数据库和 `backend/test-uploads/e2e` 均为 0 残留；
+- Prisma：18 个 migration，40 张预期业务表，无缺失或意外表；
+- 仓库卫生：424 个 tracked/candidate 文件通过；
+- 根目录和后端生产依赖审计：0 vulnerabilities。

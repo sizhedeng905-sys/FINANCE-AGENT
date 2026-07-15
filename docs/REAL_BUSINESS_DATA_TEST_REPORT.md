@@ -1,6 +1,6 @@
 # FINANCE-AGENT 真实业务数据 B0 基线报告
 
-> 生成时间：2026-07-15T05:06:04.107Z
+> 生成时间：2026-07-15T05:15:48.108Z
 >
 > 本报告只包含匿名聚合指标。原始路径、文件名、完整哈希、业务值和 OCR 原文仅保存在 Git 忽略的本地清单中。
 
@@ -341,3 +341,24 @@ cd backend
 npm test -- --runInBand
 npm run test:integration
 ```
+
+## B7 工程回归与财务 UAT 交付
+
+2026-07-15 完成 B7 工程交付。新增 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`，将七个财务场景、签字项、自动化证据和降级方案分离。Codex 未填写财务姓名、业务真值或签名；业务状态保持 `awaiting_finance_signoff`，OCR 状态保持 `awaiting_labels`。
+
+最终自动化结果：
+
+| 门禁 | 结果 |
+| --- | --- |
+| 前端 / 后端 production build | 通过 / 通过 |
+| Prisma | format/validate 通过；18/18 migrations；40 张业务表无缺失/意外 |
+| 后端单测 | 17/17 suites，183/183 tests |
+| 真实 PostgreSQL | 30/30 integration |
+| 浏览器 | 14/14 Playwright；teardown 后数据库/磁盘孤儿均为 0 |
+| Paddle 适配器 | 4/4 Python tests |
+| 老板 AI | 72/72 Mock 确定性基准；真实 Qwen 结果沿用 B5 |
+| 依赖与仓库 | 根目录/后端 0 vulnerabilities；424 个候选文件 hygiene 通过 |
+| 模型 | 四套资产完整；文本/OCR healthy，VL/Embedding offline |
+| 原始样本 | 112/112 哈希不变 |
+
+B7 工程结论为 `complete`；整体业务发布仍为“条件式 UAT、人工辅助”。G2 的 L3 逐分对账、G3 的 OCR 标签以及跨来源重复政策必须由财务完成后才能转为生产验收。

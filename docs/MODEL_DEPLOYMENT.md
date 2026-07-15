@@ -1,6 +1,6 @@
 # 本地模型部署与接入
 
-更新日期：2026-07-14
+更新日期：2026-07-15
 
 ## 当前结论
 
@@ -16,9 +16,16 @@
 | OCR 模型 | `model/PaddleOCR-VL`，2.00 GiB，V1 权重和 `PP-DocLayoutV2` 完整 |
 | Embedding | `model/Qwen3-Embedding-8B`，14.11 GiB，4 个分片完整 |
 | 视觉模型 | `model/Qwen3-VL-8B-Instruct`，16.34 GiB，4 个分片完整 |
-| WSL / Docker | 2026-07-14 检查时 Windows 没有可用的 `docker` 命令，因此容器和真实推理尚未启动验收 |
+| WSL / Docker | 已可用；文本/OCR 常驻、VL 按需切换和文本恢复均已在 RTX 5090 实测 |
 
-`npm run model:check:all` 已验证文本、OCR、视觉和 Embedding 四套模型的配置、索引及全部分片；资产完整不等于模型服务已启动或准确率已验收。
+`npm run model:check:all` 已验证文本、OCR、视觉和 Embedding 四套模型的配置、索引及全部分片。真实运行稳定性已经验收，但 OCR 字段准确率仍等待财务人工标签，二者不能混为一项。
+
+真实运行证据：
+
+- Qwen3-14B-AWQ 与 PaddleOCR-VL 连续常驻 30 分钟，61 次健康采样全部通过，容器 0 重启、0 OOM、0 fatal；显存峰值 28,911 MiB，最低空闲 3,277 MiB。
+- 文本重启约 52.99 秒、切换 VL 约 172.35 秒、恢复文本约 51.91 秒；切换期间 OCR 272 次健康采样 0 失败，Embedding 未被意外启动。
+- 恢复后 Qwen 与 OCR 同时真实请求均返回 200，并发墙钟约 1.70 秒。最终状态为文本/OCR healthy，VL/Embedding offline。
+- 真实 Qwen 72 条问题 0 Provider 错误，但严格 grounding 直接通过率仅 26.39%；财务数字必须继续由结构化工具和受控 fallback 生成。
 
 ## 运行策略
 
@@ -31,7 +38,7 @@
 | `qwen-vl` | 按需 | 8001 | 启动前卸载文本服务，OCR 保持在线 |
 | `qwen-embedding` | 按需 | 8002 | 启动前卸载文本服务，OCR 保持在线 |
 
-`0.52` 只是首次启动值，不是已压测结论。首次真实启动必须观察 OOM、空闲显存、首 Token 延迟和 OCR 峰值，再调整 `QWEN_TEXT_GPU_MEMORY_UTILIZATION`。不要在一张卡上同时启动文本、VL 和 Embedding。
+`0.52` 已作为本机 30 分钟稳定性基线通过，但不是所有驱动、并发和文档负载下的生产 SLO。部署到不同机器后仍须观察 OOM、空闲显存、首 Token 延迟和 OCR 峰值，再调整 `QWEN_TEXT_GPU_MEMORY_UTILIZATION`。不要在一张卡上同时启动文本、VL 和 Embedding。
 
 文本服务使用固定的 `vllm/vllm-openai:v0.23.0` 镜像配置；Qwen 官方模型卡提供 AWQ 的 vLLM 启动方式：[Qwen3-14B-AWQ](https://huggingface.co/Qwen/Qwen3-14B-AWQ)。vLLM 容器参数参考[官方 Docker 文档](https://docs.vllm.ai/en/stable/deployment/docker/)。
 
@@ -193,7 +200,7 @@ python -m unittest discover -s deploy/model-services/paddle-ocr-adapter/tests -p
 
 ## 7. 验收与调优
 
-首次真实部署按以下顺序验收：
+首次真实部署按以下顺序验收；本机已完成第 1-5 项和 72 条老板问题工程基准，第 6 项等待人工标签：
 
 1. 资产校验通过，容器内 `nvidia-smi` 正常。
 2. 文本与 OCR 常驻启动，连续 30 分钟无重启或 OOM。

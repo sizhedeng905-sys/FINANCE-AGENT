@@ -66,7 +66,7 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-15, B6):
+Current verification baseline (2026-07-15, B7 engineering handoff):
 
 - Backend build and Prisma validation pass with 18 applied migrations.
 - Jest: 17/17 suites and 183/183 tests.
@@ -74,6 +74,7 @@ Current verification baseline (2026-07-15, B6):
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 - Backend/database restart, ClamAV/disk fail-closed paths, 1/3/5 concurrency, model restart/VL switch, and simultaneous Qwen/OCR inference pass. Private aggregate reports stay under `.realdata-test/reports/`.
+- Finance L3 reconciliation and reviewed OCR labels remain external UAT gates; see `docs/B7_FINANCE_UAT_ACCEPTANCE.md`.
 
 ## API
 
@@ -251,7 +252,7 @@ Completed audit follow-up:
 
 Deployment or data work still required:
 
-- Real container startup and accuracy tuning against redacted company documents; the current Windows host still needs WSL 2/Docker installation.
-- All four local model asset sets pass integrity checks, but GPU container startup, OOM/latency checks, and service recovery have not been exercised.
+- Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
+- GPU container startup, 30-minute residency, OOM/latency observation, text/VL switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
 - Object storage, a running ClamAV service, production backup/restore, and retention jobs.
 - Shared/distributed rate limiting, centralized observability, managed secrets and production infrastructure validation.

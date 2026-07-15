@@ -1,31 +1,32 @@
 # GitHub PR 准备
 
-更新日期：2026-07-14
+更新日期：2026-07-15
 
-## 建议 PR
+## 当前 PR
 
 标题：
 
 ```text
-feat: complete real API migration and guarded local model runtime
+test: complete real business data validation through B7
 ```
 
-本地 `main` 当前包含既有 `process 4` 至 `process 8` 提交，并在其上存在批次 A-H 的未提交改动。远程 `origin/main` 当前停在 `process 3`。在用户明确确认前，不 push、不创建 PR、不 merge。
+工作分支：`agent/real-business-data-validation`。GitHub Draft PR：[#3](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/3)。B7 工程结果可以提交和推送；财务签字与 OCR 标签未完成前保持 Draft，不宣称生产就绪、不 merge。
 
 ## 完成内容
 
-- PostgreSQL dev/test 可重复初始化，Prisma schema、14 个 migration、seed 和结构核对通过。
+- PostgreSQL dev/test 可重复初始化，Prisma schema、18 个 migration、seed 和 40 张预期业务表结构核对通过。
 - 前端所有 C-1 至 C-11 领域完成显式 Mock/API Repository，API 错误不回退 Mock。
 - 工单完整审批、文件、通知、规则、confirmed 经营记录、报表和老板结构化 AI 工具形成真实闭环。
 - 阶段 9/B2 支持真实 `.xlsx` 与隔离转换 `.xls` 上传、解析、映射、错误行隔离、字段建议和幂等事务确认。
 - 阶段 10 支持 OCR Task、Provider、证据/置信度、纠错、重试和幂等确认入库。
 - 模型运行时提供部署/路由登记、健康检查、Schema、超时、重试、熔断、并发和安全日志；真实模型默认 disabled。
-- 本地权重校验、PaddleOCR-VL 适配器、文本/OCR 常驻编排和 VL/Embedding 按需切换已实现；WSL 2/Docker 尚未安装，真实推理未验收。
+- 本地权重校验、PaddleOCR-VL 适配器、文本/OCR 常驻编排和 VL/Embedding 按需切换已实现；RTX 5090 真实常驻、切换、恢复和并发推理通过。
 - CI、CORS、Helmet、请求/登录限流、就绪探针、结构化日志、生产 Swagger 开关、仓库卫生检查和文档完成。
+- 真实业务数据 B0-B7 工程门禁完成；财务 L3 对账和 OCR 人工标签记录在 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`。
 
 ## Migration
 
-本分支相对 `process 3` 包含阶段 4-10 和安全增强 migration。当前完整目录共 14 个；新增环境必须执行：
+本分支包含阶段 4-10、安全增强和真实业务数据适配 migration。当前完整目录共 18 个；新增环境必须执行：
 
 ```bash
 cd backend
@@ -48,18 +49,19 @@ AI/OCR：`AI_*`、`OCR_*`、`MODEL_*`、`AI_MAX_CONCURRENCY`、`OCR_MAX_CONCURRE
 
 ## 测试证据
 
-2026-07-12 本地：
+2026-07-15 B7 本地：
 
 - 前端 production build：通过；保留 bundle 大于 500 kB 的非阻断警告。
 - 后端 production build：通过。
-- 后端单测：11 suites，64 tests，通过 64，失败 0。
-- PostgreSQL 集成：1 suite，24 tests，通过 24，失败 0。
-- Playwright：12 tests，通过 12，失败 0；teardown 精确清理工单、导入/OCR任务、记录和文件。
+- 后端单测：17 suites，183 tests，通过 183，失败 0。
+- PostgreSQL 集成：1 suite，30 tests，通过 30，失败 0。
+- Playwright：14 tests，通过 14，失败 0；teardown 后测试数据库和磁盘孤儿均为 0。
 - Prisma format/validate/generate/migrate status/db:verify：通过；40 张业务表，无缺失/意外表。
 - PaddleOCR 适配器纯逻辑：4 tests，通过 4，失败 0。
-- 模型资产：文本、OCR、Embedding 通过；VL 缺失分片按预期被拒绝。
-- 仓库卫生：370 个 tracked/candidate 文件通过。
-- 生产依赖审计：高危/严重 0；已知中等级风险见 `docs/SECURITY.md`。
+- 模型资产：文本、OCR、VL、Embedding 全部完整；文本/OCR healthy，VL/Embedding 按需离线。
+- 仓库卫生：424 个 tracked/candidate 文件通过。
+- 生产依赖审计：根目录和后端均为 0 vulnerabilities。
+- 原始样本：112/112 份 SHA-256 不变，真实文件、模型和本地报告未进入 Git。
 
 ## 手工验收
 
@@ -84,22 +86,13 @@ AI/OCR：`AI_*`、`OCR_*`、`MODEL_*`、`AI_MAX_CONCURRENCY`、`OCR_MAX_CONCURRE
 - 导入/OCR/审批产生的数据通过审计、ledger 和 source/idempotency 标识定位；不要直接删除生产审计链。
 - 新模型路由可先设为 disabled，不影响 Mock 和非模型核心业务。
 
-## 保留项
+## 保留项与发布门禁
 
-- 真实 Paddle/Qwen 未在 GPU 上启动或压测，准确率未声明达标。
-- Qwen3-VL 缺少 `model-00003-of-00004.safetensors`，启动前校验会拒绝不完整权重。
-- 企业 Excel 格式、票据类型、字段真值、审批阈值和老板问题集需要脱敏真实数据校准。
+- OCR 字段准确率未声明达标；17 份匿名样本必须由财务完成人工真值复核。
+- L3 金额、入账粒度、负数/冲销、主表/凭证和 35 页拆分政策必须由财务签字。
+- 跨 Excel/OCR/手工来源的业务级重复仍按用户决定暂缓，当前以 SHA-256、任务幂等和人工复核降级。
 - 对象存储、病毒扫描、共享限流、监控告警、密钥托管和生产备份仍是上线任务。
 
-## 建议提交拆分
+## 提交与审查边界
 
-由于阶段 4-8 已有独立提交，当前未提交批次建议按可审查边界拆分：
-
-1. `feat: connect frontend domains to real PostgreSQL APIs`
-2. `test: add PostgreSQL and dual-mode Playwright acceptance`
-3. `feat: add transactional Excel import workflow`
-4. `feat: add OCR task and human-review framework`
-5. `feat: add guarded local model runtime adapters`
-6. `chore: harden runtime, CI, and delivery documentation`
-
-拆分时只暂存本项目实现文件；用户模型目录、下载脚本、真实 `.env`、上传物和样本不得进入提交。
+批次 A-B7 已按功能、测试和验收边界形成独立提交。最终推送前只暂存项目实现与公开聚合文档；用户模型目录、下载脚本、真实 `.env`、上传物、样本和 `.realdata-test/` 私有报告不得进入提交。PR 保持 Draft，直到外部签字门禁关闭。
