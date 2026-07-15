@@ -62,7 +62,9 @@ export const importStatusMap: Record<ImportTask['status'], string> = {
   parsed: '已解析',
   mapping: '待映射',
   pending_confirm: '待确认',
+  confirming: '确认入库中',
   confirmed: '已确认',
+  confirmation_failed: '确认失败',
   failed: '失败',
   cancelled: '已取消',
 };

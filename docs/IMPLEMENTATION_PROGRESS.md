@@ -3,7 +3,7 @@
 更新日期：2026-07-15
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-02 工程门禁完成，下一步进入 B8-03 大批量 Excel 确认任务化
+当前批次：B8-03 工程门禁完成，下一步进入 B8-04 OCR 精度与异步任务化
 
 ## 完成口径
 
@@ -19,7 +19,17 @@
 | B8 基线 | 完成 | 单元测试与 PostgreSQL 集成测试配置隔离，冻结可重复基线 |
 | B8-01 导入终态 | 完成 | 仅 `pending_confirm` 可确认；`confirmed` 重放幂等；取消/确认使用确定性锁顺序 |
 | B8-02 财务确认一致性 | 完成 | 金额可见、默认值落库、预览/确认边界一致，四类资金入口统一持久化幂等 |
-| B8-03 大批量 Excel 确认 | 待执行 | 需要将确认改为分批 worker，并完成 30,196 与接近 50,000 行完整入账门禁 |
+| B8-03 大批量 Excel 确认 | 完成 | 短事务 Worker、lease/恢复、原子发布及 5,001/30,196/49,999 行完整入账门禁通过 |
+
+B8-03 已完成的工程证据：
+
+- 确认 API 原子取得任务后快速返回 `confirming`；Worker 默认每批 500 行，进度、成功/错误数、attempt、lease 和错误摘要均持久化。
+- 每行使用确定性记录 ID，并增加 `(import_task_id, source_id)` 数据库唯一约束；恢复从数据库事实续跑，租约接管后旧 Worker 不能提交。
+- 批次记录保持 `pending_confirm`，最终事务一次发布为 `confirmed`；最后一批失败时日报为 0，重试后无重复发布。
+- 5,001、30,196、49,999 行均核对 ImportRow、BusinessRecord、RecordValue、Decimal 总额、唯一来源、audit、ledger 和日报。最终全量运行中，30,196/49,999 行确认到终态分别为 17.551/32.216 秒，API 延迟为 24/37 ms。
+- 故障门禁覆盖进程中断恢复、lease 接管、最后一批失败、数据库短断、重复/并发确认和确认后拒绝取消；前端显示确认进度并在终态后进入记录页。
+- 详细证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md`。H-03 跨来源业务指纹仍等待财务和业务负责人输入。
+- 自动化结果：21/21 migrations；17/17 Jest suites、184/184 tests；48/48 PostgreSQL integration；14/14 Playwright；前后端 production build 与 repository hygiene 全部通过。
 
 B8-02 已完成的工程证据：
 

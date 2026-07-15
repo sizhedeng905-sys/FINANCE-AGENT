@@ -46,6 +46,16 @@ export function toImportTask(task: ImportTaskDetail) {
         : 0,
       attempts: task.parseAttempts
     },
+    confirmationProgress: {
+      processed: task.confirmationProcessedRows,
+      total: task.confirmationTotalRows,
+      success: task.confirmationSuccessRows,
+      errors: task.confirmationErrorRows,
+      percent: task.confirmationTotalRows > 0
+        ? Math.min(100, Math.round((task.confirmationProcessedRows / task.confirmationTotalRows) * 100))
+        : 0,
+      attempts: task.confirmationAttempts
+    },
     counts: {
       total: task.totalRows,
       valid: task.validRows,

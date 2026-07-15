@@ -25,7 +25,7 @@ export default function DataImportTasksPage() {
   }, [fetchTasks]);
 
   useEffect(() => {
-    if (!tasks.some((task) => task.status === 'parsing')) return;
+    if (!tasks.some((task) => task.status === 'parsing' || task.status === 'confirming')) return;
     const timer = window.setInterval(() => void fetchTasks({ page, pageSize }).catch(() => undefined), 2000);
     return () => window.clearInterval(timer);
   }, [fetchTasks, page, pageSize, tasks]);
@@ -37,10 +37,12 @@ export default function DataImportTasksPage() {
     { title: '上传人', dataIndex: 'uploadedBy' },
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{importStatusMap[value as ImportTask['status']]}</Tag> },
     {
-      title: '解析进度',
+      title: '处理进度',
       width: 160,
       render: (_, task) => task.status === 'parsing' ? (
         <Progress percent={task.progress?.percent ?? 0} size="small" />
+      ) : task.status === 'confirming' ? (
+        <Progress percent={task.confirmationProgress?.percent ?? 0} size="small" />
       ) : task.progress?.total ? `${task.progress.processed} / ${task.progress.total}` : '-',
     },
     { title: '导入/错误', render: (_, task) => `${task.counts.imported} / ${task.counts.errors}` },
@@ -54,8 +56,8 @@ export default function DataImportTasksPage() {
             <Button type="link" onClick={() => void parseTask(task.id).then(() => navigate(`/data/import/${task.id}/mapping`)).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '解析失败'))}>解析</Button>
           ) : null}
           {['parsed', 'mapping'].includes(task.status) ? <Button type="link" onClick={() => navigate(`/data/import/${task.id}/mapping`)}>继续映射</Button> : null}
-          {['pending_confirm', 'confirmed'].includes(task.status) ? <Button type="link" onClick={() => navigate(`/data/import/${task.id}/confirm`)}>查看确认</Button> : null}
-          {!['confirmed', 'failed'].includes(task.status) ? (
+          {['pending_confirm', 'confirming', 'confirmed', 'confirmation_failed'].includes(task.status) ? <Button type="link" onClick={() => navigate(`/data/import/${task.id}/confirm`)}>查看确认</Button> : null}
+          {!['confirming', 'confirmed', 'confirmation_failed', 'failed', 'cancelled'].includes(task.status) ? (
             <Button type="link" danger onClick={() => void cancelTask(task.id).then(() => message.success('任务已取消')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '取消失败'))}>取消</Button>
           ) : null}
         </Space>

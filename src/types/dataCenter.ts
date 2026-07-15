@@ -301,7 +301,7 @@ export interface ImportTask {
   templateId: string;
   templateName: string;
   importType: DataRecordType;
-  status: 'uploaded' | 'parsing' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirmed' | 'failed' | 'cancelled';
+  status: 'uploaded' | 'parsing' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirming' | 'confirmed' | 'confirmation_failed' | 'failed' | 'cancelled';
   uploadedBy: string;
   uploadedById?: string;
   createdAt: string;
@@ -314,6 +314,14 @@ export interface ImportTask {
     processingMode?: 'document' | 'streaming';
     processed: number;
     total: number;
+    percent: number;
+    attempts: number;
+  };
+  confirmationProgress?: {
+    processed: number;
+    total: number;
+    success: number;
+    errors: number;
     percent: number;
     attempts: number;
   };
@@ -527,6 +535,7 @@ export interface SaveImportMappingsPayload {
 export interface ImportConfirmResult {
   task: ImportTask;
   recordIds: string[];
+  recordsPath?: string;
   importedRows: number;
   errorRows: number;
   duplicateRows: number;

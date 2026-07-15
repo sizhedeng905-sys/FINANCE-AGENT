@@ -12,6 +12,7 @@ import {
   FieldType,
   ImportRowStatus,
   ImportTaskStatus,
+  MappingDecisionType,
   OcrAttemptStatus,
   OcrTaskStatus,
   Prisma,
@@ -83,6 +84,19 @@ describe('real PostgreSQL integration', () => {
     }
     if (app) await app.close();
   });
+
+  const waitForImportConfirmation = async (taskId: string, timeoutMs = 30_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+      if (
+        task.status === ImportTaskStatus.confirmed ||
+        task.status === ImportTaskStatus.confirmation_failed
+      ) return task;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out waiting for import confirmation ${taskId}`);
+  };
 
   it('logs in all eight seeded Chinese and English accounts from PostgreSQL', async () => {
     const usernames = ['员工', '财务', '复核员', '老板', 'employee', 'finance', 'reviewer', 'boss'];
@@ -3610,14 +3624,24 @@ describe('real PostgreSQL integration', () => {
       const [firstConfirm, secondConfirm] = await Promise.all([confirm(), confirm()]);
       expect([firstConfirm.status, secondConfirm.status]).toEqual([201, 201]);
       expect(firstConfirm.body.data.recordIds).toEqual(secondConfirm.body.data.recordIds);
-      expect(firstConfirm.body.data.recordIds).toHaveLength(1);
-      recordIds.push(...firstConfirm.body.data.recordIds);
+      expect(firstConfirm.body.data).toMatchObject({
+        task: { status: ImportTaskStatus.confirming },
+        recordIds: [],
+        importedRows: 0,
+        alreadyConfirmed: false
+      });
+      expect(await waitForImportConfirmation(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 1,
+        errorRows: 3
+      });
 
       const records = await prisma.businessRecord.findMany({
         where: { importTaskId: taskId },
         include: { values: { include: { field: true } } }
       });
       expect(records).toHaveLength(1);
+      recordIds.push(records[0].id);
       expect(records[0]).toMatchObject({
         sourceType: RecordSourceType.excel,
         sourceId: storedRows[0].id,
@@ -3919,10 +3943,18 @@ describe('real PostgreSQL integration', () => {
     it('confirms only pending_confirm tasks and keeps cancelled tasks terminal', async () => {
       const pending = await createPendingTask('pending-success');
       const firstConfirm = await confirmRequest(pending.taskId).expect(201);
+      expect(firstConfirm.body.data).toMatchObject({
+        task: { status: ImportTaskStatus.confirming },
+        alreadyConfirmed: false,
+        importedRows: 0,
+        recordIds: []
+      });
+      expect(await waitForImportConfirmation(pending.taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 1
+      });
       const secondConfirm = await confirmRequest(pending.taskId).expect(201);
-      expect(firstConfirm.body.data).toMatchObject({ alreadyConfirmed: false, importedRows: 1 });
-      expect(secondConfirm.body.data).toMatchObject({ alreadyConfirmed: true, importedRows: 1 });
-      expect(secondConfirm.body.data.recordIds).toEqual(firstConfirm.body.data.recordIds);
+      expect(secondConfirm.body.data).toMatchObject({ alreadyConfirmed: true, importedRows: 1, recordIds: [] });
       expect(await prisma.businessRecord.count({ where: { importTaskId: pending.taskId } })).toBe(1);
       expect(await prisma.auditLog.count({
         where: { action: 'import_task.confirm', resourceId: pending.taskId }
@@ -3930,11 +3962,12 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.ledgerEvent.count({
         where: { eventType: 'import_task_confirmed', aggregateId: pending.taskId }
       })).toBe(1);
+      const [confirmedRecord] = await prisma.businessRecord.findMany({
+        where: { importTaskId: pending.taskId },
+        select: { id: true }
+      });
       expect(await prisma.ledgerEvent.count({
-        where: {
-          eventType: 'business_record_created',
-          aggregateId: { in: firstConfirm.body.data.recordIds as string[] }
-        }
+        where: { eventType: 'business_record_created', aggregateId: confirmedRecord.id }
       })).toBe(1);
       expect(await prisma.importRow.count({
         where: {
@@ -4074,7 +4107,7 @@ describe('real PostgreSQL integration', () => {
       );
       expect([confirmFirst.status, cancelSecond.status]).toEqual([201, 409]);
       expect(cancelSecond.body).toMatchObject({ code: 40901, data: {} });
-      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: confirmWins.taskId } })).toMatchObject({
+      expect(await waitForImportConfirmation(confirmWins.taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: 1,
         confirmedBy: financeUserId
@@ -4329,7 +4362,16 @@ describe('real PostgreSQL integration', () => {
         .post(`/api/import-tasks/${taskId}/confirm`)
         .set('Authorization', `Bearer ${financeToken}`)
         .expect(201);
-      expect(confirmed.body.data).toMatchObject({ importedRows: 1, errorRows: 4, alreadyConfirmed: false });
+      expect(confirmed.body.data).toMatchObject({
+        task: { status: ImportTaskStatus.confirming },
+        importedRows: 0,
+        alreadyConfirmed: false
+      });
+      expect(await waitForImportConfirmation(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 1,
+        errorRows: 4
+      });
       const record = await prisma.businessRecord.findFirstOrThrow({
         where: { importTaskId: taskId },
         include: { values: true }
@@ -4499,6 +4541,10 @@ describe('real PostgreSQL integration', () => {
       const conflict = await confirm(secondTask.taskId).expect(409);
       expect(replay.body).toEqual(first.body);
       expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(await waitForImportConfirmation(firstTask.taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 1
+      });
       expect(await prisma.businessRecord.count({
         where: { importTaskId: { in: [firstTask.taskId, secondTask.taskId] } }
       })).toBe(1);
@@ -4524,6 +4570,551 @@ describe('real PostgreSQL integration', () => {
         errors: expect.arrayContaining([expect.stringContaining('B8 precision default')])
       });
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+    });
+  });
+
+  describe('B8-03 background Excel confirmation', () => {
+    let financeToken: string;
+    let financeUserId: string;
+    let projectId: string;
+    let templateId: string;
+    let dateFieldId: string;
+    let amountFieldId: string;
+    const taskIds: string[] = [];
+    const rawFileIds: string[] = [];
+    const suffix = Date.now().toString(36);
+
+    beforeAll(async () => {
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      financeToken = login.body.data.accessToken as string;
+      financeUserId = login.body.data.user.id as string;
+      const [dateField, amountField] = await Promise.all([
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } })
+      ]);
+      dateFieldId = dateField.id;
+      amountFieldId = amountField.id;
+      const project = await prisma.project.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_confirm_${suffix}`,
+          customerName: 'B8 confirmation customer',
+          ownerName: 'B8 confirmation owner',
+          createdBy: 'finance'
+        }
+      });
+      projectId = project.id;
+      const template = await prisma.template.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_confirm_template_${suffix}`,
+          recordType: DataRecordType.cost,
+          primaryDateFieldId: dateFieldId,
+          primaryAmountFieldId: amountFieldId,
+          createdBy: 'finance'
+        }
+      });
+      templateId = template.id;
+      await prisma.templateField.createMany({
+        data: [
+          { templateId, fieldId: dateFieldId, isRequired: true, isVisible: true, displayOrder: 1 },
+          { templateId, fieldId: amountFieldId, isRequired: true, isVisible: true, displayOrder: 2 }
+        ]
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId, templateId, recordType: DataRecordType.cost }
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.idempotencyKey.deleteMany({ where: { key: { startsWith: `b8-confirm-${suffix}` } } });
+      await prisma.$executeRaw`
+        DELETE FROM ledger_events AS event
+        USING business_records AS record
+        WHERE event.aggregate_id = record.id
+          AND record.project_id = ${projectId}
+      `;
+      await prisma.businessRecord.deleteMany({ where: { projectId } });
+      if (taskIds.length) await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
+      if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+      const resourceIds = [...taskIds, projectId, templateId];
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+      await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+      await prisma.project.deleteMany({ where: { id: projectId } });
+      await prisma.template.deleteMany({ where: { id: templateId } });
+    });
+
+    const createTask = async (rowCount: number, recordDate = '2026-07-15') => {
+      const rawFile = await prisma.rawFile.create({
+        data: {
+          fileName: `b8-confirm-${rowCount}.xlsx`,
+          originalFileName: `b8-confirm-${rowCount}.xlsx`,
+          fileType: 'excel',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          fileSize: BigInt(rowCount),
+          storagePath: `b8-confirm/${suffix}-${rowCount}.xlsx`,
+          sha256: createHash('sha256').update(`${suffix}:${rowCount}`).digest('hex'),
+          uploadedBy: financeUserId,
+          relatedProjectId: projectId,
+          status: RawFileStatus.parsed,
+          scanStatus: FileScanStatus.clean
+        }
+      });
+      rawFileIds.push(rawFile.id);
+      const task = await prisma.importTask.create({
+        data: {
+          projectId,
+          templateId,
+          rawFileId: rawFile.id,
+          fileName: rawFile.originalFileName,
+          importType: DataRecordType.cost,
+          status: ImportTaskStatus.pending_confirm,
+          uploadedBy: financeUserId,
+          parsedAt: new Date(),
+          processedRows: rowCount,
+          totalRows: rowCount,
+          validRows: rowCount,
+          executionMode: 'background',
+          processingMode: 'streaming'
+        }
+      });
+      taskIds.push(task.id);
+      const sheet = await prisma.importSheet.create({
+        data: {
+          importTaskId: task.id,
+          sheetName: 'B8 confirmation',
+          sheetIndex: 0,
+          headerRowIndex: 1,
+          rowCount
+        }
+      });
+      const [dateColumn, amountColumn] = await Promise.all([
+        prisma.importColumn.create({
+          data: {
+            importTaskId: task.id,
+            sheetId: sheet.id,
+            columnIndex: 0,
+            sourceKey: 'date',
+            sourceName: '日期',
+            normalizedName: '日期',
+            inferredType: 'date'
+          }
+        }),
+        prisma.importColumn.create({
+          data: {
+            importTaskId: task.id,
+            sheetId: sheet.id,
+            columnIndex: 1,
+            sourceKey: 'amount',
+            sourceName: '金额',
+            normalizedName: '金额',
+            inferredType: 'number'
+          }
+        })
+      ]);
+      await prisma.mappingDecision.createMany({
+        data: [
+          {
+            importTaskId: task.id,
+            importColumnId: dateColumn.id,
+            targetFieldId: dateFieldId,
+            mappingType: MappingDecisionType.manual,
+            confidence: new Prisma.Decimal(1),
+            confirmedBy: financeUserId
+          },
+          {
+            importTaskId: task.id,
+            importColumnId: amountColumn.id,
+            targetFieldId: amountFieldId,
+            mappingType: MappingDecisionType.manual,
+            confidence: new Prisma.Decimal(1),
+            confirmedBy: financeUserId
+          }
+        ]
+      });
+      for (let offset = 0; offset < rowCount; offset += 1000) {
+        const size = Math.min(1000, rowCount - offset);
+        await prisma.importRow.createMany({
+          data: Array.from({ length: size }, (_, index) => {
+            const rowNumber = offset + index + 2;
+            return {
+              importTaskId: task.id,
+              sheetId: sheet.id,
+              rowNumber,
+              rawData: { date: recordDate, amount: '1.23' },
+              rowHash: createHash('sha256').update(`${task.id}:${rowNumber}`).digest('hex'),
+              status: ImportRowStatus.pending
+            };
+          })
+        });
+      }
+      return task.id;
+    };
+
+    const waitForTerminalStatus = async (taskId: string, timeoutMs = 120_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+        if (
+          task.status === ImportTaskStatus.confirmed ||
+          task.status === ImportTaskStatus.confirmation_failed
+        ) return task;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`Timed out waiting for import confirmation ${taskId}`);
+    };
+
+    const waitForConfirmationProgress = async (taskId: string, minimum: number, timeoutMs = 30_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+        if (task.status === ImportTaskStatus.confirming && task.confirmationProcessedRows >= minimum) return task;
+        if (task.status !== ImportTaskStatus.confirming) {
+          throw new Error(`Import confirmation ${taskId} left confirming before reaching ${minimum} rows`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for import confirmation progress ${taskId}`);
+    };
+
+    it('confirms 5,001 rows through a fast asynchronous API and a complete business-data closure', async () => {
+      const rowCount = 5_001;
+      const taskId = await createTask(rowCount);
+      const key = `b8-confirm-${suffix}-${rowCount}`;
+      const startedAt = Date.now();
+      const queued = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key)
+        .expect(201);
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(queued.body.data).toMatchObject({
+        task: { id: taskId, status: 'confirming' },
+        alreadyConfirmed: false
+      });
+
+      const finished = await waitForTerminalStatus(taskId) as unknown as {
+        status: ImportTaskStatus;
+        importedRows: number;
+        errorRows: number;
+      };
+      expect(finished).toMatchObject({ status: ImportTaskStatus.confirmed, importedRows: rowCount });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+      expect(await prisma.recordValue.count({ where: { record: { importTaskId: taskId } } })).toBe(rowCount * 2);
+      const amount = await prisma.businessRecord.aggregate({
+        where: { importTaskId: taskId, status: BusinessRecordStatus.confirmed },
+        _sum: { amount: true }
+      });
+      expect(amount._sum.amount?.toFixed(2)).toBe('6151.23');
+      const uniqueSources = await prisma.$queryRaw<Array<{ total: bigint; distinctSources: bigint }>>`
+        SELECT COUNT(*)::bigint AS total, COUNT(DISTINCT source_id)::bigint AS "distinctSources"
+        FROM business_records
+        WHERE import_task_id = ${taskId}
+      `;
+      expect(uniqueSources[0]).toEqual({ total: BigInt(rowCount), distinctSources: BigInt(rowCount) });
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_completed' }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+      })).toBe(1);
+      const report = await request(app.getHttpServer())
+        .get(`/api/reports/projects/${projectId}/daily?date=2026-07-15`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(report.body.data).toMatchObject({ expense: '6151.23', recordCount: rowCount });
+
+      const replay = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key)
+        .expect(201);
+      expect(replay.body).toEqual(queued.body);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+    });
+
+    it.each([
+      [30_196, '2026-07-16'],
+      [49_999, '2026-07-17']
+    ])('confirms %i rows with bounded worker resources and a complete accounting closure', async (rowCount, recordDate) => {
+      const taskId = await createTask(rowCount, recordDate);
+      const baselineRss = process.memoryUsage().rss;
+      let peakRss = baselineRss;
+      let peakConnections = 0;
+      let sampling = true;
+      const sampleResources = async () => {
+        while (sampling) {
+          peakRss = Math.max(peakRss, process.memoryUsage().rss);
+          const [connectionSample] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*)::bigint AS count
+            FROM pg_stat_activity
+            WHERE datname = current_database()
+          `;
+          peakConnections = Math.max(peakConnections, Number(connectionSample.count));
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      };
+      const samplingPromise = sampleResources();
+      const startedAt = Date.now();
+      const queued = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', `b8-confirm-${suffix}-${rowCount}`)
+        .expect(201);
+      const apiLatencyMs = Date.now() - startedAt;
+      expect(apiLatencyMs).toBeLessThan(2_000);
+      expect(queued.body.data.task.status).toBe(ImportTaskStatus.confirming);
+      const finished = await waitForTerminalStatus(taskId, 180_000);
+      const elapsedMs = Date.now() - startedAt;
+      sampling = false;
+      await samplingPromise;
+      console.info('[B8-03 confirmation profile]', JSON.stringify({
+        rowCount,
+        apiLatencyMs,
+        elapsedMs,
+        peakRssDeltaMb: Number(((peakRss - baselineRss) / 1024 / 1024).toFixed(2)),
+        peakConnections
+      }));
+
+      expect(finished).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationProcessedRows: rowCount,
+        confirmationSuccessRows: rowCount,
+        confirmationErrorRows: 0
+      });
+      const [importRows, records, values, sourceFacts, statusFacts, amount] = await Promise.all([
+        prisma.importRow.count({ where: { importTaskId: taskId } }),
+        prisma.businessRecord.count({ where: { importTaskId: taskId } }),
+        prisma.recordValue.count({ where: { record: { importTaskId: taskId } } }),
+        prisma.$queryRaw<Array<{ total: bigint; distinctSources: bigint; unmatchedSources: bigint }>>`
+          SELECT
+            COUNT(record.id)::bigint AS total,
+            COUNT(DISTINCT record.source_id)::bigint AS "distinctSources",
+            COUNT(*) FILTER (WHERE row.id IS NULL)::bigint AS "unmatchedSources"
+          FROM business_records AS record
+          LEFT JOIN import_rows AS row
+            ON row.id = record.source_id AND row.import_task_id = record.import_task_id
+          WHERE record.import_task_id = ${taskId}
+        `,
+        prisma.businessRecord.groupBy({ where: { importTaskId: taskId }, by: ['status'], _count: true }),
+        prisma.businessRecord.aggregate({ where: { importTaskId: taskId }, _sum: { amount: true } })
+      ]);
+      expect(importRows).toBe(rowCount);
+      expect(records).toBe(rowCount);
+      expect(values).toBe(rowCount * 2);
+      expect(sourceFacts[0]).toEqual({
+        total: BigInt(rowCount),
+        distinctSources: BigInt(rowCount),
+        unmatchedSources: 0n
+      });
+      expect(statusFacts).toEqual([{ status: BusinessRecordStatus.confirmed, _count: rowCount }]);
+      expect(amount._sum.amount?.toFixed(2)).toBe(new Prisma.Decimal(rowCount).mul('1.23').toFixed(2));
+      expect(await prisma.importRow.count({
+        where: { importTaskId: taskId, status: ImportRowStatus.confirmed, generatedRecordId: { not: null } }
+      })).toBe(rowCount);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_completed' }
+      })).toBe(1);
+      const summaryEvent = await prisma.ledgerEvent.findFirstOrThrow({
+        where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+      });
+      expect(summaryEvent.payload).toMatchObject({ importedRows: rowCount, totalRows: rowCount });
+      expect(summaryEvent.payload).not.toHaveProperty('recordIds');
+      const report = await request(app.getHttpServer())
+        .get(`/api/reports/projects/${projectId}/daily?date=${recordDate}`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(report.body.data).toMatchObject({
+        expense: new Prisma.Decimal(rowCount).mul('1.23').toFixed(2),
+        recordCount: rowCount
+      });
+      expect(elapsedMs).toBeLessThan(180_000);
+      expect(peakRss - baselineRss).toBeLessThan(1024 * 1024 * 1024);
+      expect(peakConnections).toBeGreaterThan(0);
+    }, 240_000);
+
+    it('recovers an expired confirmation from persisted database facts', async () => {
+      const rowCount = 1_200;
+      const taskId = await createTask(rowCount, '2026-07-18');
+      await prisma.importTask.update({
+        where: { id: taskId },
+        data: {
+          status: ImportTaskStatus.confirming,
+          leaseToken: 'expired-worker-token',
+          leaseUntil: new Date(Date.now() - 1_000),
+          confirmRequestedBy: financeUserId,
+          confirmationTotalRows: rowCount,
+          confirmationAttempts: 1,
+          confirmationStartedAt: new Date()
+        }
+      });
+      expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 2
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_recovered' }
+      })).toBe(1);
+    });
+
+    it('lets a recovered lease take over while the old worker can no longer commit', async () => {
+      const rowCount = 5_001;
+      const taskId = await createTask(rowCount, '2026-07-19');
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(201);
+      const beforeTakeover = await waitForConfirmationProgress(taskId, 1);
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${taskId}, 9))`;
+        await tx.importTask.update({
+          where: { id: taskId },
+          data: { leaseToken: 'superseded-worker-token', leaseUntil: new Date(Date.now() - 1_000) }
+        });
+      });
+      expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+      const finished = await waitForTerminalStatus(taskId);
+      expect(finished).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 2
+      });
+      expect(finished.confirmationProcessedRows).toBe(rowCount);
+      expect(beforeTakeover.confirmationProcessedRows).toBeGreaterThan(0);
+      const sourceFacts = await prisma.$queryRaw<Array<{ total: bigint; distinctSources: bigint }>>`
+        SELECT COUNT(*)::bigint AS total, COUNT(DISTINCT source_id)::bigint AS "distinctSources"
+        FROM business_records
+        WHERE import_task_id = ${taskId}
+      `;
+      expect(sourceFacts[0]).toEqual({ total: BigInt(rowCount), distinctSources: BigInt(rowCount) });
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_recovered' }
+      })).toBe(1);
+    });
+
+    it('keeps completed batches unpublished when the last batch fails and resumes without duplicates', async () => {
+      const rowCount = 1_001;
+      const taskId = await createTask(rowCount, '2026-07-20');
+      const service = app.get(ImportTasksService) as unknown as {
+        processConfirmationBatch(job: { taskId: string }): Promise<boolean>;
+      };
+      const original = service.processConfirmationBatch.bind(service);
+      const failure = jest.spyOn(service, 'processConfirmationBatch').mockImplementation(async (job) => {
+        if (job.taskId === taskId) {
+          const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+          if (task.confirmationProcessedRows >= 1_000) throw new Error('simulated final confirmation batch failure');
+        }
+        return original(job);
+      });
+      try {
+        await request(app.getHttpServer())
+          .post(`/api/import-tasks/${taskId}/confirm`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .expect(201);
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmation_failed,
+          confirmationProcessedRows: 1_000,
+          confirmationSuccessRows: 1_000
+        });
+      } finally {
+        failure.mockRestore();
+      }
+      expect(await prisma.businessRecord.count({
+        where: { importTaskId: taskId, status: BusinessRecordStatus.pending_confirm }
+      })).toBe(1_000);
+      const unpublishedReport = await request(app.getHttpServer())
+        .get(`/api/reports/projects/${projectId}/daily?date=2026-07-20`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(unpublishedReport.body.data).toMatchObject({ expense: '0.00', recordCount: 0 });
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/cancel`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(409);
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(201);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 2
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+      expect(await prisma.recordValue.count({ where: { record: { importTaskId: taskId } } })).toBe(rowCount * 2);
+      const publishedReport = await request(app.getHttpServer())
+        .get(`/api/reports/projects/${projectId}/daily?date=2026-07-20`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(publishedReport.body.data).toMatchObject({ expense: '1231.23', recordCount: rowCount });
+    });
+
+    it('recovers after a simulated short PostgreSQL disconnect', async () => {
+      const rowCount = 1_001;
+      const taskId = await createTask(rowCount, '2026-07-21');
+      const service = app.get(ImportTasksService) as unknown as {
+        processConfirmationBatch(job: { taskId: string }): Promise<boolean>;
+      };
+      const original = service.processConfirmationBatch.bind(service);
+      let disconnected = false;
+      const failure = jest.spyOn(service, 'processConfirmationBatch').mockImplementation(async (job) => {
+        if (job.taskId === taskId && !disconnected) {
+          disconnected = true;
+          throw new Prisma.PrismaClientKnownRequestError('simulated short database disconnect', {
+            code: 'P1001',
+            clientVersion: '6.19.3'
+          });
+        }
+        return original(job);
+      });
+      try {
+        await request(app.getHttpServer())
+          .post(`/api/import-tasks/${taskId}/confirm`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .expect(201);
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+          if (task.status === ImportTaskStatus.confirming && task.leaseUntil && task.leaseUntil < new Date()) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      } finally {
+        failure.mockRestore();
+      }
+      expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 2
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+    });
+
+    it('serializes concurrent confirmation requests into one background job', async () => {
+      const rowCount = 1_001;
+      const taskId = await createTask(rowCount, '2026-07-22');
+      const confirm = () => request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`);
+      const [first, second] = await Promise.all([confirm(), confirm()]);
+      expect([first.status, second.status]).toEqual([201, 201]);
+      expect(first.body.data.task.status).toBe(ImportTaskStatus.confirming);
+      expect(second.body.data.task.status).toBe(ImportTaskStatus.confirming);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 1
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_scheduled' }
+      })).toBe(1);
     });
   });
 

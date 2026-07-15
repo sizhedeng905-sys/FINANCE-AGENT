@@ -9,6 +9,7 @@ import {
   OnModuleInit,
   UnprocessableEntityException
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   BusinessRecordStatus,
   FieldDefinition,
@@ -61,7 +62,7 @@ import { XlsConversionMetadata } from './xls-sanitizer';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 
-const previewInclude = {
+const previewTaskInclude = {
   project: true,
   template: {
     include: {
@@ -75,11 +76,16 @@ const previewInclude = {
   columns: {
     include: { decision: { include: { targetField: true } } },
     orderBy: { columnIndex: 'asc' as const }
-  },
+  }
+} satisfies Prisma.ImportTaskInclude;
+
+const previewInclude = {
+  ...previewTaskInclude,
   rows: { orderBy: { rowNumber: 'asc' as const } }
 } satisfies Prisma.ImportTaskInclude;
 
-type PreviewTask = Prisma.ImportTaskGetPayload<{ include: typeof previewInclude }>;
+type PreviewTask = Prisma.ImportTaskGetPayload<{ include: typeof previewTaskInclude }>;
+type PreviewImportRow = Prisma.ImportRowGetPayload<Record<string, never>>;
 type PreviewField = FieldDefinition;
 
 interface PreviewValue {
@@ -127,6 +133,8 @@ const IMPORT_MAX_PARSE_ATTEMPTS = 3;
 
 class ImportParseLeaseLostError extends Error {}
 class ImportParseWorkerStoppingError extends Error {}
+class ImportConfirmationLeaseLostError extends Error {}
+class ImportConfirmationWorkerStoppingError extends Error {}
 
 interface BackgroundParseJob {
   taskId: string;
@@ -136,6 +144,14 @@ interface BackgroundParseJob {
   options: ParseWorkbookOptions;
   attempt: number;
   workbook?: PreparedWorkbook;
+}
+
+interface BackgroundConfirmationJob {
+  taskId: string;
+  leaseToken: string;
+  actor: CurrentUser;
+  context: RequestContext;
+  attempt: number;
 }
 
 interface PreparedWorkbook {
@@ -148,6 +164,9 @@ interface PreparedWorkbook {
 export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ImportTasksService.name);
   private readonly backgroundJobs = new Map<string, Promise<void>>();
+  private readonly confirmationBatchSize: number;
+  private readonly confirmationLeaseMs: number;
+  private readonly confirmationMaxAttempts: number;
   private leaseReaper?: NodeJS.Timeout;
   private stopping = false;
 
@@ -159,12 +178,21 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly auditLogs: AuditLogsService,
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService,
-    private readonly idempotency: IdempotencyService
-  ) {}
+    private readonly idempotency: IdempotencyService,
+    config: ConfigService
+  ) {
+    this.confirmationBatchSize = config.get<number>('importConfirmation.batchSize') ?? 500;
+    this.confirmationLeaseMs = config.get<number>('importConfirmation.leaseMs') ?? 60_000;
+    this.confirmationMaxAttempts = config.get<number>('importConfirmation.maxAttempts') ?? 3;
+  }
 
   onModuleInit() {
     void this.recoverExpiredParses();
-    this.leaseReaper = setInterval(() => void this.recoverExpiredParses(), IMPORT_PARSE_REAPER_MS);
+    void this.recoverExpiredConfirmations();
+    this.leaseReaper = setInterval(() => {
+      void this.recoverExpiredParses();
+      void this.recoverExpiredConfirmations();
+    }, IMPORT_PARSE_REAPER_MS);
     this.leaseReaper.unref();
   }
 
@@ -1118,29 +1146,26 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       { importTaskId: id },
       false
     );
-    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
+    let claimedJob: BackgroundConfirmationJob | undefined;
+    const result = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       await this.lockTask(tx, id);
       const current = await tx.importTask.findUnique({ where: { id } });
       if (!current) throw new NotFoundException('资源不存在');
       if (current.status === ImportTaskStatus.confirmed) {
-        const records = await tx.businessRecord.findMany({ where: { importTaskId: id }, select: { id: true } });
-        const task = await this.findDetailOrThrow(id, tx);
-        return {
-          task: toImportTask(task),
-          recordIds: records.map((record) => record.id),
-          importedRows: task.importedRows,
-          errorRows: task.errorRows,
-          duplicateRows: task.duplicateRows,
-          ignoredRows: task.ignoredRows,
-          alreadyConfirmed: true
-        };
+        return this.confirmationResponse(await this.findDetailOrThrow(id, tx), true);
       }
-      if (current.status !== ImportTaskStatus.pending_confirm) {
-        throw new ConflictException('仅待确认任务可以确认');
+      if (current.status === ImportTaskStatus.confirming) {
+        return this.confirmationResponse(await this.findDetailOrThrow(id, tx), false);
+      }
+      const confirmableStatuses: ImportTaskStatus[] = [
+        ImportTaskStatus.pending_confirm,
+        ImportTaskStatus.confirmation_failed
+      ];
+      if (!confirmableStatuses.includes(current.status)) {
+        throw new ConflictException('仅待确认或确认失败的任务可以确认');
       }
 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${current.projectId}, 22))`;
-
       const template = await this.recordPolicy.getWritableTemplate(
         tx,
         current.projectId,
@@ -1150,149 +1175,571 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (template.version !== current.templateVersion) {
         throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
       }
-
-      const preview = await this.buildPreview(tx, id);
-      if (preview.unresolvedColumns.length > 0) {
+      const [columnCount, decisionCount, totalRows, processedRows, successRows, errorRows] = await Promise.all([
+        tx.importColumn.count({ where: { importTaskId: id } }),
+        tx.mappingDecision.count({ where: { importTaskId: id } }),
+        tx.importRow.count({ where: { importTaskId: id } }),
+        tx.importRow.count({ where: { importTaskId: id, confirmationProcessedAt: { not: null } } }),
+        tx.businessRecord.count({ where: { importTaskId: id } }),
+        tx.importRow.count({
+          where: { importTaskId: id, confirmationProcessedAt: { not: null }, status: ImportRowStatus.error }
+        })
+      ]);
+      if (columnCount === 0 || decisionCount !== columnCount) {
         throw new ConflictException('所有未知列必须先映射或明确忽略');
       }
-      const validRows = preview.rows.filter((row) => row.status === ImportRowStatus.mapped && row.errors.length === 0);
-      if (validRows.length === 0) throw new UnprocessableEntityException('没有可导入的合法行');
+      if (totalRows === 0) throw new UnprocessableEntityException('没有可导入的数据行');
 
-      const recordIds: string[] = [];
+      const attempt = current.confirmationAttempts + 1;
+      const leaseToken = randomUUID();
       const now = new Date();
-      for (const row of preview.rows) {
-        if (row.generatedRecordId) {
-          recordIds.push(row.generatedRecordId);
-          continue;
+      await tx.importTask.update({
+        where: { id },
+        data: {
+          status: ImportTaskStatus.confirming,
+          leaseToken,
+          leaseUntil: new Date(now.getTime() + this.confirmationLeaseMs),
+          confirmRequestedBy: actor.id,
+          confirmationTotalRows: totalRows,
+          confirmationProcessedRows: processedRows,
+          confirmationSuccessRows: successRows,
+          confirmationErrorRows: errorRows,
+          confirmationAttempts: attempt,
+          confirmationStartedAt: current.confirmationStartedAt ?? now,
+          importedRows: successRows,
+          errorMessage: null,
+          version: { increment: 1 }
         }
-        if (row.status !== ImportRowStatus.mapped || row.errors.length > 0 || !row.recordDate || row.amount === undefined) {
-          await tx.importRow.update({
-            where: { id: row.id },
-            data: {
-              normalizedData: row.normalizedData as Prisma.InputJsonObject,
-              status: row.status,
-              errors: row.errors,
-              warnings: row.warnings
-            }
-          });
-          continue;
-        }
+      });
+      await this.auditLogs.write(tx, actor, 'import_task.confirm_scheduled', 'import_task', id, {
+        attempt,
+        totalRows,
+        processedRows,
+        batchSize: this.confirmationBatchSize
+      }, context);
+      await this.ledgerEvents.write(
+        tx,
+        actor,
+        'import_task_confirmation_scheduled',
+        'import_task',
+        id,
+        { attempt, totalRows, processedRows, batchSize: this.confirmationBatchSize },
+        `import_task:${id}:confirm_attempt:${attempt}:scheduled`
+      );
+      claimedJob = { taskId: id, leaseToken, actor, context, attempt };
+      return this.confirmationResponse(await this.findDetailOrThrow(id, tx), false);
+    }));
+    if (claimedJob) this.scheduleBackgroundConfirmation(claimedJob);
+    return result;
+  }
 
+  async recoverExpiredConfirmations() {
+    if (this.stopping) return 0;
+    try {
+      const expired = await this.prisma.importTask.findMany({
+        where: { status: ImportTaskStatus.confirming, leaseUntil: { lt: new Date() } },
+        select: { id: true },
+        orderBy: { leaseUntil: 'asc' },
+        take: 20
+      });
+      let recovered = 0;
+      for (const { id } of expired) {
+        if (this.stopping) continue;
+        try {
+          const job = await this.claimExpiredBackgroundConfirmation(id);
+          if (!job) continue;
+          recovered += 1;
+          this.scheduleBackgroundConfirmation(job);
+        } catch (error) {
+          this.logger.warn(`Import confirmation ${id} recovery failed: ${this.errorMessage(error)}`);
+        }
+      }
+      return recovered;
+    } catch (error) {
+      this.logger.warn(`Import confirmation lease recovery failed: ${this.errorMessage(error)}`);
+      return 0;
+    }
+  }
+
+  private async claimExpiredBackgroundConfirmation(
+    id: string
+  ): Promise<BackgroundConfirmationJob | undefined> {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await tx.importTask.findUnique({ where: { id }, include: { uploader: true } });
+      if (
+        !task ||
+        task.status !== ImportTaskStatus.confirming ||
+        !task.leaseUntil ||
+        task.leaseUntil.getTime() >= Date.now()
+      ) {
+        return undefined;
+      }
+      const requestedUser = task.confirmRequestedBy
+        ? await tx.user.findUnique({ where: { id: task.confirmRequestedBy } })
+        : undefined;
+      const actor = this.toCurrentUser(requestedUser ?? task.uploader);
+      const context = { requestId: `import-confirm-recovery-${id}-${task.confirmationAttempts + 1}` };
+      if (task.confirmationAttempts >= this.confirmationMaxAttempts) {
+        const reason = `后台确认连续中断 ${task.confirmationAttempts} 次，已停止自动恢复`;
+        await tx.importTask.update({
+          where: { id },
+          data: {
+            status: ImportTaskStatus.confirmation_failed,
+            leaseToken: null,
+            leaseUntil: null,
+            errorMessage: reason,
+            version: { increment: 1 }
+          }
+        });
+        await this.auditLogs.write(tx, actor, 'import_task.confirm_recovery_exhausted', 'import_task', id, {
+          attempts: task.confirmationAttempts,
+          reason
+        }, context);
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'import_task_confirmation_recovery_exhausted',
+          'import_task',
+          id,
+          { attempts: task.confirmationAttempts, reason },
+          `import_task:${id}:confirmation_recovery_exhausted`
+        );
+        return undefined;
+      }
+
+      const [totalRows, processedRows, successRows, errorRows] = await Promise.all([
+        tx.importRow.count({ where: { importTaskId: id } }),
+        tx.importRow.count({ where: { importTaskId: id, confirmationProcessedAt: { not: null } } }),
+        tx.businessRecord.count({ where: { importTaskId: id } }),
+        tx.importRow.count({
+          where: { importTaskId: id, confirmationProcessedAt: { not: null }, status: ImportRowStatus.error }
+        })
+      ]);
+      const attempt = task.confirmationAttempts + 1;
+      const leaseToken = randomUUID();
+      await tx.importTask.update({
+        where: { id },
+        data: {
+          leaseToken,
+          leaseUntil: new Date(Date.now() + this.confirmationLeaseMs),
+          confirmationTotalRows: totalRows,
+          confirmationProcessedRows: processedRows,
+          confirmationSuccessRows: successRows,
+          confirmationErrorRows: errorRows,
+          confirmationAttempts: attempt,
+          importedRows: successRows,
+          errorMessage: null,
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'import_task.confirm_recovered', 'import_task', id, {
+        attempt,
+        previousLeaseUntil: task.leaseUntil.toISOString(),
+        processedRows,
+        totalRows
+      }, context);
+      await this.ledgerEvents.write(
+        tx,
+        actor,
+        'import_task_confirmation_recovered',
+        'import_task',
+        id,
+        { attempt, processedRows, totalRows },
+        `import_task:${id}:confirm_attempt:${attempt}:recovered`
+      );
+      return { taskId: id, leaseToken, actor, context, attempt };
+    });
+  }
+
+  private scheduleBackgroundConfirmation(job: BackgroundConfirmationJob) {
+    const jobKey = `confirm:${job.taskId}:${job.leaseToken}`;
+    if (this.backgroundJobs.has(jobKey) || this.stopping) return;
+    const running = this.executeBackgroundConfirmation(job)
+      .catch((error) => this.logger.error(
+        `Background confirmation ${job.taskId} failed: ${this.errorMessage(error)}`
+      ))
+      .finally(() => this.backgroundJobs.delete(jobKey));
+    this.backgroundJobs.set(jobKey, running);
+  }
+
+  private async executeBackgroundConfirmation(job: BackgroundConfirmationJob) {
+    try {
+      while (true) {
+        if (this.stopping) throw new ImportConfirmationWorkerStoppingError();
+        const processedBatch = await this.processConfirmationBatch(job);
+        if (processedBatch) continue;
+        await this.completeBackgroundConfirmation(job);
+        return;
+      }
+    } catch (error) {
+      if (error instanceof ImportConfirmationLeaseLostError) return;
+      if (error instanceof ImportConfirmationWorkerStoppingError || this.isTransientDatabaseError(error)) {
+        await this.releaseConfirmationForRecovery(job.taskId, job.leaseToken, this.errorMessage(error));
+        return;
+      }
+      this.logger.warn(
+        `Background confirmation ${job.taskId} attempt ${job.attempt} failed: ${this.errorMessage(error)}`
+      );
+      await this.failOwnedConfirmation(job, error);
+    }
+  }
+
+  private async processConfirmationBatch(job: BackgroundConfirmationJob) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, job.taskId);
+      await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
+      const task = await tx.importTask.findUnique({
+        where: { id: job.taskId },
+        include: previewTaskInclude
+      });
+      if (!task) throw new NotFoundException('资源不存在');
+      const rows = await tx.importRow.findMany({
+        where: { importTaskId: job.taskId, confirmationProcessedAt: null },
+        orderBy: { rowNumber: 'asc' },
+        take: this.confirmationBatchSize
+      });
+      if (rows.length === 0) return false;
+
+      const preview = this.buildPreviewRows(task, rows);
+      if (preview.unresolvedColumns.length > 0) {
+        throw new ConflictException('确认期间检测到未处理的映射列');
+      }
+      const now = new Date();
+      const snapshotTime = task.confirmationStartedAt ?? now;
+      const recordData: Prisma.BusinessRecordCreateManyInput[] = [];
+      const valueData: Prisma.RecordValueCreateManyInput[] = [];
+      const ledgerData: Prisma.LedgerEventCreateManyInput[] = [];
+      const recordIdByRow = new Map<string, string>();
+
+      for (const row of preview.rows) {
+        if (row.status !== ImportRowStatus.mapped || row.errors.length > 0 || !row.recordDate || row.amount === undefined) {
+          continue;
+        }
         const policyValues = row.values.map((value) => ({ fieldId: value.fieldId, value: value.value }));
-        const canonical = this.recordPolicy.resolveCanonicalValues(template, policyValues, { requireValues: true });
+        const canonical = this.recordPolicy.resolveCanonicalValues(task.template, policyValues, { requireValues: true });
         this.recordPolicy.assertTopLevelMatches(canonical, {
           amount: row.amount,
           recordDate: row.recordDate,
           category: row.category
         });
-
-        const record = await tx.businessRecord.create({
-          data: {
-            projectId: preview.task.projectId,
-            templateId: preview.task.templateId,
-            templateVersion: current.templateVersion,
-            templateSnapshot: this.recordPolicy.toSnapshot(template),
-            sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.excel, row.id, {
-              importTaskId: id,
-              importRowId: row.id,
-              rowNumber: row.rowNumber,
-              rowHash: row.rowHash,
-              rawFileId: preview.task.rawFileId,
-              rawFileSha256: preview.task.rawFile.sha256
-            }),
-            confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
-              projectId: preview.task.projectId,
-              sourceType: RecordSourceType.excel,
-              sourceId: row.id,
-              confirmedAt: now,
-              confirmedBy: actor.username,
-              attachments: [preview.task.rawFileId]
-            }),
-            recordType: preview.task.template.recordType,
-            accountingDirection: canonical.accountingDirection,
-            dataLayer: template.dataLayer,
-            recordDate: canonical.recordDate,
-            amount: canonical.amount,
-            category: canonical.category,
-            subCategory: row.subCategory,
-            description: `${preview.task.fileName} 第${row.rowNumber}行导入记录`,
+        const recordId = this.deterministicImportRecordId(row.id);
+        recordIdByRow.set(row.id, recordId);
+        recordData.push({
+          id: recordId,
+          projectId: task.projectId,
+          templateId: task.templateId,
+          templateVersion: task.templateVersion,
+          templateSnapshot: this.recordPolicy.toSnapshot(task.template),
+          sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.excel, row.id, {
+            importTaskId: job.taskId,
+            importRowId: row.id,
+            rowNumber: row.rowNumber,
+            rowHash: row.rowHash,
+            rawFileId: task.rawFileId,
+            rawFileSha256: task.rawFile.sha256
+          }),
+          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(task.template, canonical, policyValues, {
+            projectId: task.projectId,
             sourceType: RecordSourceType.excel,
             sourceId: row.id,
-            importTaskId: id,
-            status: BusinessRecordStatus.confirmed,
-            attachments: [preview.task.rawFileId],
-            createdBy: actor.username,
-            confirmedBy: actor.username,
-            confirmedAt: now,
-            values: {
-              create: row.values.map((value) => this.buildRecordValue(value, preview.task.template.templateFields))
-            }
-          }
-        });
-        recordIds.push(record.id);
-        await tx.importRow.update({
-          where: { id: row.id },
-          data: {
-            normalizedData: row.normalizedData as Prisma.InputJsonObject,
-            status: ImportRowStatus.confirmed,
-            errors: [],
-            warnings: row.warnings,
-            generatedRecordId: record.id,
-            confirmedAt: now
-          }
-        });
-        await this.ledgerEvents.write(tx, actor, 'business_record_created', 'business_record', record.id, {
+            confirmedAt: snapshotTime,
+            confirmedBy: job.actor.username,
+            attachments: [task.rawFileId]
+          }),
+          recordType: task.template.recordType,
+          accountingDirection: canonical.accountingDirection,
+          dataLayer: task.template.dataLayer,
+          recordDate: canonical.recordDate,
+          amount: canonical.amount,
+          category: canonical.category,
+          subCategory: row.subCategory,
+          description: `${task.fileName} 第${row.rowNumber}行导入记录`,
           sourceType: RecordSourceType.excel,
-          importTaskId: id,
-          importRowId: row.id,
-          rawFileId: preview.task.rawFileId,
-          accountingDirection: template.accountingDirection,
-          amount: row.amount
-        }, `import_row:${row.id}:business_record_created`);
+          sourceId: row.id,
+          importTaskId: job.taskId,
+          status: BusinessRecordStatus.pending_confirm,
+          attachments: [task.rawFileId],
+          createdBy: job.actor.username
+        });
+        valueData.push(...row.values.map((value) => this.buildRecordValueData(
+          recordId,
+          value,
+          task.template.templateFields
+        )));
+        ledgerData.push({
+          eventType: 'business_record_created',
+          aggregateType: 'business_record',
+          aggregateId: recordId,
+          actorUserId: job.actor.id,
+          actorUsername: job.actor.username,
+          idempotencyKey: `import_row:${row.id}:business_record_created`,
+          payload: {
+            sourceType: RecordSourceType.excel,
+            importTaskId: job.taskId,
+            importRowId: row.id,
+            rawFileId: task.rawFileId,
+            accountingDirection: task.template.accountingDirection,
+            amount: row.amount
+          }
+        });
       }
 
-      const errorRows = preview.rows.filter((row) => row.status === ImportRowStatus.error).length;
-      const duplicateRows = preview.rows.filter((row) => row.status === ImportRowStatus.duplicate).length;
-      const ignoredRows = preview.rows.filter((row) => row.status === ImportRowStatus.ignored).length;
+      if (recordData.length > 0) {
+        await tx.businessRecord.createMany({ data: recordData, skipDuplicates: true });
+      }
+      if (valueData.length > 0) {
+        await tx.recordValue.createMany({ data: valueData, skipDuplicates: true });
+      }
+      if (ledgerData.length > 0) {
+        await tx.ledgerEvent.createMany({ data: ledgerData, skipDuplicates: true });
+      }
+      await this.persistConfirmationRows(tx, job.taskId, preview.rows, recordIdByRow, now);
+
+      const [processedRows, successRows, errorRows] = await Promise.all([
+        tx.importRow.count({ where: { importTaskId: job.taskId, confirmationProcessedAt: { not: null } } }),
+        tx.businessRecord.count({ where: { importTaskId: job.taskId } }),
+        tx.importRow.count({
+          where: {
+            importTaskId: job.taskId,
+            confirmationProcessedAt: { not: null },
+            status: ImportRowStatus.error
+          }
+        })
+      ]);
       await tx.importTask.update({
-        where: { id },
+        where: { id: job.taskId },
+        data: {
+          confirmationProcessedRows: processedRows,
+          confirmationSuccessRows: successRows,
+          confirmationErrorRows: errorRows,
+          importedRows: successRows,
+          leaseUntil: new Date(Date.now() + this.confirmationLeaseMs)
+        }
+      });
+      return true;
+    });
+  }
+
+  private async completeBackgroundConfirmation(job: BackgroundConfirmationJob) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, job.taskId);
+      await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
+      const [totalRows, processedRows, successRows, errorRows, duplicateRows, ignoredRows] = await Promise.all([
+        tx.importRow.count({ where: { importTaskId: job.taskId } }),
+        tx.importRow.count({ where: { importTaskId: job.taskId, confirmationProcessedAt: { not: null } } }),
+        tx.businessRecord.count({ where: { importTaskId: job.taskId } }),
+        tx.importRow.count({ where: { importTaskId: job.taskId, status: ImportRowStatus.error } }),
+        tx.importRow.count({ where: { importTaskId: job.taskId, status: ImportRowStatus.duplicate } }),
+        tx.importRow.count({ where: { importTaskId: job.taskId, status: ImportRowStatus.ignored } })
+      ]);
+      if (processedRows !== totalRows) throw new Error('确认进度与数据库事实不一致');
+      if (successRows === 0) {
+        const reason = '没有可导入的合法行';
+        await tx.importTask.update({
+          where: { id: job.taskId },
+          data: {
+            status: ImportTaskStatus.confirmation_failed,
+            leaseToken: null,
+            leaseUntil: null,
+            confirmationTotalRows: totalRows,
+            confirmationProcessedRows: processedRows,
+            confirmationSuccessRows: 0,
+            confirmationErrorRows: errorRows,
+            importedRows: 0,
+            validRows: 0,
+            errorRows,
+            duplicateRows,
+            ignoredRows,
+            errorMessage: reason,
+            version: { increment: 1 }
+          }
+        });
+        await this.auditLogs.write(tx, job.actor, 'import_task.confirm_failed', 'import_task', job.taskId, {
+          attempt: job.attempt,
+          reason,
+          totalRows,
+          errorRows,
+          duplicateRows,
+          ignoredRows
+        }, job.context);
+        await this.ledgerEvents.write(
+          tx,
+          job.actor,
+          'import_task_confirmation_failed',
+          'import_task',
+          job.taskId,
+          { attempt: job.attempt, reason, totalRows, errorRows, duplicateRows, ignoredRows },
+          `import_task:${job.taskId}:confirm_attempt:${job.attempt}:failed`
+        );
+        return;
+      }
+
+      const now = new Date();
+      await tx.$executeRaw`
+        UPDATE business_records
+        SET status = ${BusinessRecordStatus.confirmed}::"BusinessRecordStatus",
+            confirmed_at = ${now},
+            confirmed_by = ${job.actor.username},
+            confirmation_snapshot = COALESCE(confirmation_snapshot, '{}'::jsonb)
+              || jsonb_build_object('confirmedAt', ${now.toISOString()}, 'confirmedBy', ${job.actor.username}),
+            updated_at = ${now}
+        WHERE import_task_id = ${job.taskId}
+          AND status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
+      `;
+      await tx.importRow.updateMany({
+        where: { importTaskId: job.taskId, generatedRecordId: { not: null } },
+        data: { status: ImportRowStatus.confirmed, confirmedAt: now }
+      });
+      const summary = { importedRows: successRows, errorRows, duplicateRows, ignoredRows };
+      await tx.importTask.update({
+        where: { id: job.taskId },
         data: {
           status: ImportTaskStatus.confirmed,
+          leaseToken: null,
+          leaseUntil: null,
           confirmedAt: now,
-          confirmedBy: actor.id,
-          importedRows: recordIds.length,
-          validRows: recordIds.length,
+          confirmedBy: job.actor.id,
+          confirmationTotalRows: totalRows,
+          confirmationProcessedRows: processedRows,
+          confirmationSuccessRows: successRows,
+          confirmationErrorRows: errorRows,
+          importedRows: successRows,
+          validRows: successRows,
           errorRows,
           duplicateRows,
           ignoredRows,
-          errorMessage: errorRows > 0 ? `${errorRows} 行校验失败，已保留未入库` : null
+          errorMessage: errorRows > 0 ? `${errorRows} 行校验失败，已保留未入库` : null,
+          version: { increment: 1 }
         }
       });
-      await this.auditLogs.write(tx, actor, 'import_task.confirm', 'import_task', id, {
-        recordIds,
-        importedRows: recordIds.length,
-        errorRows,
-        duplicateRows,
-        ignoredRows
-      }, context);
-      await this.ledgerEvents.write(tx, actor, 'import_task_confirmed', 'import_task', id, {
-        recordIds,
-        importedRows: recordIds.length,
-        errorRows,
-        duplicateRows,
-        ignoredRows
+      await this.auditLogs.write(tx, job.actor, 'import_task.confirm', 'import_task', job.taskId, summary, job.context);
+      await this.auditLogs.write(
+        tx,
+        job.actor,
+        'import_task.confirm_completed',
+        'import_task',
+        job.taskId,
+        { attempt: job.attempt, totalRows, ...summary },
+        job.context
+      );
+      await this.ledgerEvents.write(
+        tx,
+        job.actor,
+        'import_task_confirmed',
+        'import_task',
+        job.taskId,
+        { attempt: job.attempt, totalRows, ...summary },
+        `import_task:${job.taskId}:confirmed`
+      );
+    }, { maxWait: 10_000, timeout: 60_000 });
+  }
+
+  private async persistConfirmationRows(
+    tx: Prisma.TransactionClient,
+    taskId: string,
+    rows: PreviewRow[],
+    recordIdByRow: Map<string, string>,
+    processedAt: Date
+  ) {
+    const updates = rows.map((row) => Prisma.sql`(
+      ${row.id}::text,
+      ${JSON.stringify(row.normalizedData)}::jsonb,
+      ${row.status}::"ImportRowStatus",
+      ${JSON.stringify(row.errors)}::jsonb,
+      ${JSON.stringify(row.warnings)}::jsonb,
+      ${recordIdByRow.get(row.id) ?? row.generatedRecordId ?? null}::text
+    )`);
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE import_rows AS target
+      SET normalized_data_json = source.normalized_data,
+          status = source.status,
+          errors = source.errors,
+          warnings = source.warnings,
+          generated_record_id = source.generated_record_id,
+          confirmation_processed_at = ${processedAt}
+      FROM (VALUES ${Prisma.join(updates)})
+        AS source(id, normalized_data, status, errors, warnings, generated_record_id)
+      WHERE target.id = source.id
+        AND target.import_task_id = ${taskId}
+        AND target.confirmation_processed_at IS NULL
+    `);
+  }
+
+  private async failOwnedConfirmation(job: BackgroundConfirmationJob, error: unknown) {
+    const message = this.safeConfirmationErrorMessage(error).slice(0, 1000);
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, job.taskId);
+      const current = await tx.importTask.findUnique({
+        where: { id: job.taskId },
+        select: { status: true, leaseToken: true }
       });
-      const task = await this.findDetailOrThrow(id, tx);
-      return {
-        task: toImportTask(task),
-        recordIds,
-        importedRows: task.importedRows,
-        errorRows: task.errorRows,
-        duplicateRows: task.duplicateRows,
-        ignoredRows: task.ignoredRows,
-        alreadyConfirmed: false
-      };
-    }));
+      if (
+        !current ||
+        current.status !== ImportTaskStatus.confirming ||
+        current.leaseToken !== job.leaseToken
+      ) {
+        return;
+      }
+      await tx.importTask.update({
+        where: { id: job.taskId },
+        data: {
+          status: ImportTaskStatus.confirmation_failed,
+          leaseToken: null,
+          leaseUntil: null,
+          errorMessage: message,
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, job.actor, 'import_task.confirm_failed', 'import_task', job.taskId, {
+        attempt: job.attempt,
+        error: message
+      }, job.context);
+      await this.ledgerEvents.write(
+        tx,
+        job.actor,
+        'import_task_confirmation_failed',
+        'import_task',
+        job.taskId,
+        { attempt: job.attempt, error: message },
+        `import_task:${job.taskId}:confirm_attempt:${job.attempt}:failed`
+      );
+    }).catch((failure) => this.logger.warn(
+      `Failed to persist confirmation failure ${job.taskId}: ${this.errorMessage(failure)}`
+    ));
+  }
+
+  private async releaseConfirmationForRecovery(id: string, leaseToken: string, reason: string) {
+    await this.prisma.importTask.updateMany({
+      where: { id, status: ImportTaskStatus.confirming, leaseToken },
+      data: {
+        leaseUntil: new Date(Date.now() - 1),
+        errorMessage: `后台确认中断，等待租约恢复：${reason}`.slice(0, 1000)
+      }
+    }).catch(() => undefined);
+  }
+
+  private async assertOwnedConfirmation(tx: Prisma.TransactionClient, id: string, leaseToken: string) {
+    const task = await tx.importTask.findUnique({
+      where: { id },
+      select: { status: true, leaseToken: true }
+    });
+    if (!task || task.status !== ImportTaskStatus.confirming || task.leaseToken !== leaseToken) {
+      throw new ImportConfirmationLeaseLostError();
+    }
+  }
+
+  private confirmationResponse(task: ImportTaskDetail, alreadyConfirmed: boolean) {
+    return {
+      task: toImportTask(task),
+      recordIds: [] as string[],
+      recordsPath: `/api/records?importTaskId=${task.id}`,
+      importedRows: task.importedRows,
+      errorRows: task.errorRows,
+      duplicateRows: task.duplicateRows,
+      ignoredRows: task.ignoredRows,
+      alreadyConfirmed
+    };
   }
 
   async cancel(id: string, actor: CurrentUser, context: RequestContext) {
@@ -1301,6 +1748,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const task = await tx.importTask.findUnique({ where: { id } });
       if (!task) throw new NotFoundException('资源不存在');
       if (task.status === ImportTaskStatus.confirmed) throw new ConflictException('已确认任务不能取消');
+      const confirmationStartedStatuses: ImportTaskStatus[] = [
+        ImportTaskStatus.confirming,
+        ImportTaskStatus.confirmation_failed
+      ];
+      if (confirmationStartedStatuses.includes(task.status)) {
+        throw new ConflictException('确认开始后不能取消；失败任务只能从已保存进度重试');
+      }
       if (task.status === ImportTaskStatus.cancelled) return;
       if (task.status === ImportTaskStatus.parsing) {
         await tx.importSheet.deleteMany({ where: { importTaskId: id } });
@@ -1582,6 +2036,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private async buildPreview(prisma: PrismaWriter, id: string): Promise<PreviewResult> {
     const task = await prisma.importTask.findUnique({ where: { id }, include: previewInclude });
     if (!task) throw new NotFoundException('资源不存在');
+    return this.buildPreviewRows(task, task.rows);
+  }
+
+  private buildPreviewRows(task: PreviewTask, importRows: PreviewImportRow[]): PreviewResult {
     const unavailableStatuses: ImportTaskStatus[] = [ImportTaskStatus.uploaded, ImportTaskStatus.failed];
     if (unavailableStatuses.includes(task.status)) {
       throw new ConflictException('导入任务尚未成功解析');
@@ -1593,7 +2051,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const templateFieldById = new Map(templateFields.map((item) => [item.fieldId, item]));
     const requiredFields = templateFields.filter((item) => item.isRequired);
     const category = task.template.accountingDirection === 'income' ? '收入' : '成本';
-    const rows: PreviewRow[] = task.rows.map((row) => {
+    const rows: PreviewRow[] = importRows.map((row) => {
       const parserErrors = this.stringArray(row.errors);
       const warnings = this.stringArray(row.warnings);
       const rawData = this.jsonObject(row.rawData);
@@ -1761,13 +2219,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return { value };
   }
 
-  private buildRecordValue(
+  private buildRecordValueData(
+    recordId: string,
     value: { fieldId: string; fieldName: string; fieldType: FieldType; value: string | string[] },
     templateFields: PreviewTask['template']['templateFields']
-  ): Prisma.RecordValueCreateWithoutRecordInput {
+  ): Prisma.RecordValueCreateManyInput {
     const field = templateFields.find((item) => item.fieldId === value.fieldId)?.field;
     if (!field) throw new BadRequestException('导入字段不属于当前模板');
-    const base = { field: { connect: { id: field.id } }, fieldName: field.fieldName };
+    const base = { recordId, fieldId: field.id, fieldName: field.fieldName };
     if (field.fieldType === FieldType.money || field.fieldType === FieldType.number) {
       return { ...base, valueNumber: new Prisma.Decimal(value.value as string) };
     }
@@ -2283,6 +2742,31 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return error instanceof Error && error.message ? error.message : 'Excel 解析失败';
   }
 
+  private deterministicImportRecordId(importRowId: string) {
+    const hex = createHash('sha256').update(`excel-import-record:${importRowId}`).digest('hex').slice(0, 32);
+    const versioned = `${hex.slice(0, 12)}5${hex.slice(13, 16)}`;
+    const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+    const normalized = `${versioned}${variant}${hex.slice(17)}`;
+    return [
+      normalized.slice(0, 8),
+      normalized.slice(8, 12),
+      normalized.slice(12, 16),
+      normalized.slice(16, 20),
+      normalized.slice(20)
+    ].join('-');
+  }
+
+  private isTransientDatabaseError(error: unknown) {
+    if (error instanceof Prisma.PrismaClientInitializationError) return true;
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+    return ['P1001', 'P1002', 'P1008', 'P1017', 'P2024'].includes(error.code);
+  }
+
+  private safeConfirmationErrorMessage(error: unknown) {
+    if (error instanceof HttpException && error.getStatus() < 500) return this.errorMessage(error);
+    return 'Excel 后台确认失败，已保留进度，可安全重试';
+  }
+
   private hasPreviewValue(value: unknown) {
     if (value === null || value === undefined) return false;
     if (typeof value === 'string') return value.trim().length > 0;
@@ -2413,6 +2897,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
   private assertTaskMutable(status: ImportTaskStatus) {
     if (status === ImportTaskStatus.confirmed) throw new ConflictException('已确认任务不能修改');
+    const confirmationStartedStatuses: ImportTaskStatus[] = [
+      ImportTaskStatus.confirming,
+      ImportTaskStatus.confirmation_failed
+    ];
+    if (confirmationStartedStatuses.includes(status)) {
+      throw new ConflictException('确认开始后不能修改导入任务');
+    }
     if (status === ImportTaskStatus.uploaded) throw new ConflictException('请先解析 Excel 文件');
     if (status === ImportTaskStatus.parsing) throw new ConflictException('Excel 任务正在解析中');
     if (status === ImportTaskStatus.failed || status === ImportTaskStatus.cancelled) {

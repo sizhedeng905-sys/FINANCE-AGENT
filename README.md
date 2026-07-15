@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B7 工程门禁已完成：112 份原件保持只读和哈希不变，文件/Excel/OCR/经营记录/老板 AI/故障恢复均有自动化证据；财务 L3 对账和 OCR 人工标签仍待外部签字
+- 真实业务数据 B0-B7 与 B8-01 至 B8-03 工程门禁已完成：112 份原件保持只读和哈希不变，Excel 49,999 行最终入账、恢复和原子发布均有自动化证据；财务 L3 对账和 OCR 人工标签仍待外部签字
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行并通过 30 分钟稳定性、服务切换和并发推理；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 按需启动
 
 ## 技术栈
@@ -78,7 +78,7 @@
 
 - **P1-07**：Excel、OCR、手工录入之间的跨来源业务去重策略和统一幂等键。
 
-**P1-08 已完成**：同步接口保持 5000 行上限，5001-50000 行自动进入后台流式任务；每 500 行提交并刷新租约，前端展示进度且支持取消，过期租约从第 0 行幂等重放，最多自动恢复三次。5001 与 30196 行已通过真实 PostgreSQL 无重复/无漏行验证，确认前不会生成 `BusinessRecord`。
+**P1-08 与 B8-03 已完成**：同步解析保持 5000 行上限，5001-50000 行解析进入后台流式任务；确认 API 也改为可恢复后台任务，每 500 行短事务写入，最终原子发布。解析阶段允许取消，确认开始后明确拒绝取消。5,001、30,196 与 49,999 行均通过真实 PostgreSQL 最终记录、动态字段、金额、唯一来源、审计、ledger 和日报闭环。
 
 因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重政策、真实模型/ClamAV/反向代理部署验收及脱敏业务真值校准前，不标记为生产就绪。
 
@@ -175,6 +175,7 @@ http://localhost:3001/api/health
 | 真实化批次 D-H | 已完成 | 30 条 PostgreSQL、14 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
+| B8-01 至 B8-03 | 工程完成 | Excel 终态、确认一致性、持久化幂等及 5,001/30,196/49,999 行后台确认、恢复和原子发布通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` |
 | 本地模型部署 | 稳定性通过 | 四套资产完整；文本/OCR 常驻和 VL 按需切换已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -312,7 +313,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B7 验收基线为 17/17 Jest suites、184/184 tests、30/30 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 18/18 Prisma migrations，40 张预期业务表核对一致；根目录和 `backend/` 的生产依赖审计均为 0 vulnerabilities。
+当前 B8-03 验收基线为 17/17 Jest suites、184/184 tests、48/48 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 21/21 Prisma migrations且无待应用迁移；前后端 production build 和 repository hygiene 均通过。B8-03 详细性能与故障证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md`。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

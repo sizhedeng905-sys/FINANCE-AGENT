@@ -95,13 +95,12 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
 
   const confirmed = await readEnvelope<ImportConfirmDto>(await confirmResponse);
   expect(confirmed.data).toMatchObject({
-    importedRows: 1,
-    errorRows: 2,
+    importedRows: 0,
     duplicateRows: 1,
     ignoredRows: 1,
     alreadyConfirmed: false
   });
-  expect(confirmed.data.task.status).toBe('confirmed');
+  expect(confirmed.data.task.status).toBe('confirming');
 
   const records = await readEnvelope<{ items: RecordDto[] }>(await recordsResponse);
   const imported = records.data.items.find((record) => record.importTaskId === created.data.id);

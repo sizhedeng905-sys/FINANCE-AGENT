@@ -26,6 +26,9 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const fileScanTimeoutMs = Number(String(environment.FILE_SCAN_TIMEOUT_MS ?? '15000'));
   const xlsConverterTimeoutMs = Number(String(environment.XLS_CONVERTER_TIMEOUT_MS ?? '30000'));
   const xlsConverterMaxOutputMb = Number(String(environment.XLS_CONVERTER_MAX_OUTPUT_MB ?? '50'));
+  const importConfirmBatchSize = Number(String(environment.IMPORT_CONFIRM_BATCH_SIZE ?? '500'));
+  const importConfirmLeaseMs = Number(String(environment.IMPORT_CONFIRM_LEASE_MS ?? '60000'));
+  const importConfirmMaxAttempts = Number(String(environment.IMPORT_CONFIRM_MAX_ATTEMPTS ?? '3'));
   const ocrProvider = String(environment.OCR_PROVIDER ?? 'mock');
   const ocrTimeoutMs = Number(String(environment.OCR_TIMEOUT_MS ?? '30000'));
   const ocrLowConfidenceThreshold = Number(String(environment.OCR_LOW_CONFIDENCE_THRESHOLD ?? '0.8'));
@@ -105,6 +108,15 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(xlsConverterMaxOutputMb) || xlsConverterMaxOutputMb < 1 || xlsConverterMaxOutputMb > 100) {
     throw new Error('XLS_CONVERTER_MAX_OUTPUT_MB must be an integer between 1 and 100.');
+  }
+  if (!Number.isInteger(importConfirmBatchSize) || importConfirmBatchSize < 100 || importConfirmBatchSize > 500) {
+    throw new Error('IMPORT_CONFIRM_BATCH_SIZE must be an integer between 100 and 500.');
+  }
+  if (!Number.isInteger(importConfirmLeaseMs) || importConfirmLeaseMs < 10000 || importConfirmLeaseMs > 600000) {
+    throw new Error('IMPORT_CONFIRM_LEASE_MS must be an integer between 10000 and 600000.');
+  }
+  if (!Number.isInteger(importConfirmMaxAttempts) || importConfirmMaxAttempts < 1 || importConfirmMaxAttempts > 10) {
+    throw new Error('IMPORT_CONFIRM_MAX_ATTEMPTS must be an integer between 1 and 10.');
   }
   if (!OCR_PROVIDERS.has(ocrProvider)) {
     throw new Error(`OCR_PROVIDER must be one of: ${Array.from(OCR_PROVIDERS).join(', ')}.`);

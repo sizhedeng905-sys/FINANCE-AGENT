@@ -23,6 +23,11 @@ export default () => ({
     timeoutMs: Number.parseInt(process.env.XLS_CONVERTER_TIMEOUT_MS ?? '30000', 10),
     maxOutputMb: Number.parseInt(process.env.XLS_CONVERTER_MAX_OUTPUT_MB ?? '50', 10)
   },
+  importConfirmation: {
+    batchSize: Number.parseInt(process.env.IMPORT_CONFIRM_BATCH_SIZE ?? '500', 10),
+    leaseMs: Number.parseInt(process.env.IMPORT_CONFIRM_LEASE_MS ?? '60000', 10),
+    maxAttempts: Number.parseInt(process.env.IMPORT_CONFIRM_MAX_ATTEMPTS ?? '3', 10)
+  },
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:4173,http://127.0.0.1:4174')
     .split(',')
     .map((origin) => origin.trim())

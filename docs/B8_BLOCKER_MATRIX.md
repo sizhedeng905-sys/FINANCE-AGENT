@@ -58,6 +58,19 @@
 | Playwright | 14/14 tests；包含真实金额断言，teardown 后文件残留 0 |
 | 真实业务文件 | 未读取、未修改；测试仅使用合成工作簿和 PDF |
 
+## B8-03 验证证据
+
+| 门禁 | 结果 |
+| --- | --- |
+| 后台确认状态机 | `pending_confirm -> confirming -> confirmed/confirmation_failed`；确认后明确拒绝取消 |
+| 分批与幂等 | 500 行短事务；确定性记录 ID；`(import_task_id, source_id)` 唯一约束 |
+| 恢复与接管 | 过期 lease、运行中接管、旧 Worker 失权、最后一批失败续跑和模拟数据库短断通过 |
+| 原子发布 | 失败批次的 `pending_confirm` 记录不进入报表；最终事务统一发布 |
+| 规模闭环 | 5,001/30,196/49,999 行的记录、字段值、金额、来源、audit、ledger 和日报一致 |
+| 性能采样 | 最终全量运行中，30,196/49,999 行 API 24/37 ms，确认到终态 17.551/32.216 s，RSS 增量 200.63/327.44 MiB，连接峰值 11/10 |
+| 完整回归 | 21 migrations；184/184 unit；48/48 PostgreSQL；14/14 Playwright；前后端 build 与 hygiene 通过 |
+| 真实业务文件 | 未读取、未修改；仅使用合成 ImportRow |
+
 ## 问题矩阵
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
@@ -66,7 +79,7 @@
 | B8-EXCEL-001 | P0 | B8-01 | `ImportTasksService.confirm()` 与映射入口 | `cancelled/failed/parsing/mapping` 任务仍可越过状态门禁；字段建议可改写 cancelled 任务 | 首次确认只接受 `pending_confirm`；`confirmed` 仅幂等返回；所有映射入口锁内校验终态 | 真实 PostgreSQL 非法状态矩阵与字段建议旁路 | verified | 无 |
 | B8-EXCEL-002 | P0 | B8-01 | `confirm()` / `cancel()` | 取消和确认缺少已证明的同锁终态测试 | 共用任务事务锁，终态互斥，audit/ledger/记录一致 | 真实 PostgreSQL 两种锁顺序与并发请求 | verified | 无 |
 | B8-EXCEL-003 | P1 | B8-02 | Excel preview/confirm | 金额显示、默认值、边界值和统一幂等尚未按 B8 门禁证明 | canonical values 与统一幂等策略 | E2E、PostgreSQL 边界矩阵 | verified | H-02 保留为冲销业务政策输入；当前正数规则已一致实现 |
-| B8-EXCEL-004 | P0 | B8-03 | 大批量确认 | 30,196 行只证明解析，未证明最终入账 | 短事务确认 Worker、lease、恢复和原子发布 | 5,001/30,196/49,999 完整闭环 | queued | H-03 |
+| B8-EXCEL-004 | P0 | B8-03 | 大批量确认 | 30,196 行只证明解析，未证明最终入账 | 短事务确认 Worker、lease、恢复和原子发布 | 5,001/30,196/49,999 完整闭环 | verified | H-03 仍作为跨来源业务去重政策输入，不阻断本阶段工程门禁 |
 | B8-OCR-001 | P0 | B8-04 | OCR 金额与执行任务 | Provider 精度和长同步 HTTP 尚未满足 B8 要求 | Decimal 字符串、异步队列、续租、恢复和 attempt 快照 | Mock/真实 Provider 并发与恢复 | queued | H-04/H-05 |
 | B8-AI-001 | P0 | B8-05 | 老板 AI grounding | 仅验证数字出现，未绑定 scope/period/metric/sourcePath | 结构化 Claim、确定性 renderer、PostgreSQL 黄金数据 | 错位数字攻击与黄金测试 | queued | H-08/H-12 |
 | B8-SEC-001 | P0 | B8-06 | AI 日志/Cookie/文件/DLP | 多项生产隔离与资源边界未按 B8 门禁证明 | 权限隔离、生产 Cookie、主动内容、资源上限和 CI DLP | 权限与攻击测试 | queued | H-10/H-11 |
