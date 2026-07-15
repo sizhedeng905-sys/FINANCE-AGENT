@@ -163,7 +163,7 @@ The seed also creates default projects, templates, fields, six risk rules, one p
 
 ## File Storage
 
-Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` is configurable and `MAX_FILE_SIZE_MB` must be between 1 and 50. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. The API validates images, PDF, OOXML, CSV, and Word content structurally, rejects active/forged documents and EICAR, records SHA-256 metadata, limits work-order attachments, and enforces user/project quotas plus a minimum disk-waterline.
+Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. The API validates images, PDF, OOXML, CSV, and Word content structurally, rejects active/forged documents and EICAR, records SHA-256 metadata, limits work-order attachments, and enforces user/project quotas plus a minimum disk-waterline.
 
 `FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Downloads are streamed, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. The storage implementation remains isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local disk later; the ClamAV daemon, object storage, backup, and retention jobs are deployment responsibilities.
 
@@ -235,7 +235,7 @@ Completed:
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
-- Real business data B0/B1 and the current B2 slice: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, and resource-limited `.xls` sanitization with audit/ledger provenance.
+- Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
 
 Explicitly deferred by the user:
 
