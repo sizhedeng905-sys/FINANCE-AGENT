@@ -25,6 +25,8 @@
     "realdata:large-xlsx-profile": "tsx scripts/profile-large-xlsx.ts",
     "realdata:ocr-prepare": "tsx scripts/prepare-real-ocr-evaluation.ts",
     "realdata:ocr-evaluate": "tsx scripts/run-real-ocr-evaluation.ts",
+    "realdata:ocr-page-ranges": "tsx scripts/profile-real-ocr-page-ranges.ts",
+    "model:soak": "node scripts/monitor-resident-models.mjs",
     "model:routes": "tsx scripts/configure-model-runtime.ts",
     "model:check": "node scripts/verify-model-assets.mjs resident",
     "model:check:all": "node scripts/verify-model-assets.mjs all",
