@@ -297,7 +297,9 @@ export class ProjectsService {
 
   async getSummary(id: string) {
     const structure = await this.getStructure(id);
-    const activeRecords = structure.records.filter((record) => record.status === 'confirmed');
+    const activeRecords = structure.records.filter(
+      (record) => record.status === 'confirmed' && record.dataLayer === 'actual'
+    );
     const incomeRecords = activeRecords.filter((record) => record.accountingDirection === 'income');
     const costRecords = activeRecords.filter((record) => record.accountingDirection === 'expense');
     const totalIncome = incomeRecords.reduce(

@@ -38,6 +38,12 @@ enum AccountingDirection {
   expense
 }
 
+enum RecordDataLayer {
+  actual
+  reconciliation
+  budget
+}
+
 enum FieldType {
   text
   number
@@ -296,6 +302,7 @@ model Template {
   name                 String
   recordType           DataRecordType      @map("record_type")
   accountingDirection  AccountingDirection @default(expense) @map("accounting_direction")
+  dataLayer             RecordDataLayer     @default(actual) @map("data_layer")
   primaryAmountFieldId String?             @map("primary_amount_field_id")
   primaryDateFieldId   String?             @map("primary_date_field_id")
   version              Int                 @default(1)
@@ -392,7 +399,11 @@ model BusinessRecord {
   templateId          String               @map("template_id")
   recordType          DataRecordType       @map("record_type")
   accountingDirection AccountingDirection  @default(expense) @map("accounting_direction")
+  dataLayer           RecordDataLayer      @default(actual) @map("data_layer")
   templateVersion     Int                  @default(1) @map("template_version")
+  templateSnapshot    Json?                @map("template_snapshot")
+  sourceSnapshot      Json?                @map("source_snapshot")
+  confirmationSnapshot Json?               @map("confirmation_snapshot")
   version             Int                  @default(1)
   recordDate          DateTime             @map("record_date")
   amount              Decimal              @default(0) @db.Decimal(18, 2)
@@ -423,6 +434,7 @@ model BusinessRecord {
   @@index([projectId])
   @@index([templateId])
   @@index([status])
+  @@index([dataLayer, status, recordDate])
   @@index([recordDate])
   @@index([importTaskId])
   @@map("business_records")

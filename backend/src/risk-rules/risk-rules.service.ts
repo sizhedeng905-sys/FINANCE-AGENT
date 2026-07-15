@@ -5,6 +5,7 @@ import {
   BusinessRecordStatus,
   NotificationType,
   Prisma,
+  RecordDataLayer,
   RiskLevel,
   RiskRule,
   UserRole,
@@ -384,6 +385,7 @@ export class RiskRulesService {
       const previous = await this.prisma.businessRecord.findMany({
         where: {
           projectId: workOrder.projectId,
+          dataLayer: RecordDataLayer.actual,
           status: BusinessRecordStatus.confirmed,
           accountingDirection: AccountingDirection.expense,
           recordDate: { gte: since, lt: referenceDate }

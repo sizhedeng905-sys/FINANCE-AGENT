@@ -50,6 +50,12 @@ export const sourceTypeMap: Record<BusinessRecord['sourceType'], string> = {
   work_order: '工单',
 };
 
+export const dataLayerMap: Record<BusinessRecord['dataLayer'], string> = {
+  actual: '实绩',
+  reconciliation: '对账',
+  budget: '预算',
+};
+
 export const importStatusMap: Record<ImportTask['status'], string> = {
   uploaded: '已上传',
   parsing: '解析中',

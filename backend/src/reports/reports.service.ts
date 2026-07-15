@@ -3,6 +3,7 @@ import {
   AnomalyStatus,
   BusinessRecordStatus,
   Prisma,
+  RecordDataLayer,
   RiskLevel,
   WorkOrderStatus
 } from '@prisma/client';
@@ -52,9 +53,15 @@ export class ReportsService {
         where: { status: { in: [WorkOrderStatus.finance_reviewing, WorkOrderStatus.reviewer_rejected] } }
       }),
       this.findRecords(range.start, range.end),
-      this.prisma.businessRecord.count({ where: { createdAt: { gte: range.start, lt: range.end } } }),
       this.prisma.businessRecord.count({
-        where: { status: BusinessRecordStatus.confirmed, confirmedAt: { gte: range.start, lt: range.end } }
+        where: { dataLayer: RecordDataLayer.actual, createdAt: { gte: range.start, lt: range.end } }
+      }),
+      this.prisma.businessRecord.count({
+        where: {
+          dataLayer: RecordDataLayer.actual,
+          status: BusinessRecordStatus.confirmed,
+          confirmedAt: { gte: range.start, lt: range.end }
+        }
       }),
       this.prisma.aiAnomaly.count({ where: anomalyWhere }),
       this.prisma.aiAnomaly.findMany({
@@ -222,7 +229,7 @@ export class ReportsService {
   async projectSummary(projectId: string) {
     const project = await this.findProject(projectId);
     const records = await this.prisma.businessRecord.findMany({
-      where: { projectId, status: BusinessRecordStatus.confirmed },
+      where: { projectId, dataLayer: RecordDataLayer.actual, status: BusinessRecordStatus.confirmed },
       include: { project: true }
     });
     return {
@@ -253,6 +260,7 @@ export class ReportsService {
     return this.prisma.businessRecord.findMany({
       where: {
         projectId,
+        dataLayer: RecordDataLayer.actual,
         status: BusinessRecordStatus.confirmed,
         recordDate: { gte: start, lt: end }
       },

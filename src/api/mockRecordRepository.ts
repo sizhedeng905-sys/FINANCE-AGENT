@@ -40,6 +40,7 @@ export async function mockGetRecords(query: RecordListQuery = {}): Promise<Pagin
     if (query.recordType && record.recordType !== query.recordType) return false;
     if (query.sourceType && record.sourceType !== query.sourceType) return false;
     if (query.status && record.status !== query.status) return false;
+    if (query.dataLayer && record.dataLayer !== query.dataLayer) return false;
     const date = record.recordDate.slice(0, 10);
     if (query.dateFrom && date < query.dateFrom.slice(0, 10)) return false;
     if (query.dateTo && date > query.dateTo.slice(0, 10)) return false;
@@ -66,6 +67,7 @@ export async function mockCreateRecord(payload: CreateRecordPayload): Promise<Bu
     templateName: payload.templateId,
     recordType: payload.recordType,
     accountingDirection: payload.recordType === 'revenue' ? 'income' : 'expense',
+    dataLayer: 'actual',
     templateVersion: 1,
     version: 1,
     recordDate: payload.recordDate,

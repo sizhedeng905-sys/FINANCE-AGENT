@@ -622,9 +622,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       if (template.version !== task.templateVersion) {
         throw new ConflictException('OCR 任务引用的模板版本已变化，请重新创建任务');
       }
+      const policyValues = values.map((value) => ({ fieldId: value.field.id, value: value.value }));
       const canonical = this.recordPolicy.resolveCanonicalValues(
         template,
-        values.map((value) => ({ fieldId: value.field.id, value: value.value })),
+        policyValues,
         { requireValues: true }
       );
 
@@ -634,8 +635,28 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           projectId: task.projectId,
           templateId: task.templateId,
           templateVersion: task.templateVersion,
+          templateSnapshot: this.recordPolicy.toSnapshot(template),
+          sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.ocr, task.id, {
+            ocrTaskId: task.id,
+            rawFileId: task.rawFileId,
+            rawFileSha256: task.rawFile.sha256,
+            provider: task.provider,
+            modelName: task.modelName,
+            modelVersion: task.modelVersion ?? 'unknown',
+            attemptCount: task.attemptCount,
+            pageCount: task.pageCount
+          }),
+          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
+            projectId: task.projectId,
+            sourceType: RecordSourceType.ocr,
+            sourceId: task.id,
+            confirmedAt: now,
+            confirmedBy: actor.username,
+            attachments: [task.rawFileId]
+          }),
           recordType: task.template.recordType,
           accountingDirection: canonical.accountingDirection,
+          dataLayer: template.dataLayer,
           recordDate: canonical.recordDate,
           amount: canonical.amount,
           category: canonical.category,

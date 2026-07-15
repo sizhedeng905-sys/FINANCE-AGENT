@@ -25,7 +25,7 @@ import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import type { BusinessRecord, RecordListQuery, UpdateRecordPayload } from '@/types/dataCenter';
 import { formatMoney } from '@/utils/format';
-import { recordStatusMap, recordTypeMap, sourceTypeMap } from '@/utils/dataCenterMaps';
+import { dataLayerMap, recordStatusMap, recordTypeMap, sourceTypeMap } from '@/utils/dataCenterMaps';
 
 interface EditRecordForm {
   recordDate: Dayjs;
@@ -43,6 +43,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
   const [recordType, setRecordType] = useState<BusinessRecord['recordType']>();
   const [sourceType, setSourceType] = useState<BusinessRecord['sourceType']>();
   const [status, setStatus] = useState<BusinessRecord['status']>();
+  const [dataLayer, setDataLayer] = useState<BusinessRecord['dataLayer']>();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [operation, setOperation] = useState<string | null>(null);
   const [form] = Form.useForm<EditRecordForm>();
@@ -76,6 +77,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
       recordType: has('recordType') ? overrides.recordType : recordType,
       sourceType: has('sourceType') ? overrides.sourceType : sourceType,
       status: has('status') ? overrides.status : status,
+      dataLayer: has('dataLayer') ? overrides.dataLayer : dataLayer,
       dateFrom: has('dateFrom') ? overrides.dateFrom : dateRange?.[0].format('YYYY-MM-DD'),
       dateTo: has('dateTo') ? overrides.dateTo : dateRange?.[1].format('YYYY-MM-DD'),
     });
@@ -157,6 +159,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
     { title: '金额', dataIndex: 'amount', render: (value) => formatMoney(value) },
     { title: '分类', dataIndex: 'category', render: (value: string) => value || '-' },
     { title: '来源', dataIndex: 'sourceType', render: (value) => sourceTypeMap[value as BusinessRecord['sourceType']] },
+    { title: '数据层', dataIndex: 'dataLayer', render: (value) => <Tag>{dataLayerMap[value as BusinessRecord['dataLayer']]}</Tag> },
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{recordStatusMap[value as BusinessRecord['status']]}</Tag> },
     { title: '创建人', dataIndex: 'createdBy' },
     {
@@ -225,6 +228,14 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
             style={{ width: 140 }}
             options={Object.entries(recordStatusMap).map(([value, label]) => ({ value: value as BusinessRecord['status'], label }))}
           />
+          <Select<BusinessRecord['dataLayer']>
+            allowClear
+            placeholder="数据层"
+            value={dataLayer}
+            onChange={(value) => { setDataLayer(value); void query({ dataLayer: value }); }}
+            style={{ width: 140 }}
+            options={Object.entries(dataLayerMap).map(([value, label]) => ({ value: value as BusinessRecord['dataLayer'], label }))}
+          />
           <DatePicker.RangePicker
             value={dateRange}
             onChange={(value) => {
@@ -263,6 +274,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
             <Descriptions.Item label="金额">{formatMoney(selected.amount)}</Descriptions.Item>
             <Descriptions.Item label="状态">{recordStatusMap[selected.status]}</Descriptions.Item>
             <Descriptions.Item label="来源">{sourceTypeMap[selected.sourceType]}</Descriptions.Item>
+            <Descriptions.Item label="数据层">{dataLayerMap[selected.dataLayer]}</Descriptions.Item>
             <Descriptions.Item label="来源文件/ID">{selected.sourceId}</Descriptions.Item>
             <Descriptions.Item label="动态字段">
               <Space direction="vertical">

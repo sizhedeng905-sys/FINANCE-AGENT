@@ -249,6 +249,7 @@ function mockRecord(task: OCRTask, id: string, actor: string): BusinessRecord {
     templateName: task.templateName,
     recordType: task.recordType,
     accountingDirection: task.recordType === 'revenue' ? 'income' : 'expense',
+    dataLayer: 'actual',
     templateVersion: 1,
     version: 1,
     recordDate: String(dateField?.normalizedValue ?? now.slice(0, 10)),

@@ -53,6 +53,7 @@ export class TemplatesService {
           name: dto.name,
           recordType: dto.recordType,
           accountingDirection: dto.accountingDirection ?? this.defaultDirection(dto.recordType),
+          dataLayer: dto.dataLayer,
           description: dto.description,
           isSystem: false,
           createdBy: actor.username
@@ -84,6 +85,7 @@ export class TemplatesService {
             (dto.recordType !== undefined && dto.recordType !== before.recordType
               ? this.defaultDirection(dto.recordType)
               : undefined),
+          dataLayer: dto.dataLayer,
           primaryAmountFieldId: dto.primaryAmountFieldId,
           primaryDateFieldId: dto.primaryDateFieldId,
           description: dto.description,
@@ -133,6 +135,7 @@ export class TemplatesService {
           name: `${source.name} 副本`,
           recordType: source.recordType,
           accountingDirection: source.accountingDirection,
+          dataLayer: source.dataLayer,
           primaryAmountFieldId: source.primaryAmountFieldId,
           primaryDateFieldId: source.primaryDateFieldId,
           description: source.description,

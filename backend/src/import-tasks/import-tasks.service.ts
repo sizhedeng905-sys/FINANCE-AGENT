@@ -89,6 +89,7 @@ interface PreviewValue {
 interface PreviewRow {
   id: string;
   rowNumber: number;
+  rowHash: string;
   status: ImportRowStatus;
   recordDate?: string;
   amount?: string;
@@ -1123,16 +1124,42 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
 
+        const policyValues = row.values.map((value) => ({ fieldId: value.fieldId, value: value.value }));
+        const canonical = this.recordPolicy.resolveCanonicalValues(template, policyValues, { requireValues: true });
+        this.recordPolicy.assertTopLevelMatches(canonical, {
+          amount: row.amount,
+          recordDate: row.recordDate,
+          category: row.category
+        });
+
         const record = await tx.businessRecord.create({
           data: {
             projectId: preview.task.projectId,
             templateId: preview.task.templateId,
             templateVersion: current.templateVersion,
+            templateSnapshot: this.recordPolicy.toSnapshot(template),
+            sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.excel, row.id, {
+              importTaskId: id,
+              importRowId: row.id,
+              rowNumber: row.rowNumber,
+              rowHash: row.rowHash,
+              rawFileId: preview.task.rawFileId,
+              rawFileSha256: preview.task.rawFile.sha256
+            }),
+            confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
+              projectId: preview.task.projectId,
+              sourceType: RecordSourceType.excel,
+              sourceId: row.id,
+              confirmedAt: now,
+              confirmedBy: actor.username,
+              attachments: [preview.task.rawFileId]
+            }),
             recordType: preview.task.template.recordType,
-            accountingDirection: template.accountingDirection,
-            recordDate: new Date(`${row.recordDate}T00:00:00.000Z`),
-            amount: new Prisma.Decimal(row.amount),
-            category: template.accountingDirection === 'income' ? '收入' : '成本',
+            accountingDirection: canonical.accountingDirection,
+            dataLayer: template.dataLayer,
+            recordDate: canonical.recordDate,
+            amount: canonical.amount,
+            category: canonical.category,
             subCategory: row.subCategory,
             description: `${preview.task.fileName} 第${row.rowNumber}行导入记录`,
             sourceType: RecordSourceType.excel,
@@ -1561,6 +1588,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       return {
         id: row.id,
         rowNumber: row.rowNumber,
+        rowHash: row.rowHash,
         status,
         recordDate: typeof recordDate === 'string' ? recordDate : undefined,
         amount: typeof amount === 'string' ? amount : undefined,
@@ -1804,6 +1832,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         name: `${source.name} 导入字段版`,
         recordType: source.recordType,
         accountingDirection: source.accountingDirection,
+        dataLayer: source.dataLayer,
         primaryAmountFieldId: source.primaryAmountFieldId,
         primaryDateFieldId: source.primaryDateFieldId,
         version: source.version + 1,

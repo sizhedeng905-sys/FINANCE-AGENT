@@ -8,6 +8,12 @@ import { useDataCenterStore } from '@/store/dataCenterStore';
 import type { CreateTemplatePayload, DataRecordType, DataTemplate } from '@/types/dataCenter';
 import { recordTypeMap } from '@/utils/dataCenterMaps';
 
+const dataLayerMap = {
+  actual: '实际经营',
+  reconciliation: '对账汇总',
+  budget: '预算',
+} as const;
+
 export default function DataTemplatesPage() {
   const { message } = App.useApp();
   const [form] = Form.useForm<CreateTemplatePayload>();
@@ -47,6 +53,7 @@ export default function DataTemplatesPage() {
     form.setFieldsValue({
       name: template.name,
       recordType: template.recordType,
+      dataLayer: template.dataLayer,
       description: template.description,
     });
     setOpen(true);
@@ -99,6 +106,7 @@ export default function DataTemplatesPage() {
   const columns: ColumnsType<DataTemplate> = [
     { title: '模板名称', dataIndex: 'name' },
     { title: '类型', dataIndex: 'recordType', render: (value: DataRecordType) => recordTypeMap[value] },
+    { title: '数据层', dataIndex: 'dataLayer', render: (value: keyof typeof dataLayerMap) => <Tag>{dataLayerMap[value]}</Tag> },
     {
       title: '模板属性',
       dataIndex: 'isSystem',
@@ -206,6 +214,9 @@ export default function DataTemplatesPage() {
           </Form.Item>
           <Form.Item label="类型" name="recordType" rules={[{ required: true, message: '请选择记录类型' }]}>
             <Select options={Object.entries(recordTypeMap).map(([value, label]) => ({ value, label }))} />
+          </Form.Item>
+          <Form.Item label="数据层" name="dataLayer" initialValue="actual" rules={[{ required: true, message: '请选择数据层' }]}>
+            <Select options={Object.entries(dataLayerMap).map(([value, label]) => ({ value, label }))} />
           </Form.Item>
           <Form.Item label="说明" name="description">
             <Input.TextArea rows={3} maxLength={1000} showCount />

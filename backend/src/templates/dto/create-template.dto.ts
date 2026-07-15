@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AccountingDirection, DataRecordType } from '@prisma/client';
+import { AccountingDirection, DataRecordType, RecordDataLayer } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
@@ -19,6 +19,11 @@ export class CreateTemplateDto {
   @IsOptional()
   @IsEnum(AccountingDirection)
   accountingDirection?: AccountingDirection;
+
+  @ApiPropertyOptional({ enum: RecordDataLayer, description: 'actual 进入经营报表；reconciliation/budget 仅用于对账或预算' })
+  @IsOptional()
+  @IsEnum(RecordDataLayer)
+  dataLayer?: RecordDataLayer;
 
   @ApiPropertyOptional({ example: '记录车辆、司机、线路和运输成本。' })
   @IsOptional()

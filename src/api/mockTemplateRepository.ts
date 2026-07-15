@@ -55,6 +55,7 @@ export async function mockCreateTemplate(payload: CreateTemplatePayload): Promis
     name: payload.name.trim(),
     recordType: payload.recordType,
     accountingDirection: payload.accountingDirection ?? (payload.recordType === 'revenue' ? 'income' : 'expense'),
+    dataLayer: payload.dataLayer ?? 'actual',
     version: 1,
     description: payload.description?.trim() ?? '',
     isSystem: false,

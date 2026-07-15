@@ -49,7 +49,11 @@ function monthBounds(month?: string) {
 function projectRecords(projectId: string, start: string, end: string) {
   return mockRecordSnapshot().filter((item) => {
     const date = item.recordDate.slice(0, 10);
-    return item.projectId === projectId && item.status === 'confirmed' && date >= start && date <= end;
+    return item.projectId === projectId
+      && item.dataLayer === 'actual'
+      && item.status === 'confirmed'
+      && date >= start
+      && date <= end;
   });
 }
 

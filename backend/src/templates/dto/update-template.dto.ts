@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { AccountingDirection, DataRecordType } from '@prisma/client';
+import { AccountingDirection, DataRecordType, RecordDataLayer } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
@@ -21,6 +21,11 @@ export class UpdateTemplateDto {
   @IsOptional()
   @IsEnum(AccountingDirection)
   accountingDirection?: AccountingDirection;
+
+  @ApiPropertyOptional({ enum: RecordDataLayer })
+  @IsOptional()
+  @IsEnum(RecordDataLayer)
+  dataLayer?: RecordDataLayer;
 
   @ApiPropertyOptional({ description: '模板字段关系中的 money 字段 ID' })
   @IsOptional()

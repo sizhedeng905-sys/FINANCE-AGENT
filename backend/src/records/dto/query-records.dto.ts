@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { BusinessRecordStatus, DataRecordType, RecordSourceType } from '@prisma/client';
+import { BusinessRecordStatus, DataRecordType, RecordDataLayer, RecordSourceType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsDateString, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
@@ -41,6 +41,11 @@ export class QueryRecordsDto extends PaginationDto {
   @IsOptional()
   @IsEnum(BusinessRecordStatus)
   status?: BusinessRecordStatus;
+
+  @ApiPropertyOptional({ enum: RecordDataLayer })
+  @IsOptional()
+  @IsEnum(RecordDataLayer)
+  dataLayer?: RecordDataLayer;
 
   @ApiPropertyOptional({ example: '2026-07-01' })
   @IsOptional()

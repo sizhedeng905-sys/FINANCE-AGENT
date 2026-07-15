@@ -1,5 +1,6 @@
 export type DataRecordType = 'cost' | 'revenue' | 'reimbursement' | 'transport' | 'labor' | 'other';
 export type AccountingDirection = 'income' | 'expense';
+export type RecordDataLayer = 'actual' | 'reconciliation' | 'budget';
 export type FieldType = 'text' | 'number' | 'money' | 'date' | 'select' | 'file' | 'textarea';
 export type SemanticType =
   | 'amount'
@@ -61,6 +62,7 @@ export interface DataTemplate {
   name: string;
   recordType: DataRecordType;
   accountingDirection: AccountingDirection;
+  dataLayer: RecordDataLayer;
   primaryAmountFieldId?: string;
   primaryDateFieldId?: string;
   version: number;
@@ -72,10 +74,10 @@ export interface DataTemplate {
 }
 
 export type CreateTemplatePayload = Pick<DataTemplate, 'name' | 'recordType'> &
-  Partial<Pick<DataTemplate, 'description' | 'accountingDirection'>>;
+  Partial<Pick<DataTemplate, 'description' | 'accountingDirection' | 'dataLayer'>>;
 
 export type UpdateTemplatePayload = Partial<
-  Pick<DataTemplate, 'name' | 'recordType' | 'description' | 'accountingDirection' | 'primaryAmountFieldId' | 'primaryDateFieldId'>
+  Pick<DataTemplate, 'name' | 'recordType' | 'description' | 'accountingDirection' | 'dataLayer' | 'primaryAmountFieldId' | 'primaryDateFieldId'>
 >;
 
 export interface TemplateListQuery {
@@ -193,7 +195,11 @@ export interface BusinessRecord {
   templateName: string;
   recordType: DataRecordType;
   accountingDirection: AccountingDirection;
+  dataLayer: RecordDataLayer;
   templateVersion: number;
+  templateSnapshot?: Record<string, unknown>;
+  sourceSnapshot?: Record<string, unknown>;
+  confirmationSnapshot?: Record<string, unknown>;
   version: number;
   recordDate: string;
   amount: string;
@@ -227,6 +233,7 @@ export interface RecordListQuery {
   recordType?: BusinessRecord['recordType'];
   sourceType?: BusinessRecord['sourceType'];
   status?: BusinessRecord['status'];
+  dataLayer?: BusinessRecord['dataLayer'];
   dateFrom?: string;
   dateTo?: string;
 }

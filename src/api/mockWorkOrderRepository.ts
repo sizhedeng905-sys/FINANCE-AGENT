@@ -374,6 +374,7 @@ async function createGeneratedRecord(workOrder: WorkOrder, user: UserAccount): P
     templateName: template.name,
     recordType: workOrder.type === 'transport' ? 'transport' : workOrder.type === 'expense' ? 'reimbursement' : 'other',
     accountingDirection: 'expense',
+    dataLayer: 'actual',
     templateVersion: template.version,
     version: 1,
     recordDate: workOrder.occurredDate?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),

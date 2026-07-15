@@ -6,6 +6,7 @@ import {
   FileScanStatus,
   Prisma,
   ProjectStatus,
+  RecordDataLayer,
   RecordSourceType,
   RiskLevel,
   SemanticType,
@@ -57,6 +58,7 @@ describe('phase 7 record generation and reports', () => {
       name: '报销工单模板',
       recordType: DataRecordType.reimbursement,
       accountingDirection: AccountingDirection.expense,
+      dataLayer: RecordDataLayer.actual as RecordDataLayer,
       primaryAmountFieldId: 'field_amount',
       primaryDateFieldId: 'field_date',
       version: 1
@@ -184,6 +186,11 @@ describe('phase 7 record generation and reports', () => {
       new RecordPolicyService()
     );
 
+    template.dataLayer = RecordDataLayer.budget;
+    await expect(service.generate(workOrder.id, boss, {})).rejects.toThrow('工单只能使用实际经营数据层模板');
+    expect(records).toHaveLength(0);
+    template.dataLayer = RecordDataLayer.actual;
+
     const generated = await service.generate(workOrder.id, boss, {});
     expect(generated.status).toBe(BusinessRecordStatus.confirmed);
     expect(generated.sourceType).toBe(RecordSourceType.work_order);
@@ -216,6 +223,7 @@ describe('phase 7 record generation and reports', () => {
       updatedAt: now,
       confirmedAt: now,
       confirmedBy: '老板',
+      dataLayer: RecordDataLayer.actual,
       voidedAt: null,
       voidedBy: null,
       project
@@ -224,13 +232,20 @@ describe('phase 7 record generation and reports', () => {
       { ...base, id: 'income_1', recordType: DataRecordType.revenue, accountingDirection: AccountingDirection.income, amount: new Prisma.Decimal(1000), category: '收入', subCategory: '运费', description: '', sourceId: 'wo_1' },
       { ...base, id: 'cost_1', recordType: DataRecordType.reimbursement, accountingDirection: AccountingDirection.expense, amount: new Prisma.Decimal(400), category: '成本', subCategory: '油费', description: '', sourceId: 'wo_2' },
       { ...base, id: 'draft_1', status: BusinessRecordStatus.draft, recordType: DataRecordType.revenue, accountingDirection: AccountingDirection.income, amount: new Prisma.Decimal(9000), category: '收入', subCategory: '未确认收入', description: '', sourceId: 'manual' },
-      { ...base, id: 'void_1', status: BusinessRecordStatus.rejected, recordType: DataRecordType.reimbursement, accountingDirection: AccountingDirection.expense, amount: new Prisma.Decimal(8000), category: '成本', subCategory: '已作废成本', description: '', sourceId: 'manual' }
+      { ...base, id: 'void_1', status: BusinessRecordStatus.rejected, recordType: DataRecordType.reimbursement, accountingDirection: AccountingDirection.expense, amount: new Prisma.Decimal(8000), category: '成本', subCategory: '已作废成本', description: '', sourceId: 'manual' },
+      { ...base, id: 'reconciliation_1', dataLayer: RecordDataLayer.reconciliation, recordType: DataRecordType.revenue, accountingDirection: AccountingDirection.income, amount: new Prisma.Decimal(99999), category: '收入', subCategory: '对账收入', description: '', sourceId: 'manual-reconciliation' }
     ];
     const pending = { id: 'wo_pending', orderNo: 'WO-P', projectId: project.id, projectName: project.name, amount: new Prisma.Decimal(300), riskLevel: RiskLevel.medium, urgent: false };
     const prisma: any = {
       businessRecord: {
-        findMany: jest.fn(async ({ where }) => records.filter((record) => !where?.status || record.status === where.status)),
-        count: jest.fn(async ({ where }) => records.filter((record) => !where?.status || record.status === where.status).length)
+        findMany: jest.fn(async ({ where }) => records.filter((record) =>
+          (!where?.status || record.status === where.status)
+          && (!where?.dataLayer || record.dataLayer === where.dataLayer)
+        )),
+        count: jest.fn(async ({ where }) => records.filter((record) =>
+          (!where?.status || record.status === where.status)
+          && (!where?.dataLayer || record.dataLayer === where.dataLayer)
+        ).length)
       },
       workOrder: {
         count: jest.fn(async ({ where }) => (where.status === WorkOrderStatus.boss_pending ? 1 : 2)),
@@ -258,7 +273,10 @@ describe('phase 7 record generation and reports', () => {
     const summary = await service.projectSummary(project.id);
     expect(summary).toMatchObject({ income: '1000.00', expense: '400.00', profit: '600.00', recordCount: 2 });
     expect(prisma.businessRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ status: BusinessRecordStatus.confirmed })
+      where: expect.objectContaining({
+        status: BusinessRecordStatus.confirmed,
+        dataLayer: RecordDataLayer.actual
+      })
     }));
     expect(await service.pendingApprovals()).toHaveLength(1);
   });

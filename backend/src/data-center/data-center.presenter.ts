@@ -41,6 +41,7 @@ export function toTemplate(template: Template) {
     name: template.name,
     recordType: template.recordType,
     accountingDirection: template.accountingDirection,
+    dataLayer: template.dataLayer,
     primaryAmountFieldId: template.primaryAmountFieldId ?? undefined,
     primaryDateFieldId: template.primaryDateFieldId ?? undefined,
     version: template.version,
@@ -121,7 +122,11 @@ export function toBusinessRecord(record: BusinessRecordWithRelations) {
     templateName: record.template.name,
     recordType: record.recordType,
     accountingDirection: record.accountingDirection,
+    dataLayer: record.dataLayer,
     templateVersion: record.templateVersion,
+    templateSnapshot: jsonObject(record.templateSnapshot),
+    sourceSnapshot: jsonObject(record.sourceSnapshot),
+    confirmationSnapshot: jsonObject(record.confirmationSnapshot),
     version: record.version,
     recordDate: record.recordDate.toISOString(),
     amount: record.amount.toFixed(2),
@@ -178,4 +183,10 @@ function normalizeStringArray(value: Prisma.JsonValue | null): string[] {
   }
 
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function jsonObject(value: Prisma.JsonValue | null): Prisma.InputJsonObject | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Prisma.InputJsonObject
+    : undefined;
 }

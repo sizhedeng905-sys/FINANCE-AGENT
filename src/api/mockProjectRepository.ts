@@ -118,7 +118,7 @@ export async function mockGetProjectSummary(id: string): Promise<ProjectSummary>
     .filter((item) => item.projectId === id && item.isActive)
     .map((item) => item.templateId);
   const records = mockRecordSnapshot().filter((item) => item.projectId === id);
-  const confirmedRecords = records.filter((item) => item.status === 'confirmed');
+  const confirmedRecords = records.filter((item) => item.status === 'confirmed' && item.dataLayer === 'actual');
   const income = confirmedRecords
     .filter((item) => item.accountingDirection === 'income')
     .reduce((sum, item) => sum + Number(item.amount), 0);

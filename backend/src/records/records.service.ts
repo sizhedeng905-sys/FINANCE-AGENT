@@ -114,8 +114,13 @@ export class RecordsService {
           projectId: dto.projectId,
           templateId: dto.templateId,
           templateVersion: template.version,
+          templateSnapshot: this.recordPolicy.toSnapshot(template),
+          sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.manual, 'manual', {
+            createdByUserId: actor.id
+          }),
           recordType: template.recordType,
           accountingDirection: template.accountingDirection,
+          dataLayer: template.dataLayer,
           recordDate,
           amount,
           category,
@@ -214,7 +219,9 @@ export class RecordsService {
         where: { id, status: before.status, version: before.version },
         data: {
           templateVersion: template.version,
+          templateSnapshot: this.recordPolicy.toSnapshot(template),
           accountingDirection: template.accountingDirection,
+          dataLayer: template.dataLayer,
           recordDate,
           amount,
           category,
@@ -334,6 +341,14 @@ export class RecordsService {
           amount: canonical.amount,
           recordDate: canonical.recordDate,
           category: canonical.category,
+          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, values, {
+            projectId: before.projectId,
+            sourceType: before.sourceType,
+            sourceId: before.sourceId,
+            confirmedAt: now,
+            confirmedBy: actor.username,
+            attachments: attachmentIds
+          }),
           confirmedAt: now,
           confirmedBy: actor.username,
           voidedAt: null,
@@ -380,6 +395,7 @@ export class RecordsService {
       recordType: query.recordType,
       sourceType: query.sourceType,
       status: query.status,
+      dataLayer: query.dataLayer,
       recordDate: dateFrom || dateTo ? { gte: dateFrom, lte: dateTo } : undefined
     };
   }

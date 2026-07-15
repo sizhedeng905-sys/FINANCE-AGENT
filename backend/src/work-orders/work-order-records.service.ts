@@ -7,6 +7,7 @@ import {
   FieldType,
   FileScanStatus,
   Prisma,
+  RecordDataLayer,
   RecordSourceType,
   Template,
   TemplateField,
@@ -18,7 +19,11 @@ import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { RecordPolicyService } from '../record-policy/record-policy.service';
+import {
+  CanonicalRecordValues,
+  PolicyValueInput,
+  RecordPolicyService
+} from '../record-policy/record-policy.service';
 import { workOrderInclude, WorkOrderWithRelations } from './work-order.presenter';
 
 type PolicyTemplate = Template & {
@@ -38,6 +43,8 @@ export interface WorkOrderSubmissionPreparation {
   }>;
   templateSnapshot: Prisma.InputJsonObject;
   submissionSnapshot: Prisma.InputJsonObject;
+  canonical: CanonicalRecordValues;
+  policyValues: PolicyValueInput[];
 }
 
 @Injectable()
@@ -80,6 +87,9 @@ export class WorkOrderRecordsService {
       templateId,
       recordType
     );
+    if (template.dataLayer !== RecordDataLayer.actual) {
+      throw new UnprocessableEntityException('工单只能使用实际经营数据层模板');
+    }
     const mapped = template.templateFields.map((templateField) => ({
       templateField,
       rawValue: this.resolveFieldValue(templateField, template, workOrder)
@@ -120,6 +130,7 @@ export class WorkOrderRecordsService {
       type: workOrder.type,
       recordType,
       accountingDirection: template.accountingDirection,
+      dataLayer: template.dataLayer,
       amount: workOrder.amount.toFixed(2),
       occurredDate: workOrder.occurredDate.toISOString().slice(0, 10),
       description: workOrder.description,
@@ -130,7 +141,7 @@ export class WorkOrderRecordsService {
         fileSize: item.rawFile.fileSize.toString()
       }))
     } as Prisma.InputJsonObject;
-    return { template, recordType, values, templateSnapshot, submissionSnapshot };
+    return { template, recordType, values, templateSnapshot, submissionSnapshot, canonical, policyValues };
   }
 
   async createWithinTransaction(
@@ -161,8 +172,32 @@ export class WorkOrderRecordsService {
         projectId: workOrder.projectId,
         templateId: preparation.template.id,
         templateVersion: preparation.template.version,
+        templateSnapshot: preparation.templateSnapshot,
+        sourceSnapshot: this.recordPolicy.toSourceSnapshot(
+          RecordSourceType.work_order,
+          workOrder.id,
+          {
+            workOrderId: workOrder.id,
+            workOrderVersion: workOrder.version,
+            submissionSnapshot: preparation.submissionSnapshot
+          }
+        ),
+        confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(
+          preparation.template,
+          preparation.canonical,
+          preparation.policyValues,
+          {
+            projectId: workOrder.projectId,
+            sourceType: RecordSourceType.work_order,
+            sourceId: workOrder.id,
+            confirmedAt: now,
+            confirmedBy: actor.username,
+            attachments: workOrder.attachments.map((item) => item.rawFileId)
+          }
+        ),
         recordType: preparation.recordType,
         accountingDirection: preparation.template.accountingDirection,
+        dataLayer: preparation.template.dataLayer,
         recordDate: workOrder.occurredDate!,
         amount: workOrder.amount,
         category:

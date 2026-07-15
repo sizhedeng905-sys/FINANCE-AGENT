@@ -6,6 +6,7 @@ import {
   FieldType,
   Prisma,
   ProjectStatus,
+  RecordSourceType,
   Template,
   TemplateField
 } from '@prisma/client';
@@ -27,6 +28,15 @@ export interface CanonicalRecordValues {
   recordDate: Date;
   accountingDirection: AccountingDirection;
   category: '收入' | '成本';
+}
+
+export interface ConfirmationSnapshotOptions {
+  projectId: string;
+  sourceType: RecordSourceType;
+  sourceId: string;
+  confirmedAt: Date;
+  confirmedBy: string;
+  attachments?: string[];
 }
 
 @Injectable()
@@ -141,10 +151,12 @@ export class RecordPolicyService {
 
   toSnapshot(template: PolicyTemplate): Prisma.InputJsonObject {
     return {
+      schemaVersion: 1,
       templateId: template.id,
       version: template.version,
       recordType: template.recordType,
       accountingDirection: template.accountingDirection,
+      dataLayer: template.dataLayer,
       primaryAmountFieldId: template.primaryAmountFieldId,
       primaryDateFieldId: template.primaryDateFieldId,
       fields: template.templateFields.map((item) => ({
@@ -157,6 +169,57 @@ export class RecordPolicyService {
         defaultValue: item.defaultValue,
         displayOrder: item.displayOrder
       }))
+    } as Prisma.InputJsonObject;
+  }
+
+  toSourceSnapshot(
+    sourceType: RecordSourceType,
+    sourceId: string,
+    metadata: Prisma.InputJsonObject = {}
+  ): Prisma.InputJsonObject {
+    return {
+      schemaVersion: 1,
+      sourceType,
+      sourceId,
+      metadata
+    };
+  }
+
+  toConfirmationSnapshot(
+    template: PolicyTemplate,
+    canonical: CanonicalRecordValues,
+    values: PolicyValueInput[],
+    options: ConfirmationSnapshotOptions
+  ): Prisma.InputJsonObject {
+    const valuesByField = new Map(values.map((value) => [value.fieldId, value.value]));
+    const snapshotValues = template.templateFields.flatMap((templateField) => {
+      const value = valuesByField.get(templateField.fieldId);
+      if (!this.hasValue(value)) return [];
+      return [{
+        fieldId: templateField.fieldId,
+        fieldKey: templateField.field.fieldKey,
+        fieldName: templateField.field.fieldName,
+        fieldType: templateField.field.fieldType,
+        value: this.snapshotFieldValue(templateField.field, value)
+      }];
+    });
+    return {
+      schemaVersion: 1,
+      projectId: options.projectId,
+      templateId: template.id,
+      templateVersion: template.version,
+      recordType: template.recordType,
+      accountingDirection: canonical.accountingDirection,
+      dataLayer: template.dataLayer,
+      recordDate: canonical.recordDate.toISOString().slice(0, 10),
+      amount: canonical.amount.toFixed(2),
+      category: canonical.category,
+      sourceType: options.sourceType,
+      sourceId: options.sourceId,
+      confirmedAt: options.confirmedAt.toISOString(),
+      confirmedBy: options.confirmedBy,
+      attachments: options.attachments ?? [],
+      values: snapshotValues
     } as Prisma.InputJsonObject;
   }
 
@@ -212,5 +275,22 @@ export class RecordPolicyService {
   private hasValue(value: unknown) {
     if (value === null || value === undefined) return false;
     return typeof value !== 'string' || value.trim().length > 0;
+  }
+
+  private snapshotFieldValue(field: FieldDefinition, value: unknown): Prisma.InputJsonValue {
+    if (field.fieldType === FieldType.money) return this.parseMoney(String(value), field.fieldName).toFixed(2);
+    if (field.fieldType === FieldType.number) return this.parseNumericValue(value, field.fieldName).toString();
+    if (field.fieldType === FieldType.date) {
+      const input = value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+      return this.parseDateOnly(input, field.fieldName).toISOString().slice(0, 10);
+    }
+    if (field.fieldType === FieldType.file) {
+      const values = Array.isArray(value) ? value : [value];
+      if (values.some((item) => typeof item !== 'string')) {
+        throw new BadRequestException(`${field.fieldName}的文件值格式不正确`);
+      }
+      return values as string[];
+    }
+    return String(value);
   }
 }

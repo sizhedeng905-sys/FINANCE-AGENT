@@ -16,6 +16,7 @@ import {
   Prisma,
   ProjectStatus,
   RawFileStatus,
+  RecordDataLayer,
   RecordSourceType,
   SemanticType,
   UserRole,
@@ -424,6 +425,7 @@ describe('real PostgreSQL integration', () => {
         .send({
           name: `  ${TEST_USER_PREFIX}template  `,
           recordType: 'cost',
+          dataLayer: RecordDataLayer.reconciliation,
           description: '  集成模板测试  '
         })
         .expect(201);
@@ -432,6 +434,7 @@ describe('real PostgreSQL integration', () => {
       expect(createResponse.body.data).toMatchObject({
         name: `${TEST_USER_PREFIX}template`,
         description: '集成模板测试',
+        dataLayer: RecordDataLayer.reconciliation,
         isSystem: false
       });
 
@@ -446,9 +449,12 @@ describe('real PostgreSQL integration', () => {
         .patch(`/api/templates/${customTemplateId}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-template-update')
-        .send({ name: `  ${TEST_USER_PREFIX}template_updated  ` })
+        .send({ name: `  ${TEST_USER_PREFIX}template_updated  `, dataLayer: RecordDataLayer.budget })
         .expect(200)
-        .expect(({ body }) => expect(body.data.name).toBe(`${TEST_USER_PREFIX}template_updated`));
+        .expect(({ body }) => expect(body.data).toMatchObject({
+          name: `${TEST_USER_PREFIX}template_updated`,
+          dataLayer: RecordDataLayer.budget
+        }));
 
       const sourceFields = await request(app.getHttpServer())
         .get('/api/templates/dt-transport/fields')
@@ -461,7 +467,11 @@ describe('real PostgreSQL integration', () => {
         .expect(201);
       const clonedTemplateId = cloneResponse.body.data.id as string;
       templateIds.push(clonedTemplateId);
-      expect(cloneResponse.body.data).toMatchObject({ isSystem: false, name: '运输费用模板 副本' });
+      expect(cloneResponse.body.data).toMatchObject({
+        isSystem: false,
+        name: '运输费用模板 副本',
+        dataLayer: RecordDataLayer.actual
+      });
       const clonedFields = await request(app.getHttpServer())
         .get(`/api/templates/${clonedTemplateId}/fields`)
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -1146,6 +1156,10 @@ describe('real PostgreSQL integration', () => {
         .get(`/api/records?dateFrom=2026-07-12&dateTo=2026-07-11`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(400);
+      await request(app.getHttpServer())
+        .get('/api/records?dataLayer=forged')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(400);
 
       const projectRecords = await request(app.getHttpServer())
         .get(`/api/projects/${projectId}/records?page=1&pageSize=20`)
@@ -1303,6 +1317,7 @@ describe('real PostgreSQL integration', () => {
       .send({ username: 'finance', password: '123456' })
       .expect(200);
     const financeToken = financeLogin.body.data.accessToken as string;
+    const financeUserId = financeLogin.body.data.user.id as string;
     const suffix = Date.now().toString(36);
     let projectId: string | undefined;
     let templateId: string | undefined;
@@ -1323,6 +1338,7 @@ describe('real PostgreSQL integration', () => {
         data: {
           name: `${TEST_USER_PREFIX}manual_template_${suffix}`,
           recordType: DataRecordType.cost,
+          dataLayer: RecordDataLayer.reconciliation,
           createdBy: 'finance'
         }
       });
@@ -1460,6 +1476,39 @@ describe('real PostgreSQL integration', () => {
       const stored = await prisma.businessRecord.findUniqueOrThrow({ where: { id: recordId } });
       expect(stored.recordDate.toISOString()).toBe('2026-07-15T00:00:00.000Z');
       expect(stored.createdBy).toBe('finance');
+      expect(stored.dataLayer).toBe(RecordDataLayer.reconciliation);
+      expect(stored.templateSnapshot).toMatchObject({
+        templateId,
+        version: 1,
+        accountingDirection: AccountingDirection.expense,
+        dataLayer: RecordDataLayer.reconciliation
+      });
+      expect(stored.sourceSnapshot).toMatchObject({
+        sourceType: RecordSourceType.manual,
+        sourceId: 'manual',
+        metadata: { createdByUserId: financeUserId }
+      });
+      expect(stored.confirmationSnapshot).toMatchObject({
+        projectId,
+        templateId,
+        templateVersion: 1,
+        accountingDirection: AccountingDirection.expense,
+        dataLayer: RecordDataLayer.reconciliation,
+        recordDate: '2026-07-15',
+        amount: '88.12',
+        sourceType: RecordSourceType.manual,
+        sourceId: 'manual',
+        confirmedBy: 'finance'
+      });
+      const reconciliationRecords = await request(app.getHttpServer())
+        .get(`/api/records?projectId=${projectId}&dataLayer=${RecordDataLayer.reconciliation}`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(reconciliationRecords.body.data).toMatchObject({ total: 1 });
+      expect(reconciliationRecords.body.data.items[0]).toMatchObject({
+        id: recordId,
+        dataLayer: RecordDataLayer.reconciliation
+      });
       const storedValues = await prisma.recordValue.findMany({ where: { recordId } });
       expect(storedValues.find((value) => value.fieldId === amountField.id)?.valueNumber?.toString()).toBe('88.12');
       expect(storedValues.find((value) => value.fieldId === dateField.id)?.valueDate?.toISOString()).toBe('2026-07-15T00:00:00.000Z');
@@ -1849,6 +1898,26 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.businessRecord.count({
         where: { sourceType: RecordSourceType.work_order, sourceId: workOrderId }
       })).toBe(1);
+      const generatedRecord = await prisma.businessRecord.findUniqueOrThrow({ where: { id: generatedRecordId } });
+      expect(generatedRecord.templateSnapshot).toMatchObject({
+        templateId,
+        version: 1,
+        accountingDirection: AccountingDirection.expense
+      });
+      expect(generatedRecord.sourceSnapshot).toMatchObject({
+        sourceType: RecordSourceType.work_order,
+        sourceId: workOrderId,
+        metadata: { workOrderId, submissionSnapshot: { workOrderId } }
+      });
+      expect(generatedRecord.confirmationSnapshot).toMatchObject({
+        projectId,
+        templateId,
+        amount: '2450.50',
+        recordDate: '2026-07-18',
+        sourceType: RecordSourceType.work_order,
+        sourceId: workOrderId,
+        confirmedBy: 'boss'
+      });
       expect(await prisma.approval.count({
         where: { workOrderId, approverRole: UserRole.boss }
       })).toBe(1);
@@ -2381,7 +2450,7 @@ describe('real PostgreSQL integration', () => {
     }))) as Record<(typeof usernames)[number], string>;
     const suffix = Date.now().toString(36);
     const projectId = `${TEST_USER_PREFIX}report_${suffix}`;
-    const recordIds = Array.from({ length: 7 }, (_, index) => `${projectId}_record_${index + 1}`);
+    const recordIds = Array.from({ length: 9 }, (_, index) => `${projectId}_record_${index + 1}`);
     const dailyRange = dayRange(undefined);
     const reportDate = dailyRange.startDate;
     const reportMonth = reportDate.slice(0, 7);
@@ -2524,6 +2593,38 @@ describe('real PostgreSQL integration', () => {
             status: BusinessRecordStatus.rejected,
             voidedAt: new Date(),
             voidedBy: 'integration'
+          },
+          {
+            ...base,
+            id: recordIds[7],
+            templateId: 'dt-revenue',
+            recordType: DataRecordType.revenue,
+            recordDate: new Date(dailyRange.start.getTime() + 15 * 60 * 60 * 1000),
+            amount: new Prisma.Decimal('88888.88'),
+            accountingDirection: AccountingDirection.income,
+            dataLayer: RecordDataLayer.reconciliation,
+            category: '收入',
+            subCategory: '对账汇总',
+            sourceId: `${projectId}-reconciliation`,
+            status: BusinessRecordStatus.confirmed,
+            confirmedAt: new Date(),
+            confirmedBy: 'integration'
+          },
+          {
+            ...base,
+            id: recordIds[8],
+            templateId: 'dt-reimbursement',
+            recordType: DataRecordType.reimbursement,
+            recordDate: new Date(dailyRange.start.getTime() + 16 * 60 * 60 * 1000),
+            amount: new Prisma.Decimal('77777.77'),
+            accountingDirection: AccountingDirection.expense,
+            dataLayer: RecordDataLayer.budget,
+            category: '支出',
+            subCategory: '预算',
+            sourceId: `${projectId}-budget`,
+            status: BusinessRecordStatus.confirmed,
+            confirmedAt: new Date(),
+            confirmedBy: 'integration'
           }
         ]
       });
@@ -2574,6 +2675,16 @@ describe('real PostgreSQL integration', () => {
       expect(projectDaily.body.data.expenseCategories).toEqual([
         { name: '边界成本', amount: '40.05', recordCount: 1, percentage: 1 }
       ]);
+      const projectSummary = await request(app.getHttpServer())
+        .get(`/api/projects/${projectId}/summary`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      expect(projectSummary.body.data).toMatchObject({
+        recordCount: 9,
+        totalIncome: '10099.10',
+        totalCost: '10039.05',
+        profit: '60.05'
+      });
 
       const projectMonthly = await request(app.getHttpServer())
         .get(`/api/reports/projects/${projectId}/monthly?month=${reportMonth}`)
@@ -3392,6 +3503,30 @@ describe('real PostgreSQL integration', () => {
         status: BusinessRecordStatus.confirmed,
         importTaskId: taskId
       });
+      expect(records[0].templateSnapshot).toMatchObject({
+        templateId: activeTemplateId,
+        version: 2,
+        accountingDirection: AccountingDirection.expense
+      });
+      expect(records[0].sourceSnapshot).toMatchObject({
+        sourceType: RecordSourceType.excel,
+        sourceId: storedRows[0].id,
+        metadata: {
+          importTaskId: taskId,
+          importRowId: storedRows[0].id,
+          rowHash: storedRows[0].rowHash,
+          rawFileId
+        }
+      });
+      expect(records[0].confirmationSnapshot).toMatchObject({
+        projectId: project.id,
+        templateId: activeTemplateId,
+        amount: '8200.00',
+        recordDate: '2026-07-01',
+        sourceType: RecordSourceType.excel,
+        sourceId: storedRows[0].id,
+        confirmedBy: 'finance'
+      });
       expect(Number(records[0].amount)).toBe(8200);
       expect(records[0].values.find((value) => value.fieldId === suggestedFieldId)?.valueNumber?.toNumber()).toBe(300);
 
@@ -4089,6 +4224,25 @@ describe('real PostgreSQL integration', () => {
       expect(firstConfirm.body.data).toMatchObject({
         task: { status: OcrTaskStatus.confirmed, generatedRecordId: recordId },
         record: { sourceType: 'ocr', sourceId: taskId, amount: '1299.25', status: 'confirmed' }
+      });
+      const storedOcrRecord = await prisma.businessRecord.findUniqueOrThrow({ where: { id: recordId } });
+      expect(storedOcrRecord.templateSnapshot).toMatchObject({
+        templateId: 'dt-reimbursement',
+        version: 1,
+        accountingDirection: AccountingDirection.expense
+      });
+      expect(storedOcrRecord.sourceSnapshot).toMatchObject({
+        sourceType: RecordSourceType.ocr,
+        sourceId: taskId,
+        metadata: { ocrTaskId: taskId, rawFileId, provider: 'mock', attemptCount: 1 }
+      });
+      expect(storedOcrRecord.confirmationSnapshot).toMatchObject({
+        projectId: 'dp-001',
+        templateId: 'dt-reimbursement',
+        amount: '1299.25',
+        sourceType: RecordSourceType.ocr,
+        sourceId: taskId,
+        confirmedBy: 'finance'
       });
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { action: 'ocr_task.confirm', resourceId: taskId } })).toBe(1);

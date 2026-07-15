@@ -1154,6 +1154,7 @@ export const useDataCenterStore = create<DataCenterState>()(
             templateName: task.templateName,
             recordType: task.importType as DataRecordType,
             accountingDirection: task.importType === 'revenue' ? 'income' : 'expense',
+            dataLayer: 'actual',
             templateVersion: 1,
             version: 1,
             recordDate: recordDate || task.createdAt.slice(0, 10),
