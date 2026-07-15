@@ -656,6 +656,8 @@ export interface CreateOCRTaskPayload {
   rawFileId: string;
   projectId: string;
   templateId: string;
+  pageStart?: number;
+  pageEnd?: number;
   mockScenario?: 'normal' | 'low_confidence' | 'missing_field' | 'failure' | 'failure_once';
 }
 

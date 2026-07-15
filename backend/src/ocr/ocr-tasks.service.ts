@@ -35,7 +35,7 @@ import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
 import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
-import { DocumentPreprocessorService } from './document-preprocessor.service';
+import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
 import { OcrProviderRegistry } from './ocr-provider.registry';
 import { MockOcrScenario, OcrFieldCandidate, OcrProviderResult, OcrTemplateField } from './ocr-provider';
 import { ocrTaskDetailInclude, OcrTaskDetail, toOcrTask } from './ocr.presenter';
@@ -146,8 +146,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
     }
     const file = await this.files.readForProcessing(dto.rawFileId, actor);
-    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType);
+    const pageSelection = this.pageSelectionFromDto(dto);
+    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
     const snapshot = provider.snapshot();
+    const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
 
     try {
       const taskId = await this.prisma.$transaction(async (tx) => {
@@ -164,25 +166,27 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             modelName: snapshot.modelName,
             modelVersion: snapshot.modelVersion,
             endpointSnapshot: snapshot.endpoint,
-            providerOptions: dto.mockScenario ? { mockScenario: dto.mockScenario } : undefined,
+            providerOptions: providerOptions ? this.json(providerOptions) : undefined,
             pages: this.json(pages),
             pageCount: pages.length,
             uploadedBy: actor.id,
             idempotencyKey
           }
         });
-        await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, {
+        await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, this.json({
           rawFileId: task.rawFileId,
           projectId: task.projectId,
           templateId: task.templateId,
           provider: task.provider,
-          pageCount: task.pageCount
-        }, context);
-        await this.ledgerEvents.write(tx, actor, 'ocr_task_created', 'ocr_task', task.id, {
+          pageCount: task.pageCount,
+          pageRange: pageSelection.pageStart ? pageSelection : null
+        }), context);
+        await this.ledgerEvents.write(tx, actor, 'ocr_task_created', 'ocr_task', task.id, this.json({
           rawFileId: task.rawFileId,
           sha256: rawFile.sha256,
-          provider: task.provider
-        });
+          provider: task.provider,
+          pageRange: pageSelection.pageStart ? pageSelection : null
+        }));
         return task.id;
       });
       return toOcrTask(await this.findDetailOrThrow(taskId));
@@ -227,7 +231,9 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           rawFileId: rawFile.id,
           projectId: dto.projectId,
           templateId: dto.templateId,
-          mockScenario: dto.mockScenario
+          mockScenario: dto.mockScenario,
+          pageStart: dto.pageStart,
+          pageEnd: dto.pageEnd
         },
         actor,
         context,
@@ -346,7 +352,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     const startedAt = Date.now();
     try {
       const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
-      const pages = await this.preprocessor.inspect(file.buffer, file.mimeType);
+      const document = await this.preprocessor.prepare(
+        file.buffer,
+        file.mimeType,
+        this.pageSelection(prepared.task.providerOptions)
+      );
+      const pages = document.pages;
       const provider = this.providers.byName(prepared.task.provider);
       const result = await provider.recognize({
         documentId: id,
@@ -354,7 +365,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         fileName: file.fileName,
         mimeType: file.mimeType,
         sha256: file.sha256,
-        buffer: file.buffer,
+        buffer: document.buffer,
         pages,
         fields: this.providerFields(prepared.task.template.templateFields),
         attemptNo: prepared.attempt.attemptNo,
@@ -923,6 +934,32 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     const scenario = (value as Record<string, Prisma.JsonValue>).mockScenario;
     return typeof scenario === 'string' ? scenario as MockOcrScenario : undefined;
+  }
+
+  private providerOptions(scenario: MockOcrScenario | undefined, selection: OcrPageSelection) {
+    if (!scenario && selection.pageStart === undefined) return undefined;
+    return {
+      ...(scenario ? { mockScenario: scenario } : {}),
+      ...(selection.pageStart === undefined ? {} : {
+        pageRange: { pageStart: selection.pageStart, pageEnd: selection.pageEnd }
+      })
+    };
+  }
+
+  private pageSelectionFromDto(dto: { pageStart?: number; pageEnd?: number }): OcrPageSelection {
+    return { pageStart: dto.pageStart, pageEnd: dto.pageEnd };
+  }
+
+  private pageSelection(value: Prisma.JsonValue | null): OcrPageSelection {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const range = (value as Record<string, Prisma.JsonValue>).pageRange;
+    if (!range || typeof range !== 'object' || Array.isArray(range)) return {};
+    const pageStart = (range as Record<string, Prisma.JsonValue>).pageStart;
+    const pageEnd = (range as Record<string, Prisma.JsonValue>).pageEnd;
+    return {
+      pageStart: typeof pageStart === 'number' ? pageStart : undefined,
+      pageEnd: typeof pageEnd === 'number' ? pageEnd : undefined
+    };
   }
 
   private normalizeName(value: string) {

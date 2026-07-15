@@ -3894,6 +3894,76 @@ describe('real PostgreSQL integration', () => {
     const pdfBuffer = Buffer.from(await pdf.save());
 
     try {
+      const longPdf = await PDFDocument.create();
+      for (let pageNo = 1; pageNo <= 21; pageNo += 1) {
+        const longPage = longPdf.addPage([420, 595]);
+        longPage.drawText(`Synthetic OCR page ${pageNo}`, { x: 40, y: 540, size: 16 });
+      }
+      const longPdfBuffer = Buffer.from(await longPdf.save());
+      const rejectedName = `OCR-page-range-required-${suffix}.pdf`;
+      await request(app.getHttpServer())
+        .post('/api/ocr-tasks/upload')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .field('projectId', 'dp-001')
+        .field('templateId', 'dt-reimbursement')
+        .attach('file', longPdfBuffer, { filename: rejectedName, contentType: 'application/pdf' })
+        .expect(400);
+      const rejectedFile = await prisma.rawFile.findFirstOrThrow({
+        where: { originalFileName: rejectedName },
+        orderBy: { uploadedAt: 'desc' }
+      });
+      rawFileIds.push(rejectedFile.id);
+      expect(rejectedFile).toMatchObject({ isVoided: true, status: RawFileStatus.voided });
+      await expect(fileStorage.read(rejectedFile.storagePath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const rangedCreated = await request(app.getHttpServer())
+        .post('/api/ocr-tasks/upload')
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('Idempotency-Key', `integration-ocr-${suffix}-range`)
+        .field('projectId', 'dp-001')
+        .field('templateId', 'dt-reimbursement')
+        .field('pageStart', '16')
+        .field('pageEnd', '21')
+        .attach('file', longPdfBuffer, { filename: `OCR-page-range-${suffix}.pdf`, contentType: 'application/pdf' })
+        .expect(201);
+      const rangedTaskId = rangedCreated.body.data.id as string;
+      const rangedRawFileId = rangedCreated.body.data.rawFileId as string;
+      taskIds.push(rangedTaskId);
+      rawFileIds.push(rangedRawFileId);
+      const rangedRawFile = await prisma.rawFile.findUniqueOrThrow({ where: { id: rangedRawFileId } });
+      storagePaths.push(rangedRawFile.storagePath);
+      expect(rangedCreated.body.data).toMatchObject({
+        status: OcrTaskStatus.uploaded,
+        pageCount: 6,
+        pages: [
+          expect.objectContaining({ page: 16 }),
+          expect.objectContaining({ page: 17 }),
+          expect.objectContaining({ page: 18 }),
+          expect.objectContaining({ page: 19 }),
+          expect.objectContaining({ page: 20 }),
+          expect.objectContaining({ page: 21 })
+        ]
+      });
+      expect(await prisma.ocrTask.findUniqueOrThrow({ where: { id: rangedTaskId } })).toMatchObject({
+        providerOptions: { pageRange: { pageStart: 16, pageEnd: 21 } }
+      });
+      const rangedRecognized = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${rangedTaskId}/run`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(201);
+      expect(rangedRecognized.body.data).toMatchObject({
+        status: OcrTaskStatus.pending_confirm,
+        textBlocks: [expect.objectContaining({ page: 16 })],
+        fields: expect.arrayContaining([expect.objectContaining({ page: 16 })])
+      });
+      expect(await prisma.businessRecord.count({
+        where: { sourceType: RecordSourceType.ocr, sourceId: rangedTaskId }
+      })).toBe(0);
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${rangedTaskId}/cancel`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(201);
+
       const uploaded = await request(app.getHttpServer())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -4031,7 +4101,7 @@ describe('real PostgreSQL integration', () => {
         expect.objectContaining({ id: taskId, status: OcrTaskStatus.confirmed, generatedRecordId: recordId })
       ]));
       expect(structure.body.data.logicalTablesSummary).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tableName: 'ocr_tasks', relatedCount: 1 }),
+        expect.objectContaining({ tableName: 'ocr_tasks', relatedCount: 2 }),
         expect.objectContaining({ tableName: 'ocr_corrections', relatedCount: 2 })
       ]));
 

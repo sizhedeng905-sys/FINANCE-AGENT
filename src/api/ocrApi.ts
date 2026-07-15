@@ -54,6 +54,8 @@ export async function uploadAndCreateOCRTask(
   formData.set('file', file);
   formData.set('projectId', payload.projectId);
   formData.set('templateId', payload.templateId);
+  if (payload.pageStart !== undefined) formData.set('pageStart', String(payload.pageStart));
+  if (payload.pageEnd !== undefined) formData.set('pageEnd', String(payload.pageEnd));
   if (payload.mockScenario) formData.set('mockScenario', payload.mockScenario);
   return httpClient.post<OCRTask>('/ocr-tasks/upload', formData, {
     headers: { 'Idempotency-Key': idempotencyKey('ocr-upload') },

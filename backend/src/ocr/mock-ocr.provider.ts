@@ -42,6 +42,7 @@ export class MockOcrProvider implements OcrProvider {
       candidates[0] = { ...candidates[0], confidence: 0.55, evidence: 'Mock 模糊区域，需人工确认' };
     }
 
+    const sourcePage = input.pages[0]?.page ?? 1;
     const extractedText = candidates
       .map((candidate) => `${candidate.sourceLabel}：${this.display(candidate.normalizedValue)}`)
       .join('\n');
@@ -49,7 +50,7 @@ export class MockOcrProvider implements OcrProvider {
       documentId: input.documentId,
       extractedText,
       pages: input.pages,
-      textBlocks: extractedText ? [{ page: 1, text: extractedText, confidence: 0.94 }] : [],
+      textBlocks: extractedText ? [{ page: sourcePage, text: extractedText, confidence: 0.94 }] : [],
       tables: [],
       fieldCandidates: candidates,
       rawResult: {
@@ -63,16 +64,17 @@ export class MockOcrProvider implements OcrProvider {
 
   private candidate(field: OcrTemplateField, index: number, input: OcrProviderInput): OcrFieldCandidate {
     const value = this.valueFor(field, input);
+    const sourcePage = input.pages[0]?.page ?? 1;
     return {
       targetFieldId: field.id,
       targetFieldKey: field.fieldKey,
       sourceLabel: field.fieldName,
       rawValue: value,
       normalizedValue: value,
-      page: 1,
+      page: sourcePage,
       boundingBox: { x: 32, y: 40 + index * 28, width: 220, height: 20 },
       confidence: Math.max(0.82, 0.98 - index * 0.01),
-      evidence: `Mock OCR 从第 1 页识别“${field.fieldName}”`
+      evidence: `Mock OCR 从第 ${sourcePage} 页识别“${field.fieldName}”`
     };
   }
 

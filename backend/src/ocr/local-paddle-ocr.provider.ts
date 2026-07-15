@@ -77,13 +77,30 @@ export class LocalPaddleOcrProvider implements OcrProvider {
     return {
       documentId: input.documentId,
       extractedText: payload.extractedText,
-      pages: Array.isArray(payload.pages) ? payload.pages : input.pages,
-      textBlocks: Array.isArray(payload.textBlocks) ? payload.textBlocks : [],
-      tables: Array.isArray(payload.tables) ? payload.tables : [],
-      fieldCandidates: payload.fieldCandidates,
+      pages: input.pages,
+      textBlocks: this.mapRecordPages(Array.isArray(payload.textBlocks) ? payload.textBlocks : [], input),
+      tables: this.mapRecordPages(Array.isArray(payload.tables) ? payload.tables : [], input),
+      fieldCandidates: payload.fieldCandidates.map((candidate) => ({
+        ...candidate,
+        page: this.mapPage(candidate.page, input)
+      })),
       rawResult: payload.rawResult && typeof payload.rawResult === 'object' ? payload.rawResult : payload as unknown as Record<string, unknown>,
       rawResultRef: payload.rawResultRef
     };
+  }
+
+  private mapRecordPages(items: Array<Record<string, unknown>>, input: OcrProviderInput) {
+    return items.map((item) => ({
+      ...item,
+      ...(typeof item.page === 'number' ? { page: this.mapPage(item.page, input) } : {})
+    }));
+  }
+
+  private mapPage(value: number, input: OcrProviderInput) {
+    if (!Number.isInteger(value) || value < 1 || value > input.pages.length) {
+      throw new BadGatewayException('本地 Paddle OCR 返回了超出所选页段的页码');
+    }
+    return input.pages[value - 1].page;
   }
 
   private async readLimitedJson(response: Response) {

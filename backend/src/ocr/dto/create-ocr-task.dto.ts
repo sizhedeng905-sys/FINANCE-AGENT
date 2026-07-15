@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 import { MockOcrScenario } from '../ocr-provider';
 
@@ -28,4 +28,18 @@ export class CreateOcrTaskDto {
   @IsOptional()
   @IsIn(MOCK_SCENARIOS)
   mockScenario?: MockOcrScenario;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  pageStart?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  pageEnd?: number;
 }

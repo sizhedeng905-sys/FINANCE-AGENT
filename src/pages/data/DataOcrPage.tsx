@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { InboxOutlined } from '@ant-design/icons';
-import { Alert, App, Button, Card, Form, Select, Upload } from 'antd';
+import { Alert, App, Button, Card, Form, InputNumber, Select, Space, Upload } from 'antd';
 import type { RcFile, UploadFile } from 'antd/es/upload/interface';
 import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
@@ -11,6 +11,8 @@ import { recordTypeMap } from '@/utils/dataCenterMaps';
 interface FormValues {
   projectId: string;
   templateId: string;
+  pageStart?: number;
+  pageEnd?: number;
 }
 
 export default function DataOcrPage() {
@@ -55,6 +57,8 @@ export default function DataOcrPage() {
     [enabledTemplateIds, templates],
   );
   const selectedTemplate = enabledTemplates.find((item) => item.id === templateId);
+  const selectedFile = fileList[0];
+  const isPdf = selectedFile?.type === 'application/pdf' || selectedFile?.name.toLowerCase().endsWith('.pdf');
 
   const submit = async () => {
     const values = await form.validateFields();
@@ -70,7 +74,12 @@ export default function DataOcrPage() {
     }
     setUploading(true);
     try {
-      const task = await uploadAndRun(file, { projectId: values.projectId, templateId: template.id });
+      const task = await uploadAndRun(file, {
+        projectId: values.projectId,
+        templateId: template.id,
+        pageStart: values.pageStart,
+        pageEnd: values.pageEnd,
+      });
       message.success('OCR 识别完成，请人工核对字段');
       navigate(`/data/ocr/${task.id}`);
     } finally {
@@ -110,7 +119,13 @@ export default function DataOcrPage() {
             <Upload.Dragger
               beforeUpload={() => false}
               fileList={fileList}
-              onChange={({ fileList: next }) => setFileList(next.slice(-1))}
+              onChange={({ fileList: next }) => {
+                const latest = next.slice(-1);
+                setFileList(latest);
+                const nextFile = latest[0];
+                const nextIsPdf = nextFile?.type === 'application/pdf' || nextFile?.name.toLowerCase().endsWith('.pdf');
+                if (!nextIsPdf) form.setFieldsValue({ pageStart: undefined, pageEnd: undefined });
+              }}
               accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
               maxCount={1}
             >
@@ -118,6 +133,43 @@ export default function DataOcrPage() {
               <p className="ant-upload-text">选择 PDF、PNG、JPEG 或 WebP 票据</p>
             </Upload.Dragger>
           </Form.Item>
+          {isPdf ? (
+            <Form.Item label="PDF 页段（可选）">
+              <Space.Compact>
+                <Form.Item
+                  name="pageStart"
+                  noStyle
+                  dependencies={['pageEnd']}
+                  rules={[{
+                    validator: (_, value) => {
+                      const end = form.getFieldValue('pageEnd') as number | undefined;
+                      return end !== undefined && value === undefined
+                        ? Promise.reject(new Error('请输入起始页'))
+                        : Promise.resolve();
+                    },
+                  }]}
+                >
+                  <InputNumber min={1} max={500} precision={0} placeholder="起始页" />
+                </Form.Item>
+                <Form.Item
+                  name="pageEnd"
+                  noStyle
+                  dependencies={['pageStart']}
+                  rules={[{
+                    validator: (_, value) => {
+                      const start = form.getFieldValue('pageStart') as number | undefined;
+                      if (start !== undefined && value === undefined) return Promise.reject(new Error('请输入结束页'));
+                      if (start !== undefined && value !== undefined && value < start) return Promise.reject(new Error('结束页不能小于起始页'));
+                      if (start !== undefined && value !== undefined && value - start + 1 > 20) return Promise.reject(new Error('单次最多识别 20 页'));
+                      return Promise.resolve();
+                    },
+                  }]}
+                >
+                  <InputNumber min={1} max={500} precision={0} placeholder="结束页" />
+                </Form.Item>
+              </Space.Compact>
+            </Form.Item>
+          ) : null}
           <Button type="primary" loading={uploading || loading} onClick={() => void submit().catch((error) => message.error(error instanceof Error ? error.message : 'OCR识别失败'))}>
             上传并识别
           </Button>

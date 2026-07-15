@@ -4,6 +4,7 @@ import { FieldType, SemanticType } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
 
 import { DocumentPreprocessorService } from '../src/ocr/document-preprocessor.service';
+import { LocalPaddleOcrProvider } from '../src/ocr/local-paddle-ocr.provider';
 import { MockOcrProvider } from '../src/ocr/mock-ocr.provider';
 import { OcrProviderRegistry } from '../src/ocr/ocr-provider.registry';
 import { OcrProviderInput, OcrTemplateField } from '../src/ocr/ocr-provider';
@@ -100,8 +101,73 @@ describe('OCR phase 10 providers and preprocessing', () => {
     tooLong.addPage();
     tooLong.addPage();
     tooLong.addPage();
-    await expect(preprocessor.inspect(Buffer.from(await tooLong.save()), 'application/pdf')).rejects.toThrow('不能超过 2 页');
+    const tooLongBuffer = Buffer.from(await tooLong.save());
+    await expect(preprocessor.inspect(tooLongBuffer, 'application/pdf')).rejects.toThrow('请选择不超过 2 页');
+    const selectedPages = await preprocessor.inspect(tooLongBuffer, 'application/pdf', { pageStart: 2, pageEnd: 3 });
+    expect(selectedPages.map((page) => page.page)).toEqual([2, 3]);
+    const prepared = await preprocessor.prepare(tooLongBuffer, 'application/pdf', { pageStart: 2, pageEnd: 3 });
+    expect((await PDFDocument.load(prepared.buffer)).getPageCount()).toBe(2);
+    expect(prepared.pages.map((page) => page.page)).toEqual([2, 3]);
+    await expect(preprocessor.inspect(tooLongBuffer, 'application/pdf', { pageStart: 2 })).rejects
+      .toThrow('必须同时提供');
+    await expect(preprocessor.inspect(tooLongBuffer, 'application/pdf', { pageStart: 1, pageEnd: 3 })).rejects
+      .toThrow('最多选择 2 页');
+    await expect(preprocessor.inspect(Buffer.from('image'), 'image/jpeg', { pageStart: 1, pageEnd: 1 })).rejects
+      .toThrow('图片 OCR 不支持');
     await expect(preprocessor.inspect(Buffer.from('%PDF-1.4\nbroken\n%%EOF'), 'application/pdf')).rejects.toBeInstanceOf(BadRequestException);
     await expect(preprocessor.inspect(Buffer.from('%PDF-1.4\n/Encrypt\n%%EOF'), 'application/pdf')).rejects.toThrow('受密码保护');
+  });
+
+  it('maps sliced PDF provider pages back to original page numbers', async () => {
+    const payload = {
+      documentId: 'ocr-test',
+      extractedText: '金额：100',
+      pages: [{ page: 1 }, { page: 2 }],
+      textBlocks: [{ page: 1, text: '首页' }],
+      tables: [{ page: 2, text: '表格' }],
+      fieldCandidates: [{
+        targetFieldKey: 'amount',
+        sourceLabel: '金额',
+        rawValue: '100',
+        normalizedValue: 100,
+        page: 2,
+        confidence: 0.9,
+        evidence: 'synthetic'
+      }],
+      rawResult: { provider: 'local_paddle' }
+    };
+    const http = {
+      request: jest.fn(async () => new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+    };
+    const gate = { run: jest.fn(async (_key, _limit, operation) => operation()) };
+    const outputValidator = { validate: jest.fn((_schema, value) => value) };
+    const provider = new LocalPaddleOcrProvider(config({
+      'ocr.model': 'PaddleOCR-VL',
+      'ocr.modelVersion': 'v1',
+      'ocr.baseUrl': 'http://127.0.0.1:8868',
+      'ocr.apiKey': 'test-secret',
+      'ocr.timeoutMs': 1000,
+      'modelRuntime.ocrMaxConcurrency': 1,
+      'ocr.maxResponseBytes': 1024 * 1024
+    }), http as any, gate as any, outputValidator as any);
+    const slicedInput = {
+      ...input(),
+      pages: [
+        { ...input().pages[0], page: 16 },
+        { ...input().pages[0], page: 17 }
+      ]
+    };
+    const result = await provider.recognize(slicedInput);
+
+    expect(result.pages.map((page) => page.page)).toEqual([16, 17]);
+    expect(result.textBlocks[0].page).toBe(16);
+    expect(result.tables[0].page).toBe(17);
+    expect(result.fieldCandidates[0].page).toBe(17);
+
+    payload.fieldCandidates[0].page = 3;
+    await expect(provider.recognize(slicedInput)).rejects.toThrow('超出所选页段');
   });
 });
