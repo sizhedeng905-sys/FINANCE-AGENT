@@ -8,6 +8,7 @@ import {
   BusinessRecordStatus,
   DataRecordType,
   FileScanStatus,
+  FieldSuggestionStatus,
   FieldType,
   ImportRowStatus,
   ImportTaskStatus,
@@ -3721,6 +3722,376 @@ describe('real PostgreSQL integration', () => {
       await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
       await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
     }
+  });
+
+  describe('B8-01 import confirmation state hardening', () => {
+    let financeToken: string;
+    let financeUserId: string;
+    let dateFieldId: string;
+    let projectId: string;
+    let templateId: string;
+    let workbookBuffer: Buffer;
+    const taskIds: string[] = [];
+    const rawFileIds: string[] = [];
+    const suggestionIds: string[] = [];
+    const suffix = Date.now().toString(36);
+
+    beforeAll(async () => {
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      financeToken = login.body.data.accessToken as string;
+      const finance = await prisma.user.findUniqueOrThrow({ where: { username: 'finance' } });
+      financeUserId = finance.id;
+      const [dateField, amountField] = await Promise.all([
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
+        prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } })
+      ]);
+      dateFieldId = dateField.id;
+      const project = await prisma.project.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_state_${suffix}`,
+          customerName: 'B8 state customer',
+          ownerName: 'B8 state owner',
+          createdBy: 'finance'
+        }
+      });
+      projectId = project.id;
+      const template = await prisma.template.create({
+        data: {
+          name: `${TEST_USER_PREFIX}b8_state_template_${suffix}`,
+          recordType: DataRecordType.cost,
+          primaryDateFieldId: dateField.id,
+          primaryAmountFieldId: amountField.id,
+          createdBy: 'finance'
+        }
+      });
+      templateId = template.id;
+      await prisma.templateField.createMany({
+        data: [
+          { templateId, fieldId: dateField.id, isRequired: true, isVisible: true, displayOrder: 1 },
+          { templateId, fieldId: amountField.id, isRequired: true, isVisible: true, displayOrder: 2 }
+        ]
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId, templateId, recordType: DataRecordType.cost }
+      });
+
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('B8 state');
+      sheet.addRow(['date', 'amount']);
+      sheet.addRow(['2026-07-15', 125.5]);
+      workbookBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    });
+
+    afterAll(async () => {
+      const records = taskIds.length
+        ? await prisma.businessRecord.findMany({
+          where: { importTaskId: { in: taskIds } },
+          select: { id: true }
+        })
+        : [];
+      const files = rawFileIds.length
+        ? await prisma.rawFile.findMany({
+          where: { id: { in: rawFileIds } },
+          select: { id: true, storagePath: true }
+        })
+        : [];
+      if (taskIds.length) {
+        await prisma.businessRecord.deleteMany({ where: { importTaskId: { in: taskIds } } });
+        await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
+      }
+      for (const file of files) await fileStorage.remove(file.storagePath);
+      if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+      if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
+      if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+      const resourceIds = [
+        ...taskIds,
+        ...rawFileIds,
+        ...records.map((record) => record.id),
+        ...suggestionIds,
+        projectId,
+        templateId
+      ].filter((id): id is string => Boolean(id));
+      if (resourceIds.length) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+      }
+    });
+
+    const createPendingTask = async (label: string) => {
+      const created = await request(app.getHttpServer())
+        .post('/api/import-tasks')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', `b8-state-${suffix}-${label}`)
+        .field('projectId', projectId)
+        .field('templateId', templateId)
+        .field('importType', DataRecordType.cost)
+        .attach('file', workbookBuffer, {
+          filename: `${label}.xlsx`,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        })
+        .expect(201);
+      const taskId = created.body.data.id as string;
+      const rawFileId = created.body.data.rawFileId as string;
+      taskIds.push(taskId);
+      rawFileIds.push(rawFileId);
+      const parsed = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/parse`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({})
+        .expect(201);
+      expect(parsed.body.data.status).toBe(ImportTaskStatus.pending_confirm);
+      const columnId = parsed.body.data.columns[0].id as string;
+      return { taskId, rawFileId, columnId };
+    };
+
+    const expectNoConfirmationSideEffects = async (taskId: string) => {
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+      expect(await prisma.importRow.count({
+        where: {
+          importTaskId: taskId,
+          OR: [{ status: ImportRowStatus.confirmed }, { generatedRecordId: { not: null } }]
+        }
+      })).toBe(0);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.confirm', resourceId: taskId }
+      })).toBe(0);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_confirmed', aggregateId: taskId }
+      })).toBe(0);
+    };
+
+    const waitingAdvisoryLocks = async () => {
+      const [row] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint AS "count"
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+          AND NOT granted
+      `;
+      return Number(row.count);
+    };
+
+    const waitForAdvisoryWaiters = async (minimum: number) => {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        if (await waitingAdvisoryLocks() >= minimum) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(`Timed out waiting for ${minimum} advisory lock waiters`);
+    };
+
+    const queueBehindTaskLock = async (
+      taskId: string,
+      first: () => request.Test,
+      second: () => request.Test
+    ): Promise<[request.Response, request.Response]> => {
+      let firstResponse!: Promise<request.Response>;
+      let secondResponse!: Promise<request.Response>;
+      await prisma.$transaction(async (tx) => {
+        const baseline = await waitingAdvisoryLocks();
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${taskId}, 9))`;
+        firstResponse = first().then((response) => response);
+        await waitForAdvisoryWaiters(baseline + 1);
+        secondResponse = second().then((response) => response);
+        await waitForAdvisoryWaiters(baseline + 2);
+      }, { maxWait: 5_000, timeout: 10_000 });
+      return [await firstResponse, await secondResponse];
+    };
+
+    const confirmRequest = (taskId: string) => request(app.getHttpServer())
+      .post(`/api/import-tasks/${taskId}/confirm`)
+      .set('Authorization', `Bearer ${financeToken}`);
+    const cancelRequest = (taskId: string) => request(app.getHttpServer())
+      .post(`/api/import-tasks/${taskId}/cancel`)
+      .set('Authorization', `Bearer ${financeToken}`);
+
+    it('confirms only pending_confirm tasks and keeps cancelled tasks terminal', async () => {
+      const pending = await createPendingTask('pending-success');
+      const firstConfirm = await confirmRequest(pending.taskId).expect(201);
+      const secondConfirm = await confirmRequest(pending.taskId).expect(201);
+      expect(firstConfirm.body.data).toMatchObject({ alreadyConfirmed: false, importedRows: 1 });
+      expect(secondConfirm.body.data).toMatchObject({ alreadyConfirmed: true, importedRows: 1 });
+      expect(secondConfirm.body.data.recordIds).toEqual(firstConfirm.body.data.recordIds);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: pending.taskId } })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.confirm', resourceId: pending.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_confirmed', aggregateId: pending.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: {
+          eventType: 'business_record_created',
+          aggregateId: { in: firstConfirm.body.data.recordIds as string[] }
+        }
+      })).toBe(1);
+      expect(await prisma.importRow.count({
+        where: {
+          importTaskId: pending.taskId,
+          status: ImportRowStatus.confirmed,
+          generatedRecordId: { not: null }
+        }
+      })).toBe(1);
+
+      const invalidStatuses = [
+        ImportTaskStatus.uploaded,
+        ImportTaskStatus.parsing,
+        ImportTaskStatus.parsed,
+        ImportTaskStatus.mapping,
+        ImportTaskStatus.failed
+      ];
+      for (const status of invalidStatuses) {
+        const invalid = await createPendingTask(`invalid-${status}`);
+        await prisma.importTask.update({
+          where: { id: invalid.taskId },
+          data: { status, leaseToken: null, leaseUntil: null }
+        });
+        const response = await confirmRequest(invalid.taskId).expect(409);
+        expect(response.body).toMatchObject({ code: 40901, data: {} });
+        expect(await prisma.importTask.findUniqueOrThrow({ where: { id: invalid.taskId } })).toMatchObject({
+          status,
+          importedRows: 0,
+          confirmedAt: null,
+          confirmedBy: null
+        });
+        await expectNoConfirmationSideEffects(invalid.taskId);
+      }
+
+      const cancelled = await createPendingTask('cancelled-terminal');
+      const cancelledColumns = await prisma.importColumn.findMany({
+        where: { importTaskId: cancelled.taskId },
+        orderBy: { columnIndex: 'asc' }
+      });
+      const [mapSuggestion, rejectSuggestion] = await Promise.all([
+        prisma.fieldSuggestion.create({
+          data: {
+            projectId,
+            templateId,
+            importTaskId: cancelled.taskId,
+            importColumnId: cancelledColumns[0].id,
+            sourceName: cancelledColumns[0].sourceName,
+            suggestedFieldName: 'B8 map suggestion',
+            suggestedFieldType: FieldType.date,
+            sampleValues: []
+          }
+        }),
+        prisma.fieldSuggestion.create({
+          data: {
+            projectId,
+            templateId,
+            importTaskId: cancelled.taskId,
+            importColumnId: cancelledColumns[1].id,
+            sourceName: cancelledColumns[1].sourceName,
+            suggestedFieldName: 'B8 reject suggestion',
+            suggestedFieldType: FieldType.money,
+            sampleValues: []
+          }
+        })
+      ]);
+      suggestionIds.push(mapSuggestion.id, rejectSuggestion.id);
+      await cancelRequest(cancelled.taskId).expect(201);
+      for (const response of [
+        await confirmRequest(cancelled.taskId),
+        await request(app.getHttpServer())
+          .post(`/api/import-tasks/${cancelled.taskId}/parse`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .send({}),
+        await request(app.getHttpServer())
+          .put(`/api/import-tasks/${cancelled.taskId}/mappings`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .send({ mappings: [{ columnId: cancelled.columnId, ignore: true }] }),
+        await request(app.getHttpServer())
+          .post(`/api/field-suggestions/${mapSuggestion.id}/map`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .send({ fieldId: dateFieldId }),
+        await request(app.getHttpServer())
+          .post(`/api/field-suggestions/${rejectSuggestion.id}/reject`)
+          .set('Authorization', `Bearer ${financeToken}`)
+      ]) {
+        expect(response.status).toBe(409);
+        expect(response.body).toMatchObject({ code: 40901, data: {} });
+      }
+      await app.get(ImportTasksService).recoverExpiredParses();
+      expect(await prisma.fieldSuggestion.findMany({
+        where: { id: { in: [mapSuggestion.id, rejectSuggestion.id] } },
+        orderBy: { id: 'asc' },
+        select: { status: true }
+      })).toEqual([
+        { status: FieldSuggestionStatus.pending },
+        { status: FieldSuggestionStatus.pending }
+      ]);
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: cancelled.taskId } })).toMatchObject({
+        status: ImportTaskStatus.cancelled,
+        leaseToken: null,
+        leaseUntil: null
+      });
+      await expectNoConfirmationSideEffects(cancelled.taskId);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.cancel', resourceId: cancelled.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_cancelled', aggregateId: cancelled.taskId }
+      })).toBe(1);
+    });
+
+    it('serializes cancel and confirm with deterministic lock ordering', async () => {
+      const cancelWins = await createPendingTask('race-cancel-wins');
+      const [cancelFirst, confirmSecond] = await queueBehindTaskLock(
+        cancelWins.taskId,
+        () => cancelRequest(cancelWins.taskId),
+        () => confirmRequest(cancelWins.taskId)
+      );
+      expect([cancelFirst.status, confirmSecond.status]).toEqual([201, 409]);
+      expect(confirmSecond.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: cancelWins.taskId } })).toMatchObject({
+        status: ImportTaskStatus.cancelled,
+        importedRows: 0
+      });
+      await expectNoConfirmationSideEffects(cancelWins.taskId);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.cancel', resourceId: cancelWins.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_cancelled', aggregateId: cancelWins.taskId }
+      })).toBe(1);
+
+      const confirmWins = await createPendingTask('race-confirm-wins');
+      const [confirmFirst, cancelSecond] = await queueBehindTaskLock(
+        confirmWins.taskId,
+        () => confirmRequest(confirmWins.taskId),
+        () => cancelRequest(confirmWins.taskId)
+      );
+      expect([confirmFirst.status, cancelSecond.status]).toEqual([201, 409]);
+      expect(cancelSecond.body).toMatchObject({ code: 40901, data: {} });
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: confirmWins.taskId } })).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 1,
+        confirmedBy: financeUserId
+      });
+      const confirmedRecords = await prisma.businessRecord.findMany({
+        where: { importTaskId: confirmWins.taskId },
+        select: { id: true }
+      });
+      expect(confirmedRecords).toHaveLength(1);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.confirm', resourceId: confirmWins.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_confirmed', aggregateId: confirmWins.taskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'business_record_created', aggregateId: confirmedRecords[0].id }
+      })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.cancel', resourceId: confirmWins.taskId }
+      })).toBe(0);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_cancelled', aggregateId: confirmWins.taskId }
+      })).toBe(0);
+    });
   });
 
   it('keeps legacy XLS evidence intact while importing only a sanitized in-memory workbook', async () => {

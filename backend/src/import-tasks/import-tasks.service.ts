@@ -1084,6 +1084,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         const records = await tx.businessRecord.findMany({ where: { importTaskId: id }, select: { id: true } });
         return { alreadyConfirmed: true, recordIds: records.map((record) => record.id) };
       }
+      if (current.status !== ImportTaskStatus.pending_confirm) {
+        throw new ConflictException('仅待确认任务可以确认');
+      }
 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${current.projectId}, 22))`;
 
@@ -1305,6 +1308,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         }
         throw new ConflictException('字段建议已经处理');
       }
+      await this.lockMutableTask(tx, suggestion.importTaskId);
       const fieldName = dto.fieldName ?? suggestion.suggestedFieldName;
       const fieldType = dto.fieldType ?? suggestion.suggestedFieldType;
       const fieldKey = await this.uniqueFieldKey(tx, suggestion.sourceName);
@@ -1344,6 +1348,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         if (suggestion.mappedFieldId === dto.fieldId) return;
         throw new ConflictException('字段建议已经处理');
       }
+      await this.lockMutableTask(tx, suggestion.importTaskId);
       const field = await tx.fieldDefinition.findUnique({ where: { id: dto.fieldId } });
       if (!field || !field.isActive) throw new BadRequestException('目标字段不存在或已停用');
       const templateId = await this.ensureTemplateField(tx, suggestion, field.id, actor, context);
@@ -1367,6 +1372,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const suggestion = await this.findSuggestionOrThrow(tx, id);
       if (suggestion.status === FieldSuggestionStatus.rejected) return;
       if (suggestion.status !== FieldSuggestionStatus.pending) throw new ConflictException('字段建议已经处理');
+      await this.lockMutableTask(tx, suggestion.importTaskId);
       await tx.fieldSuggestion.update({
         where: { id },
         data: { status: FieldSuggestionStatus.rejected, approvedBy: actor.id, approvedAt: new Date() }
@@ -2314,6 +2320,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     if (status === ImportTaskStatus.failed || status === ImportTaskStatus.cancelled) {
       throw new ConflictException('失败或已取消任务不能修改');
     }
+  }
+
+  private async lockMutableTask(tx: Prisma.TransactionClient, id: string) {
+    await this.lockTask(tx, id);
+    const task = await tx.importTask.findUnique({ where: { id }, select: { status: true } });
+    if (!task) throw new NotFoundException('资源不存在');
+    this.assertTaskMutable(task.status);
   }
 
   private async lockTask(tx: Prisma.TransactionClient, id: string) {

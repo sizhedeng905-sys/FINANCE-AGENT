@@ -31,13 +31,27 @@
 
 后端 build 与 unit 不得在 Windows 上同时执行，因为两者都会运行 `prisma generate` 并争用同一 Prisma DLL。B8 后续验收固定串行运行这两个命令；该编排约束不计为产品缺陷。
 
+## B8-01 验证证据
+
+| 门禁 | 结果 |
+| --- | --- |
+| 状态矩阵红灯 | 修复前 `parsing -> confirm` 返回 201；取消先取得任务锁后，后续确认仍返回 201 |
+| 字段建议旁路红灯 | 修复前 cancelled 任务仍可通过字段建议 map/reject 写入映射并离开取消终态 |
+| 定向 PostgreSQL 回归 | 2/2 tests；覆盖 `pending_confirm`、幂等 confirmed、六种非法状态、取消终态和两种确定锁顺序 |
+| 后端构建 | 通过；Prisma generate、应用 TypeScript 和脚本 TypeScript 均通过 |
+| 后端单元测试 | 17/17 suites，184/184 tests |
+| PostgreSQL integration | 32/32 tests；18 migrations，无 pending migration |
+| Playwright | 14/14 tests；teardown 后文件残留 0 |
+| 数据库迁移 | 无 |
+| 真实业务文件 | 未读取、未修改 |
+
 ## 问题矩阵
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | B8-ENV-001 | P1 | B8-00 | `backend/test/app.spec.ts` | 调用者 `NODE_ENV=production` 时，静态 `AppModule` 导入先触发生产配置校验 | 测试环境在导入 `AppModule` 前设置，使用通过熵校验的测试密钥，关闭钩子容忍初始化失败并恢复调用者环境 | 污染环境 16/16、完整 unit 184/184 | verified | 无 |
-| B8-EXCEL-001 | P0 | B8-01 | `ImportTasksService.confirm()` | `cancelled/failed/parsing/mapping` 任务仍可越过状态门禁进入确认逻辑 | 首次确认只接受 `pending_confirm`；`confirmed` 仅幂等返回 | 真实 PostgreSQL 非法状态矩阵 | open | 无 |
-| B8-EXCEL-002 | P0 | B8-01 | `confirm()` / `cancel()` | 取消和确认缺少已证明的同锁终态测试 | 共用任务事务锁，终态互斥，audit/ledger/记录一致 | 真实 PostgreSQL 两种锁顺序与并发请求 | open | 无 |
+| B8-EXCEL-001 | P0 | B8-01 | `ImportTasksService.confirm()` 与映射入口 | `cancelled/failed/parsing/mapping` 任务仍可越过状态门禁；字段建议可改写 cancelled 任务 | 首次确认只接受 `pending_confirm`；`confirmed` 仅幂等返回；所有映射入口锁内校验终态 | 真实 PostgreSQL 非法状态矩阵与字段建议旁路 | verified | 无 |
+| B8-EXCEL-002 | P0 | B8-01 | `confirm()` / `cancel()` | 取消和确认缺少已证明的同锁终态测试 | 共用任务事务锁，终态互斥，audit/ledger/记录一致 | 真实 PostgreSQL 两种锁顺序与并发请求 | verified | 无 |
 | B8-EXCEL-003 | P1 | B8-02 | Excel preview/confirm | 金额显示、默认值、边界值和统一幂等尚未按 B8 门禁证明 | canonical values 与统一幂等策略 | E2E、PostgreSQL 边界矩阵 | queued | H-02 |
 | B8-EXCEL-004 | P0 | B8-03 | 大批量确认 | 30,196 行只证明解析，未证明最终入账 | 短事务确认 Worker、lease、恢复和原子发布 | 5,001/30,196/49,999 完整闭环 | queued | H-03 |
 | B8-OCR-001 | P0 | B8-04 | OCR 金额与执行任务 | Provider 精度和长同步 HTTP 尚未满足 B8 要求 | Decimal 字符串、异步队列、续租、恢复和 attempt 快照 | Mock/真实 Provider 并发与恢复 | queued | H-04/H-05 |
