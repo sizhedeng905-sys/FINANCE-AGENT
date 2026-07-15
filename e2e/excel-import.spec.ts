@@ -81,6 +81,7 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
   await expect(page.getByText('可入库').first()).toBeVisible();
   await expect(page.getByText('错误行').first()).toBeVisible();
   await expect(page.getByText('重复行').first()).toBeVisible();
+  await expect(page.locator('.ant-table-row').filter({ hasText: '可入库' }).first()).toContainText('¥8,765.43');
 
   const confirmResponse = page.waitForResponse((response) => isApiResponse(
     response,

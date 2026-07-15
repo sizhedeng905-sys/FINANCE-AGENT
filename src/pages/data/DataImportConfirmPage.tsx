@@ -24,7 +24,7 @@ export default function DataImportConfirmPage() {
   const columns: ColumnsType<ImportPreviewRow> = [
     { title: '行号', dataIndex: 'rowNumber', width: 80 },
     { title: '日期', dataIndex: 'recordDate', render: (value) => value || '-' },
-    { title: '金额', dataIndex: 'amount', render: (value) => typeof value === 'number' ? formatMoney(value) : '-' },
+    { title: '金额', dataIndex: 'amount', render: (value) => value === undefined ? '-' : formatMoney(value) },
     { title: '分类', dataIndex: 'category' },
     {
       title: '动态字段',
