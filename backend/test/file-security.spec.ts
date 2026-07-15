@@ -6,7 +6,11 @@ import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
 import { FileSecurityService } from '../src/files/file-security.service';
-import { resolveQuarantinedUploadPath } from '../src/files/secure-upload-options';
+import {
+  createSecureUploadOptions,
+  resolveQuarantinedUploadPath,
+  resolveUploadQuarantineRoot
+} from '../src/files/secure-upload-options';
 
 describe('FileSecurityService', () => {
   const config = {
@@ -105,5 +109,22 @@ describe('FileSecurityService', () => {
     expect(resolveQuarantinedUploadPath({ filename, path: expected })).toBe(expected);
     expect(() => resolveQuarantinedUploadPath({ filename: '../outside', path: expected })).toThrow();
     expect(() => resolveQuarantinedUploadPath({ filename, path: resolve(process.cwd(), filename) })).toThrow();
+  });
+
+  it('uses injected upload settings without module-load environment drift', () => {
+    const customRoot = resolve(process.cwd(), '.upload-quarantine-test');
+    const uploadConfig = {
+      get: jest.fn((key: string) => ({
+        maxFileSizeMb: 50,
+        uploadQuarantineDir: '.upload-quarantine-test'
+      })[key])
+    } as unknown as ConfigService;
+    const options = createSecureUploadOptions(uploadConfig);
+
+    expect(options.limits?.fileSize).toBe(50 * 1024 * 1024 + 1);
+    expect(resolveUploadQuarantineRoot(uploadConfig)).toBe(customRoot);
+    const filename = '123e4567-e89b-42d3-a456-426614174000';
+    const expected = resolve(customRoot, filename);
+    expect(resolveQuarantinedUploadPath({ filename, path: expected }, customRoot)).toBe(expected);
   });
 });

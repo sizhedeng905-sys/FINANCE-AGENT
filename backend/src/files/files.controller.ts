@@ -27,7 +27,6 @@ import { getRequestContext } from '../common/utils/request-context';
 import { UploadFileDto } from './dto/upload-file.dto';
 import { VoidFileDto } from './dto/void-file.dto';
 import { FilesService } from './files.service';
-import { secureUploadOptions } from './secure-upload-options';
 import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
 
 @ApiTags('files')
@@ -51,7 +50,7 @@ export class FilesController {
       required: ['file']
     }
   })
-  @UseInterceptors(FileInterceptor('file', secureUploadOptions), TempUploadCleanupInterceptor)
+  @UseInterceptors(FileInterceptor('file'), TempUploadCleanupInterceptor)
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: UploadFileDto,

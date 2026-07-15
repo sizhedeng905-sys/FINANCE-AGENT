@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { MulterModule } from '@nestjs/platform-express';
 
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -11,10 +13,20 @@ import { FileSecurityService } from './file-security.service';
 import { FILE_STORAGE } from './file-storage';
 import { FilesService } from './files.service';
 import { LocalFileStorageService } from './local-file-storage.service';
+import { createSecureUploadOptions } from './secure-upload-options';
 import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
 
 @Module({
-  imports: [AuditLogsModule, LedgerEventsModule, WorkOrdersModule, JwtModule.register({})],
+  imports: [
+    AuditLogsModule,
+    LedgerEventsModule,
+    WorkOrdersModule,
+    JwtModule.register({}),
+    MulterModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: createSecureUploadOptions
+    })
+  ],
   controllers: [FilesController],
   providers: [
     FilesService,
@@ -25,6 +37,6 @@ import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor'
     JwtAuthGuard,
     RolesGuard
   ],
-  exports: [FilesService, FileSecurityService]
+  exports: [FilesService, FileSecurityService, MulterModule]
 })
 export class FilesModule {}

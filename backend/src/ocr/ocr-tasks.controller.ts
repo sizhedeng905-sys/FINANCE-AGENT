@@ -22,7 +22,6 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
-import { secureUploadOptions } from '../files/secure-upload-options';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { ConfirmOcrTaskDto } from './dto/confirm-ocr-task.dto';
 import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
@@ -51,7 +50,7 @@ export class OcrTasksController {
 
   @Post('upload')
   @Roles(UserRole.finance)
-  @UseInterceptors(FileInterceptor('file', secureUploadOptions), TempUploadCleanupInterceptor)
+  @UseInterceptors(FileInterceptor('file'), TempUploadCleanupInterceptor)
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateOcrUploadDto,

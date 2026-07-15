@@ -7,7 +7,8 @@ import {
   Inject,
   Injectable,
   Logger,
-  NotFoundException
+  NotFoundException,
+  PayloadTooLargeException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FileScanStatus, Prisma, RawFileStatus, UserRole, WorkOrderStatus } from '@prisma/client';
@@ -22,7 +23,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { UploadFileDto } from './dto/upload-file.dto';
 import { FileSecurityService } from './file-security.service';
-import { resolveQuarantinedUploadPath } from './secure-upload-options';
+import { resolveQuarantinedUploadPath, resolveUploadQuarantineRoot } from './secure-upload-options';
 import { toRawFile } from './file.presenter';
 import { FILE_STORAGE, FileStorage } from './file-storage';
 import { VoidFileDto } from './dto/void-file.dto';
@@ -51,6 +52,7 @@ export class FilesService {
   private readonly userQuotaBytes: bigint;
   private readonly projectQuotaBytes: bigint;
   private readonly minimumFreeBytes: bigint;
+  private readonly quarantineRoot: string;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -66,6 +68,7 @@ export class FilesService {
     this.userQuotaBytes = BigInt(config.get<number>('fileQuotas.userMb') ?? 500) * 1024n * 1024n;
     this.projectQuotaBytes = BigInt(config.get<number>('fileQuotas.projectMb') ?? 5000) * 1024n * 1024n;
     this.minimumFreeBytes = BigInt(config.get<number>('fileQuotas.minimumFreeMb') ?? 1024) * 1024n * 1024n;
+    this.quarantineRoot = resolveUploadQuarantineRoot(config);
   }
 
   async upload(
@@ -343,7 +346,7 @@ export class FilesService {
   private async validateFile(file: Express.Multer.File) {
     if (file.size <= 0) throw new BadRequestException('不能上传空文件');
     if (file.size > this.maxFileSize) {
-      throw new BadRequestException(`文件大小不能超过 ${this.maxFileSize / 1024 / 1024}MB`);
+      throw new PayloadTooLargeException(`文件大小不能超过 ${this.maxFileSize / 1024 / 1024}MB`);
     }
     const originalFileName = this.validateFileName(file.originalname);
     const extension = extname(originalFileName).toLowerCase();
@@ -352,7 +355,7 @@ export class FilesService {
       throw new BadRequestException('文件扩展名与 MIME 类型不匹配');
     }
     if ((!file.buffer || file.buffer.length === 0) && file.path) {
-      const quarantinedPath = resolveQuarantinedUploadPath(file);
+      const quarantinedPath = resolveQuarantinedUploadPath(file, this.quarantineRoot);
       await chmod(quarantinedPath, 0o600);
       file.buffer = await readFile(quarantinedPath);
     }

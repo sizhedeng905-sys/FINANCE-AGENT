@@ -6,6 +6,7 @@ export default () => ({
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || (process.env.NODE_ENV === 'production' ? '30m' : '8h'),
   databaseUrl: process.env.DATABASE_URL,
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
+  uploadQuarantineDir: process.env.UPLOAD_QUARANTINE_DIR || '.upload-quarantine',
   maxFileSizeMb: Number.parseInt(process.env.MAX_FILE_SIZE_MB ?? '10', 10),
   fileQuotas: {
     userMb: Number.parseInt(process.env.FILE_USER_QUOTA_MB ?? '500', 10),

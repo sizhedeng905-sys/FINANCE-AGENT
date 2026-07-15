@@ -106,6 +106,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   private resolveHttpMessage(status: number, responseBody: string | object, fallback: string): string {
+    if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+      return '文件大小超过上传限制';
+    }
+
     if (status === HttpStatus.NOT_FOUND) {
       return '资源不存在';
     }

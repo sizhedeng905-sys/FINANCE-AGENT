@@ -22,7 +22,6 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
-import { secureUploadOptions } from '../files/secure-upload-options';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
@@ -53,7 +52,7 @@ export class ImportTasksController {
       }
     }
   })
-  @UseInterceptors(FileInterceptor('file', secureUploadOptions), TempUploadCleanupInterceptor)
+  @UseInterceptors(FileInterceptor('file'), TempUploadCleanupInterceptor)
   create(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateImportTaskDto,

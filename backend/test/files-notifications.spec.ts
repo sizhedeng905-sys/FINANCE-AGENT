@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  PayloadTooLargeException
+} from '@nestjs/common';
 import { FileScanStatus, NotificationType, RawFileStatus, UserRole, UserStatus } from '@prisma/client';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -143,6 +149,14 @@ describe('phase 5 files and notifications', () => {
         {}
       )
     ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.upload(
+        { ...file, buffer: Buffer.alloc(1024 * 1024 + 1), size: 1024 * 1024 + 1 },
+        { relatedProjectId: 'project_1' },
+        actor(UserRole.finance, 'finance_1'),
+        {}
+      )
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
 
     const referenced = await service.upload(
       file,

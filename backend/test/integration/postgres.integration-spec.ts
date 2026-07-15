@@ -26,6 +26,8 @@ import {
 import * as bcrypt from 'bcryptjs';
 import ExcelJS from 'exceljs';
 import { createHash } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import request from 'supertest';
 import * as XLSX from 'xlsx';
@@ -2284,6 +2286,87 @@ describe('real PostgreSQL integration', () => {
       for (const storagePath of new Set([...storagePaths, ...persistedStoragePaths])) {
         await fileStorage.remove(storagePath);
       }
+    }
+  });
+
+  it('enforces the configured upload limit at the exact multipart boundary', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const token = login.body.data.accessToken as string;
+    const suffix = Date.now().toString(36);
+    const rawFileIds: string[] = [];
+    const storagePaths: string[] = [];
+    let projectId: string | undefined;
+    const configuredMb = app.get(ConfigService).get<number>('maxFileSizeMb') ?? 5;
+    const limitBytes = configuredMb * 1024 * 1024;
+    const quarantineRoot = resolve(
+      process.cwd(),
+      app.get(ConfigService).get<string>('uploadQuarantineDir') ?? '.upload-quarantine'
+    );
+    const quarantineEntries = async () => {
+      try {
+        return (await readdir(quarantineRoot)).sort();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      }
+    };
+    const upload = (contents: Buffer, name: string) => request(app.getHttpServer())
+      .post('/api/files/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .field('relatedProjectId', projectId!)
+      .attach('file', contents, { filename: name, contentType: 'text/csv' });
+
+    try {
+      expect(configuredMb).toBeGreaterThanOrEqual(1);
+      expect(configuredMb).toBeLessThanOrEqual(50);
+      const project = await prisma.project.create({
+        data: {
+          name: `${TEST_USER_PREFIX}upload_boundary_${suffix}`,
+          customerName: 'Boundary customer',
+          ownerName: 'Boundary owner',
+          createdBy: 'finance'
+        }
+      });
+      projectId = project.id;
+
+      for (const [size, name] of [
+        [limitBytes - 1, 'below-limit.csv'],
+        [limitBytes, 'at-limit.csv']
+      ] as const) {
+        const response = await upload(Buffer.alloc(size, 0x61), name).expect(201);
+        rawFileIds.push(response.body.data.id as string);
+        expect(response.body.data.fileSize).toBe(size);
+        const stored = await prisma.rawFile.findUniqueOrThrow({ where: { id: response.body.data.id } });
+        storagePaths.push(stored.storagePath);
+      }
+
+      const persistedBefore = await prisma.rawFile.count({ where: { relatedProjectId: projectId } });
+      const quarantineBefore = await quarantineEntries();
+      const rejected = await upload(Buffer.alloc(limitBytes + 1, 0x61), 'over-limit.csv').expect(413);
+      expect(rejected.body).toEqual({
+        code: 41301,
+        message: '文件大小超过上传限制',
+        data: {}
+      });
+      expect(await prisma.rawFile.count({ where: { relatedProjectId: projectId } })).toBe(persistedBefore);
+      expect(await quarantineEntries()).toEqual(quarantineBefore);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: { in: rawFileIds }, action: 'file.upload' }
+      })).toBe(2);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: { in: rawFileIds }, eventType: 'raw_file_uploaded' }
+      })).toBe(2);
+    } finally {
+      if (rawFileIds.length) {
+        await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: rawFileIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: rawFileIds } } });
+      }
+      if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
+      for (const storagePath of storagePaths) await fileStorage.remove(storagePath);
     }
   });
 
