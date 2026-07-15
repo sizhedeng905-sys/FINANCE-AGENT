@@ -14,7 +14,6 @@ import {
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 
-import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -1004,11 +1003,19 @@ class InMemoryPrisma {
 describe('FINANCE-AGENT backend phases 1 and 2', () => {
   let app: INestApplication;
   let prisma: InMemoryPrisma;
+  const originalEnvironment = {
+    NODE_ENV: process.env.NODE_ENV,
+    DATABASE_URL: process.env.DATABASE_URL,
+    JWT_SECRET: process.env.JWT_SECRET,
+    AI_PROVIDER: process.env.AI_PROVIDER
+  };
 
   beforeAll(async () => {
+    process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public';
-    process.env.JWT_SECRET = 'test-secret-with-at-least-32-characters';
+    process.env.JWT_SECRET = '4f9d2a7c8e1b6f305d7a9c2e4b8f1d603a7e5c9b2f6d8a104c3e7b9f5a2d6c81';
     process.env.AI_PROVIDER = 'mock';
+    const { AppModule } = await import('../src/app.module');
     prisma = new InMemoryPrisma();
     await prisma.seed();
 
@@ -1037,7 +1044,11 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) await app.close();
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   async function login(username: string, password = '123456') {
