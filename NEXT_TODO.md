@@ -4,7 +4,7 @@
 
 项目已不是纯前端原型。阶段 0-10 的真实 PostgreSQL/API 主链路已完成，当前按 `docs/REAL_BUSINESS_DATA_TEST_PLAN.md` 推进真实业务数据门禁。详细证据见 `docs/IMPLEMENTATION_PROGRESS.md` 和 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`。
 
-## 当前门禁：B6 性能、故障恢复与模型切换
+## 当前门禁：B7 财务 UAT 与最终回归
 
 已完成：
 
@@ -38,17 +38,18 @@
 - 72 条 Qwen 基准的有效数字、空数据、注入和 Schema 均 100%；原始模型 fallback 较高，必须保留 grounding 和结构化降级。
 - 跨来源业务去重继续保留人工复核；L3 抽样会计真值等待财务签字。
 
-### B6 性能与故障恢复（进行中）
+### B6 性能与故障恢复（完成）
 
-- 执行后端重启、数据库短断、ClamAV 离线、磁盘水位、队列拥塞和 lease 恢复。
-- 验证 1/3/5 并发上传/导入与 OCR 单并发排队，无重复确认、孤儿文件或未知 500。
-- 启动按需 VL、确认 OCR 保持在线，再恢复 Qwen 文本；Embedding 本轮不启用。
+- 后端重启与本地 PostgreSQL TCP 代理短断通过；readiness 失败关闭、liveness 保持在线，恢复后自动重连。
+- ClamAV 离线返回 503，磁盘低水位在落盘前返回 507；lease 接管、1/3/5 并发上传/导入和模型队列全部通过。
+- Qwen 文本重启、按需 VL、文本恢复及 Qwen/OCR 同时推理通过；272 次切换期 OCR 健康采样 0 失败，Embedding 未启动。
+- 修复 E2E teardown 目录漂移，清理 50 个历史孤儿测试文件；隔离目录和 E2E 运行目录收口后均为 0 残留。
 
-### B7 稳定性与交付
+### B7 财务 UAT 与最终交付（进行中）
 
-- 测试模型重启、后端重启、数据库短断、ClamAV 离线、磁盘水位、队列拥塞和模型切换。
-- 全量运行 build、unit、integration、Playwright、hygiene、依赖审计和原始文件哈希复核。
-- 每个通过门禁形成独立提交并推送 `agent/real-business-data-validation`，PR #3 持续更新；真实文件、模型、`.env` 和用户未跟踪文档永不提交。
+- 生成可签字的财务 UAT 清单，保留入账粒度、L3 金额、OCR 标签和重复提示政策为外部确认项，不伪造签字。
+- 全量运行 build、unit、integration、14 条 Playwright、hygiene、依赖审计、模型资产和原始文件哈希复核。
+- 检查 Git diff 与敏感信息，提交并推送 `agent/real-business-data-validation`，更新 PR #3；真实文件、模型、`.env` 和用户未跟踪文档永不提交。
 
 ## 每批提交条件
 

@@ -47,6 +47,48 @@ describe('model runtime safeguards', () => {
     await expect(second).resolves.toBe('second');
   });
 
+  it.each([1, 3, 5])('honors a max concurrency of %i without losing queued work', async (maxConcurrency) => {
+    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }));
+    let active = 0;
+    let peak = 0;
+    const completed = await Promise.all(Array.from({ length: 5 }, (_, index) => gate.run(
+      `batch-${maxConcurrency}`,
+      maxConcurrency,
+      async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+        return index;
+      }
+    )));
+
+    expect(completed).toEqual([0, 1, 2, 3, 4]);
+    expect(peak).toBe(maxConcurrency);
+    expect(gate.snapshot()).toMatchObject({
+      [`batch-${maxConcurrency}`]: { active: 0, queued: 0 }
+    });
+  });
+
+  it('keeps the single-concurrency OCR queue independent from text AI work', async () => {
+    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }));
+    let releaseOcr!: () => void;
+    const ocrBlocker = new Promise<void>((resolve) => { releaseOcr = resolve; });
+    const firstOcr = gate.run('ocr', 1, async () => ocrBlocker);
+    await Promise.resolve();
+    const secondOcr = gate.run('ocr', 1, async () => 'ocr-second');
+    await Promise.resolve();
+
+    await expect(gate.run('ai', 1, async () => 'ai-ready')).resolves.toBe('ai-ready');
+    expect(gate.snapshot()).toMatchObject({
+      ocr: { active: 1, queued: 1 },
+      ai: { active: 0, queued: 0 }
+    });
+    releaseOcr();
+    await firstOcr;
+    await expect(secondOcr).resolves.toBe('ocr-second');
+  });
+
   it('opens a circuit after consecutive model network failures', async () => {
     const client = new ResilientHttpClientService(config({
       'modelRuntime.httpMaxRetries': 0,

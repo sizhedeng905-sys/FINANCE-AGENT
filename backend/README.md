@@ -47,6 +47,8 @@ npm run prisma:seed
 npm run db:verify
 npm run realdata:scan
 npm run realdata:xls-profile
+npm run realdata:resilience
+npm run realdata:model-resilience
 npm run model:routes -- list
 npm run model:check
 npm run model:services:init
@@ -64,13 +66,14 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-15):
+Current verification baseline (2026-07-15, B6):
 
-- Backend build and Prisma validation pass with 16 applied migrations.
-- Jest: 15/15 suites and 94/94 tests.
-- Real PostgreSQL integration: 28/28 tests.
+- Backend build and Prisma validation pass with 18 applied migrations.
+- Jest: 17/17 suites and 183/183 tests.
+- Real PostgreSQL integration: 30/30 tests.
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
+- Backend/database restart, ClamAV/disk fail-closed paths, 1/3/5 concurrency, model restart/VL switch, and simultaneous Qwen/OCR inference pass. Private aggregate reports stay under `.realdata-test/reports/`.
 
 ## API
 

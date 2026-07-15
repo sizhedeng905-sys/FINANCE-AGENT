@@ -27,6 +27,8 @@
     "realdata:ocr-evaluate": "tsx scripts/run-real-ocr-evaluation.ts",
     "realdata:ocr-page-ranges": "tsx scripts/profile-real-ocr-page-ranges.ts",
     "realdata:ai-benchmark": "tsx scripts/run-ai-benchmark.ts",
+    "realdata:resilience": "node scripts/profile-service-resilience.mjs",
+    "realdata:model-resilience": "node scripts/profile-model-resilience.mjs",
     "model:soak": "node scripts/monitor-resident-models.mjs",
     "model:routes": "tsx scripts/configure-model-runtime.ts",
     "model:check": "node scripts/verify-model-assets.mjs resident",

@@ -2439,6 +2439,109 @@ describe('real PostgreSQL integration', () => {
     }
   });
 
+  it('keeps 1, 3, and 5 concurrent uploads and imports complete and unique', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const token = login.body.data.accessToken as string;
+    const enabled = await prisma.projectTemplate.findFirstOrThrow({
+      where: { isActive: true, project: { status: ProjectStatus.active } },
+      include: { project: true, template: true }
+    });
+    const suffix = Date.now().toString(36);
+    const rawFileIds: string[] = [];
+    const taskIds: string[] = [];
+    const storagePaths: string[] = [];
+    const expectedPerKind = 1 + 3 + 5;
+
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 200]);
+    const pdfBuffer = Buffer.from(await pdf.save());
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Concurrent import').addRows([
+      ['日期', '金额'],
+      ['2026-07-15', 100]
+    ]);
+    const xlsxBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    try {
+      for (const concurrency of [1, 3, 5]) {
+        const uploads = await Promise.all(Array.from({ length: concurrency }, (_, index) => request(app.getHttpServer())
+          .post('/api/files/upload')
+          .set('Authorization', `Bearer ${token}`)
+          .set('X-Request-Id', `integration-concurrency-upload-${suffix}-${concurrency}-${index}`)
+          .field('relatedProjectId', enabled.projectId)
+          .attach('file', pdfBuffer, {
+            filename: `concurrent-${concurrency}-${index}.pdf`,
+            contentType: 'application/pdf'
+          })));
+        expect(uploads.map((response) => response.status)).toEqual(Array(concurrency).fill(201));
+        rawFileIds.push(...uploads.map((response) => response.body.data.id as string));
+
+        const imports = await Promise.all(Array.from({ length: concurrency }, (_, index) => request(app.getHttpServer())
+          .post('/api/import-tasks')
+          .set('Authorization', `Bearer ${token}`)
+          .set('Idempotency-Key', `integration-concurrency-import-${suffix}-${concurrency}-${index}`)
+          .set('X-Request-Id', `integration-concurrency-import-${suffix}-${concurrency}-${index}`)
+          .field('projectId', enabled.projectId)
+          .field('templateId', enabled.templateId)
+          .field('importType', enabled.template.recordType)
+          .attach('file', xlsxBuffer, {
+            filename: `concurrent-import-${concurrency}-${index}.xlsx`,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          })));
+        expect(imports.map((response) => response.status)).toEqual(Array(concurrency).fill(201));
+        const batchTaskIds = imports.map((response) => response.body.data.id as string);
+        const batchRawFileIds = imports.map((response) => response.body.data.rawFileId as string);
+        taskIds.push(...batchTaskIds);
+        rawFileIds.push(...batchRawFileIds);
+
+        const parses = await Promise.all(batchTaskIds.map((taskId) => request(app.getHttpServer())
+          .post(`/api/import-tasks/${taskId}/parse`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({})));
+        expect(parses.map((response) => response.status)).toEqual(Array(concurrency).fill(201));
+        for (const parsed of parses) {
+          expect([ImportTaskStatus.mapping, ImportTaskStatus.pending_confirm]).toContain(parsed.body.data.status);
+        }
+      }
+
+      expect(new Set(rawFileIds).size).toBe(expectedPerKind * 2);
+      expect(new Set(taskIds).size).toBe(expectedPerKind);
+      expect(await prisma.rawFile.count({ where: { id: { in: rawFileIds } } })).toBe(expectedPerKind * 2);
+      expect(await prisma.importTask.count({ where: { id: { in: taskIds } } })).toBe(expectedPerKind);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: { in: taskIds } } })).toBe(0);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: { in: rawFileIds }, action: 'file.upload' }
+      })).toBe(expectedPerKind * 2);
+      expect(await prisma.auditLog.count({
+        where: { resourceId: { in: taskIds }, action: 'import_task.parse' }
+      })).toBe(expectedPerKind);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: { in: rawFileIds }, eventType: 'raw_file_uploaded' }
+      })).toBe(expectedPerKind * 2);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: { in: taskIds }, eventType: 'import_task_parsed' }
+      })).toBe(expectedPerKind);
+    } finally {
+      if (rawFileIds.length) {
+        storagePaths.push(...(await prisma.rawFile.findMany({
+          where: { id: { in: rawFileIds } },
+          select: { storagePath: true }
+        })).map((file) => file.storagePath));
+      }
+      if (taskIds.length) await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
+      if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+      const resourceIds = [...taskIds, ...rawFileIds];
+      if (resourceIds.length) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+      }
+      for (const storagePath of storagePaths) await fileStorage.remove(storagePath);
+    }
+  });
+
   it('aggregates only confirmed records with China-time boundaries and shared AI report tools', async () => {
     const usernames = ['finance', 'boss', 'employee', 'reviewer'] as const;
     const tokens = Object.fromEntries(await Promise.all(usernames.map(async (username) => {

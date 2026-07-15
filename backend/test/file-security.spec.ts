@@ -1,5 +1,6 @@
-import { BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
@@ -81,6 +82,30 @@ describe('FileSecurityService', () => {
     sheet.getCell('A1').value = { text: '外部链接', hyperlink: 'https://example.invalid/data' };
     await expect(security.scan('external.xlsx', Buffer.from(await workbook.xlsx.writeBuffer())))
       .rejects.toThrow('Office 文件包含外部关系');
+  });
+
+  it('fails closed with a recoverable error when ClamAV is offline', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to reserve an ephemeral TCP port');
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+
+    const clamavConfig = {
+      get: jest.fn((key: string) => ({
+        'fileScan.mode': 'clamav',
+        'fileScan.clamavHost': '127.0.0.1',
+        'fileScan.clamavPort': address.port,
+        'fileScan.timeoutMs': 250
+      })[key])
+    } as unknown as ConfigService;
+    const clamavSecurity = new FileSecurityService(clamavConfig);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    );
+
+    await expect(clamavSecurity.scan('receipt.png', png)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('rejects forged or structurally inconsistent legacy XLS containers', async () => {

@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   PayloadTooLargeException
 } from '@nestjs/common';
@@ -190,6 +192,59 @@ describe('phase 5 files and notifications', () => {
       service.upload(file, { workOrderId: 'work_order_1' }, actor(UserRole.employee, 'employee_1'), {})
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.$executeRaw).toHaveBeenCalled();
+  });
+
+  it('rejects an upload before persistence when the disk waterline would be crossed', async () => {
+    const prisma: any = {
+      project: { findUnique: jest.fn(async () => ({ id: 'project_1', status: 'active' })) },
+      workOrder: { findUnique: jest.fn(async () => null) },
+      rawFile: { create: jest.fn() },
+      $transaction: jest.fn()
+    };
+    const storage: any = {
+      availableBytes: jest.fn(async () => 0n),
+      save: jest.fn(),
+      read: jest.fn(),
+      openReadStream: jest.fn(),
+      remove: jest.fn()
+    };
+    const config: any = {
+      get: jest.fn((key: string) => ({
+        maxFileSizeMb: 1,
+        'fileQuotas.userMb': 1,
+        'fileQuotas.projectMb': 1,
+        'fileQuotas.minimumFreeMb': 100,
+        'fileScan.mode': 'basic'
+      })[key])
+    };
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 200]);
+    const buffer = Buffer.from(await pdf.save());
+    const file = {
+      originalname: 'waterline.pdf',
+      mimetype: 'application/pdf',
+      size: buffer.length,
+      buffer
+    } as Express.Multer.File;
+    const service = new FilesService(
+      prisma,
+      storage,
+      {} as any,
+      { write: jest.fn() } as any,
+      { write: jest.fn() } as any,
+      new FileSecurityService(config),
+      config
+    );
+
+    const error = await service
+      .upload(file, { relatedProjectId: 'project_1' }, actor(UserRole.finance), {})
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(HttpStatus.INSUFFICIENT_STORAGE);
+    expect(storage.save).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.rawFile.create).not.toHaveBeenCalled();
   });
 
   it('scopes notifications from the token user and reduces unread count', async () => {

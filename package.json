@@ -18,6 +18,8 @@
     "realdata:ocr-evaluate": "npm --prefix backend run realdata:ocr-evaluate --",
     "realdata:ocr-page-ranges": "npm --prefix backend run realdata:ocr-page-ranges --",
     "realdata:ai-benchmark": "npm --prefix backend run realdata:ai-benchmark --",
+    "realdata:resilience": "npm --prefix backend run realdata:resilience --",
+    "realdata:model-resilience": "npm --prefix backend run realdata:model-resilience --",
     "model:soak": "npm --prefix backend run model:soak --",
     "model:init": "node backend/scripts/model-services.mjs init",
     "model:check": "node backend/scripts/model-services.mjs check resident",

@@ -1,6 +1,6 @@
 # FINANCE-AGENT 真实业务数据 B0 基线报告
 
-> 生成时间：2026-07-15T01:51:11.539Z
+> 生成时间：2026-07-15T05:06:04.107Z
 >
 > 本报告只包含匿名聚合指标。原始路径、文件名、完整哈希、业务值和 OCR 原文仅保存在 Git 忽略的本地清单中。
 
@@ -297,3 +297,47 @@ npm run realdata:ai-benchmark -- --provider local
 ```
 
 本地报告 `.realdata-test/reports/ai-benchmark.local.json` 只保存聚合指标、fallback 原因和失败用例 ID，不保存模型回答或真实业务值。
+
+## B6 性能、故障恢复与模型切换
+
+2026-07-15 完成 B6。所有服务级写操作只使用 `finance_agent_test`；数据库短断通过本地 TCP 代理制造，没有停止 PostgreSQL 系统服务。模型报告、端口和逐次采样只保存在 Git 忽略的 `.realdata-test/reports/`，公开报告不包含密钥、模型回答、OCR 原文、文件名或业务值。
+
+### 资源与并发基线
+
+- 文件边界沿用 B1/B2 证据：真实 19.67 MiB 与 46.35 MiB 档位在 512 MiB 堆限制下完成结构扫描/流式解析；50 MiB 含边界，超过 1 字节统一 413；含 248 个媒体对象的工作簿只统计媒体元数据，不把媒体载入普通单元格模型。
+- Excel 的 4999/5000/5001/30196 行和 180 列宽表均已有确定性或真实匿名剖析；30196 行按 500 行批次完成，峰值 RSS 217.90 MiB，确认前经营记录为 0。
+- OCR 已覆盖单页、4 页、20 页、21 页、35 页范围和 1080x4794 长图。校准批次单样本最大 79.63 秒，小于本地部署建议的 120 秒 OCR 超时；准确率仍为 `awaiting_labels`。
+- 新增真实 PostgreSQL 1/3/5 并发门禁：共 18 个 `raw_files` 与 9 个导入任务全部唯一，上传、解析、audit 和 ledger 数量一一对应；整组用例 458 ms，确认前 `BusinessRecord` 为 0。
+- 模型门控以 1/3/5 并发运行无任务丢失；OCR 单并发时第二个任务排队，独立 `ai` 队列可同时执行。
+
+### 故障恢复结果
+
+| 场景 | 结果 | 恢复/响应时间 |
+| --- | --- | ---: |
+| 后端进程重启 | liveness/readiness 恢复，统一响应保持有效 | 2,081.42 ms |
+| PostgreSQL 短断 | readiness 统一 503，liveness 仍为 200，无未知 500 | 22.63 ms 检出 |
+| PostgreSQL 恢复 | Prisma 连接池自动重连，readiness 返回 200 | 43.02 ms |
+| ClamAV 断联 | 关闭的临时 TCP 端口稳定返回可恢复 503，不放行文件 | 自动化通过 |
+| 磁盘低水位 | 在 `storage.save` 和数据库事务前返回 507 | 自动化通过 |
+| 导入/OCR lease 过期 | 新 lease 接管、旧 token 隔离、最多三次恢复 | PostgreSQL 通过 |
+| E2E 文件清理 | 修复 teardown 根目录漂移和空库提前返回；清除 50 个历史孤儿测试文件 | 清理后 0 孤儿 |
+
+### 真实模型恢复结果
+
+| 操作 | 就绪耗时 | OCR 健康采样 | OOM/自动重启 |
+| --- | ---: | ---: | ---: |
+| Qwen3-14B-AWQ 容器重启 | 52,985.80 ms | 52/52 | 0/0 |
+| 切换 Qwen3-VL-8B-Instruct | 172,354.50 ms | 169/169 | 0/0 |
+| 停止 VL 并恢复 Qwen 文本 | 51,912.53 ms | 51/51 | 0/0 |
+
+恢复后使用内存生成的无业务信息 PDF 同时调用 Qwen 文本和 Paddle OCR：两者均返回 200，文本 929.91 ms、OCR 1,700.15 ms、并发墙钟 1,700.90 ms。最终 Qwen 文本与 Paddle OCR 为 healthy，VL 已停止，Embedding 从未启动。此前 30 分钟长稳的 61 次采样仍为 0 重启、0 OOM、0 fatal。
+
+B6 结论：首轮资源与恢复基线通过，无进程崩溃、OOM、重复确认、隔离区残留或未知 500。模型冷启动和 VL 切换仍按 900 秒启动超时管理；OCR 业务 SLO 需在人工标签与财务等待时间确认后冻结。复现命令：
+
+```powershell
+npm run realdata:resilience
+npm run realdata:model-resilience
+cd backend
+npm test -- --runInBand
+npm run test:integration
+```

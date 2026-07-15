@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { readdir, rm, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { loadEnvFile } from 'node:process';
 import { PrismaClient } from '@prisma/client';
@@ -23,7 +23,12 @@ if (!databaseName.endsWith('_test')) {
 
 process.env.DATABASE_URL = databaseUrl;
 const prisma = new PrismaClient();
-const uploadRoot = resolve(backendRoot, process.env.E2E_UPLOAD_DIR || process.env.UPLOAD_DIR || 'test-uploads/e2e');
+const testUploadRoot = resolve(backendRoot, 'test-uploads');
+const uploadRoot = resolve(backendRoot, process.env.E2E_UPLOAD_DIR || 'test-uploads/e2e');
+const uploadRootRelative = relative(testUploadRoot, uploadRoot);
+if (!uploadRootRelative || uploadRootRelative.startsWith('..') || isAbsolute(uploadRootRelative)) {
+  throw new Error('E2E upload root must be a dedicated child of backend/test-uploads.');
+}
 
 function resolveStoredFile(storagePath) {
   if (isAbsolute(storagePath)) throw new Error(`Refusing to remove absolute storage path: ${storagePath}`);
@@ -67,11 +72,6 @@ async function main() {
   const workOrderIds = workOrders.map((item) => item.id);
   const importTaskIds = importTasks.map((item) => item.id);
   const ocrTaskIds = ocrTasks.map((item) => item.id);
-  if (workOrderIds.length === 0 && importTaskIds.length === 0 && ocrTaskIds.length === 0) {
-    console.log(`No E2E workflow, import, or OCR data to clean from "${databaseName}".`);
-    return;
-  }
-
   const generatedRecordIds = workOrders
     .map((item) => item.generatedRecordId)
     .filter((id) => typeof id === 'string');
@@ -122,9 +122,28 @@ async function main() {
     }
   }
 
+  const orphanFilesRemoved = await countFiles(uploadRoot);
+  await rm(uploadRoot, { recursive: true, force: true });
+
   console.log(
-    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), and ${rawFileIds.length} file(s).`
+    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
   );
+}
+
+async function countFiles(directory) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return 0;
+    throw error;
+  }
+  let count = 0;
+  for (const entry of entries) {
+    if (entry.isDirectory()) count += await countFiles(resolve(directory, entry.name));
+    else if (entry.isFile()) count += 1;
+  }
+  return count;
 }
 
 main()
