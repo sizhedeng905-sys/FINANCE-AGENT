@@ -48,7 +48,7 @@
 ### B7 财务 UAT 与最终交付（工程完成）
 
 - 已生成 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`；入账粒度、L3 金额、OCR 标签和重复政策明确保留为外部签字项。
-- 已通过前后端 build、183 单测、30 PostgreSQL、14 Playwright、Prisma、hygiene、依赖审计、模型资产和 112 份原件哈希复核。
+- 已通过前后端 build、184 单测、30 PostgreSQL、14 Playwright、Prisma、hygiene、依赖审计、模型资产和 112 份原件哈希复核。
 - GitHub 提交、CI 与审查状态统一以 Draft PR #3 为准；财务/OCR 外部门禁关闭前不 merge、不标记生产就绪。
 
 ### 财务下一步

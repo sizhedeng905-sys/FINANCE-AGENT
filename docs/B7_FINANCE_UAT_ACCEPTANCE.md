@@ -38,7 +38,7 @@ npm run model:status
 npm run realdata:scan
 ```
 
-预期：18 个 migration、40 张业务表、17/17 Jest suites、183/183 tests、30/30 PostgreSQL integration、14/14 Playwright、112/112 原件哈希不变；Qwen 文本/OCR ready，VL/Embedding offline。
+预期：18 个 migration、40 张业务表、17/17 Jest suites、184/184 tests、30/30 PostgreSQL integration、14/14 Playwright、112/112 原件哈希不变；Qwen 文本/OCR ready，VL/Embedding offline。
 
 ## UAT 场景
 
@@ -116,7 +116,7 @@ npm run realdata:scan
 | G1 文件与任务 | 通过：4xx/503/507、取消、lease、重试、清理和 1/3/5 并发 | 目标环境 ClamAV/对象存储部署 |
 | G2 数据正确性 | 条件通过：方向、Decimal、状态、数据层、audit/ledger 自动化通过 | L3 金额、入账粒度、负数/冲销政策 |
 | G3 模型与人工复核 | 条件通过：AI 有效数字 100%，未确认 OCR 入账 0，模型长稳通过 | OCR 字段标签与准确率签字 |
-| G4 工程回归 | 通过：build、183 unit、30 integration、14 E2E、Prisma、audit、模型资产 | GitHub CI 状态以 Draft PR #3 为准 |
+| G4 工程回归 | 通过：build、184 unit、30 integration、14 E2E、Prisma、audit、模型资产 | GitHub CI 状态以 Draft PR #3 为准 |
 
 ## 已知降级
 

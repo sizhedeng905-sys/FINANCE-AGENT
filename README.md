@@ -312,7 +312,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B7 验收基线为 17/17 Jest suites、183/183 tests、30/30 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 18/18 Prisma migrations，40 张预期业务表核对一致；根目录和 `backend/` 的生产依赖审计均为 0 vulnerabilities。
+当前 B7 验收基线为 17/17 Jest suites、184/184 tests、30/30 真实 PostgreSQL 集成测试和 14/14 Playwright。测试库已应用 18/18 Prisma migrations，40 张预期业务表核对一致；根目录和 `backend/` 的生产依赖审计均为 0 vulnerabilities。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

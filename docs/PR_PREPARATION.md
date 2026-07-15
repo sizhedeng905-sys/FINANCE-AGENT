@@ -53,7 +53,7 @@ AI/OCR：`AI_*`、`OCR_*`、`MODEL_*`、`AI_MAX_CONCURRENCY`、`OCR_MAX_CONCURRE
 
 - 前端 production build：通过；保留 bundle 大于 500 kB 的非阻断警告。
 - 后端 production build：通过。
-- 后端单测：17 suites，183 tests，通过 183，失败 0。
+- 后端单测：17 suites，184 tests，通过 184，失败 0。
 - PostgreSQL 集成：1 suite，30 tests，通过 30，失败 0。
 - Playwright：14 tests，通过 14，失败 0；teardown 后测试数据库和磁盘孤儿均为 0。
 - Prisma format/validate/generate/migrate status/db:verify：通过；40 张业务表，无缺失/意外表。

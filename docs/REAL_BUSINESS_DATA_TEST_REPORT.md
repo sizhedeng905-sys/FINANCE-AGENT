@@ -352,7 +352,7 @@ npm run test:integration
 | --- | --- |
 | 前端 / 后端 production build | 通过 / 通过 |
 | Prisma | format/validate 通过；18/18 migrations；40 张业务表无缺失/意外 |
-| 后端单测 | 17/17 suites，183/183 tests |
+| 后端单测 | 17/17 suites，184/184 tests |
 | 真实 PostgreSQL | 30/30 integration |
 | 浏览器 | 14/14 Playwright；teardown 后数据库/磁盘孤儿均为 0 |
 | Paddle 适配器 | 4/4 Python tests |

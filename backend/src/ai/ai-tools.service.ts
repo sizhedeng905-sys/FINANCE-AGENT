@@ -66,7 +66,7 @@ export class AiToolsService {
     const hasWorkOrderContext = contexts.some((context) => context.name === 'get_work_order_detail');
     if (
       /异常|风险|可疑/.test(question)
-      && (!hasWorkOrderContext || /异常列表|异常工单|有哪些.*(?:异常|风险)|全部.*风险/.test(question))
+      && (!hasWorkOrderContext || this.asksForAnomalyList(question))
     ) {
       const anomalies = await this.riskRules.findAnomalies({ page: 1, pageSize: 100 });
       contexts.push({ name: 'get_anomalies', data: anomalies.items });
@@ -152,6 +152,19 @@ export class AiToolsService {
     if (/同比|去年同期/.test(question)) return 'year_over_year';
     if (/环比|较上月|比上月|比上个月|与上月相比|和上月相比/.test(question)) return 'month_over_month';
     return undefined;
+  }
+
+  private asksForAnomalyList(question: string) {
+    return question.includes('异常列表')
+      || question.includes('异常工单')
+      || this.includesInOrder(question, '有哪些', '异常')
+      || this.includesInOrder(question, '有哪些', '风险')
+      || this.includesInOrder(question, '全部', '风险');
+  }
+
+  private includesInOrder(value: string, first: string, second: string) {
+    const firstIndex = value.indexOf(first);
+    return firstIndex >= 0 && value.indexOf(second, firstIndex + first.length) >= 0;
   }
 
   private periodIntent(question: string, comparison: boolean): PeriodIntent {

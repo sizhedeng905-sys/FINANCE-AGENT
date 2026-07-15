@@ -61,6 +61,32 @@ describe('phase 8 boss AI assistant', () => {
     expect(missing.find((item) => item.name === 'get_project_summary')?.data).toMatchObject({ error: expect.any(String) });
   });
 
+  it('handles adversarial repeated intent text without backtracking regular expressions', async () => {
+    const prisma: any = {
+      project: { findMany: jest.fn(async () => []) },
+      workOrder: { findUnique: jest.fn(async () => null) }
+    };
+    const reports: any = { boss: jest.fn(async () => ({ recordCount: 0 })) };
+    const riskRules: any = { findAnomalies: jest.fn(async () => ({ items: [] })) };
+    const workOrders: any = { findOne: jest.fn(async () => ({ id: 'work_order_1' })) };
+    const tools = new AiToolsService(prisma, reports, riskRules, workOrders);
+
+    const repeatedQuestion = `${'有哪些'.repeat(600)}可疑`;
+    const contexts = await tools.buildContext(repeatedQuestion, 'work_order_1', boss);
+
+    expect(contexts.map((item) => item.name)).toEqual(['get_work_order_detail']);
+    expect(riskRules.findAnomalies).not.toHaveBeenCalled();
+
+    const grounding = new AiAnswerGroundingService();
+    const reportContexts: any = [{
+      name: 'get_today_report',
+      data: { income: '100.00', expense: '40.00', profit: '60.00', recordCount: 2 }
+    }];
+    expect(grounding.validate('收入100元。', reportContexts, '多少'.repeat(1000))).toEqual({ accepted: true });
+    expect(grounding.validate('共有2条记录。', reportContexts, '一共有多少条记录')).toEqual({ accepted: true });
+    expect(grounding.validate('收入100元。', reportContexts, '一共有多少条记录')).toMatchObject({ accepted: false });
+  });
+
   it('uses the mock provider without a model deployment and logs every call', async () => {
     const now = new Date();
     const conversations: any[] = [];

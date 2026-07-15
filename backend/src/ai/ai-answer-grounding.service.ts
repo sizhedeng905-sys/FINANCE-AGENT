@@ -86,7 +86,7 @@ export class AiAnswerGroundingService {
         if (/收入/.test(question) && income !== undefined) required.push(this.normalizeNumber(String(income)));
         if (/支出|成本/.test(question) && expense !== undefined) required.push(this.normalizeNumber(String(expense)));
         if (/利润|赚钱|亏损/.test(question) && profit !== undefined) required.push(this.normalizeNumber(String(profit)));
-        if (/多少.*记录|记录.*多少/.test(question) && data.recordCount !== undefined) {
+        if (question.includes('多少') && question.includes('记录') && data.recordCount !== undefined) {
           required.push(this.normalizeNumber(String(data.recordCount)));
         }
         if (/哪个项目|哪个客户|排行|最高|最低/.test(question) && data.projectRanking?.[0]?.profit !== undefined) {

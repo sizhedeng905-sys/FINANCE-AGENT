@@ -80,7 +80,7 @@ Playwright 共 14 条，覆盖：
 
 - 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：17 suites，183 tests，失败 0；
+- 后端单测：17 suites，184 tests，失败 0；
 - PostgreSQL 集成：1 suite，30 tests，失败 0；
 - Playwright：14 tests，失败 0；
 - E2E teardown：测试数据库和 `backend/test-uploads/e2e` 均为 0 残留；
