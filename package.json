@@ -14,6 +14,8 @@
     "realdata:scan": "npm --prefix backend run realdata:scan --",
     "realdata:xlsx-profile": "npm --prefix backend run realdata:xlsx-profile --",
     "realdata:large-xlsx-profile": "npm --prefix backend run realdata:large-xlsx-profile --",
+    "realdata:ocr-prepare": "npm --prefix backend run realdata:ocr-prepare --",
+    "realdata:ocr-evaluate": "npm --prefix backend run realdata:ocr-evaluate --",
     "model:init": "node backend/scripts/model-services.mjs init",
     "model:check": "node backend/scripts/model-services.mjs check resident",
     "model:check:all": "node backend/scripts/model-services.mjs check all",

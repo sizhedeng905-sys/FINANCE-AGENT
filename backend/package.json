@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --watch --require ts-node/register/transpile-only src/main.ts",
     "start:e2e": "node --require ts-node/register/transpile-only src/main.ts",
-    "build": "npm run prisma:generate && tsc -p tsconfig.build.json",
+    "build": "npm run prisma:generate && tsc -p tsconfig.build.json && tsc -p tsconfig.scripts.json",
     "start": "node dist/main.js",
     "test": "npm run prisma:generate && jest --runInBand",
     "test:integration": "node scripts/run-integration-tests.mjs",
@@ -23,6 +23,8 @@
     "realdata:xlsx-profile": "tsx scripts/profile-real-xlsx.ts",
     "realdata:xls-profile": "tsx scripts/profile-real-xls.ts",
     "realdata:large-xlsx-profile": "tsx scripts/profile-large-xlsx.ts",
+    "realdata:ocr-prepare": "tsx scripts/prepare-real-ocr-evaluation.ts",
+    "realdata:ocr-evaluate": "tsx scripts/run-real-ocr-evaluation.ts",
     "model:routes": "tsx scripts/configure-model-runtime.ts",
     "model:check": "node scripts/verify-model-assets.mjs resident",
     "model:check:all": "node scripts/verify-model-assets.mjs all",
