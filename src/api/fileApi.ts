@@ -1,23 +1,47 @@
-import { mockRawFiles } from '@/mock/mockDataCenter';
-import type { RawFile } from '@/types/dataCenter';
-import { delay, ok } from './dataApiUtils';
+import { runtimeConfig } from '@/config/runtime';
+import type { FileBinary, RawFile } from '@/types/file';
+import { httpClient } from './httpClient';
+import { mockDeleteFile, mockGetFile, mockReadFile, mockUploadFile } from './mockFileRepository';
 
-export async function uploadFile(file: File | string, relatedProjectId: string) {
-  await delay();
-  const fileName = typeof file === 'string' ? file : file.name;
-  return ok({
-    id: `rf-${Date.now()}`,
-    fileName,
-    fileType: fileName.endsWith('.xlsx') ? 'excel' : 'other',
-    storagePath: `/mock/${fileName}`,
-    uploadedBy: '当前用户',
-    uploadedAt: new Date().toISOString(),
-    relatedProjectId,
-    status: 'uploaded',
-  } as RawFile);
+export type UploadedFile = RawFile;
+
+export function uploadFile(file: File, relatedProjectId: string, workOrderId?: string): Promise<RawFile> {
+  if (runtimeConfig.dataMode !== 'api') return mockUploadFile(file, relatedProjectId, workOrderId);
+  const formData = new FormData();
+  formData.set('file', file);
+  formData.set('relatedProjectId', relatedProjectId);
+  if (workOrderId) formData.set('workOrderId', workOrderId);
+  return httpClient.post<RawFile>('/files/upload', formData);
 }
 
-export async function getFile(id: string) {
-  await delay();
-  return ok(mockRawFiles.find((item) => item.id === id));
+export function getFile(id: string): Promise<RawFile> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<RawFile>(`/files/${encodeURIComponent(id)}`)
+    : mockGetFile(id);
+}
+
+export async function previewFile(id: string): Promise<FileBinary> {
+  if (runtimeConfig.dataMode !== 'api') return mockReadFile(id);
+  const result = await httpClient.binary(`/files/${encodeURIComponent(id)}/preview`);
+  return {
+    blob: result.blob,
+    fileName: result.fileName ?? id,
+    mimeType: result.mimeType,
+  };
+}
+
+export async function downloadFile(id: string): Promise<FileBinary> {
+  if (runtimeConfig.dataMode !== 'api') return mockReadFile(id);
+  const result = await httpClient.binary(`/files/${encodeURIComponent(id)}/download`);
+  return {
+    blob: result.blob,
+    fileName: result.fileName ?? id,
+    mimeType: result.mimeType,
+  };
+}
+
+export function deleteFile(id: string, reason?: string): Promise<RawFile> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.delete<RawFile>(`/files/${encodeURIComponent(id)}`, { body: { reason } })
+    : mockDeleteFile(id, reason);
 }

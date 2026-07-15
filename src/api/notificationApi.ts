@@ -1,29 +1,40 @@
-import { mockNotifications } from '@/mock/mockNotifications';
-import type { Role } from '@/types/auth';
-import type { Notification } from '@/types/notification';
+import { runtimeConfig } from '@/config/runtime';
+import type {
+  MarkAllNotificationsReadResult,
+  Notification,
+  NotificationListQuery,
+  PaginatedNotifications,
+} from '@/types/notification';
+import { httpClient } from './httpClient';
+import {
+  mockFetchNotifications,
+  mockMarkAllNotificationsRead,
+  mockMarkNotificationRead,
+} from './mockNotificationRepository';
 
-const delay = (ms = 160) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-// GET /api/notifications?targetRole=:role
-export async function fetchNotificationsApi(role: Role): Promise<Notification[]> {
-  await delay();
-  return mockNotifications.filter((item) => item.targetRole === role);
+function queryString(query: NotificationListQuery): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined) params.set(key, String(value));
+  });
+  const value = params.toString();
+  return value ? `?${value}` : '';
 }
 
-// POST /api/notifications
-export async function createNotificationApi(notification: Notification): Promise<Notification> {
-  await delay();
-  return notification;
+export function fetchNotificationsApi(query: NotificationListQuery = {}): Promise<PaginatedNotifications> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedNotifications>(`/notifications${queryString(query)}`)
+    : mockFetchNotifications(query);
 }
 
-// PATCH /api/notifications/:id/read
-export async function markNotificationReadApi(id: string): Promise<{ id: string; read: true }> {
-  await delay();
-  return { id, read: true };
+export function markNotificationReadApi(id: string): Promise<Notification> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<Notification>(`/notifications/${encodeURIComponent(id)}/read`)
+    : mockMarkNotificationRead(id);
 }
 
-// PATCH /api/notifications/read-all
-export async function markAllNotificationsReadApi(role: Role): Promise<{ role: Role; read: true }> {
-  await delay();
-  return { role, read: true };
+export function markAllNotificationsReadApi(): Promise<MarkAllNotificationsReadResult> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<MarkAllNotificationsReadResult>('/notifications/read-all')
+    : mockMarkAllNotificationsRead();
 }

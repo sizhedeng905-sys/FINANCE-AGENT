@@ -3,9 +3,10 @@ import {
   Catch,
   ExceptionFilter,
   HttpException,
-  HttpStatus
+  HttpStatus,
+  Logger
 } from '@nestjs/common';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 
 import { getErrorCode } from '../constants/error-codes';
 
@@ -22,11 +23,25 @@ interface PrismaKnownError {
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger('HttpException');
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request & { requestId?: string }>();
 
     const { status, code, message, data } = this.normalizeException(exception);
+
+    if (status >= 500) {
+      this.logger.error(JSON.stringify({
+        type: 'http_exception',
+        requestId: request.requestId,
+        method: request.method,
+        path: (request.originalUrl || request.url).split('?')[0],
+        statusCode: status,
+        exception: exception instanceof Error ? exception.name : 'UnknownException'
+      }));
+    }
 
     response.status(status).json({
       code,
@@ -71,6 +86,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
       };
     }
 
+    if (this.isPrismaKnownRequestError(exception) && exception.code === 'P2003') {
+      return {
+        status: HttpStatus.CONFLICT,
+        code: getErrorCode(HttpStatus.CONFLICT),
+        message: '资源仍被其他数据引用',
+        data: {
+          field: exception.meta?.field_name
+        }
+      };
+    }
+
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       code: getErrorCode(HttpStatus.INTERNAL_SERVER_ERROR),
@@ -80,6 +106,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   private resolveHttpMessage(status: number, responseBody: string | object, fallback: string): string {
+    if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+      return '文件大小超过上传限制';
+    }
+
     if (status === HttpStatus.NOT_FOUND) {
       return '资源不存在';
     }

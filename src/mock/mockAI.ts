@@ -8,6 +8,18 @@ export const bossQuickQuestions = [
 ];
 
 export function getMockAIReply(question: string) {
+  if (question.includes('不存在项目')) {
+    return '项目不存在或问题中未提供可识别的项目名称，需要人工确认。';
+  }
+  if (question.includes('今天经营情况')) {
+    return '今日确认收入 12.68 万元，确认支出 8.42 万元，利润 4.26 万元；当前有 3 项待老板审批。';
+  }
+  if (question.includes('太和中转项目')) {
+    return '太和中转项目的收入、成本和利润应以项目汇总中的已确认经营记录为准；当前 Mock 演示数据没有可确认的本月收入。';
+  }
+  if (question.includes('待老板审批')) {
+    return '当前有 3 张待老板审批工单，建议先处理高风险和已催办项目。';
+  }
   if (question.includes('异常')) {
     return '今天最需要关注两类异常：一是高额报销附件不完整，二是项目暂停后仍有维修支出。建议先看高风险报销，再看电商仓配项目。';
   }

@@ -13,7 +13,7 @@ import { workOrderTypeMap } from '@/utils/statusMap';
 export default function FinanceHome() {
   const navigate = useNavigate();
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const pending = workOrders.filter((item) => ['submitted', 'finance_reviewing'].includes(item.status));
+  const pending = workOrders.filter((item) => ['finance_reviewing', 'reviewer_rejected'].includes(item.status));
   const todayReviewed = workOrders.filter((item) => ['reviewer_reviewing', 'finance_rejected'].includes(item.status)).length;
   const aiAnomalies = workOrders.filter((item) => item.riskLevel !== 'low').length;
   const supplement = workOrders.filter((item) => item.status === 'returned_for_supplement').length;

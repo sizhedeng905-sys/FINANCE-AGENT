@@ -1,22 +1,30 @@
-import { useState } from 'react';
-import { App, Button, Card, Modal, Select, Space, Table, Tag } from 'antd';
+import { useEffect, useState } from 'react';
+import { Alert, App, Button, Card, Modal, Select, Space, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
-import { useAuthStore } from '@/store/authStore';
 import { useDataCenterStore } from '@/store/dataCenterStore';
+import { useImportStore } from '@/store/importStore';
 import type { FieldSuggestion } from '@/types/dataCenter';
 import { fieldTypeMap, suggestionStatusMap } from '@/utils/dataCenterMaps';
 
 export default function DataFieldSuggestionsPage() {
   const { message } = App.useApp();
-  const user = useAuthStore((state) => state.user);
   const [mapping, setMapping] = useState<FieldSuggestion | null>(null);
   const [fieldId, setFieldId] = useState<string>();
-  const suggestions = useDataCenterStore((state) => state.fieldSuggestions);
+  const suggestions = useImportStore((state) => state.suggestions);
+  const loading = useImportStore((state) => state.loading);
+  const error = useImportStore((state) => state.error);
+  const fetchSuggestions = useImportStore((state) => state.fetchSuggestions);
+  const approveSuggestion = useImportStore((state) => state.approveSuggestion);
+  const mapSuggestion = useImportStore((state) => state.mapSuggestion);
+  const rejectSuggestion = useImportStore((state) => state.rejectSuggestion);
   const fields = useDataCenterStore((state) => state.fields);
-  const approveSuggestion = useDataCenterStore((state) => state.approveSuggestion);
-  const mapSuggestion = useDataCenterStore((state) => state.mapSuggestion);
-  const rejectSuggestion = useDataCenterStore((state) => state.rejectSuggestion);
+  const fetchFields = useDataCenterStore((state) => state.fetchFields);
+
+  useEffect(() => {
+    void fetchSuggestions().catch(() => undefined);
+    void fetchFields({ page: 1, pageSize: 100, isActive: true }).catch(() => undefined);
+  }, [fetchFields, fetchSuggestions]);
 
   const columns: ColumnsType<FieldSuggestion> = [
     { title: '建议字段名', dataIndex: 'suggestedFieldName' },
@@ -28,34 +36,44 @@ export default function DataFieldSuggestionsPage() {
     { title: '状态', dataIndex: 'status', render: (value) => <Tag>{suggestionStatusMap[value as FieldSuggestion['status']]}</Tag> },
     {
       title: '操作',
-      render: (_, record) =>
-        record.status === 'pending' ? (
-          <Space>
-            <Button type="link" onClick={() => { approveSuggestion(record.id, user?.name ?? '财务'); message.success('字段已加入字段字典和模板，可在项目结构中查看。'); }}>批准为新字段</Button>
-            <Button type="link" onClick={() => setMapping(record)}>映射到已有字段</Button>
-            <Button type="link" danger onClick={() => { rejectSuggestion(record.id); message.success('已拒绝，该字段不会参与入库'); }}>拒绝</Button>
-          </Space>
-        ) : null,
+      width: 320,
+      render: (_, record) => record.status === 'pending' ? (
+        <Space wrap>
+          <Button type="link" loading={loading} onClick={() => void approveSuggestion(record.id).then(async () => {
+            await fetchFields({ page: 1, pageSize: 100, isActive: true });
+            message.success('字段已创建并加入当前模板');
+          }).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '批准失败'))}>批准为新字段</Button>
+          <Button type="link" onClick={() => setMapping(record)}>映射到已有字段</Button>
+          <Button type="link" danger loading={loading} onClick={() => void rejectSuggestion(record.id).then(() => message.success('该列已明确忽略')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '拒绝失败'))}>拒绝并忽略</Button>
+        </Space>
+      ) : null,
     },
   ];
 
   return (
     <div>
-      <PageHeader title="字段建议" description="未知字段经人工确认后进入字段字典和模板" />
+      <PageHeader title="字段建议" description="导入未知列的人工处理" />
+      {error ? <Alert type="error" showIcon message="字段建议请求失败" description={error} /> : null}
       <Card>
-        <Table rowKey="id" columns={columns} dataSource={suggestions} scroll={{ x: 1100 }} />
+        <Table rowKey="id" columns={columns} dataSource={suggestions} loading={loading} scroll={{ x: 1100 }} />
       </Card>
       <Modal
         title="映射到已有字段"
         open={Boolean(mapping)}
-        onCancel={() => setMapping(null)}
+        confirmLoading={loading}
+        onCancel={() => { setMapping(null); setFieldId(undefined); }}
         onOk={() => {
-          if (mapping && fieldId) {
-            mapSuggestion(mapping.id, fieldId);
-            message.success('未知字段已映射到已有字段。');
-            setMapping(null);
-            setFieldId(undefined);
+          if (!mapping || !fieldId) {
+            message.warning('请选择字段');
+            return;
           }
+          void mapSuggestion(mapping.id, fieldId)
+            .then(() => {
+              message.success('未知列已映射到已有字段');
+              setMapping(null);
+              setFieldId(undefined);
+            })
+            .catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '映射失败'));
         }}
       >
         <Select

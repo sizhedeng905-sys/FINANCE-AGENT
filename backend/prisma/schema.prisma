@@ -33,6 +33,17 @@ enum DataRecordType {
   other
 }
 
+enum AccountingDirection {
+  income
+  expense
+}
+
+enum RecordDataLayer {
+  actual
+  reconciliation
+  budget
+}
+
 enum FieldType {
   text
   number
@@ -69,6 +80,145 @@ enum BusinessRecordStatus {
   rejected
 }
 
+enum WorkOrderType {
+  transport
+  expense
+  other
+}
+
+enum WorkOrderStatus {
+  draft
+  finance_reviewing
+  finance_rejected
+  reviewer_reviewing
+  reviewer_rejected
+  ai_reviewing
+  ai_passed
+  ai_flagged
+  boss_pending
+  boss_rejected
+  completed
+  returned_for_supplement
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum NotificationType {
+  urgent
+  audit
+  system
+  boss_approval
+}
+
+enum RawFileStatus {
+  uploaded
+  parsed
+  failed
+  voided
+}
+
+enum ImportTaskStatus {
+  uploaded
+  parsing
+  parsed
+  mapping
+  pending_confirm
+  confirmed
+  failed
+  cancelled
+}
+
+enum ImportRowStatus {
+  pending
+  mapped
+  error
+  confirmed
+  duplicate
+  ignored
+}
+
+enum MappingDecisionType {
+  profile
+  field_key
+  exact_name
+  alias
+  normalized
+  fuzzy
+  manual
+  ignored
+}
+
+enum FieldSuggestionStatus {
+  pending
+  approved
+  rejected
+  mapped_to_existing
+}
+
+enum OcrTaskStatus {
+  uploaded
+  queued
+  processing
+  pending_confirm
+  confirmed
+  failed
+  cancelled
+}
+
+enum OcrAttemptStatus {
+  queued
+  processing
+  succeeded
+  failed
+}
+
+enum FileScanStatus {
+  pending
+  clean
+  infected
+  failed
+}
+
+enum AnomalyStatus {
+  open
+  acknowledged
+  resolved
+  ignored
+  accepted_risk
+  false_positive
+}
+
+enum AiMessageRole {
+  user
+  assistant
+}
+
+enum ModelDeploymentStatus {
+  unknown
+  healthy
+  unhealthy
+  disabled
+}
+
+enum AiTaskStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum AiCallAttemptStatus {
+  queued
+  running
+  succeeded
+  failed
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -78,11 +228,24 @@ model User {
   department   String?
   phone        String?
   status       UserStatus @default(active)
+  tokenVersion Int        @default(0) @map("token_version")
   createdBy    String?    @map("created_by")
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  auditLogs AuditLog[]
+  auditLogs            AuditLog[]
+  createdWorkOrders    WorkOrder[]           @relation("WorkOrderCreator")
+  approvals            Approval[]
+  timelineEntries      WorkOrderTimeline[]
+  uploadedFiles        RawFile[]
+  uploadedImportTasks  ImportTask[]          @relation("ImportTaskUploader")
+  confirmedImportTasks ImportTask[]          @relation("ImportTaskConfirmer")
+  uploadedOcrTasks     OcrTask[]             @relation("OcrTaskUploader")
+  confirmedOcrTasks    OcrTask[]             @relation("OcrTaskConfirmer")
+  ocrCorrections       OcrCorrection[]
+  aiConversations      AiConversation[]
+  aiTasks              AiTask[]
+  notificationReceipts NotificationReceipt[]
 
   @@map("users")
 }
@@ -97,12 +260,15 @@ model AuditLog {
   metadata      Json?
   ip            String?
   userAgent     String?  @map("user_agent")
+  requestId     String?  @map("request_id")
+  failureReason String?  @map("failure_reason")
   createdAt     DateTime @default(now()) @map("created_at")
 
   actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([actorUserId])
   @@index([resourceType, resourceId])
+  @@index([requestId])
   @@map("audit_logs")
 }
 
@@ -119,26 +285,47 @@ model Project {
 
   projectTemplates ProjectTemplate[]
   businessRecords  BusinessRecord[]
+  workOrders       WorkOrder[]
+  rawFiles         RawFile[]
+  importTasks      ImportTask[]
+  ocrTasks         OcrTask[]
+  fieldSuggestions FieldSuggestion[]
+  ruleRunResults   RuleRunResult[]
+  aiAnomalies      AiAnomaly[]
 
   @@index([status])
   @@map("projects")
 }
 
 model Template {
-  id          String         @id @default(cuid())
-  name        String
-  recordType  DataRecordType @map("record_type")
-  description String?
-  isSystem    Boolean        @default(false) @map("is_system")
-  createdBy   String?        @map("created_by")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  id                   String              @id @default(cuid())
+  name                 String
+  recordType           DataRecordType      @map("record_type")
+  accountingDirection  AccountingDirection @default(expense) @map("accounting_direction")
+  dataLayer            RecordDataLayer     @default(actual) @map("data_layer")
+  primaryAmountFieldId String?             @map("primary_amount_field_id")
+  primaryDateFieldId   String?             @map("primary_date_field_id")
+  version              Int                 @default(1)
+  description          String?
+  isSystem             Boolean             @default(false) @map("is_system")
+  createdBy            String?             @map("created_by")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
 
-  templateFields   TemplateField[]
-  projectTemplates ProjectTemplate[]
-  businessRecords  BusinessRecord[]
+  primaryAmountField FieldDefinition?  @relation("TemplatePrimaryAmountField", fields: [primaryAmountFieldId], references: [id], onDelete: Restrict)
+  primaryDateField   FieldDefinition?  @relation("TemplatePrimaryDateField", fields: [primaryDateFieldId], references: [id], onDelete: Restrict)
+  templateFields     TemplateField[]
+  projectTemplates   ProjectTemplate[]
+  businessRecords    BusinessRecord[]
+  workOrders         WorkOrder[]
+  importTasks        ImportTask[]
+  ocrTasks           OcrTask[]
+  mappingProfiles    MappingProfile[]
+  fieldSuggestions   FieldSuggestion[]
 
   @@index([recordType])
+  @@index([primaryAmountFieldId])
+  @@index([primaryDateFieldId])
   @@map("templates")
 }
 
@@ -155,8 +342,14 @@ model FieldDefinition {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  templateFields TemplateField[]
-  recordValues   RecordValue[]
+  templateFields      TemplateField[]
+  recordValues        RecordValue[]
+  mappingProfileRules MappingProfileRule[]
+  mappingDecisions    MappingDecision[]
+  mappedSuggestions   FieldSuggestion[]    @relation("SuggestionMappedField")
+  ocrCorrections      OcrCorrection[]
+  primaryAmountFor    Template[]           @relation("TemplatePrimaryAmountField")
+  primaryDateFor      Template[]           @relation("TemplatePrimaryDateField")
 
   @@index([isActive])
   @@map("field_definitions")
@@ -182,53 +375,851 @@ model TemplateField {
 }
 
 model ProjectTemplate {
-  id         String   @id @default(cuid())
-  projectId  String   @map("project_id")
-  templateId String   @map("template_id")
-  customName String?  @map("custom_name")
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id         String         @id @default(cuid())
+  projectId  String         @map("project_id")
+  templateId String         @map("template_id")
+  recordType DataRecordType @map("record_type")
+  customName String?        @map("custom_name")
+  isActive   Boolean        @default(true) @map("is_active")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
 
   project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, templateId])
+  @@index([projectId, recordType])
   @@index([templateId])
   @@map("project_templates")
 }
 
 model BusinessRecord {
-  id          String               @id @default(cuid())
-  projectId   String               @map("project_id")
-  templateId  String               @map("template_id")
-  recordType  DataRecordType       @map("record_type")
-  recordDate  DateTime             @map("record_date")
-  amount      Decimal              @default(0) @db.Decimal(18, 2)
-  category    String?
-  subCategory String?              @map("sub_category")
-  description String?
-  sourceType  RecordSourceType     @default(manual) @map("source_type")
-  sourceId    String               @default("manual") @map("source_id")
-  status      BusinessRecordStatus @default(pending_confirm)
-  attachments Json?
-  createdBy   String?              @map("created_by")
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
-  confirmedAt DateTime?            @map("confirmed_at")
-  confirmedBy String?              @map("confirmed_by")
-  voidedAt    DateTime?            @map("voided_at")
-  voidedBy    String?              @map("voided_by")
+  id                   String               @id @default(cuid())
+  projectId            String               @map("project_id")
+  templateId           String               @map("template_id")
+  recordType           DataRecordType       @map("record_type")
+  accountingDirection  AccountingDirection  @default(expense) @map("accounting_direction")
+  dataLayer            RecordDataLayer      @default(actual) @map("data_layer")
+  templateVersion      Int                  @default(1) @map("template_version")
+  templateSnapshot     Json?                @map("template_snapshot")
+  sourceSnapshot       Json?                @map("source_snapshot")
+  confirmationSnapshot Json?                @map("confirmation_snapshot")
+  version              Int                  @default(1)
+  recordDate           DateTime             @map("record_date")
+  amount               Decimal              @default(0) @db.Decimal(18, 2)
+  category             String?
+  subCategory          String?              @map("sub_category")
+  description          String?
+  sourceType           RecordSourceType     @default(manual) @map("source_type")
+  sourceId             String               @default("manual") @map("source_id")
+  importTaskId         String?              @map("import_task_id")
+  status               BusinessRecordStatus @default(pending_confirm)
+  attachments          Json?
+  createdBy            String?              @map("created_by")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  confirmedAt          DateTime?            @map("confirmed_at")
+  confirmedBy          String?              @map("confirmed_by")
+  voidedAt             DateTime?            @map("voided_at")
+  voidedBy             String?              @map("voided_by")
 
-  project  Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  template Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  values   RecordValue[]
+  project                Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template               Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  values                 RecordValue[]
+  generatedFromWorkOrder WorkOrder?    @relation("GeneratedRecord")
+  importTask             ImportTask?   @relation(fields: [importTaskId], references: [id], onDelete: Restrict)
+  sourceImportRow        ImportRow?    @relation("ImportRowGeneratedRecord")
+  generatedFromOcrTask   OcrTask?      @relation("OcrGeneratedRecord")
 
   @@index([projectId])
   @@index([templateId])
   @@index([status])
+  @@index([dataLayer, status, recordDate])
   @@index([recordDate])
+  @@index([importTaskId])
   @@map("business_records")
+}
+
+model WorkOrder {
+  id                     String          @id @default(cuid())
+  orderNo                String          @unique @map("order_no")
+  type                   WorkOrderType
+  projectId              String          @map("project_id")
+  templateId             String?         @map("template_id")
+  templateVersion        Int?            @map("template_version")
+  templateSnapshot       Json?           @map("template_snapshot")
+  submissionSnapshot     Json?           @map("submission_snapshot")
+  version                Int             @default(1)
+  projectName            String          @map("project_name")
+  customerName           String?         @map("customer_name")
+  creatorId              String          @map("creator_id")
+  creatorName            String          @map("creator_name")
+  amount                 Decimal         @default(0) @db.Decimal(14, 2)
+  income                 Decimal         @default(0) @db.Decimal(14, 2)
+  cost                   Decimal         @default(0) @db.Decimal(14, 2)
+  profit                 Decimal         @default(0) @db.Decimal(14, 2)
+  status                 WorkOrderStatus @default(finance_reviewing)
+  riskLevel              RiskLevel       @default(low) @map("risk_level")
+  description            String?
+  occurredDate           DateTime?       @map("occurred_date")
+  extraValues            Json?           @map("extra_values")
+  financeOpinion         String?         @map("finance_opinion")
+  reviewerOpinion        String?         @map("reviewer_opinion")
+  aiSummary              String?         @map("ai_summary")
+  bossOpinion            String?         @map("boss_opinion")
+  urgent                 Boolean         @default(false)
+  urgentReason           String?         @map("urgent_reason")
+  urgentTime             DateTime?       @map("urgent_time")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  submittedAt            DateTime?       @map("submitted_at")
+  completedAt            DateTime?       @map("completed_at")
+  generatedRecordId      String?         @unique @map("generated_record_id")
+  creationIdempotencyKey String?         @unique @map("creation_idempotency_key")
+  approvalIdempotencyKey String?         @unique @map("approval_idempotency_key")
+
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template        Template?             @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  creator         User                  @relation("WorkOrderCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  generatedRecord BusinessRecord?       @relation("GeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+  attachments     WorkOrderAttachment[]
+  timeline        WorkOrderTimeline[]
+  approvals       Approval[]
+  notifications   Notification[]
+  rawFiles        RawFile[]             @relation("RelatedWorkOrderFiles")
+  ruleRunResults  RuleRunResult[]
+  aiAnomalies     AiAnomaly[]
+
+  @@index([creatorId])
+  @@index([projectId])
+  @@index([templateId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("work_orders")
+}
+
+model WorkOrderAttachment {
+  id          String   @id @default(cuid())
+  workOrderId String   @map("work_order_id")
+  rawFileId   String   @map("raw_file_id")
+  uploadedBy  String?  @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  rawFile   RawFile   @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
+
+  @@unique([workOrderId, rawFileId])
+  @@index([rawFileId])
+  @@map("work_order_attachments")
+}
+
+model RawFile {
+  id                 String         @id @default(cuid())
+  fileName           String         @map("file_name")
+  originalFileName   String         @map("original_file_name")
+  fileType           String         @map("file_type")
+  mimeType           String         @map("mime_type")
+  fileSize           BigInt         @map("file_size")
+  storagePath        String         @map("storage_path")
+  sha256             String
+  uploadedBy         String         @map("uploaded_by")
+  uploadedAt         DateTime       @default(now()) @map("uploaded_at")
+  relatedProjectId   String?        @map("related_project_id")
+  relatedWorkOrderId String?        @map("related_work_order_id")
+  status             RawFileStatus  @default(uploaded)
+  scanStatus         FileScanStatus @default(pending) @map("scan_status")
+  previewStatus      String         @default("original") @map("preview_status")
+  isVoided           Boolean        @default(false) @map("is_voided")
+  voidReason         String?        @map("void_reason")
+  voidedAt           DateTime?      @map("voided_at")
+  voidedBy           String?        @map("voided_by")
+
+  uploader         User                  @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
+  project          Project?              @relation(fields: [relatedProjectId], references: [id], onDelete: SetNull)
+  relatedWorkOrder WorkOrder?            @relation("RelatedWorkOrderFiles", fields: [relatedWorkOrderId], references: [id], onDelete: SetNull)
+  attachments      WorkOrderAttachment[]
+  importTasks      ImportTask[]
+  ocrTasks         OcrTask[]
+
+  @@index([sha256])
+  @@index([uploadedBy])
+  @@index([relatedProjectId])
+  @@index([relatedWorkOrderId])
+  @@index([scanStatus])
+  @@map("raw_files")
+}
+
+model ImportTask {
+  id               String           @id @default(cuid())
+  projectId        String           @map("project_id")
+  templateId       String           @map("template_id")
+  templateVersion  Int              @default(1) @map("template_version")
+  templateSnapshot Json?            @map("template_snapshot")
+  rawFileId        String           @unique @map("raw_file_id")
+  fileName         String           @map("file_name")
+  importType       DataRecordType   @map("import_type")
+  status           ImportTaskStatus @default(uploaded)
+  version          Int              @default(1)
+  leaseToken       String?          @map("lease_token")
+  leaseUntil       DateTime?        @map("lease_until")
+  parseConfig      Json?            @map("parse_config")
+  parseRequestedBy String?          @map("parse_requested_by")
+  executionMode    String?          @map("execution_mode")
+  processingMode   String?          @map("processing_mode")
+  processedRows    Int              @default(0) @map("processed_rows")
+  parseAttempts    Int              @default(0) @map("parse_attempts")
+  uploadedBy       String           @map("uploaded_by")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  parsedAt         DateTime?        @map("parsed_at")
+  confirmedAt      DateTime?        @map("confirmed_at")
+  confirmedBy      String?          @map("confirmed_by")
+  errorMessage     String?          @map("error_message")
+  idempotencyKey   String?          @unique @map("idempotency_key")
+  totalRows        Int              @default(0) @map("total_rows")
+  validRows        Int              @default(0) @map("valid_rows")
+  errorRows        Int              @default(0) @map("error_rows")
+  duplicateRows    Int              @default(0) @map("duplicate_rows")
+  ignoredRows      Int              @default(0) @map("ignored_rows")
+  importedRows     Int              @default(0) @map("imported_rows")
+
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template         Template          @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  rawFile          RawFile           @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
+  uploader         User              @relation("ImportTaskUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  confirmer        User?             @relation("ImportTaskConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  sheets           ImportSheet[]
+  columns          ImportColumn[]
+  rows             ImportRow[]
+  mappingDecisions MappingDecision[]
+  fieldSuggestions FieldSuggestion[]
+  businessRecords  BusinessRecord[]
+
+  @@index([projectId, createdAt])
+  @@index([status, leaseUntil])
+  @@index([templateId])
+  @@index([status])
+  @@index([uploadedBy])
+  @@map("import_tasks")
+}
+
+model ImportSheet {
+  id             String   @id @default(cuid())
+  importTaskId   String   @map("import_task_id")
+  sheetName      String   @map("sheet_name")
+  sheetIndex     Int      @map("sheet_index")
+  headerRowIndex Int      @default(1) @map("header_row_index")
+  rowCount       Int      @default(0) @map("row_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  importTask ImportTask     @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
+  columns    ImportColumn[]
+  rows       ImportRow[]
+
+  @@unique([importTaskId, sheetIndex])
+  @@index([importTaskId])
+  @@map("import_sheets")
+}
+
+model ImportColumn {
+  id             String   @id @default(cuid())
+  importTaskId   String   @map("import_task_id")
+  sheetId        String   @map("sheet_id")
+  columnIndex    Int      @map("column_index")
+  sourceKey      String   @map("source_key")
+  sourceName     String   @map("source_name")
+  normalizedName String   @map("normalized_name")
+  sampleValues   Json     @default("[]") @map("sample_values")
+  inferredType   String   @map("inferred_type")
+  duplicateName  Boolean  @default(false) @map("duplicate_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  importTask ImportTask       @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
+  sheet      ImportSheet      @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  decision   MappingDecision?
+  suggestion FieldSuggestion?
+
+  @@unique([sheetId, columnIndex])
+  @@unique([importTaskId, sourceKey])
+  @@index([importTaskId])
+  @@map("import_columns")
+}
+
+model ImportRow {
+  id                String          @id @default(cuid())
+  importTaskId      String          @map("import_task_id")
+  sheetId           String          @map("sheet_id")
+  rowNumber         Int             @map("row_number")
+  rawData           Json            @map("raw_data_json")
+  normalizedData    Json?           @map("normalized_data_json")
+  rowHash           String          @map("row_hash")
+  status            ImportRowStatus @default(pending)
+  errors            Json            @default("[]")
+  warnings          Json            @default("[]")
+  confirmedAt       DateTime?       @map("confirmed_at")
+  generatedRecordId String?         @unique @map("generated_record_id")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  importTask      ImportTask      @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
+  sheet           ImportSheet     @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  generatedRecord BusinessRecord? @relation("ImportRowGeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+
+  @@unique([sheetId, rowNumber])
+  @@index([importTaskId, status])
+  @@index([rowHash])
+  @@map("import_rows")
+}
+
+model MappingProfile {
+  id         String   @id @default(cuid())
+  templateId String   @map("template_id")
+  name       String
+  isActive   Boolean  @default(true) @map("is_active")
+  reviewedBy String?  @map("reviewed_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  template Template             @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  rules    MappingProfileRule[]
+
+  @@unique([templateId, name])
+  @@index([templateId, isActive])
+  @@map("mapping_profiles")
+}
+
+model MappingProfileRule {
+  id                   String   @id @default(cuid())
+  mappingProfileId     String   @map("mapping_profile_id")
+  sourceName           String   @map("source_name")
+  normalizedSourceName String   @map("normalized_source_name")
+  targetFieldId        String?  @map("target_field_id")
+  ignored              Boolean  @default(false)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  profile     MappingProfile   @relation(fields: [mappingProfileId], references: [id], onDelete: Cascade)
+  targetField FieldDefinition? @relation(fields: [targetFieldId], references: [id], onDelete: Restrict)
+
+  @@unique([mappingProfileId, normalizedSourceName])
+  @@index([targetFieldId])
+  @@map("mapping_profile_rules")
+}
+
+model MappingDecision {
+  id             String              @id @default(cuid())
+  importTaskId   String              @map("import_task_id")
+  importColumnId String              @unique @map("import_column_id")
+  targetFieldId  String?             @map("target_field_id")
+  mappingType    MappingDecisionType @map("mapping_type")
+  confidence     Decimal             @default(0) @db.Decimal(5, 4)
+  ignored        Boolean             @default(false)
+  confirmedBy    String?             @map("confirmed_by")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  importTask   ImportTask       @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
+  importColumn ImportColumn     @relation(fields: [importColumnId], references: [id], onDelete: Cascade)
+  targetField  FieldDefinition? @relation(fields: [targetFieldId], references: [id], onDelete: Restrict)
+
+  @@index([importTaskId])
+  @@index([targetFieldId])
+  @@map("mapping_decisions")
+}
+
+model FieldSuggestion {
+  id                 String                @id @default(cuid())
+  projectId          String                @map("project_id")
+  templateId         String                @map("template_id")
+  importTaskId       String                @map("import_task_id")
+  importColumnId     String                @unique @map("import_column_id")
+  sourceName         String                @map("source_name")
+  suggestedFieldName String                @map("suggested_field_name")
+  suggestedFieldType FieldType             @map("suggested_field_type")
+  sampleValues       Json                  @default("[]") @map("sample_values")
+  reason             String?
+  status             FieldSuggestionStatus @default(pending)
+  approvedBy         String?               @map("approved_by")
+  approvedAt         DateTime?             @map("approved_at")
+  mappedFieldId      String?               @map("mapped_field_id")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template     Template         @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  importTask   ImportTask       @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
+  importColumn ImportColumn     @relation(fields: [importColumnId], references: [id], onDelete: Cascade)
+  mappedField  FieldDefinition? @relation("SuggestionMappedField", fields: [mappedFieldId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, status])
+  @@index([templateId])
+  @@index([importTaskId])
+  @@map("field_suggestions")
+}
+
+model OcrTask {
+  id                String        @id @default(cuid())
+  rawFileId         String        @map("raw_file_id")
+  projectId         String        @map("project_id")
+  templateId        String        @map("template_id")
+  templateVersion   Int           @default(1) @map("template_version")
+  templateSnapshot  Json?         @map("template_snapshot")
+  status            OcrTaskStatus @default(uploaded)
+  version           Int           @default(1)
+  leaseToken        String?       @map("lease_token")
+  leaseUntil        DateTime?     @map("lease_until")
+  provider          String
+  modelName         String        @map("model_name")
+  modelVersion      String?       @map("model_version")
+  endpointSnapshot  String?       @map("endpoint_snapshot")
+  providerOptions   Json?         @map("provider_options")
+  extractedText     String?       @map("extracted_text")
+  extractedFields   Json          @default("{}") @map("extracted_fields")
+  fieldConfidence   Json          @default("{}") @map("field_confidence_json")
+  pages             Json          @default("[]")
+  textBlocks        Json          @default("[]") @map("text_blocks")
+  tables            Json          @default("[]")
+  fieldCandidates   Json          @default("[]") @map("field_candidates")
+  rawResult         Json?         @map("raw_result")
+  rawResultRef      String?       @map("raw_result_ref")
+  pageCount         Int           @default(0) @map("page_count")
+  avgConfidence     Decimal?      @map("avg_confidence") @db.Decimal(6, 4)
+  latencyMs         Int?          @map("latency_ms")
+  attemptCount      Int           @default(0) @map("attempt_count")
+  retryCount        Int           @default(0) @map("retry_count")
+  errorMessage      String?       @map("error_message")
+  uploadedBy        String        @map("uploaded_by")
+  confirmedBy       String?       @map("confirmed_by")
+  confirmedAt       DateTime?     @map("confirmed_at")
+  generatedRecordId String?       @unique @map("generated_record_id")
+  idempotencyKey    String?       @unique @map("idempotency_key")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  rawFile         RawFile         @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template        Template        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  uploader        User            @relation("OcrTaskUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  confirmer       User?           @relation("OcrTaskConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  generatedRecord BusinessRecord? @relation("OcrGeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+  attempts        OcrAttempt[]
+  corrections     OcrCorrection[]
+
+  @@index([projectId, createdAt])
+  @@index([templateId])
+  @@index([rawFileId])
+  @@index([status])
+  @@index([status, leaseUntil])
+  @@index([uploadedBy])
+  @@map("ocr_tasks")
+}
+
+model OcrAttempt {
+  id               String           @id @default(cuid())
+  ocrTaskId        String           @map("ocr_task_id")
+  attemptNo        Int              @map("attempt_no")
+  status           OcrAttemptStatus @default(queued)
+  provider         String
+  modelName        String           @map("model_name")
+  modelVersion     String?          @map("model_version")
+  endpointSnapshot String?          @map("endpoint_snapshot")
+  inputSha256      String           @map("input_sha256")
+  correlationId    String           @map("correlation_id")
+  startedAt        DateTime?        @map("started_at")
+  completedAt      DateTime?        @map("completed_at")
+  latencyMs        Int?             @map("latency_ms")
+  pageCount        Int?             @map("page_count")
+  rawResult        Json?            @map("raw_result")
+  rawResultRef     String?          @map("raw_result_ref")
+  errorMessage     String?          @map("error_message")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  ocrTask OcrTask @relation(fields: [ocrTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([ocrTaskId, attemptNo])
+  @@index([ocrTaskId, createdAt])
+  @@index([correlationId])
+  @@map("ocr_attempts")
+}
+
+model OcrCorrection {
+  id                 String   @id @default(cuid())
+  ocrTaskId          String   @map("ocr_task_id")
+  fieldId            String   @map("field_id")
+  fieldName          String   @map("field_name")
+  beforeValue        String?  @map("before_value")
+  afterValue         String   @map("after_value")
+  originalConfidence Decimal? @map("original_confidence") @db.Decimal(6, 4)
+  reason             String?
+  correctedBy        String   @map("corrected_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  ocrTask   OcrTask         @relation(fields: [ocrTaskId], references: [id], onDelete: Cascade)
+  field     FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+  corrector User            @relation(fields: [correctedBy], references: [id], onDelete: Restrict)
+
+  @@index([ocrTaskId, createdAt])
+  @@index([fieldId])
+  @@index([correctedBy])
+  @@map("ocr_corrections")
+}
+
+model WorkOrderTimeline {
+  id           String           @id @default(cuid())
+  workOrderId  String           @map("work_order_id")
+  operatorId   String?          @map("operator_id")
+  operatorName String?          @map("operator_name")
+  role         String
+  action       String
+  comment      String?
+  fromStatus   WorkOrderStatus? @map("from_status")
+  toStatus     WorkOrderStatus? @map("to_status")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  operator  User?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId, createdAt])
+  @@map("work_order_timeline")
+}
+
+model Approval {
+  id           String   @id @default(cuid())
+  workOrderId  String   @map("work_order_id")
+  approverId   String?  @map("approver_id")
+  approverRole String   @map("approver_role")
+  action       String
+  comment      String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  approver  User?     @relation(fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([workOrderId])
+  @@index([approverId])
+  @@map("approvals")
+}
+
+model Notification {
+  id                 String           @id @default(cuid())
+  title              String
+  content            String
+  type               NotificationType
+  senderId           String?          @map("sender_id")
+  senderName         String?          @map("sender_name")
+  targetRole         UserRole?        @map("target_role")
+  targetUserId       String?          @map("target_user_id")
+  relatedWorkOrderId String?          @map("related_work_order_id")
+  read               Boolean          @default(false)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  readAt             DateTime?        @map("read_at")
+
+  workOrder WorkOrder?            @relation(fields: [relatedWorkOrderId], references: [id], onDelete: Cascade)
+  receipts  NotificationReceipt[]
+
+  @@index([targetRole, read])
+  @@index([targetUserId, read])
+  @@index([relatedWorkOrderId])
+  @@map("notifications")
+}
+
+model NotificationReceipt {
+  id             String   @id @default(cuid())
+  notificationId String   @map("notification_id")
+  userId         String   @map("user_id")
+  readAt         DateTime @default(now()) @map("read_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
+  @@map("notification_receipts")
+}
+
+model RiskRule {
+  id            String    @id @default(cuid())
+  ruleKey       String    @unique @map("rule_key")
+  ruleName      String    @map("rule_name")
+  ruleType      String    @map("rule_type")
+  targetType    String    @default("work_order") @map("target_type")
+  severity      RiskLevel @default(medium)
+  conditionJson Json      @map("condition_json")
+  description   String?
+  isActive      Boolean   @default(true) @map("is_active")
+  createdBy     String?   @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  runResults RuleRunResult[]
+  anomalies  AiAnomaly[]
+
+  @@index([isActive])
+  @@index([targetType])
+  @@map("risk_rules")
+}
+
+model RuleRunResult {
+  id          String     @id @default(cuid())
+  runId       String     @map("run_id")
+  ruleId      String     @map("rule_id")
+  targetType  String     @map("target_type")
+  targetId    String     @map("target_id")
+  projectId   String?    @map("project_id")
+  workOrderId String?    @map("work_order_id")
+  passed      Boolean
+  riskLevel   RiskLevel? @map("risk_level")
+  resultJson  Json       @default("{}") @map("result_json")
+  runBy       String     @default("system") @map("run_by")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  rule      RiskRule   @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([targetType, targetId])
+  @@index([projectId])
+  @@index([ruleId])
+  @@map("rule_run_results")
+}
+
+model AiAnomaly {
+  id             String        @id @default(cuid())
+  anomalyType    String        @map("anomaly_type")
+  ruleId         String        @map("rule_id")
+  projectId      String?       @map("project_id")
+  workOrderId    String        @map("work_order_id")
+  riskLevel      RiskLevel     @map("risk_level")
+  reason         String
+  suggestion     String?
+  evidence       Json?
+  status         AnomalyStatus @default(open)
+  detectedAt     DateTime      @default(now()) @map("detected_at")
+  resolvedAt     DateTime?     @map("resolved_at")
+  handledById    String?       @map("handled_by_id")
+  handledByName  String?       @map("handled_by_name")
+  handlingReason String?       @map("handling_reason")
+  handledAt      DateTime?     @map("handled_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  rule      RiskRule  @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([workOrderId, ruleId])
+  @@index([status, riskLevel])
+  @@index([projectId])
+  @@map("ai_anomalies")
+}
+
+model AiConversation {
+  id          String   @id @default(cuid())
+  ownerUserId String   @map("owner_user_id")
+  title       String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User        @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+  callLogs AiCallLog[]
+
+  @@index([ownerUserId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String        @id @default(cuid())
+  conversationId String        @map("conversation_id")
+  role           AiMessageRole
+  content        String
+  toolContext    Json?         @map("tool_context")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiModelConfig {
+  id               String   @id @default(cuid())
+  provider         String
+  modelName        String   @map("model_name")
+  displayName      String?  @map("display_name")
+  baseUrl          String?  @map("base_url")
+  apiKeySecretName String?  @map("api_key_secret_name")
+  isLocal          Boolean  @default(false) @map("is_local")
+  supportsToolCall Boolean  @default(false) @map("supports_tool_call")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdBy        String?  @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  callLogs AiCallLog[]
+
+  @@index([provider, isActive])
+  @@map("ai_model_configs")
+}
+
+model ModelDeployment {
+  id                  String                @id @default(cuid())
+  deploymentKey       String                @unique @map("deployment_key")
+  provider            String
+  modelName           String                @map("model_name")
+  modelVersion        String?               @map("model_version")
+  endpoint            String?
+  secretRef           String?               @map("secret_ref")
+  taskTypes           Json                  @default("[]") @map("task_types")
+  maxConcurrency      Int                   @default(1) @map("max_concurrency")
+  timeoutMs           Int                   @default(30000) @map("timeout_ms")
+  isLocal             Boolean               @default(true) @map("is_local")
+  isEnabled           Boolean               @default(false) @map("is_enabled")
+  status              ModelDeploymentStatus @default(unknown)
+  lastHealthAt        DateTime?             @map("last_health_at")
+  lastHealthLatencyMs Int?                  @map("last_health_latency_ms")
+  lastError           String?               @map("last_error")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+
+  routes       TaskModelRoute[]
+  callAttempts AiCallAttempt[]
+
+  @@index([provider, isEnabled])
+  @@index([status])
+  @@map("model_deployments")
+}
+
+model TaskModelRoute {
+  id             String   @id @default(cuid())
+  taskType       String   @map("task_type")
+  deploymentId   String   @map("deployment_id")
+  priority       Int      @default(100)
+  isEnabled      Boolean  @default(true) @map("is_enabled")
+  fallbackPolicy String   @default("manual") @map("fallback_policy")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  deployment ModelDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@unique([taskType, deploymentId])
+  @@index([taskType, isEnabled, priority])
+  @@map("task_model_routes")
+}
+
+model AiTask {
+  id            String       @id @default(cuid())
+  taskType      String       @map("task_type")
+  resourceType  String?      @map("resource_type")
+  resourceId    String?      @map("resource_id")
+  status        AiTaskStatus @default(queued)
+  inputHash     String       @map("input_hash")
+  inputPayload  Json?        @map("input_payload")
+  outputPayload Json?        @map("output_payload")
+  outputRef     String?      @map("output_ref")
+  correlationId String       @map("correlation_id")
+  errorMessage  String?      @map("error_message")
+  createdBy     String?      @map("created_by")
+  startedAt     DateTime?    @map("started_at")
+  completedAt   DateTime?    @map("completed_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  creator  User?           @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  attempts AiCallAttempt[]
+
+  @@index([taskType, status])
+  @@index([resourceType, resourceId])
+  @@index([correlationId])
+  @@map("ai_tasks")
+}
+
+model AiCallAttempt {
+  id               String              @id @default(cuid())
+  aiTaskId         String              @map("ai_task_id")
+  deploymentId     String?             @map("deployment_id")
+  promptVersionId  String?             @map("prompt_version_id")
+  attemptNo        Int                 @map("attempt_no")
+  status           AiCallAttemptStatus @default(queued)
+  provider         String
+  modelName        String              @map("model_name")
+  modelVersion     String?             @map("model_version")
+  endpointSnapshot String?             @map("endpoint_snapshot")
+  inputHash        String              @map("input_hash")
+  outputPayload    Json?               @map("output_payload")
+  outputRef        String?             @map("output_ref")
+  latencyMs        Int?                @map("latency_ms")
+  inputTokens      Int                 @default(0) @map("input_tokens")
+  outputTokens     Int                 @default(0) @map("output_tokens")
+  unitCount        Int                 @default(0) @map("unit_count")
+  retry            Boolean             @default(false)
+  fallback         Boolean             @default(false)
+  errorMessage     String?             @map("error_message")
+  correlationId    String              @map("correlation_id")
+  startedAt        DateTime?           @map("started_at")
+  completedAt      DateTime?           @map("completed_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+
+  aiTask        AiTask           @relation(fields: [aiTaskId], references: [id], onDelete: Cascade)
+  deployment    ModelDeployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  promptVersion AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+
+  @@unique([aiTaskId, attemptNo])
+  @@index([deploymentId, createdAt])
+  @@index([correlationId])
+  @@map("ai_call_attempts")
+}
+
+model AiPromptVersion {
+  id                 String   @id @default(cuid())
+  promptKey          String   @map("prompt_key")
+  versionNo          Int      @map("version_no")
+  title              String?
+  systemPrompt       String   @map("system_prompt")
+  userPromptTemplate String?  @map("user_prompt_template")
+  outputSchemaJson   Json?    @map("output_schema_json")
+  isActive           Boolean  @default(false) @map("is_active")
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  callLogs     AiCallLog[]
+  taskAttempts AiCallAttempt[]
+
+  @@unique([promptKey, versionNo])
+  @@index([promptKey, isActive])
+  @@map("ai_prompt_versions")
+}
+
+model AiCallLog {
+  id               String   @id @default(cuid())
+  conversationId   String?  @map("conversation_id")
+  modelConfigId    String?  @map("model_config_id")
+  promptVersionId  String?  @map("prompt_version_id")
+  provider         String
+  modelName        String   @map("model_name")
+  requestPayload   Json     @map("request_payload")
+  responsePayload  Json?    @map("response_payload")
+  inputTokens      Int      @default(0) @map("input_tokens")
+  outputTokens     Int      @default(0) @map("output_tokens")
+  latencyMs        Int      @default(0) @map("latency_ms")
+  success          Boolean  @default(true)
+  errorMessage     String?  @map("error_message")
+  endpointSnapshot String?  @map("endpoint_snapshot")
+  inputHash        String?  @map("input_hash")
+  correlationId    String?  @map("correlation_id")
+  attemptNo        Int      @default(1) @map("attempt_no")
+  fallback         Boolean  @default(false)
+  createdBy        String?  @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  conversation  AiConversation?  @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  modelConfig   AiModelConfig?   @relation(fields: [modelConfigId], references: [id], onDelete: SetNull)
+  promptVersion AiPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([modelName, createdAt])
+  @@index([createdAt])
+  @@index([correlationId])
+  @@map("ai_call_logs")
 }
 
 model RecordValue {
@@ -252,14 +1243,15 @@ model RecordValue {
 }
 
 model LedgerEvent {
-  id            String   @id @default(cuid())
-  eventType     String   @map("event_type")
-  aggregateType String   @map("aggregate_type")
-  aggregateId   String   @map("aggregate_id")
-  actorUserId   String?  @map("actor_user_id")
-  actorUsername String?  @map("actor_username")
-  payload       Json?
-  createdAt     DateTime @default(now()) @map("created_at")
+  id             String   @id @default(cuid())
+  eventType      String   @map("event_type")
+  aggregateType  String   @map("aggregate_type")
+  aggregateId    String   @map("aggregate_id")
+  actorUserId    String?  @map("actor_user_id")
+  actorUsername  String?  @map("actor_username")
+  idempotencyKey String?  @unique @map("idempotency_key")
+  payload        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([aggregateType, aggregateId])
   @@index([eventType])

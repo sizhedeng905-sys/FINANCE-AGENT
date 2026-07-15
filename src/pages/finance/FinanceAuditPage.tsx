@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { App, Card, Descriptions, Empty, List, Space, Tabs, Typography } from 'antd';
+import { Alert, App, Card, Descriptions, Empty, List, Space, Tabs, Typography } from 'antd';
 import PageHeader from '@/components/PageHeader';
 import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
 import AISummaryCard from '@/components/workOrder/AISummaryCard';
@@ -7,9 +7,7 @@ import AuditActionBar, { type AuditActionPayload } from '@/components/workOrder/
 import AuditTimeline from '@/components/workOrder/AuditTimeline';
 import RiskTag from '@/components/workOrder/RiskTag';
 import StatusTag from '@/components/workOrder/StatusTag';
-import { useAuthStore } from '@/store/authStore';
 import { useWorkOrderStore } from '@/store/workOrderStore';
-import type { WorkOrder } from '@/types/workOrder';
 import { formatMoney } from '@/utils/format';
 import { workOrderTypeMap } from '@/utils/statusMap';
 
@@ -19,36 +17,31 @@ export default function FinanceAuditPage() {
   const { message } = App.useApp();
   const [tab, setTab] = useState<TabKey>('pending');
   const [selectedId, setSelectedId] = useState<string>();
-  const user = useAuthStore((state) => state.user);
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const updateStatus = useWorkOrderStore((state) => state.updateStatus);
+  const financeReview = useWorkOrderStore((state) => state.financeReview);
+  const runAiReview = useWorkOrderStore((state) => state.runAiReview);
+  const loading = useWorkOrderStore((state) => state.loading);
+  const error = useWorkOrderStore((state) => state.error);
 
   const list = useMemo(() => {
-    if (tab === 'pending') return workOrders.filter((item) => ['submitted', 'finance_reviewing'].includes(item.status));
-    if (tab === 'anomaly') return workOrders.filter((item) => item.riskLevel !== 'low' && ['submitted', 'finance_reviewing'].includes(item.status));
-    if (tab === 'reviewed') return workOrders.filter((item) => ['reviewer_reviewing', 'finance_approved'].includes(item.status));
+    if (tab === 'pending') return workOrders.filter((item) => ['finance_reviewing', 'reviewer_rejected'].includes(item.status));
+    if (tab === 'anomaly') return workOrders.filter((item) => item.riskLevel !== 'low' && ['finance_reviewing', 'reviewer_rejected'].includes(item.status));
+    if (tab === 'reviewed') return workOrders.filter((item) => ['reviewer_reviewing', 'ai_reviewing', 'boss_pending', 'completed'].includes(item.status));
     return workOrders.filter((item) => item.status === 'finance_rejected');
   }, [tab, workOrders]);
 
   const selected = list.find((item) => item.id === selectedId) ?? list[0];
 
-  const handleAction = (payload: AuditActionPayload) => {
-    if (!user || !selected) return;
-    updateStatus({
-      id: selected.id,
-      operator: user.name,
-      role: user.role,
-      action: payload.action,
-      comment: payload.comment,
-      status: payload.status,
-      patch: { financeOpinion: payload.comment },
-    });
+  const handleAction = async (payload: AuditActionPayload) => {
+    if (!selected) return;
+    await financeReview(selected.id, { action: payload.action, comment: payload.comment || undefined });
     message.success('财务审核操作成功');
   };
 
   return (
     <div>
       <PageHeader title="财务审核中心" description="左侧选择工单，右侧完成审核操作" />
+      {error ? <Alert type="error" showIcon message="工单加载或操作失败" description={error} /> : null}
       <div className="audit-layout">
         <Card className="audit-list-card">
           <Tabs
@@ -65,6 +58,7 @@ export default function FinanceAuditPage() {
             ]}
           />
           <List
+            loading={loading}
             dataSource={list}
             locale={{ emptyText: '暂无工单' }}
             renderItem={(item) => (
@@ -106,7 +100,15 @@ export default function FinanceAuditPage() {
               </div>
               <Card title="审核时间线"><AuditTimeline timeline={selected.timeline} /></Card>
               <Card title="财务操作">
-                <AuditActionBar role="finance" workOrder={selected} onAction={handleAction} />
+                <AuditActionBar
+                  role="finance"
+                  workOrder={selected}
+                  onAction={handleAction}
+                  onSimulateAI={async () => {
+                    await runAiReview(selected.id);
+                    message.success('规则复核已完成');
+                  }}
+                />
               </Card>
             </>
           ) : (

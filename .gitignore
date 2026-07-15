@@ -2,9 +2,27 @@ node_modules
 dist
 .env
 .env.*
+!.env.example
+!backend/.env.example
+!backend/.env.test.example
 *.local
 *.log
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
+backend/uploads/
+backend/test-uploads/
+# Local company source documents must never be committed.
+数据文件/
+# Local manifests, labels, derived samples, and raw benchmark output.
+.realdata-test/
+playwright-report/
+test-results/
+model/
+backend/model/
+*.safetensors
+*.safetensors.incomplete
+*.gguf
 financial-agent-frontend-package*.zip
 vite.config.js
 vite.config.d.ts

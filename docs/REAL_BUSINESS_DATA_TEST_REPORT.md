@@ -1,0 +1,364 @@
+# FINANCE-AGENT 真实业务数据 B0 基线报告
+
+> 生成时间：2026-07-15T05:15:48.108Z
+>
+> 本报告只包含匿名聚合指标。原始路径、文件名、完整哈希、业务值和 OCR 原文仅保存在 Git 忽略的本地清单中。
+
+## 门禁结论
+
+| 检查项 | 结果 |
+| --- | --- |
+| 物理文件已扫描 | 112 / 112 |
+| 原始文件复核哈希未变化 | 通过（112 / 112） |
+| 文件均有匿名业务分类 | 通过 |
+| 公开报告包含原始路径/完整哈希 | 否 |
+| B0 是否允许进入 B1/B2 | 允许，按优先级修复兼容问题 |
+
+## 文件概况
+
+| 格式 | 数量 | 空间 |
+| --- | ---: | ---: |
+| `.docx` | 1 | 0.04 MiB |
+| `.jpg` | 24 | 7.18 MiB |
+| `.pdf` | 23 | 18.98 MiB |
+| `.png` | 11 | 1.99 MiB |
+| `.xls` | 15 | 0.91 MiB |
+| `.xlsx` | 34 | 284.61 MiB |
+| `.zip` | 4 | 9.53 MiB |
+| **合计** | **112** | **323.25 MiB** |
+
+## 匿名业务分类
+
+| 数据族 | 数量 |
+| --- | ---: |
+| `RB-ARC` | 4 |
+| `RB-ATT` | 7 |
+| `RB-CASH` | 2 |
+| `RB-CLM` | 5 |
+| `RB-EINV` | 21 |
+| `RB-EXP` | 11 |
+| `RB-FRT` | 14 |
+| `RB-MDM` | 3 |
+| `RB-MGT` | 2 |
+| `RB-OTHER` | 3 |
+| `RB-PAY` | 3 |
+| `RB-SCAN` | 2 |
+| `RB-SHOT` | 25 |
+| `RB-TABLE-IMG` | 10 |
+
+## 当前处理路线
+
+| 路线 | 数量 |
+| --- | ---: |
+| `manual-only` | 1 |
+| `needs-conversion` | 19 |
+| `needs-profile` | 27 |
+| `security-rejected` | 6 |
+| `supported` | 59 |
+
+| 主要原因 | 数量 |
+| --- | ---: |
+| `merged_cells` | 30 |
+| `formula_cells` | 29 |
+| `multiple_non_empty_sheets` | 22 |
+| `legacy_xls_requires_conversion` | 15 |
+| `embedded_media` | 10 |
+| `hidden_sheets` | 8 |
+| `exceeds_default_upload_limit` | 7 |
+| `active_or_external_office_parts` | 6 |
+| `file_security_rejected` | 6 |
+| `archive_requires_safe_unpack` | 4 |
+| `document_table_requires_manual_route` | 1 |
+| `exceeds_hard_upload_limit` | 1 |
+| `ocr_page_limit` | 1 |
+| `ocr_preprocessor_rejected` | 1 |
+| `row_limit` | 1 |
+
+## Excel 结构基线
+
+| 指标 | 结果 |
+| --- | ---: |
+| XLSX 文件 | 34 |
+| 工作表总数 | 298 |
+| 多工作表文件 | 23 |
+| 多个非空工作表文件 | 22 |
+| 含隐藏工作表文件 | 8 |
+| 含公式文件 | 29 |
+| 含合并单元格文件 | 30 |
+| 含内嵌媒体文件 | 10 |
+| 内嵌媒体对象 | 998 |
+| 内嵌媒体大小 | 256.38 MiB |
+| 单文件最大工作表数 | 32 |
+| 单工作表最大行数 | 30196 |
+| 最大列数 | 180 |
+| 超过默认上传限制 | 7 |
+| 超过硬上传限制 | 1 |
+| 超过当前行数限制 | 1 |
+
+## PDF、图片和文档
+
+| 指标 | 结果 |
+| --- | ---: |
+| PDF 文件 | 23 |
+| 单页 PDF | 21 |
+| 最大页数 | 35 |
+| 超过 OCR 页数限制 | 1 |
+| 图片文件 | 35 |
+| 长图 | 6 |
+| 最大宽度 | 2016 |
+| 最大高度 | 4794 |
+| DOCX 文件 | 1 |
+| DOCX 表格/表格行 | 1 / 166 |
+
+## 重复与归档
+
+| 指标 | 结果 |
+| --- | ---: |
+| 独立文件完全重复组 | 6 |
+| 重复组涉及文件 | 12 |
+| ZIP 文件 | 4 |
+| ZIP 条目 | 69 |
+| 与散文件完全相同的条目 | 46 |
+| ZIP 内独有表格文件 | 23 |
+| 不安全路径/加密条目 | 0 / 0 |
+
+## 现有服务兼容性
+
+| 检查器 | 接受 | 拒绝 | 不适用/未检查 |
+| --- | ---: | ---: | ---: |
+| FileSecurityService | 102 | 10 | 0 |
+| DocumentPreprocessorService | 57 | 1 | 54 |
+
+## B0 结论
+
+1. 多 Sheet、合并表头、公式和旧版 XLS 已进入显式选择或人工复核路径；第一版不开放超过 50 MiB 的独立通道，不应直接提高全局限制绕过。
+2. 表格数据与内嵌凭证必须分层处理，避免一次性载入大量媒体对象。
+3. 超过 OCR 页数限制的 PDF 必须显式拆分或选择页范围，不能静默截断。
+4. 完全重复当前只做哈希提示与幂等验证，不自动判断业务近似重复。
+5. B1 文件边界及 B2 的 Sheet、表头、公式、媒体、后台分块、旧 XLS 和精确上传边界已完成；超过 50 MiB 统一返回 413。
+
+<!-- REAL_DATA_VALIDATION_HISTORY -->
+## B2 XLSX 匿名兼容性剖析
+
+2026-07-14 在 `--max-old-space-size=512` 限制下，对安全检查已接受且不超过 10 MiB 的 XLSX 运行两组只读对照。脚本在每份文件解析前后复核 SHA-256，本地详细结果仅写入 Git 忽略的 `.realdata-test/`。
+
+PowerShell 复现命令（需先生成 B0 本地清单）：
+
+```powershell
+$env:NODE_OPTIONS='--max-old-space-size=512'
+npm run realdata:xlsx-profile -- --mode parse --min-size-mb 0 --max-size-mb 10 --formula-results reject --output .realdata-test/xlsx-profile-reject.local.json
+npm run realdata:xlsx-profile -- --mode parse --min-size-mb 0 --max-size-mb 10 --formula-results cached --output .realdata-test/xlsx-profile-cached.local.json
+```
+
+脚本会拒绝将详细结果写到 `.realdata-test/` 之外。
+
+| 指标 | 默认拒绝公式缓存 | 显式允许公式缓存 |
+| --- | ---: | ---: |
+| 匿名样本 | 26 | 26 |
+| 检查通过 | 26 | 26 |
+| 解析通过 / 安全跳过 | 25 / 1 | 25 / 1 |
+| 解析行 | 4078 | 4078 |
+| `pending` | 2309 | 3926 |
+| `error` | 1759 | 142 |
+| `ignored` | 10 | 10 |
+| 公式复核警告行 | 0 | 1676 |
+| 合并数据复核警告行 | 1737 | 1737 |
+| 进程峰值 RSS | 323.48 MiB | 305.45 MiB |
+
+策略结论：
+
+1. 系统不执行任何 Excel 公式；默认路径继续拒绝公式行。
+2. 只有财务用户在工作簿检查页显式勾选后，才使用文件内已缓存的日期或有限标量结果。
+3. 公式原文和缓存结果一起保留在导入行，复核警告进入确认预览，选择记入 audit/ledger。
+4. 缺少缓存、Excel 错误值、非有限数字或对象结果仍不可入库。
+5. 数据区合并单元格仅保留主单元格；其他位置留空并进入人工复核，不自动填充。
+
+## B2 流式行解析与媒体隔离复测
+
+同日完成第二轮 B2 适配。触发条件为压缩文件大于 10 MiB，或 OOXML 包含 `xl/media/` 对象。实现先读取中央目录和有限 XML 元数据，再用 ExcelJS 流式行读取器处理工作表；媒体条目只统计数量与展开大小，不进入普通单元格值或工作簿对象。压缩上传 Buffer 仍受现有 50 MiB 文件上限约束，本轮不宣称端到端零缓冲。
+
+发现并修复的通用问题：
+
+1. `actualRowCount` / `actualColumnCount` 是非空数量，不是最后有效坐标；旧路径会漏掉中间空行或空列后的尾部数据。新边界按真实单元格值和有值合并区域计算，并排除纯样式和图片锚点。
+2. ExcelJS 流式读取器不保留共享公式属性。元数据层读取共享公式主单元格，并复用 ExcelJS 公式平移算法还原每个从属表达式；仍只读取缓存，不执行公式。
+3. ExcelJS 4.4 对“多工作表且 workbook 元数据位于 ZIP 尾部”的延迟读取存在竞态。读取器现在由已验证的 OOXML Sheet/Relationship 元数据预置最小模型，并有合成回归覆盖。
+
+| 文件档位 | 匿名样本 | 流式样本 | 媒体对象 / 大小 | 解析结果 | 行状态 | 峰值 RSS |
+| --- | ---: | ---: | ---: | --- | --- | ---: |
+| 0-10 MiB | 26 | 3 | 10 / 4.40 MiB | 26 通过，0 跳过 | 3933 pending / 144 error / 10 ignored | 284.82-315.66 MiB |
+| 10-25 MiB | 1 | 1 | 0 / 0 MiB | 33 行通过 | 33 pending | 191.07-192.07 MiB |
+| 40-50 MiB | 1 | 1 | 28 / 46.24 MiB | 32 行通过 | 32 pending | 202.90-204.54 MiB |
+
+小文件组由 4078 行增加到 4087 行：7 行成为 pending，2 行按公式政策成为 error；这是找回旧路径漏掉的真实尾行，不是重复生成。此前无可靠表头而跳过的 1 个样本，在保留首行空白后的真实边界后得到明确候选并进入人工公式处理。3 个媒体样本另做修正文档路径与流式路径匿名摘要对照，Sheet、列、逐行值、公式来源、状态、警告和行哈希完全一致。
+
+本切片通过 87 个 Jest、26 个真实 PostgreSQL 集成测试和 13 个 Playwright；集成测试验证 `processingMode` / 媒体统计进入 audit 和 ledger，浏览器测试验证媒体隔离提示与公式缓存显式授权。
+
+B2 大文件产品策略：
+
+- 50 MiB 是含边界硬上限；超过时返回统一 `41301`，第一版不建设独立大文件通道。
+
+## B2 超大行数解析基础
+
+新增 `realdata:large-xlsx-profile`，只生成无业务信息的确定性 XLSX，逐次运行后删除 fixture，仅在 `.realdata-test/` 保存聚合结果。解析器新增后台专用 `parseInBatches`：始终使用流式路径，默认 500 行一批，消费方完成前暂停继续读取，硬上限 50,000 行；现有同步 `parse` 仍拒绝超过 5,000 行。
+
+在 `--max-old-space-size=512` 下的单进程结果：
+
+| 合成数据行 | 压缩大小 | 批次数 | 状态 | 公式复核警告 | 解析耗时 | 峰值 RSS |
+| ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| 4999 | 0.21 MiB | 10 | 4999 pending / 0 error | 4999 | 151.42 ms | 161.41 MiB |
+| 5000 | 0.21 MiB | 10 | 5000 pending / 0 error | 5000 | 157.36 ms | 145.47 MiB |
+| 5001 | 0.21 MiB | 11 | 5001 pending / 0 error | 5001 | 155.77 ms | 144.31 MiB |
+| 30196 | 1.27 MiB | 61 | 30196 pending / 0 error | 30196 | 617.43 ms | 217.90 MiB |
+
+## B2 后台分块与租约恢复
+
+解析基线随后接入真实 ImportTask 状态机。同步入口保持 5,000 行上限，估算为 5,001-50,000 行时返回 `parsing` 并在进程内调度后台 worker；解析配置、执行/处理模式、已处理行数、总行数和尝试次数进入 PostgreSQL。每批 500 行在同一事务中写入 `import_rows`、更新分类计数并把 lease 延长 10 分钟。
+
+恢复采用“全量重放而非断点续写”：新 lease 在 advisory lock 内删除旧 Sheet/Column/Row，再从第 0 行解析。worker 以任务 ID 与 lease token 共同标识，旧 worker 即使仍存活，也会在下一次批次提交时因 token 失效退出。取消同样先取得任务锁并级联删除半成品。连续三次进程中断后任务进入 `failed`，不再形成无限恢复循环。调度、恢复、完成、失败、取消和恢复耗尽均写 audit/ledger；只有后续人工 confirm 才能生成经营记录。
+
+真实 `_test` PostgreSQL 验收：
+
+| 场景 | 数据库结果 | 经营记录 | 结论 |
+| --- | --- | ---: | --- |
+| 5,001 行，首批后取消 | 0 Sheet / 0 Row 残留 | 0 | 取消清理通过 |
+| 5,001 行，旧 worker 挂起后 lease 接管 | 5,001 行；行号与 SHA-256 行哈希各 5,001 个唯一值 | 0 | 无重复、无漏行、旧 token 隔离通过 |
+| 30,196 行，61 批 | 30,196 行；首行 2、末行 30,197；行号与行哈希均唯一 | 0 | 生产规模档位分批持久化通过 |
+| 第三次过期恢复 | 半成品清空，任务 `failed`，lease 释放 | 0 | 自动恢复上限通过 |
+
+本切片通过 16/16 migrations、87 个 Jest、27 个真实 PostgreSQL 集成测试和 13 个 Playwright。解析器内存基线仍采用上表 512 MiB 堆限制结果；数据库测试用例约 4.2 秒完成取消、并发接管、5,001 行恢复和 30,196 行持久化。全量回归后重新扫描 112 份原始样本，与初始清单相比 0 新增、0 缺失、0 哈希或大小变化。
+
+## B2 旧 XLS 隔离转换与解析
+
+2026-07-15 增加旧 `.xls` 安全路径。原始文件继续按 SHA-256 和原始字节保存；导入时仅通过受限 Node.js 子进程在内存中重建 `.xlsx`。子进程固定使用 SheetJS 0.20.3，限制 256 MiB 堆、30 秒执行时间、50 MiB 输出，无网络、写文件、子进程和原生扩展权限。重建白名单只包含类型化单元格、公式文本及缓存值、数字格式、合并区域和工作表可见性；VBA/XLM 宏、宏/图表/对话工作表、嵌入对象、外部引用、外部超链接及加密内容直接拒绝。
+
+真实样本匿名复测：
+
+| 指标 | 结果 |
+| --- | ---: |
+| `.xls` 样本 | 15 |
+| 转换通过 / 失败 | 15 / 0 |
+| 解析通过 / 失败 / 跳过 | 15 / 0 / 0 |
+| 工作表 / 隐藏表 | 45 / 9 |
+| 有效输出单元格 | 19,738 |
+| 公式单元格 | 2,351 |
+| 合并区域 | 224 |
+| 公式 / 合并 / 可见性往返偏差 | 0 / 0 / 0 |
+| 解析行 | 440 |
+| `pending` / `error` | 291 / 146 |
+| 公式缓存复核警告行 | 274 |
+| 原文件哈希变化 | 0 |
+| 单样本最长耗时 | 442.31 ms |
+| 驱动进程峰值 RSS | 183.51 MiB |
+
+146 个错误行均保持失败关闭，主要由公式缺少可接受缓存结果触发；系统不执行公式，也不会为了提高通过率静默信任这些行。PostgreSQL 集成测试另行验证原 `.xls` 存储字节与哈希不变、转换副本不落盘、审计与台账包含转换器版本及聚合结构、解析后确认前经营记录仍为 0。
+
+复现命令：
+
+```powershell
+npm run realdata:scan
+npm run realdata:xls-profile
+```
+
+本地逐样本明细只写入 `.realdata-test/xls-profile.local.json`，不包含文件名和单元格业务值。
+
+## B2 上传大小精确边界
+
+2026-07-15 完成上传上限收口。此前 Multer 在模块加载期直接读取 `process.env`，可能与 Nest 从 `.env` 加载的业务配置漂移；同时 Busboy 在达到 `fileSize` 时即触发截断，会误拒绝恰好位于上限的文件。现改为由 `ConfigService` 动态注入统一配置，并将传输截断点设置为业务上限加 1 字节，`FilesService` 保留第二道上限检查。
+
+真实 multipart/PostgreSQL 门禁使用测试环境 5 MiB 配置验证同一边界语义：上限减 1 字节和恰好上限均成功；上限加 1 字节返回 `{ code: 41301, message: "文件大小超过上传限制", data: {} }`。失败请求未新增 `raw_files`、`audit_logs` 或 `ledger_events`，隔离目录前后一致。配置测试同时确认生产允许的最大值严格对应含边界 50 MiB，51 MiB 配置继续启动失败。B2 至此完成。
+
+## B3 OCR 页范围与模型长稳
+
+- 17 份匿名 OCR 样本已建立本地标签骨架，校准 10/10、验证 2/2 Provider 调用通过，5 份盲测未提前运行。
+- 35 页 PDF 以 1-20 和 21-35 两段完整覆盖，原页码保留，原文件哈希前后不变，不持久化派生 PDF。
+- Qwen3-14B-AWQ 与 PaddleOCR-VL 连续常驻 1,800 秒，共 61 次健康采样；容器无重启、OOM 或 fatal。GPU 最大已用 28,911 MiB、最低空闲 3,277 MiB、最高温度 39 摄氏度。
+- 人工标签尚未复核，字段准确率门禁为 `awaiting_labels`；当前仅允许人工纠错后确认，不宣称自动入账准确率达标。
+
+## B4 统一经营记录与数据层
+
+- Excel、OCR、手工补录和工单终审统一写入 `templateSnapshot`、`sourceSnapshot` 和 confirmed 时的 `confirmationSnapshot`，保留模板版本、字段定义、来源任务/文件、确认人和确认值。
+- 模板与经营记录增加 `actual/reconciliation/budget`。数据层不接受记录请求直接传值，只由后端模板推导；工单只允许 actual 模板。
+- 财务/老板/项目报表、项目汇总和风险趋势仅统计 confirmed actual；对账和预算记录仍可筛选查看，但不会重复计入实际收入、成本和利润。
+- 18 个 migration、177 个单元测试中的相关规则及 29 个 PostgreSQL 集成测试通过。真实 L3 逐条会计真值仍等待财务抽样签字。
+
+## B5 老板 AI 标准问题集
+
+- 固化 72 条匿名标准问题，覆盖日/周/月、上月、指定月份、项目下钻、排行、成本结构、月环比/月同比、待审批、异常、工单、空数据和 6 条 Prompt Injection。
+- 工具选择、有效回答数字与标准事实、空数据、Prompt Injection 和输出 Schema 均为 100%。employee、finance、reviewer 的 boss AI 访问继续由真实 API 返回 403。
+- Qwen3-14B-AWQ 本地运行 72 次，0 Provider 错误；P50 433 ms、P95 1,038 ms、最大 1,254 ms。
+- 原始模型 grounding 通过率为 26.39%，53 次触发受控 fallback：44 次工具外数字、5 次未引用结构化数字、3 次敏感指令词、1 次未说明无数据。fallback 后有效 grounding 和确定性事实均为 100%。
+- 发布结论：B5 以“Qwen 问题理解 + 后端结构化工具 + 数字溯源 + 受控 renderer”通过；不得关闭 grounding，也不得把原始模型文本直接作为财务结论。
+
+复现命令：
+
+```powershell
+npm run realdata:ai-benchmark -- --provider mock
+npm run realdata:ai-benchmark -- --provider local
+```
+
+本地报告 `.realdata-test/reports/ai-benchmark.local.json` 只保存聚合指标、fallback 原因和失败用例 ID，不保存模型回答或真实业务值。
+
+## B6 性能、故障恢复与模型切换
+
+2026-07-15 完成 B6。所有服务级写操作只使用 `finance_agent_test`；数据库短断通过本地 TCP 代理制造，没有停止 PostgreSQL 系统服务。模型报告、端口和逐次采样只保存在 Git 忽略的 `.realdata-test/reports/`，公开报告不包含密钥、模型回答、OCR 原文、文件名或业务值。
+
+### 资源与并发基线
+
+- 文件边界沿用 B1/B2 证据：真实 19.67 MiB 与 46.35 MiB 档位在 512 MiB 堆限制下完成结构扫描/流式解析；50 MiB 含边界，超过 1 字节统一 413；含 248 个媒体对象的工作簿只统计媒体元数据，不把媒体载入普通单元格模型。
+- Excel 的 4999/5000/5001/30196 行和 180 列宽表均已有确定性或真实匿名剖析；30196 行按 500 行批次完成，峰值 RSS 217.90 MiB，确认前经营记录为 0。
+- OCR 已覆盖单页、4 页、20 页、21 页、35 页范围和 1080x4794 长图。校准批次单样本最大 79.63 秒，小于本地部署建议的 120 秒 OCR 超时；准确率仍为 `awaiting_labels`。
+- 新增真实 PostgreSQL 1/3/5 并发门禁：共 18 个 `raw_files` 与 9 个导入任务全部唯一，上传、解析、audit 和 ledger 数量一一对应；整组用例 458 ms，确认前 `BusinessRecord` 为 0。
+- 模型门控以 1/3/5 并发运行无任务丢失；OCR 单并发时第二个任务排队，独立 `ai` 队列可同时执行。
+
+### 故障恢复结果
+
+| 场景 | 结果 | 恢复/响应时间 |
+| --- | --- | ---: |
+| 后端进程重启 | liveness/readiness 恢复，统一响应保持有效 | 2,081.42 ms |
+| PostgreSQL 短断 | readiness 统一 503，liveness 仍为 200，无未知 500 | 22.63 ms 检出 |
+| PostgreSQL 恢复 | Prisma 连接池自动重连，readiness 返回 200 | 43.02 ms |
+| ClamAV 断联 | 关闭的临时 TCP 端口稳定返回可恢复 503，不放行文件 | 自动化通过 |
+| 磁盘低水位 | 在 `storage.save` 和数据库事务前返回 507 | 自动化通过 |
+| 导入/OCR lease 过期 | 新 lease 接管、旧 token 隔离、最多三次恢复 | PostgreSQL 通过 |
+| E2E 文件清理 | 修复 teardown 根目录漂移和空库提前返回；清除 50 个历史孤儿测试文件 | 清理后 0 孤儿 |
+
+### 真实模型恢复结果
+
+| 操作 | 就绪耗时 | OCR 健康采样 | OOM/自动重启 |
+| --- | ---: | ---: | ---: |
+| Qwen3-14B-AWQ 容器重启 | 52,985.80 ms | 52/52 | 0/0 |
+| 切换 Qwen3-VL-8B-Instruct | 172,354.50 ms | 169/169 | 0/0 |
+| 停止 VL 并恢复 Qwen 文本 | 51,912.53 ms | 51/51 | 0/0 |
+
+恢复后使用内存生成的无业务信息 PDF 同时调用 Qwen 文本和 Paddle OCR：两者均返回 200，文本 929.91 ms、OCR 1,700.15 ms、并发墙钟 1,700.90 ms。最终 Qwen 文本与 Paddle OCR 为 healthy，VL 已停止，Embedding 从未启动。此前 30 分钟长稳的 61 次采样仍为 0 重启、0 OOM、0 fatal。
+
+B6 结论：首轮资源与恢复基线通过，无进程崩溃、OOM、重复确认、隔离区残留或未知 500。模型冷启动和 VL 切换仍按 900 秒启动超时管理；OCR 业务 SLO 需在人工标签与财务等待时间确认后冻结。复现命令：
+
+```powershell
+npm run realdata:resilience
+npm run realdata:model-resilience
+cd backend
+npm test -- --runInBand
+npm run test:integration
+```
+
+## B7 工程回归与财务 UAT 交付
+
+2026-07-15 完成 B7 工程交付。新增 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`，将七个财务场景、签字项、自动化证据和降级方案分离。Codex 未填写财务姓名、业务真值或签名；业务状态保持 `awaiting_finance_signoff`，OCR 状态保持 `awaiting_labels`。
+
+最终自动化结果：
+
+| 门禁 | 结果 |
+| --- | --- |
+| 前端 / 后端 production build | 通过 / 通过 |
+| Prisma | format/validate 通过；18/18 migrations；40 张业务表无缺失/意外 |
+| 后端单测 | 17/17 suites，184/184 tests |
+| 真实 PostgreSQL | 30/30 integration |
+| 浏览器 | 14/14 Playwright；teardown 后数据库/磁盘孤儿均为 0 |
+| Paddle 适配器 | 4/4 Python tests |
+| 老板 AI | 72/72 Mock 确定性基准；真实 Qwen 结果沿用 B5 |
+| 依赖与仓库 | 根目录/后端 0 vulnerabilities；424 个候选文件 hygiene 通过 |
+| 模型 | 四套资产完整；文本/OCR healthy，VL/Embedding offline |
+| 原始样本 | 112/112 哈希不变 |
+
+B7 工程结论为 `complete`；整体业务发布仍为“条件式 UAT、人工辅助”。G2 的 L3 逐分对账、G3 的 OCR 标签以及跨来源重复政策必须由财务完成后才能转为生产验收。

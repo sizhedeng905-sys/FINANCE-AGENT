@@ -6,25 +6,46 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e:prepare": "node backend/scripts/prepare-e2e.mjs",
+    "test:e2e": "npm run test:e2e:prepare && playwright test",
+    "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
+    "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
+    "realdata:scan": "npm --prefix backend run realdata:scan --",
+    "realdata:xlsx-profile": "npm --prefix backend run realdata:xlsx-profile --",
+    "realdata:large-xlsx-profile": "npm --prefix backend run realdata:large-xlsx-profile --",
+    "realdata:ocr-prepare": "npm --prefix backend run realdata:ocr-prepare --",
+    "realdata:ocr-evaluate": "npm --prefix backend run realdata:ocr-evaluate --",
+    "realdata:ocr-page-ranges": "npm --prefix backend run realdata:ocr-page-ranges --",
+    "realdata:ai-benchmark": "npm --prefix backend run realdata:ai-benchmark --",
+    "realdata:resilience": "npm --prefix backend run realdata:resilience --",
+    "realdata:model-resilience": "npm --prefix backend run realdata:model-resilience --",
+    "model:soak": "npm --prefix backend run model:soak --",
+    "model:init": "node backend/scripts/model-services.mjs init",
+    "model:check": "node backend/scripts/model-services.mjs check resident",
+    "model:check:all": "node backend/scripts/model-services.mjs check all",
+    "model:resident": "node backend/scripts/model-services.mjs start-resident",
+    "model:on-demand": "node backend/scripts/model-services.mjs start-on-demand",
+    "model:restore": "node backend/scripts/model-services.mjs stop-on-demand",
+    "model:status": "node backend/scripts/model-services.mjs status",
+    "model:stop": "node backend/scripts/model-services.mjs stop-all"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
     "antd": "^5.22.5",
     "dayjs": "^1.11.13",
-    "echarts": "^5.5.1",
-    "echarts-for-react": "^3.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@types/node": "^22.10.1",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^4.7.0",
     "typescript": "~5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^6.4.3"
   }
 }

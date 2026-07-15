@@ -13,7 +13,7 @@ import { workOrderTypeMap } from '@/utils/statusMap';
 export default function ReviewerHome() {
   const navigate = useNavigate();
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const pending = workOrders.filter((item) => ['reviewer_reviewing', 'finance_approved'].includes(item.status));
+  const pending = workOrders.filter((item) => item.status === 'reviewer_reviewing');
   const reviewed = workOrders.filter((item) => ['ai_reviewing', 'boss_pending', 'completed'].includes(item.status)).length;
   const highRisk = pending.filter((item) => item.riskLevel === 'high').length;
   const returned = workOrders.filter((item) => item.status === 'reviewer_rejected').length;

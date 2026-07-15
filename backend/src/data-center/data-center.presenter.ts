@@ -40,6 +40,11 @@ export function toTemplate(template: Template) {
     id: template.id,
     name: template.name,
     recordType: template.recordType,
+    accountingDirection: template.accountingDirection,
+    dataLayer: template.dataLayer,
+    primaryAmountFieldId: template.primaryAmountFieldId ?? undefined,
+    primaryDateFieldId: template.primaryDateFieldId ?? undefined,
+    version: template.version,
     description: template.description ?? '',
     isSystem: template.isSystem,
     createdBy: template.createdBy ?? '',
@@ -82,6 +87,7 @@ export function toProjectTemplate(projectTemplate: ProjectTemplate) {
     id: projectTemplate.id,
     projectId: projectTemplate.projectId,
     templateId: projectTemplate.templateId,
+    recordType: projectTemplate.recordType,
     customName: projectTemplate.customName ?? '',
     isActive: projectTemplate.isActive,
     createdAt: projectTemplate.createdAt.toISOString(),
@@ -102,6 +108,7 @@ export function toRecordValue(recordValue: RecordValue & { field?: FieldDefiniti
     recordId: recordValue.recordId,
     fieldId: recordValue.fieldId,
     fieldName: recordValue.fieldName,
+    fieldType: recordValue.field?.fieldType,
     value: resolveRecordValue(recordValue)
   };
 }
@@ -114,13 +121,21 @@ export function toBusinessRecord(record: BusinessRecordWithRelations) {
     templateId: record.templateId,
     templateName: record.template.name,
     recordType: record.recordType,
+    accountingDirection: record.accountingDirection,
+    dataLayer: record.dataLayer,
+    templateVersion: record.templateVersion,
+    templateSnapshot: jsonObject(record.templateSnapshot),
+    sourceSnapshot: jsonObject(record.sourceSnapshot),
+    confirmationSnapshot: jsonObject(record.confirmationSnapshot),
+    version: record.version,
     recordDate: record.recordDate.toISOString(),
-    amount: toNumber(record.amount),
+    amount: record.amount.toFixed(2),
     category: record.category ?? '',
     subCategory: record.subCategory ?? '',
     description: record.description ?? '',
     sourceType: record.sourceType,
     sourceId: record.sourceId,
+    importTaskId: record.importTaskId ?? undefined,
     status: record.status,
     values: record.values.map(toRecordValue),
     attachments: normalizeStringArray(record.attachments),
@@ -140,7 +155,7 @@ export function normalizeAliases(value: Prisma.JsonValue | null): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function resolveRecordValue(recordValue: RecordValue): string | number | string[] | null {
+function resolveRecordValue(recordValue: RecordValue & { field?: FieldDefinition }): string | string[] | null {
   if (recordValue.valueJson !== null && recordValue.valueJson !== undefined) {
     if (Array.isArray(recordValue.valueJson)) {
       return recordValue.valueJson.filter((item): item is string => typeof item === 'string');
@@ -150,7 +165,9 @@ function resolveRecordValue(recordValue: RecordValue): string | number | string[
   }
 
   if (recordValue.valueNumber !== null && recordValue.valueNumber !== undefined) {
-    return toNumber(recordValue.valueNumber);
+    return recordValue.field?.fieldType === 'money'
+      ? recordValue.valueNumber.toFixed(2)
+      : recordValue.valueNumber.toString();
   }
 
   if (recordValue.valueDate) {
@@ -168,10 +185,8 @@ function normalizeStringArray(value: Prisma.JsonValue | null): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function toNumber(value: Prisma.Decimal | number | string): number {
-  if (typeof value === 'number') {
-    return value;
-  }
-
-  return Number(value);
+function jsonObject(value: Prisma.JsonValue | null): Prisma.InputJsonObject | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Prisma.InputJsonObject
+    : undefined;
 }

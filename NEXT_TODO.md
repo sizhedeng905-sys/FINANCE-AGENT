@@ -1,79 +1,66 @@
-# 后续功能 TODO List
+# FINANCE-AGENT 下一步执行清单
 
-当前项目仍是前端原型，已为主要功能预留 `src/api` mock Promise 接口。下一阶段建议按下面顺序推进。
+更新日期：2026-07-15
 
-## 1. 后端接口
+项目已不是纯前端原型。阶段 0-10 的真实 PostgreSQL/API 主链路已完成，当前按 `docs/REAL_BUSINESS_DATA_TEST_PLAN.md` 推进真实业务数据门禁。详细证据见 `docs/IMPLEMENTATION_PROGRESS.md` 和 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`。
 
-- 登录认证：接入 `POST /api/auth/login`，返回用户、角色、token、权限菜单。
-- 工单列表：接入 `GET /api/work-orders`，支持角色、状态、项目、创建人、时间范围筛选。
-- 工单详情：接入 `GET /api/work-orders/:id`。
-- 新建工单：接入 `POST /api/work-orders`。
-- 更新工单：接入 `PUT /api/work-orders/:id`。
-- 审核流转：接入 `POST /api/work-orders/:id/status`，统一处理财务审核、复核员审核、AI复核、老板审批。
-- 员工催办：接入 `POST /api/work-orders/:id/urge`，同时生成通知和时间线。
-- 附件上传：接入 `POST /api/work-orders/:id/attachments`，支持发票、回单、图片、PDF。
-- 通知列表：接入 `GET /api/notifications?targetRole=finance`。
-- 通知已读：接入 `PATCH /api/notifications/:id/read` 和 `PATCH /api/notifications/read-all`。
-- AI聊天：接入 `POST /api/ai/chat`，仅老板完整聊天页面可用。
-- AI异常：接入 `GET /api/reports/anomalies`，供财务异常提示页展示。
-- 财务日报：接入 `GET /api/reports/finance?period=today|week|month`。
-- 老板经营日报：接入 `GET /api/reports/boss?period=daily|weekly|monthly`。
-- 项目概览：接入 `GET /api/projects` 和 `GET /api/projects/:id/summary`。
+## 当前门禁：B7 工程交付完成，等待财务签字
 
-## 2. 数据库设计
+已完成：
 
-- `users`：用户账号、姓名、角色、部门、职位、状态。
-- `roles`：角色定义，包含 employee、finance、reviewer、boss。
-- `permissions`：页面和操作权限。
-- `projects`：客户/项目、负责人、收入、成本、状态、AI摘要。
-- `work_orders`：工单主表，保存类型、项目、客户、金额、收入、成本、利润、状态、风险等级、加急字段。
-- `work_order_transport`：运输订单扩展字段，保存车牌、司机、起终点、公里数、油费、过路费等。
-- `work_order_expense`：费用报销和其他支出扩展字段，保存费用类型、金额、日期、付款方式、说明。
-- `attachments`：附件表，关联工单，保存文件名、URL、类型、上传人。
-- `audit_timeline`：审核时间线，记录操作人、角色、动作、意见、时间。
-- `notifications`：通知表，保存类型、发送人、目标角色、已读状态、关联工单。
-- `reports`：日报/周报/月报汇总数据。
-- `ai_anomalies`：AI异常检测结果，关联工单和风险原因。
-- `ai_conversations`：AI对话会话，仅老板可创建。
-- `ai_messages`：AI对话消息明细。
-- `audit_logs`：系统操作日志，便于追踪审批和权限变更。
+- XLSX 多 Sheet、隐藏 Sheet、1-3 行合并表头和人工选择。
+- 公式默认拒绝、缓存结果显式授权、共享公式来源还原和 audit/ledger。
+- 稀疏行列边界、样式尾部排除、数据区合并单元格人工复核。
+- 大于 10 MiB 或含媒体 XLSX 的流式行读取；19.67 MiB 与 46.35 MiB 真实匿名样本在 512 MiB 堆限制下通过。
+- 单元、真实 PostgreSQL、Playwright 和前后端构建回归。
+- 15 份旧 `.xls` 已通过受限子进程隔离转换与解析；原件不变，45 个 Sheet、2351 个公式和 224 个合并区域往返一致。
+- B2 已收口：50 MiB 是含边界硬上限，超过 1 字节即统一返回 `41301`；第一版不开放独立大文件通道。
 
-## 3. 权限和安全
+已完成的 B2 收口项：
 
-- 后端必须校验角色权限，前端 403 只作为体验层控制。
-- 员工只能访问自己创建的工单。
-- 财务可查看全部业务工单和财务日报，但不可访问老板 AI 助手。
-- 复核员只能访问复核任务和审核历史，不可访问财务日报和老板 AI 助手。
-- 老板可访问最终审批、经营日报、财务日报、AI助手、项目分析。
-- 所有审批操作需要记录操作日志和时间线。
+1. 已完成：为 4999/5000/5001/30196 行建立不含业务数据的确定性生成器、500 行批次消费和资源基线；同步接口继续保持 5000 行上限。
+2. 已完成：超过 5000 行自动进入可观察的后台分块任务，具备 500 行批次、heartbeat、取消、lease 过期接管和最多三次恢复。
+3. 已完成：5001/30196 行真实 PostgreSQL 持久化无重复、无漏行；旧 worker 与新租约并存时令牌隔离生效，确认前不生成 `BusinessRecord`。
+4. 已完成：旧 `.xls` 不依赖桌面 Excel/COM；只在 256 MiB、30 秒、无网络/写权限的子进程中重建内存 `.xlsx`，转换结果不落盘。
+5. 已完成：上传限制由 Nest 配置动态注入，避免 `.env` 与 Multer 漂移；上限下、恰好上限和上限加 1 字节均通过真实 multipart/PostgreSQL 门禁，失败无数据库或隔离目录残留。
 
-## 4. 业务流程
+## 后续门禁
 
-- 明确工单状态机，禁止非法状态跳转。
-- 财务通过后进入复核员复核。
-- 复核通过后进入 AI 自动复核。
-- AI复核结果只作为流程步骤，不作为登录角色。
-- AI通过或标记异常后进入老板待审批。
-- 老板通过后归档完成，老板驳回后进入驳回状态。
-- 待补充材料状态下，员工补充后重新提交财务审核。
-- 催办需要限制频率，例如同一工单 30 分钟内只能催办一次。
+### B3 OCR 与视觉样本（自动化完成，等待人工标签）
 
-## 5. 前端后续优化
+- 文本模型和 OCR 常驻，VL/Embedding 按需；真实 Provider 不可用时核心财务链路继续可用。
+- 35 页 PDF 页范围、Provider 校准/验证和 30 分钟常驻已通过；文本与 OCR 常驻，VL/Embedding 保持按需。
+- 17 份匿名评估样本已准备，因字段标签尚未人工复核，准确率保持 `awaiting_labels`，发布为人工辅助模式。
 
-- 将页面中的部分直接 mock 读取逐步切换为 `src/api` 调用。
-- 增加加载态、空状态、错误态。
-- 增加列表分页、排序、搜索条件持久化。
-- 增加附件真实预览组件。
-- 增加工单详情打印或导出 PDF。
-- 增加更多表单校验，例如金额必须大于 0、运输订单收入不能为空。
-- 优化大包体，按角色页面做路由懒加载。
-- 增加单元测试和关键流程 E2E 测试。
+### B4-B5 统一经营记录、报表与老板 AI（完成）
 
-## 6. 当前已预留的前端 API 文件
+- 四类来源统一模板、来源与确认快照；`actual/reconciliation/budget` 由后端模板推导，报表仅统计 confirmed actual。
+- 72 条 Qwen 基准的有效数字、空数据、注入和 Schema 均 100%；原始模型 fallback 较高，必须保留 grounding 和结构化降级。
+- 跨来源业务去重继续保留人工复核；L3 抽样会计真值等待财务签字。
 
-- `src/api/authApi.ts`
-- `src/api/workOrderApi.ts`
-- `src/api/notificationApi.ts`
-- `src/api/projectApi.ts`
-- `src/api/reportApi.ts`
-- `src/api/aiApi.ts`
+### B6 性能与故障恢复（完成）
+
+- 后端重启与本地 PostgreSQL TCP 代理短断通过；readiness 失败关闭、liveness 保持在线，恢复后自动重连。
+- ClamAV 离线返回 503，磁盘低水位在落盘前返回 507；lease 接管、1/3/5 并发上传/导入和模型队列全部通过。
+- Qwen 文本重启、按需 VL、文本恢复及 Qwen/OCR 同时推理通过；272 次切换期 OCR 健康采样 0 失败，Embedding 未启动。
+- 修复 E2E teardown 目录漂移，清理 50 个历史孤儿测试文件；隔离目录和 E2E 运行目录收口后均为 0 残留。
+
+### B7 财务 UAT 与最终交付（工程完成）
+
+- 已生成 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`；入账粒度、L3 金额、OCR 标签和重复政策明确保留为外部签字项。
+- 已通过前后端 build、184 单测、30 PostgreSQL、14 Playwright、Prisma、hygiene、依赖审计、模型资产和 112 份原件哈希复核。
+- GitHub 提交、CI 与审查状态统一以 Draft PR #3 为准；财务/OCR 外部门禁关闭前不 merge、不标记生产就绪。
+
+### 财务下一步
+
+- 按 UAT-01 至 UAT-07 执行真实业务抽样，不把逐字段真值或敏感值提交 Git。
+- 签署入账粒度、负数/冲销、主表/凭证、35 页拆分和重复处置政策。
+- 完成 17 份 OCR 标签与 L3 逐分对账后，再决定是否从人工辅助模式升级。
+
+## 每批提交条件
+
+- 先有失败复现或明确基线，再修改通用能力。
+- 所有接口继续使用后端身份、统一响应、DTO 校验、分页、权限、audit 和必要 ledger。
+- 原始样本扫描前后 SHA-256 一致，公开输出仅含匿名 ID 和聚合指标。
+- 相关单元、PostgreSQL 集成、Playwright、前后端 build 与仓库卫生全部通过。
+- README、进度报告、未完成限制和复现命令同步更新。

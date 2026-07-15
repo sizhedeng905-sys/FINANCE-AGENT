@@ -1,0 +1,1042 @@
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+  ServiceUnavailableException
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  BusinessRecordStatus,
+  FieldDefinition,
+  FieldType,
+  OcrAttemptStatus,
+  OcrTaskStatus,
+  Prisma,
+  ProjectStatus,
+  RecordSourceType,
+  SemanticType
+} from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { toBusinessRecord } from '../data-center/data-center.presenter';
+import { FilesService } from '../files/files.service';
+import { LedgerEventsService } from '../ledger-events/ledger-events.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { RecordPolicyService } from '../record-policy/record-policy.service';
+import { ConfirmOcrTaskDto } from './dto/confirm-ocr-task.dto';
+import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
+import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
+import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
+import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
+import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
+import { OcrProviderRegistry } from './ocr-provider.registry';
+import { MockOcrScenario, OcrFieldCandidate, OcrProviderResult, OcrTemplateField } from './ocr-provider';
+import { ocrTaskDetailInclude, OcrTaskDetail, toOcrTask } from './ocr.presenter';
+import { CanonicalOcrFieldCandidate } from './ocr.types';
+
+type PrismaWriter = Prisma.TransactionClient | PrismaService;
+type TemplateFieldWithField = OcrTaskDetail['template']['templateFields'][number];
+const MAX_OCR_RESULT_BYTES = 2 * 1024 * 1024;
+
+@Injectable()
+export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(OcrTasksService.name);
+  private readonly lowConfidenceThreshold: number;
+  private readonly maxRetries: number;
+  private readonly processingLeaseMs: number;
+  private leaseReaper?: NodeJS.Timeout;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly files: FilesService,
+    private readonly preprocessor: DocumentPreprocessorService,
+    private readonly providers: OcrProviderRegistry,
+    private readonly auditLogs: AuditLogsService,
+    private readonly ledgerEvents: LedgerEventsService,
+    private readonly recordPolicy: RecordPolicyService,
+    config: ConfigService
+  ) {
+    this.lowConfidenceThreshold = config.get<number>('ocr.lowConfidenceThreshold') ?? 0.8;
+    this.maxRetries = config.get<number>('ocr.maxRetries') ?? 2;
+    const providerTimeoutMs = config.get<number>('ocr.timeoutMs') ?? 30_000;
+    this.processingLeaseMs = Math.max(60_000, providerTimeoutMs * 2 + 30_000);
+  }
+
+  onModuleInit() {
+    void this.recoverExpiredTasks();
+    this.leaseReaper = setInterval(() => void this.recoverExpiredTasks(), 60_000);
+    this.leaseReaper.unref();
+  }
+
+  onModuleDestroy() {
+    if (this.leaseReaper) clearInterval(this.leaseReaper);
+  }
+
+  async recoverExpiredTasks() {
+    try {
+      const expired = await this.prisma.ocrTask.findMany({
+        where: { status: OcrTaskStatus.processing, leaseUntil: { lt: new Date() } },
+        select: { id: true },
+        orderBy: { leaseUntil: 'asc' },
+        take: 100
+      });
+      for (const task of expired) {
+        await this.prisma.$transaction(async (tx) => {
+          await this.lockTask(tx, task.id);
+          const changed = await tx.ocrTask.updateMany({
+            where: { id: task.id, status: OcrTaskStatus.processing, leaseUntil: { lt: new Date() } },
+            data: {
+              status: OcrTaskStatus.failed,
+              errorMessage: 'OCR 处理租约已过期，可安全重试',
+              leaseToken: null,
+              leaseUntil: null,
+              version: { increment: 1 }
+            }
+          });
+          if (changed.count === 1) {
+            await tx.ocrAttempt.updateMany({
+              where: { ocrTaskId: task.id, status: OcrAttemptStatus.processing },
+              data: {
+                status: OcrAttemptStatus.failed,
+                completedAt: new Date(),
+                errorMessage: 'OCR 处理租约已过期'
+              }
+            });
+          }
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`OCR lease reaper failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  async create(
+    dto: CreateOcrTaskDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    this.validateIdempotencyKey(idempotencyKey);
+    if (idempotencyKey) {
+      const existing = await this.prisma.ocrTask.findUnique({
+        where: { idempotencyKey },
+        include: ocrTaskDetailInclude
+      });
+      if (existing) return toOcrTask(existing);
+    }
+
+    const template = await this.recordPolicy.getWritableTemplate(
+      this.prisma,
+      dto.projectId,
+      dto.templateId
+    );
+    const rawFile = await this.prisma.rawFile.findUnique({ where: { id: dto.rawFileId } });
+    if (!rawFile || rawFile.isVoided) throw new NotFoundException('原始文件不存在');
+    if (rawFile.relatedProjectId !== dto.projectId) throw new BadRequestException('原始文件与 OCR 项目不一致');
+
+    const provider = await this.providers.current();
+    if (dto.mockScenario && provider.name !== 'mock') {
+      throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
+    }
+    const file = await this.files.readForProcessing(dto.rawFileId, actor);
+    const pageSelection = this.pageSelectionFromDto(dto);
+    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
+    const snapshot = provider.snapshot();
+    const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
+
+    try {
+      const taskId = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
+        await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
+        const task = await tx.ocrTask.create({
+          data: {
+            rawFileId: dto.rawFileId,
+            projectId: dto.projectId,
+            templateId: dto.templateId,
+            templateVersion: template.version,
+            templateSnapshot: this.recordPolicy.toSnapshot(template),
+            provider: snapshot.provider,
+            modelName: snapshot.modelName,
+            modelVersion: snapshot.modelVersion,
+            endpointSnapshot: snapshot.endpoint,
+            providerOptions: providerOptions ? this.json(providerOptions) : undefined,
+            pages: this.json(pages),
+            pageCount: pages.length,
+            uploadedBy: actor.id,
+            idempotencyKey
+          }
+        });
+        await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, this.json({
+          rawFileId: task.rawFileId,
+          projectId: task.projectId,
+          templateId: task.templateId,
+          provider: task.provider,
+          pageCount: task.pageCount,
+          pageRange: pageSelection.pageStart ? pageSelection : null
+        }), context);
+        await this.ledgerEvents.write(tx, actor, 'ocr_task_created', 'ocr_task', task.id, this.json({
+          rawFileId: task.rawFileId,
+          sha256: rawFile.sha256,
+          provider: task.provider,
+          pageRange: pageSelection.pageStart ? pageSelection : null
+        }));
+        return task.id;
+      });
+      return toOcrTask(await this.findDetailOrThrow(taskId));
+    } catch (error) {
+      if (idempotencyKey && this.isUniqueConflict(error)) {
+        const existing = await this.prisma.ocrTask.findUnique({
+          where: { idempotencyKey },
+          include: ocrTaskDetailInclude
+        });
+        if (existing) return toOcrTask(existing);
+      }
+      throw error;
+    }
+  }
+
+  async createFromUpload(
+    file: Express.Multer.File | undefined,
+    dto: CreateOcrUploadDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    this.validateIdempotencyKey(idempotencyKey);
+    if (idempotencyKey) {
+      const existing = await this.prisma.ocrTask.findUnique({
+        where: { idempotencyKey },
+        include: ocrTaskDetailInclude
+      });
+      if (existing) return toOcrTask(existing);
+    }
+    if (!file) throw new BadRequestException('请选择 OCR 原始文件');
+
+    const rawFile = await this.files.upload(
+      file,
+      { relatedProjectId: dto.projectId },
+      actor,
+      context
+    );
+    try {
+      const task = await this.create(
+        {
+          rawFileId: rawFile.id,
+          projectId: dto.projectId,
+          templateId: dto.templateId,
+          mockScenario: dto.mockScenario,
+          pageStart: dto.pageStart,
+          pageEnd: dto.pageEnd
+        },
+        actor,
+        context,
+        idempotencyKey
+      );
+      if (task.rawFileId !== rawFile.id) {
+        await this.files.discardFailedUpload(
+          rawFile.id,
+          actor,
+          context,
+          'OCR 幂等请求已绑定既有任务，重复上传文件已清理'
+        );
+      }
+      return task;
+    } catch (error) {
+      await this.files.discardFailedUpload(
+        rawFile.id,
+        actor,
+        context,
+        'OCR 任务创建失败，原文件已清理'
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async findMany(query: QueryOcrTasksDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const where: Prisma.OcrTaskWhereInput = { projectId: query.projectId, status: query.status };
+    const [items, total] = await Promise.all([
+      this.prisma.ocrTask.findMany({
+        where,
+        include: ocrTaskDetailInclude,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      }),
+      this.prisma.ocrTask.count({ where })
+    ]);
+    return { items: items.map(toOcrTask), page, pageSize, total };
+  }
+
+  async findOne(id: string) {
+    return toOcrTask(await this.findDetailOrThrow(id));
+  }
+
+  async run(id: string, actor: CurrentUser, context: RequestContext) {
+    const prepared = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await this.findDetailOrThrow(id, tx);
+      const completedStatuses: OcrTaskStatus[] = [OcrTaskStatus.pending_confirm, OcrTaskStatus.confirmed];
+      if (completedStatuses.includes(task.status)) {
+        return { skipped: true as const, task };
+      }
+      if (
+        task.status === OcrTaskStatus.processing &&
+        task.leaseToken &&
+        task.leaseUntil &&
+        task.leaseUntil.getTime() > Date.now()
+      ) {
+        throw new ConflictException('OCR 任务正在识别中');
+      }
+      if (task.status === OcrTaskStatus.failed) throw new ConflictException('失败任务请使用重试接口');
+      if (task.status === OcrTaskStatus.cancelled) throw new ConflictException('已取消任务不能识别');
+
+      if (task.status === OcrTaskStatus.processing) {
+        await tx.ocrAttempt.updateMany({
+          where: { ocrTaskId: id, status: OcrAttemptStatus.processing },
+          data: {
+            status: OcrAttemptStatus.failed,
+            completedAt: new Date(),
+            errorMessage: '处理租约已过期，由后续任务回收'
+          }
+        });
+      }
+
+      const attemptNo = task.attemptCount + 1;
+      const correlationId = context.requestId || randomUUID();
+      const leaseToken = randomUUID();
+      const attempt = await tx.ocrAttempt.create({
+        data: {
+          ocrTaskId: id,
+          attemptNo,
+          status: OcrAttemptStatus.processing,
+          provider: task.provider,
+          modelName: task.modelName,
+          modelVersion: task.modelVersion,
+          endpointSnapshot: task.endpointSnapshot,
+          inputSha256: task.rawFile.sha256,
+          correlationId,
+          startedAt: new Date()
+        }
+      });
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          status: OcrTaskStatus.processing,
+          attemptCount: attemptNo,
+          errorMessage: null,
+          leaseToken,
+          leaseUntil: new Date(Date.now() + this.processingLeaseMs),
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.run_started', 'ocr_task', id, {
+        attemptNo,
+        correlationId,
+        provider: task.provider,
+        modelName: task.modelName
+      }, context);
+      return { skipped: false as const, task, attempt, leaseToken };
+    });
+
+    if (prepared.skipped) return toOcrTask(prepared.task);
+
+    const startedAt = Date.now();
+    try {
+      const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
+      const document = await this.preprocessor.prepare(
+        file.buffer,
+        file.mimeType,
+        this.pageSelection(prepared.task.providerOptions)
+      );
+      const pages = document.pages;
+      const provider = this.providers.byName(prepared.task.provider);
+      const result = await provider.recognize({
+        documentId: id,
+        rawFileId: prepared.task.rawFileId,
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        sha256: file.sha256,
+        buffer: document.buffer,
+        pages,
+        fields: this.providerFields(prepared.task.template.templateFields),
+        attemptNo: prepared.attempt.attemptNo,
+        scenario: this.mockScenario(prepared.task.providerOptions)
+      });
+      if (result.documentId !== id) throw new BadGatewayException('OCR Provider 返回了错误的 documentId');
+      this.assertProviderResultLimits(result);
+      const candidates = this.canonicalizeCandidates(
+        result.fieldCandidates,
+        prepared.task.template.templateFields,
+        prepared.task.rawFileId
+      );
+      const latencyMs = Date.now() - startedAt;
+      const extractedFields = this.extractedFields(candidates);
+      const fieldConfidence = this.fieldConfidence(candidates);
+      const avgConfidence = this.averageConfidence(candidates);
+
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockTask(tx, id);
+        const current = await tx.ocrTask.findUnique({ where: { id }, select: { status: true, leaseToken: true } });
+        if (
+          !current ||
+          current.status !== OcrTaskStatus.processing ||
+          current.leaseToken !== prepared.leaseToken
+        ) {
+          throw new ConflictException('OCR 处理租约已失效，识别结果未写入');
+        }
+        const now = new Date();
+        await tx.ocrAttempt.update({
+          where: { id: prepared.attempt.id },
+          data: {
+            status: OcrAttemptStatus.succeeded,
+            completedAt: now,
+            latencyMs,
+            pageCount: pages.length,
+            rawResult: this.json(result.rawResult),
+            rawResultRef: result.rawResultRef,
+            errorMessage: null
+          }
+        });
+        await tx.ocrTask.update({
+          where: { id },
+          data: {
+            status: OcrTaskStatus.pending_confirm,
+            extractedText: result.extractedText.slice(0, 100000),
+            extractedFields: this.json(extractedFields),
+            fieldConfidence: this.json(fieldConfidence),
+            pages: this.json(pages),
+            textBlocks: this.json(result.textBlocks),
+            tables: this.json(result.tables),
+            fieldCandidates: this.json(candidates),
+            rawResult: this.json(result.rawResult),
+            rawResultRef: result.rawResultRef,
+            pageCount: pages.length,
+            avgConfidence: new Prisma.Decimal(avgConfidence),
+            latencyMs,
+            errorMessage: null,
+            leaseToken: null,
+            leaseUntil: null,
+            version: { increment: 1 }
+          }
+        });
+        await this.auditLogs.write(tx, actor, 'ocr_task.run_succeeded', 'ocr_task', id, {
+          attemptNo: prepared.attempt.attemptNo,
+          latencyMs,
+          pageCount: pages.length,
+          lowConfidenceFields: candidates.filter((candidate) => candidate.lowConfidence).map((candidate) => candidate.fieldId)
+        }, context);
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'ocr_task_recognized',
+          'ocr_task',
+          id,
+          {
+            attemptNo: prepared.attempt.attemptNo,
+            latencyMs,
+            pageCount: pages.length,
+            avgConfidence
+          },
+          `ocr_task:${id}:attempt:${prepared.attempt.attemptNo}:recognized`
+        );
+      });
+      return toOcrTask(await this.findDetailOrThrow(id));
+    } catch (error) {
+      const latencyMs = Date.now() - startedAt;
+      const message = this.safeErrorMessage(error);
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockTask(tx, id);
+        await tx.ocrAttempt.updateMany({
+          where: { id: prepared.attempt.id, status: OcrAttemptStatus.processing },
+          data: {
+            status: OcrAttemptStatus.failed,
+            completedAt: new Date(),
+            latencyMs,
+            errorMessage: message
+          }
+        });
+        const updated = await tx.ocrTask.updateMany({
+          where: { id, status: OcrTaskStatus.processing, leaseToken: prepared.leaseToken },
+          data: {
+            status: OcrTaskStatus.failed,
+            latencyMs,
+            errorMessage: message,
+            leaseToken: null,
+            leaseUntil: null,
+            version: { increment: 1 }
+          }
+        });
+        if (updated.count === 1) {
+          await this.auditLogs.write(tx, actor, 'ocr_task.run_failed', 'ocr_task', id, {
+            attemptNo: prepared.attempt.attemptNo,
+            latencyMs,
+            error: message
+          }, context);
+          await this.ledgerEvents.write(
+            tx,
+            actor,
+            'ocr_task_failed',
+            'ocr_task',
+            id,
+            { attemptNo: prepared.attempt.attemptNo, error: message },
+            `ocr_task:${id}:attempt:${prepared.attempt.attemptNo}:failed`
+          );
+        }
+      });
+      if (error instanceof ConflictException) throw error;
+      throw new ServiceUnavailableException(`OCR 识别失败：${message}`);
+    }
+  }
+
+  async retry(id: string, actor: CurrentUser, context: RequestContext) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await tx.ocrTask.findUnique({ where: { id } });
+      if (!task) throw new NotFoundException('资源不存在');
+      if (task.status !== OcrTaskStatus.failed) throw new ConflictException('只有失败的 OCR 任务可以重试');
+      if (task.retryCount >= this.maxRetries) throw new ConflictException('OCR 重试次数已达上限');
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          status: OcrTaskStatus.queued,
+          retryCount: { increment: 1 },
+          errorMessage: null,
+          leaseToken: null,
+          leaseUntil: null,
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.retry', 'ocr_task', id, {
+        retryCount: task.retryCount + 1
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'ocr_task_retried', 'ocr_task', id, {
+        retryCount: task.retryCount + 1
+      });
+    });
+    return this.run(id, actor, context);
+  }
+
+  async correct(id: string, dto: CorrectOcrTaskDto, actor: CurrentUser, context: RequestContext) {
+    const uniqueFieldIds = new Set(dto.corrections.map((correction) => correction.fieldId));
+    if (uniqueFieldIds.size !== dto.corrections.length) throw new BadRequestException('同一字段不能在一次请求中重复纠错');
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await this.findDetailOrThrow(id, tx);
+      if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('当前 OCR 状态不能人工纠错');
+      const candidates = this.candidateArray(task.fieldCandidates);
+      const fields = new Map(task.template.templateFields.map((item) => [item.fieldId, item]));
+
+      for (const correction of dto.corrections) {
+        const templateField = fields.get(correction.fieldId);
+        if (!templateField || !templateField.isVisible || !templateField.field.isActive) {
+          throw new BadRequestException('纠错字段不属于当前模板或已停用');
+        }
+        const index = candidates.findIndex((candidate) => candidate.fieldId === correction.fieldId);
+        if (index < 0) throw new BadRequestException('OCR 字段候选不存在');
+        const before = candidates[index];
+        const normalized = this.normalizeFieldValue(templateField.field, correction.correctedValue, task.rawFileId);
+        candidates[index] = {
+          ...before,
+          rawValue: correction.correctedValue,
+          normalizedValue: normalized,
+          confidence: 1,
+          evidence: correction.reason?.trim() || '财务人工纠错',
+          missing: false,
+          lowConfidence: false,
+          corrected: true,
+          validationError: undefined
+        };
+        await tx.ocrCorrection.create({
+          data: {
+            ocrTaskId: id,
+            fieldId: correction.fieldId,
+            fieldName: templateField.field.fieldName,
+            beforeValue: this.displayValue(before.normalizedValue),
+            afterValue: this.displayValue(normalized),
+            originalConfidence: new Prisma.Decimal(before.confidence),
+            reason: correction.reason?.trim(),
+            correctedBy: actor.id
+          }
+        });
+      }
+
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          fieldCandidates: this.json(candidates),
+          extractedFields: this.json(this.extractedFields(candidates)),
+          fieldConfidence: this.json(this.fieldConfidence(candidates)),
+          avgConfidence: new Prisma.Decimal(this.averageConfidence(candidates))
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.correct', 'ocr_task', id, {
+        fields: dto.corrections.map((correction) => correction.fieldId)
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'ocr_task_corrected', 'ocr_task', id, {
+        fields: dto.corrections.map((correction) => correction.fieldId)
+      });
+    });
+    return toOcrTask(await this.findDetailOrThrow(id));
+  }
+
+  async confirm(
+    id: string,
+    dto: ConfirmOcrTaskDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    this.validateIdempotencyKey(idempotencyKey, true);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await this.findDetailOrThrow(id, tx);
+      if (task.status === OcrTaskStatus.confirmed && task.generatedRecordId) {
+        return { recordId: task.generatedRecordId, alreadyConfirmed: true };
+      }
+      if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('OCR 结果尚未进入人工确认状态');
+
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${task.projectId}, 22))`;
+
+      const candidates = this.candidateArray(task.fieldCandidates);
+      const unresolved = candidates.filter((candidate) => candidate.lowConfidence || candidate.missing || candidate.validationError);
+      if (unresolved.length > 0 && dto.acknowledgeLowConfidence !== true) {
+        throw new ConflictException('存在低置信度、缺失或格式异常字段，必须人工确认或纠错');
+      }
+      const values = this.validateCandidates(candidates, task.template.templateFields, task.rawFileId);
+      const template = await this.recordPolicy.getWritableTemplate(
+        tx,
+        task.projectId,
+        task.templateId,
+        task.template.recordType
+      );
+      if (template.version !== task.templateVersion) {
+        throw new ConflictException('OCR 任务引用的模板版本已变化，请重新创建任务');
+      }
+      const policyValues = values.map((value) => ({ fieldId: value.field.id, value: value.value }));
+      const canonical = this.recordPolicy.resolveCanonicalValues(
+        template,
+        policyValues,
+        { requireValues: true }
+      );
+
+      const now = new Date();
+      const record = await tx.businessRecord.create({
+        data: {
+          projectId: task.projectId,
+          templateId: task.templateId,
+          templateVersion: task.templateVersion,
+          templateSnapshot: this.recordPolicy.toSnapshot(template),
+          sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.ocr, task.id, {
+            ocrTaskId: task.id,
+            rawFileId: task.rawFileId,
+            rawFileSha256: task.rawFile.sha256,
+            provider: task.provider,
+            modelName: task.modelName,
+            modelVersion: task.modelVersion ?? 'unknown',
+            attemptCount: task.attemptCount,
+            pageCount: task.pageCount
+          }),
+          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
+            projectId: task.projectId,
+            sourceType: RecordSourceType.ocr,
+            sourceId: task.id,
+            confirmedAt: now,
+            confirmedBy: actor.username,
+            attachments: [task.rawFileId]
+          }),
+          recordType: task.template.recordType,
+          accountingDirection: canonical.accountingDirection,
+          dataLayer: template.dataLayer,
+          recordDate: canonical.recordDate,
+          amount: canonical.amount,
+          category: canonical.category,
+          subCategory: task.template.name,
+          description: `${task.rawFile.originalFileName} OCR 人工确认记录`,
+          sourceType: RecordSourceType.ocr,
+          sourceId: task.id,
+          status: BusinessRecordStatus.confirmed,
+          attachments: [task.rawFileId],
+          createdBy: actor.username,
+          confirmedBy: actor.username,
+          confirmedAt: now,
+          values: {
+            create: values.map(({ field, value }) => this.buildRecordValue(field, value))
+          }
+        },
+        include: {
+          project: true,
+          template: true,
+          values: { include: { field: true }, orderBy: { createdAt: 'asc' } }
+        }
+      });
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          status: OcrTaskStatus.confirmed,
+          confirmedBy: actor.id,
+          confirmedAt: now,
+          generatedRecordId: record.id,
+          errorMessage: null
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.confirm', 'ocr_task', id, {
+        generatedRecordId: record.id,
+        acknowledgedFields: unresolved.map((candidate) => candidate.fieldId)
+      }, context);
+      await this.auditLogs.write(tx, actor, 'business_record.create_from_ocr', 'business_record', record.id, {
+        ocrTaskId: id,
+        rawFileId: task.rawFileId
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'ocr_task_confirmed', 'ocr_task', id, {
+        generatedRecordId: record.id,
+        rawFileId: task.rawFileId
+      });
+      await this.ledgerEvents.write(tx, actor, 'business_record_created', 'business_record', record.id, {
+        sourceType: RecordSourceType.ocr,
+        ocrTaskId: id,
+        rawFileId: task.rawFileId,
+        accountingDirection: canonical.accountingDirection,
+        amount: canonical.amount.toFixed(2)
+      }, `ocr_task:${id}:business_record_created`);
+      return { recordId: record.id, alreadyConfirmed: false, record: toBusinessRecord(record) };
+    });
+
+    const task = toOcrTask(await this.findDetailOrThrow(id));
+    const record = result.record ?? toBusinessRecord(await this.findRecordOrThrow(result.recordId));
+    return { task, record, alreadyConfirmed: result.alreadyConfirmed };
+  }
+
+  async cancel(id: string, actor: CurrentUser, context: RequestContext) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await tx.ocrTask.findUnique({ where: { id } });
+      if (!task) throw new NotFoundException('资源不存在');
+      if (task.status === OcrTaskStatus.confirmed) throw new ConflictException('已确认 OCR 任务不能取消');
+      if (task.status === OcrTaskStatus.cancelled) return;
+      if (task.status === OcrTaskStatus.processing) {
+        await tx.ocrAttempt.updateMany({
+          where: { ocrTaskId: id, status: OcrAttemptStatus.processing },
+          data: {
+            status: OcrAttemptStatus.failed,
+            completedAt: new Date(),
+            errorMessage: '用户取消'
+          }
+        });
+      }
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          status: OcrTaskStatus.cancelled,
+          errorMessage: '用户取消',
+          leaseToken: null,
+          leaseUntil: null,
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.cancel', 'ocr_task', id, {}, context);
+      await this.ledgerEvents.write(tx, actor, 'ocr_task_cancelled', 'ocr_task', id, {});
+    });
+    return toOcrTask(await this.findDetailOrThrow(id));
+  }
+
+  private providerFields(templateFields: TemplateFieldWithField[]): OcrTemplateField[] {
+    return templateFields.map((item) => ({
+      id: item.field.id,
+      fieldKey: item.field.fieldKey,
+      fieldName: item.field.fieldName,
+      fieldType: item.field.fieldType,
+      semanticType: item.field.semanticType,
+      aliases: this.aliases(item.field.aliases),
+      isRequired: item.isRequired,
+      isVisible: item.isVisible
+    }));
+  }
+
+  private assertProviderResultLimits(result: OcrProviderResult) {
+    if (result.extractedText.length > 100_000) throw new BadGatewayException('OCR 文本超过安全上限');
+    if (result.pages.length > 200) throw new BadGatewayException('OCR 页数超过安全上限');
+    if (result.textBlocks.length > 5_000) throw new BadGatewayException('OCR 文本块超过安全上限');
+    if (result.tables.length > 100) throw new BadGatewayException('OCR 表格数量超过安全上限');
+    if (result.fieldCandidates.length > 500) throw new BadGatewayException('OCR 字段候选超过安全上限');
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(result);
+    } catch {
+      throw new BadGatewayException('OCR Provider 返回结果无法序列化');
+    }
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_OCR_RESULT_BYTES) {
+      throw new BadGatewayException('OCR Provider 返回结果超过安全上限');
+    }
+  }
+
+  private canonicalizeCandidates(
+    providerCandidates: OcrFieldCandidate[],
+    templateFields: TemplateFieldWithField[],
+    rawFileId: string
+  ): CanonicalOcrFieldCandidate[] {
+    const activeFields = templateFields.filter((item) => item.isVisible && item.field.isActive);
+    const matched = new Map<string, OcrFieldCandidate>();
+    for (const candidate of providerCandidates) {
+      const templateField = this.matchCandidate(candidate, activeFields);
+      if (!templateField) throw new BadGatewayException(`OCR Provider 返回未映射字段：${candidate.sourceLabel || '未命名字段'}`);
+      const existing = matched.get(templateField.fieldId);
+      if (!existing || Number(candidate.confidence) > Number(existing.confidence)) matched.set(templateField.fieldId, candidate);
+    }
+
+    return activeFields.map((templateField) => {
+      const candidate = matched.get(templateField.fieldId);
+      if (!candidate) {
+        return {
+          fieldId: templateField.fieldId,
+          fieldKey: templateField.field.fieldKey,
+          fieldName: templateField.field.fieldName,
+          fieldType: templateField.field.fieldType,
+          semanticType: templateField.field.semanticType,
+          isRequired: templateField.isRequired,
+          sourceLabel: templateField.field.fieldName,
+          rawValue: null,
+          normalizedValue: null,
+          page: 1,
+          confidence: 0,
+          evidence: 'OCR 未识别该模板字段',
+          missing: true,
+          lowConfidence: true,
+          corrected: false,
+          validationError: templateField.isRequired ? '必填字段未识别' : undefined
+        };
+      }
+
+      const confidence = Math.max(0, Math.min(1, Number(candidate.confidence) || 0));
+      let normalizedValue = candidate.normalizedValue;
+      let validationError: string | undefined;
+      try {
+        normalizedValue = this.normalizeFieldValue(templateField.field, candidate.normalizedValue, rawFileId);
+      } catch (error) {
+        validationError = this.safeErrorMessage(error);
+      }
+      const missing = this.isEmpty(candidate.normalizedValue);
+      return {
+        fieldId: templateField.fieldId,
+        fieldKey: templateField.field.fieldKey,
+        fieldName: templateField.field.fieldName,
+        fieldType: templateField.field.fieldType,
+        semanticType: templateField.field.semanticType,
+        isRequired: templateField.isRequired,
+        sourceLabel: String(candidate.sourceLabel || templateField.field.fieldName).slice(0, 128),
+        rawValue: candidate.rawValue ?? null,
+        normalizedValue: normalizedValue ?? null,
+        page: Number.isInteger(candidate.page) && candidate.page > 0 ? candidate.page : 1,
+        boundingBox: candidate.boundingBox,
+        confidence,
+        evidence: String(candidate.evidence || '').slice(0, 1000),
+        missing,
+        lowConfidence: missing || confidence < this.lowConfidenceThreshold || Boolean(validationError),
+        corrected: false,
+        validationError
+      };
+    });
+  }
+
+  private matchCandidate(candidate: OcrFieldCandidate, fields: TemplateFieldWithField[]) {
+    if (candidate.targetFieldId) {
+      const field = fields.find((item) => item.fieldId === candidate.targetFieldId);
+      if (field) return field;
+    }
+    const key = candidate.targetFieldKey?.normalize('NFKC').trim().toLowerCase();
+    if (key) {
+      const field = fields.find((item) => item.field.fieldKey.toLowerCase() === key);
+      if (field) return field;
+    }
+    const source = this.normalizeName(candidate.sourceLabel);
+    return fields.find((item) => [item.field.fieldName, ...this.aliases(item.field.aliases)]
+      .some((name) => this.normalizeName(name) === source));
+  }
+
+  private validateCandidates(
+    candidates: CanonicalOcrFieldCandidate[],
+    templateFields: TemplateFieldWithField[],
+    rawFileId: string
+  ) {
+    const byField = new Map(candidates.map((candidate) => [candidate.fieldId, candidate]));
+    const values: Array<{ field: FieldDefinition; value: string | string[] }> = [];
+    const errors: string[] = [];
+    for (const templateField of templateFields.filter((item) => item.isVisible && item.field.isActive)) {
+      const candidate = byField.get(templateField.fieldId);
+      if (!candidate || this.isEmpty(candidate.normalizedValue)) {
+        if (templateField.isRequired) errors.push(`${templateField.field.fieldName}：必填字段缺失`);
+        continue;
+      }
+      try {
+        values.push({
+          field: templateField.field,
+          value: this.normalizeFieldValue(templateField.field, candidate.normalizedValue, rawFileId)
+        });
+      } catch (error) {
+        errors.push(`${templateField.field.fieldName}：${this.safeErrorMessage(error)}`);
+      }
+    }
+    if (errors.length > 0) throw new BadRequestException(errors.join('；'));
+    return values;
+  }
+
+  private normalizeFieldValue(field: FieldDefinition, raw: unknown, rawFileId: string): string | string[] {
+    if (this.isEmpty(raw)) throw new BadRequestException('值不能为空');
+    if (field.fieldType === FieldType.number || field.fieldType === FieldType.money) {
+      if (typeof raw !== 'string' && typeof raw !== 'number') throw new BadRequestException('数字格式错误');
+      const text = String(raw).trim().replace(/,/g, '');
+      if (!/^-?(?:\d+|\d*\.\d+)$/.test(text)) throw new BadRequestException('数字格式错误');
+      const decimal = new Prisma.Decimal(text);
+      if (field.fieldType === FieldType.money && decimal.decimalPlaces() > 2) throw new BadRequestException('金额最多保留两位小数');
+      if (decimal.abs().greaterThan('99999999999999.99')) throw new BadRequestException('数字超出允许范围');
+      return decimal.toString();
+    }
+    if (field.fieldType === FieldType.date) {
+      if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new BadRequestException('日期格式必须为 YYYY-MM-DD');
+      const date = new Date(`${raw}T00:00:00.000Z`);
+      if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) throw new BadRequestException('日期无效');
+      return raw;
+    }
+    if (field.fieldType === FieldType.file) {
+      if (!Array.isArray(raw) || raw.length !== 1 || raw[0] !== rawFileId) throw new BadRequestException('附件字段必须引用当前 OCR 原文件');
+      return [rawFileId];
+    }
+    if (typeof raw !== 'string') throw new BadRequestException('文本字段必须是字符串');
+    const value = raw.trim();
+    const maxLength = field.fieldType === FieldType.textarea ? 5000 : 1000;
+    if (!value || value.length > maxLength) throw new BadRequestException(`文本长度必须为 1-${maxLength}`);
+    return value;
+  }
+
+  private buildRecordValue(field: FieldDefinition, value: string | string[]) {
+    const base = { fieldId: field.id, fieldName: field.fieldName };
+    if (field.fieldType === FieldType.number || field.fieldType === FieldType.money) {
+      return { ...base, valueNumber: new Prisma.Decimal(value as string) };
+    }
+    if (field.fieldType === FieldType.date) {
+      return { ...base, valueDate: new Date(`${value as string}T00:00:00.000Z`) };
+    }
+    if (field.fieldType === FieldType.file) return { ...base, valueJson: value as string[] };
+    return { ...base, valueText: value as string };
+  }
+
+  private extractedFields(candidates: CanonicalOcrFieldCandidate[]) {
+    return Object.fromEntries(candidates.map((candidate) => [candidate.fieldId, candidate.normalizedValue]));
+  }
+
+  private fieldConfidence(candidates: CanonicalOcrFieldCandidate[]) {
+    return Object.fromEntries(candidates.map((candidate) => [candidate.fieldId, candidate.confidence]));
+  }
+
+  private averageConfidence(candidates: CanonicalOcrFieldCandidate[]) {
+    const recognized = candidates.filter((candidate) => !candidate.missing);
+    if (recognized.length === 0) return 0;
+    return Number((recognized.reduce((sum, candidate) => sum + candidate.confidence, 0) / recognized.length).toFixed(4));
+  }
+
+  private aliases(value: Prisma.JsonValue | null): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  private candidateArray(value: Prisma.JsonValue): CanonicalOcrFieldCandidate[] {
+    return Array.isArray(value) ? value as unknown as CanonicalOcrFieldCandidate[] : [];
+  }
+
+  private mockScenario(value: Prisma.JsonValue | null): MockOcrScenario | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const scenario = (value as Record<string, Prisma.JsonValue>).mockScenario;
+    return typeof scenario === 'string' ? scenario as MockOcrScenario : undefined;
+  }
+
+  private providerOptions(scenario: MockOcrScenario | undefined, selection: OcrPageSelection) {
+    if (!scenario && selection.pageStart === undefined) return undefined;
+    return {
+      ...(scenario ? { mockScenario: scenario } : {}),
+      ...(selection.pageStart === undefined ? {} : {
+        pageRange: { pageStart: selection.pageStart, pageEnd: selection.pageEnd }
+      })
+    };
+  }
+
+  private pageSelectionFromDto(dto: { pageStart?: number; pageEnd?: number }): OcrPageSelection {
+    return { pageStart: dto.pageStart, pageEnd: dto.pageEnd };
+  }
+
+  private pageSelection(value: Prisma.JsonValue | null): OcrPageSelection {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const range = (value as Record<string, Prisma.JsonValue>).pageRange;
+    if (!range || typeof range !== 'object' || Array.isArray(range)) return {};
+    const pageStart = (range as Record<string, Prisma.JsonValue>).pageStart;
+    const pageEnd = (range as Record<string, Prisma.JsonValue>).pageEnd;
+    return {
+      pageStart: typeof pageStart === 'number' ? pageStart : undefined,
+      pageEnd: typeof pageEnd === 'number' ? pageEnd : undefined
+    };
+  }
+
+  private normalizeName(value: string) {
+    return value.normalize('NFKC').trim().toLowerCase().replace(/[\s_\-—/\\()（）\[\]【】:：,.，。]+/g, '');
+  }
+
+  private isEmpty(value: unknown) {
+    return value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
+  }
+
+  private displayValue(value: unknown) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+  }
+
+  private safeErrorMessage(error: unknown) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    return message.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]').slice(0, 500);
+  }
+
+  private json(value: unknown): Prisma.InputJsonValue {
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  private validateIdempotencyKey(value: string | undefined, required = false) {
+    if (required && !value) throw new BadRequestException('Idempotency-Key 请求头不能为空');
+    if (value && !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) {
+      throw new BadRequestException('Idempotency-Key 格式不合法');
+    }
+  }
+
+  private async lockTask(tx: Prisma.TransactionClient, id: string) {
+    await tx.$executeRaw`SELECT id FROM ocr_tasks WHERE id = ${id} FOR UPDATE`;
+  }
+
+  private async findDetailOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
+    const task = await prisma.ocrTask.findUnique({ where: { id }, include: ocrTaskDetailInclude });
+    if (!task) throw new NotFoundException('资源不存在');
+    return task;
+  }
+
+  private async findRecordOrThrow(id: string) {
+    const record = await this.prisma.businessRecord.findUnique({
+      where: { id },
+      include: {
+        project: true,
+        template: true,
+        values: { include: { field: true }, orderBy: { createdAt: 'asc' } }
+      }
+    });
+    if (!record) throw new NotFoundException('资源不存在');
+    return record;
+  }
+
+  private isUniqueConflict(error: unknown) {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+  }
+}

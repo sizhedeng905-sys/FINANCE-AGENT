@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, User, UserStatus } from '@prisma/client';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, User, UserRole, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -61,6 +61,7 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, actor: CurrentUser, context: RequestContext) {
+    this.assertFinanceBossBoundary(actor, undefined, dto.role);
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
     return this.prisma.$transaction(async (tx) => {
@@ -90,17 +91,25 @@ export class UsersService {
       );
 
       return toPublicUser(user);
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async update(id: string, dto: UpdateUserDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findUserOrThrow(id, tx);
+      this.assertFinanceBossBoundary(actor, before, dto.role);
+      const roleChanged = dto.role !== undefined && dto.role !== before.role;
+      if (before.role === UserRole.boss && before.status === UserStatus.active && roleChanged) {
+        await this.assertAnotherActiveBoss(tx, before.id);
+      }
       const user = await tx.user.update({
         where: {
           id
         },
-        data: dto
+        data: {
+          ...dto,
+          tokenVersion: roleChanged ? { increment: 1 } : undefined
+        }
       });
 
       await this.auditLogs.write(
@@ -117,7 +126,7 @@ export class UsersService {
       );
 
       return toPublicUser(user);
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async updatePassword(id: string, dto: UpdateUserPasswordDto, actor: CurrentUser, context: RequestContext) {
@@ -125,12 +134,14 @@ export class UsersService {
 
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findUserOrThrow(id, tx);
+      this.assertFinanceBossBoundary(actor, before);
       const user = await tx.user.update({
         where: {
           id
         },
         data: {
-          passwordHash
+          passwordHash,
+          tokenVersion: { increment: 1 }
         }
       });
 
@@ -155,12 +166,21 @@ export class UsersService {
   async updateStatus(id: string, dto: UpdateUserStatusDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findUserOrThrow(id, tx);
+      this.assertFinanceBossBoundary(actor, before);
+      if (
+        before.role === UserRole.boss &&
+        before.status === UserStatus.active &&
+        dto.status === UserStatus.disabled
+      ) {
+        await this.assertAnotherActiveBoss(tx, before.id);
+      }
       const user = await tx.user.update({
         where: {
           id
         },
         data: {
-          status: dto.status
+          status: dto.status,
+          tokenVersion: { increment: 1 }
         }
       });
 
@@ -181,12 +201,24 @@ export class UsersService {
         id: user.id,
         status: user.status
       };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async remove(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findUserOrThrow(id, tx);
+      this.assertFinanceBossBoundary(actor, before);
+      if (before.role === UserRole.boss && before.status === UserStatus.active) {
+        await this.assertAnotherActiveBoss(tx, before.id);
+      }
+
+      const user = await tx.user.update({
+        where: { id },
+        data: {
+          status: UserStatus.disabled,
+          tokenVersion: { increment: 1 }
+        }
+      });
 
       await this.auditLogs.write(
         tx,
@@ -195,21 +227,38 @@ export class UsersService {
         'user',
         before.id,
         {
-          before: toPublicUser(before)
+          before: toPublicUser(before),
+          after: toPublicUser(user),
+          softDelete: true
         },
         context
       );
 
-      await tx.user.delete({
-        where: {
-          id
-        }
-      });
-
       return {
-        id
+        id,
+        status: user.status
       };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  private assertFinanceBossBoundary(actor: CurrentUser, target?: User, requestedRole?: UserRole) {
+    if (actor.role !== UserRole.finance) return;
+    if (target?.role === UserRole.boss || requestedRole === UserRole.boss) {
+      throw new ForbiddenException('财务角色不能创建、提升或操作老板账号');
+    }
+  }
+
+  private async assertAnotherActiveBoss(prisma: Prisma.TransactionClient, excludedUserId: string) {
+    const remainingBosses = await prisma.user.count({
+      where: {
+        id: { not: excludedUserId },
+        role: UserRole.boss,
+        status: UserStatus.active
+      }
     });
+    if (remainingBosses === 0) {
+      throw new ConflictException('不能停用、降级或删除最后一个有效老板账号');
+    }
   }
 
   private async findUserOrThrow(id: string, prisma: Prisma.TransactionClient | PrismaService = this.prisma): Promise<User> {
