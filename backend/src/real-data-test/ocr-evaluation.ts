@@ -145,6 +145,9 @@ export function evaluateOcrPredictions(
   let errorCases = 0;
   let lowConfidenceErrors = 0;
   let highConfidenceErrors = 0;
+  let highConfidencePredictions = 0;
+  let amountAndNumberErrors = 0;
+  let dateErrors = 0;
   let expectedTypedFields = 0;
   let correctTypedFields = 0;
   let expectedDateFields = 0;
@@ -173,6 +176,8 @@ export function evaluateOcrPredictions(
       if (existing) duplicateCandidates += 1;
       if (!existing || candidate.confidence > existing.confidence) candidates.set(fieldKey, candidate);
     }
+    highConfidencePredictions += [...candidates.values()]
+      .filter((candidate) => candidate.confidence >= threshold).length;
 
     if (label.expectedDocumentType) {
       documentTypeEvaluated += 1;
@@ -208,10 +213,12 @@ export function evaluateOcrPredictions(
         if (truth.fieldType === 'money' || truth.fieldType === 'number') {
           expectedTypedFields += 1;
           if (correct) correctTypedFields += 1;
+          else amountAndNumberErrors += 1;
         }
         if (truth.fieldType === 'date') {
           expectedDateFields += 1;
           if (correct) correctDateFields += 1;
+          else dateErrors += 1;
         }
         if (label.family === 'RB-EINV' && OCR_KEY_FIELD_KEYS.has(truth.fieldKey)) {
           keyFieldExpected += 1;
@@ -260,7 +267,7 @@ export function evaluateOcrPredictions(
     amountAndNumberAccuracy: ratio(correctTypedFields, expectedTypedFields),
     dateAccuracy: ratio(correctDateFields, expectedDateFields),
     lowConfidenceRecall: errorCases === 0 ? 1 : ratio(lowConfidenceErrors, errorCases),
-    highConfidenceErrorRate: fieldSlots === 0 ? null : ratio(highConfidenceErrors, fieldSlots),
+    highConfidenceErrorRate: highConfidencePredictions === 0 ? 0 : ratio(highConfidenceErrors, highConfidencePredictions),
     unconfirmedAutoRecordCount: options.unconfirmedAutoRecordCount ?? null
   };
   const gate = reviewed.length === 0
@@ -285,6 +292,9 @@ export function evaluateOcrPredictions(
       errorCases,
       lowConfidenceErrors,
       highConfidenceErrors,
+      highConfidencePredictions,
+      amountAndNumberErrors,
+      dateErrors,
       duplicateCandidates,
       unexpectedCandidateKeys
     },

@@ -39,12 +39,12 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   ));
   await page.getByRole('button', { name: '上传并识别' }).click();
   const created = await readEnvelope<OcrTaskDto>(await createResponse);
-  const recognized = await readEnvelope<OcrTaskDto>(await runResponse);
-  expect(recognized.data).toMatchObject({ id: created.data.id, status: 'pending_confirm' });
-  expect(recognized.data.extractedText).toContain('金额');
+  const queued = await readEnvelope<OcrTaskDto>(await runResponse);
+  expect(queued.data).toMatchObject({ id: created.data.id, status: 'queued' });
   await expect(page).toHaveURL(new RegExp(`/data/ocr/${created.data.id}$`));
 
   const amountRow = page.locator('.ant-table-row').filter({ hasText: '金额' }).first();
+  await expect(amountRow).toBeVisible({ timeout: 30_000 });
   await expect(amountRow).toContainText('1280.5');
   await amountRow.getByRole('button', { name: '修正' }).click();
   const dialog = page.getByRole('dialog', { name: /修正字段：金额/ });

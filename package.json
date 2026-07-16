@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test:e2e:prepare": "node backend/scripts/prepare-e2e.mjs",
     "test:e2e": "npm run test:e2e:prepare && playwright test",
+    "test:e2e:ocr-real": "npm run test:e2e:prepare && playwright test --config playwright.ocr-real.config.ts",
     "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
     "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
     "realdata:scan": "npm --prefix backend run realdata:scan --",

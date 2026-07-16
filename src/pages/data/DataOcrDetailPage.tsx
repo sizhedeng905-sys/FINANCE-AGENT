@@ -60,6 +60,12 @@ export default function DataOcrDetailPage() {
     if (id) void fetchTask(id).catch(() => undefined);
   }, [fetchTask, id]);
 
+  useEffect(() => {
+    if (!id || !task || !['queued', 'processing'].includes(task.status)) return undefined;
+    const timer = window.setInterval(() => void fetchTask(id).catch(() => undefined), 1500);
+    return () => window.clearInterval(timer);
+  }, [fetchTask, id, task?.status]);
+
   const unresolved = useMemo(
     () => task?.fields.filter((field) => field.lowConfidence || field.missing || field.validationError) ?? [],
     [task?.fields],
@@ -74,12 +80,8 @@ export default function DataOcrDetailPage() {
     if (!id || !candidate) return;
     const values = await form.validateFields();
     const correctedValue = ['number', 'money'].includes(candidate.fieldType)
-      ? Number(values.correctedValue.replace(/,/g, ''))
+      ? values.correctedValue.trim()
       : values.correctedValue;
-    if (typeof correctedValue === 'number' && !Number.isFinite(correctedValue)) {
-      message.warning('请输入有效数字');
-      return;
-    }
     await correctTask(id, { corrections: [{ fieldId: candidate.fieldId, correctedValue, reason: values.reason }] });
     message.success('字段修正已保存并留痕');
     setCandidate(undefined);
@@ -189,6 +191,15 @@ export default function DataOcrDetailPage() {
                 message="OCR识别失败"
                 description={task.errorMessage}
                 action={<Button loading={loading} onClick={() => void retryTask(task.id).then(() => message.success('重试成功')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '重试失败'))}>重试</Button>}
+              />
+            ) : null}
+            {['queued', 'processing'].includes(task.status) ? (
+              <Alert
+                className="section-row"
+                type="info"
+                showIcon
+                message={task.status === 'queued' ? 'OCR 任务正在排队' : 'OCR 模型正在识别'}
+                description="页面会自动刷新状态，可以安全离开后再返回。"
               />
             ) : null}
             {unresolved.length ? <Alert className="section-row" type="warning" showIcon message={`${unresolved.length} 个字段需要人工核对`} description="低置信度、缺失或格式异常字段不会自动入账。" /> : null}

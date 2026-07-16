@@ -30,6 +30,7 @@ import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { FilesService } from '../files/files.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
+import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
 import { ConfirmOcrTaskDto } from './dto/confirm-ocr-task.dto';
@@ -39,7 +40,13 @@ import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
 import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
 import { OcrProviderRegistry } from './ocr-provider.registry';
-import { MockOcrScenario, OcrFieldCandidate, OcrProviderResult, OcrTemplateField } from './ocr-provider';
+import {
+  MockOcrScenario,
+  OcrFieldCandidate,
+  OcrProviderExecutionConfig,
+  OcrProviderResult,
+  OcrTemplateField
+} from './ocr-provider';
 import { ocrTaskDetailInclude, OcrTaskDetail, toOcrTask } from './ocr.presenter';
 import { CanonicalOcrFieldCandidate } from './ocr.types';
 
@@ -53,6 +60,9 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly lowConfidenceThreshold: number;
   private readonly maxRetries: number;
   private readonly processingLeaseMs: number;
+  private readonly recoveryIntervalMs: number;
+  private readonly backgroundJobs = new Map<string, Promise<void>>();
+  private stopping = false;
   private leaseReaper?: NodeJS.Timeout;
 
   constructor(
@@ -64,25 +74,37 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService,
     private readonly idempotency: IdempotencyService,
+    private readonly executionGate: ModelExecutionGateService,
     config: ConfigService
   ) {
     this.lowConfidenceThreshold = config.get<number>('ocr.lowConfidenceThreshold') ?? 0.8;
     this.maxRetries = config.get<number>('ocr.maxRetries') ?? 2;
     const providerTimeoutMs = config.get<number>('ocr.timeoutMs') ?? 30_000;
-    this.processingLeaseMs = Math.max(60_000, providerTimeoutMs * 2 + 30_000);
+    this.processingLeaseMs = Math.max(
+      5_000,
+      config.get<number>('ocr.processingLeaseMs') ?? providerTimeoutMs * 2 + 30_000
+    );
+    this.recoveryIntervalMs = Math.max(1_000, config.get<number>('ocr.recoveryIntervalMs') ?? 5_000);
   }
 
   onModuleInit() {
-    void this.recoverExpiredTasks();
-    this.leaseReaper = setInterval(() => void this.recoverExpiredTasks(), 60_000);
+    void this.recoverRunnableTasks();
+    this.leaseReaper = setInterval(() => void this.recoverRunnableTasks(), this.recoveryIntervalMs);
     this.leaseReaper.unref();
   }
 
   onModuleDestroy() {
+    this.stopping = true;
     if (this.leaseReaper) clearInterval(this.leaseReaper);
   }
 
+  private async recoverRunnableTasks() {
+    await this.recoverExpiredTasks();
+    await this.recoverQueuedTasks();
+  }
+
   async recoverExpiredTasks() {
+    let recovered = 0;
     try {
       const expired = await this.prisma.ocrTask.findMany({
         where: { status: OcrTaskStatus.processing, leaseUntil: { lt: new Date() } },
@@ -93,17 +115,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       for (const task of expired) {
         await this.prisma.$transaction(async (tx) => {
           await this.lockTask(tx, task.id);
-          const changed = await tx.ocrTask.updateMany({
-            where: { id: task.id, status: OcrTaskStatus.processing, leaseUntil: { lt: new Date() } },
-            data: {
-              status: OcrTaskStatus.failed,
-              errorMessage: 'OCR 处理租约已过期，可安全重试',
-              leaseToken: null,
-              leaseUntil: null,
-              version: { increment: 1 }
-            }
-          });
-          if (changed.count === 1) {
+          const current = await tx.ocrTask.findUnique({ where: { id: task.id } });
+          if (
+            current?.status === OcrTaskStatus.processing &&
+            current.leaseUntil &&
+            current.leaseUntil.getTime() < Date.now()
+          ) {
             await tx.ocrAttempt.updateMany({
               where: { ocrTaskId: task.id, status: OcrAttemptStatus.processing },
               data: {
@@ -112,11 +129,41 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
                 errorMessage: 'OCR 处理租约已过期'
               }
             });
+            const exhausted = current.attemptCount >= this.maxRetries + 1;
+            await tx.ocrTask.update({
+              where: { id: task.id },
+              data: {
+                status: exhausted ? OcrTaskStatus.failed : OcrTaskStatus.queued,
+                queuedAt: exhausted ? null : new Date(),
+                errorMessage: exhausted ? 'OCR 处理恢复次数已达上限' : null,
+                leaseToken: null,
+                leaseUntil: null,
+                version: { increment: 1 }
+              }
+            });
+            if (!exhausted) recovered += 1;
           }
         });
       }
     } catch (error) {
       this.logger.warn(`OCR lease reaper failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    return recovered;
+  }
+
+  async recoverQueuedTasks() {
+    try {
+      const queued = await this.prisma.ocrTask.findMany({
+        where: { status: OcrTaskStatus.queued },
+        select: { id: true },
+        orderBy: [{ queuedAt: 'asc' }, { createdAt: 'asc' }],
+        take: 100
+      });
+      for (const task of queued) this.scheduleTask(task.id);
+      return queued.length;
+    } catch (error) {
+      this.logger.warn(`OCR queue recovery failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return 0;
     }
   }
 
@@ -215,14 +262,15 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     idempotencyKey?: string
   ) {
     const template = await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
-    const provider = await this.providers.current();
+    const resolvedProvider = await this.providers.resolve();
+    const provider = resolvedProvider.provider;
     if (dto.mockScenario && provider.name !== 'mock') {
       throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
     }
     const file = await this.files.readForProcessing(dto.rawFileId, actor);
     const pageSelection = this.pageSelectionFromDto(dto);
     const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
-    const snapshot = provider.snapshot();
+    const snapshot = resolvedProvider.config;
     const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
 
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
@@ -284,6 +332,74 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   }
 
   async run(id: string, actor: CurrentUser, context: RequestContext) {
+    const queued = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await this.findDetailOrThrow(id, tx);
+      if (task.status === OcrTaskStatus.pending_confirm || task.status === OcrTaskStatus.confirmed) {
+        return toOcrTask(task);
+      }
+      if (task.status === OcrTaskStatus.cancelled) {
+        throw new ConflictException('已取消任务不能识别');
+      }
+      if (task.status === OcrTaskStatus.failed) {
+        throw new ConflictException('失败任务请使用重试接口');
+      }
+      if (
+        task.status === OcrTaskStatus.processing &&
+        task.leaseUntil &&
+        task.leaseUntil.getTime() > Date.now()
+      ) {
+        throw new ConflictException('OCR 任务正在识别中');
+      }
+      if (task.status === OcrTaskStatus.processing) {
+        await tx.ocrAttempt.updateMany({
+          where: { ocrTaskId: id, status: OcrAttemptStatus.processing },
+          data: {
+            status: OcrAttemptStatus.failed,
+            completedAt: new Date(),
+            errorMessage: 'OCR 处理租约过期后重新排队'
+          }
+        });
+      }
+      if (task.status !== OcrTaskStatus.queued || !task.runRequestedBy) {
+        await tx.ocrTask.update({
+          where: { id },
+          data: {
+            status: OcrTaskStatus.queued,
+            queuedAt: task.queuedAt ?? new Date(),
+            runRequestedBy: actor.id,
+            runRequestId: context.requestId ?? randomUUID(),
+            errorMessage: null,
+            leaseToken: null,
+            leaseUntil: null,
+            version: { increment: 1 }
+          }
+        });
+        await this.auditLogs.write(tx, actor, 'ocr_task.queued', 'ocr_task', id, {
+          previousStatus: task.status
+        }, context);
+        await this.ledgerEvents.write(
+          tx,
+          actor,
+          'ocr_task_queued',
+          'ocr_task',
+          id,
+          { previousStatus: task.status },
+          `ocr_task:${id}:queued:${task.attemptCount + 1}`
+        );
+      }
+      return toOcrTask(await this.findDetailOrThrow(id, tx));
+    });
+    this.scheduleTask(id);
+    return queued;
+  }
+
+  private async executeQueuedTask(
+    id: string,
+    actor: CurrentUser,
+    context: RequestContext,
+    executionConfig: OcrProviderExecutionConfig
+  ) {
     const prepared = await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
@@ -321,10 +437,13 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           ocrTaskId: id,
           attemptNo,
           status: OcrAttemptStatus.processing,
-          provider: task.provider,
-          modelName: task.modelName,
-          modelVersion: task.modelVersion,
-          endpointSnapshot: task.endpointSnapshot,
+          provider: executionConfig.provider,
+          modelName: executionConfig.modelName,
+          modelVersion: executionConfig.modelVersion,
+          endpointSnapshot: executionConfig.endpoint,
+          providerConfig: this.json(executionConfig.configSummary),
+          providerConfigHash: executionConfig.configHash,
+          secretRef: executionConfig.secretRef,
           inputSha256: task.rawFile.sha256,
           correlationId,
           startedAt: new Date()
@@ -335,6 +454,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         data: {
           status: OcrTaskStatus.processing,
           attemptCount: attemptNo,
+          provider: executionConfig.provider,
+          modelName: executionConfig.modelName,
+          modelVersion: executionConfig.modelVersion,
+          endpointSnapshot: executionConfig.endpoint,
           errorMessage: null,
           leaseToken,
           leaseUntil: new Date(Date.now() + this.processingLeaseMs),
@@ -344,8 +467,9 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       await this.auditLogs.write(tx, actor, 'ocr_task.run_started', 'ocr_task', id, {
         attemptNo,
         correlationId,
-        provider: task.provider,
-        modelName: task.modelName
+        provider: executionConfig.provider,
+        modelName: executionConfig.modelName,
+        providerConfigHash: executionConfig.configHash
       }, context);
       return { skipped: false as const, task, attempt, leaseToken };
     });
@@ -353,6 +477,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     if (prepared.skipped) return toOcrTask(prepared.task);
 
     const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+      void this.prisma.ocrTask.updateMany({
+        where: {
+          id,
+          status: OcrTaskStatus.processing,
+          leaseToken: prepared.leaseToken
+        },
+        data: { leaseUntil: new Date(Date.now() + this.processingLeaseMs) }
+      }).catch((error) => this.logger.warn(
+        `OCR heartbeat failed for ${id}: ${error instanceof Error ? error.message : 'unknown error'}`
+      ));
+    }, Math.max(1_000, Math.floor(this.processingLeaseMs / 3)));
+    heartbeat.unref();
     try {
       const file = await this.files.readForProcessing(prepared.task.rawFileId, actor);
       const document = await this.preprocessor.prepare(
@@ -361,7 +498,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         this.pageSelection(prepared.task.providerOptions)
       );
       const pages = document.pages;
-      const provider = this.providers.byName(prepared.task.provider);
+      const provider = this.providers.byName(executionConfig.provider);
       const result = await provider.recognize({
         documentId: id,
         rawFileId: prepared.task.rawFileId,
@@ -373,7 +510,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         fields: this.providerFields(prepared.task.template.templateFields),
         attemptNo: prepared.attempt.attemptNo,
         scenario: this.mockScenario(prepared.task.providerOptions)
-      });
+      }, executionConfig);
       if (result.documentId !== id) throw new BadGatewayException('OCR Provider 返回了错误的 documentId');
       this.assertProviderResultLimits(result);
       const candidates = this.canonicalizeCandidates(
@@ -497,6 +634,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       });
       if (error instanceof ConflictException) throw error;
       throw new ServiceUnavailableException(`OCR 识别失败：${message}`);
+    } finally {
+      clearInterval(heartbeat);
     }
   }
 
@@ -511,6 +650,9 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         where: { id },
         data: {
           status: OcrTaskStatus.queued,
+          queuedAt: new Date(),
+          runRequestedBy: actor.id,
+          runRequestId: context.requestId ?? randomUUID(),
           retryCount: { increment: 1 },
           errorMessage: null,
           leaseToken: null,
@@ -617,6 +759,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         };
       }
       if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('OCR 结果尚未进入人工确认状态');
+      const actualAttempt = task.attempts.find((attempt) => attempt.status === OcrAttemptStatus.succeeded);
+      if (!actualAttempt) throw new ConflictException('OCR 结果缺少可追溯的成功 attempt');
 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${task.projectId}, 22))`;
 
@@ -651,12 +795,16 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           templateSnapshot: this.recordPolicy.toSnapshot(template),
           sourceSnapshot: this.recordPolicy.toSourceSnapshot(RecordSourceType.ocr, task.id, {
             ocrTaskId: task.id,
+            ocrAttemptId: actualAttempt.id,
             rawFileId: task.rawFileId,
             rawFileSha256: task.rawFile.sha256,
-            provider: task.provider,
-            modelName: task.modelName,
-            modelVersion: task.modelVersion ?? 'unknown',
-            attemptCount: task.attemptCount,
+            provider: actualAttempt.provider,
+            modelName: actualAttempt.modelName,
+            modelVersion: actualAttempt.modelVersion ?? 'unknown',
+            endpoint: actualAttempt.endpointSnapshot ?? 'local-inprocess',
+            providerConfigHash: actualAttempt.providerConfigHash ?? 'unknown',
+            secretRef: actualAttempt.secretRef ?? 'none',
+            attemptNo: actualAttempt.attemptNo,
             pageCount: task.pageCount
           }),
           confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
@@ -762,6 +910,51 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     return toOcrTask(await this.findDetailOrThrow(id));
   }
 
+  private scheduleTask(id: string) {
+    if (this.stopping || this.backgroundJobs.has(id)) return;
+    const job = (async () => {
+      const queuedResolution = await this.providers.resolve();
+      const gateKey = `ocr:${queuedResolution.config.configHash ?? queuedResolution.config.provider}`;
+      await this.executionGate.run(gateKey, queuedResolution.config.maxConcurrency, async () => {
+        if (this.stopping) return;
+        const request = await this.backgroundRequest(id);
+        if (!request) return;
+        const actualResolution = await this.providers.resolve();
+        await this.executeQueuedTask(id, request.actor, request.context, actualResolution.config);
+      });
+    })().catch((error) => {
+      this.logger.warn(`OCR background task ${id} deferred: ${this.safeErrorMessage(error)}`);
+    }).finally(() => {
+      this.backgroundJobs.delete(id);
+    });
+    this.backgroundJobs.set(id, job);
+  }
+
+  private async backgroundRequest(id: string) {
+    const task = await this.prisma.ocrTask.findUnique({
+      where: { id },
+      select: { status: true, runRequestedBy: true, runRequestId: true, uploadedBy: true }
+    });
+    if (!task || task.status !== OcrTaskStatus.queued) return undefined;
+    const user = await this.prisma.user.findUnique({
+      where: { id: task.runRequestedBy ?? task.uploadedBy }
+    }) ?? await this.prisma.user.findUnique({ where: { id: task.uploadedBy } });
+    if (!user) throw new Error('OCR queue actor no longer exists');
+    return {
+      actor: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        department: user.department ?? '',
+        phone: user.phone ?? '',
+        status: user.status,
+        tokenVersion: user.tokenVersion
+      } satisfies CurrentUser,
+      context: { requestId: task.runRequestId ?? `ocr-background-${id}` } satisfies RequestContext
+    };
+  }
+
   private providerFields(templateFields: TemplateFieldWithField[]): OcrTemplateField[] {
     return templateFields.map((item) => ({
       id: item.field.id,
@@ -808,6 +1001,25 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
 
     return activeFields.map((templateField) => {
       const candidate = matched.get(templateField.fieldId);
+      if (!candidate && templateField.field.fieldType === FieldType.file) {
+        return {
+          fieldId: templateField.fieldId,
+          fieldKey: templateField.field.fieldKey,
+          fieldName: templateField.field.fieldName,
+          fieldType: templateField.field.fieldType,
+          semanticType: templateField.field.semanticType,
+          isRequired: templateField.isRequired,
+          sourceLabel: 'OCR 原始文件',
+          rawValue: [rawFileId],
+          normalizedValue: [rawFileId],
+          page: 1,
+          confidence: 1,
+          evidence: '系统绑定当前 OCR 原始文件；人工确认前不会入账',
+          missing: false,
+          lowConfidence: false,
+          corrected: false
+        };
+      }
       if (!candidate) {
         return {
           fieldId: templateField.fieldId,
@@ -889,6 +1101,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         if (templateField.isRequired) errors.push(`${templateField.field.fieldName}：必填字段缺失`);
         continue;
       }
+      if (candidate.validationError) {
+        errors.push(`${templateField.field.fieldName}：${candidate.validationError}`);
+        continue;
+      }
       try {
         values.push({
           field: templateField.field,
@@ -905,8 +1121,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private normalizeFieldValue(field: FieldDefinition, raw: unknown, rawFileId: string): string | string[] {
     if (this.isEmpty(raw)) throw new BadRequestException('值不能为空');
     if (field.fieldType === FieldType.number || field.fieldType === FieldType.money) {
-      if (typeof raw !== 'string' && typeof raw !== 'number') throw new BadRequestException('数字格式错误');
-      const text = String(raw).trim().replace(/,/g, '');
+      if (typeof raw !== 'string') throw new BadRequestException('精度敏感数字必须使用字符串传输并人工纠错');
+      const text = raw.trim().replace(/,/g, '');
       if (!/^-?(?:\d+|\d*\.\d+)$/.test(text)) throw new BadRequestException('数字格式错误');
       const decimal = new Prisma.Decimal(text);
       if (field.fieldType === FieldType.money && decimal.decimalPlaces() > 2) throw new BadRequestException('金额最多保留两位小数');

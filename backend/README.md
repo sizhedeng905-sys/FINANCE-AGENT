@@ -240,7 +240,7 @@ Completed:
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
 - Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
-- B8-01 to B8-03: terminal-state hardening, persistent request idempotency, and asynchronous Excel confirmation with 100-500 row transactions, durable progress, lease takeover, deterministic row records, and final atomic publication.
+- B8-01 to B8-04: terminal-state hardening, persistent request idempotency, asynchronous Excel confirmation, and Decimal-safe asynchronous OCR with execution-slot leases, recovery, actual-attempt snapshots, and human-only publication.
 
 Explicitly deferred by the user:
 
@@ -250,6 +250,7 @@ Completed audit follow-up:
 
 - Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001/30,196-row memory, persistence, cancellation, lease recovery, and uniqueness benchmarks (audit P1-08).
 - Complete 5,001/30,196/49,999-row Excel confirmation with BusinessRecord/RecordValue totals, Decimal sums, unique sources, reports, failure recovery, and bounded resource profiles (B8-03).
+- Mock and local Paddle OCR UI flows with Decimal strings, concurrency 1/3/5, queue/heartbeat/cancel/restart behavior, actual provider snapshots, and a measured zero-record delta before human confirmation (B8-04).
 - Legacy `.xls` conversion in a Node.js 22+ permission-model child process; no Excel/COM dependency and no converted artifact at rest.
 
 Deployment or data work still required:

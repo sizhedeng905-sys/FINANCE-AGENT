@@ -63,6 +63,8 @@ export default () => ({
     lowConfidenceThreshold: Number(process.env.OCR_LOW_CONFIDENCE_THRESHOLD ?? '0.8'),
     maxPdfPages: Number.parseInt(process.env.OCR_MAX_PDF_PAGES ?? '20', 10),
     maxRetries: Number.parseInt(process.env.OCR_MAX_RETRIES ?? '2', 10),
+    processingLeaseMs: Number.parseInt(process.env.OCR_PROCESSING_LEASE_MS ?? '90000', 10),
+    recoveryIntervalMs: Number.parseInt(process.env.OCR_RECOVERY_INTERVAL_MS ?? '5000', 10),
     maxResponseBytes: Number.parseInt(process.env.OCR_MAX_RESPONSE_BYTES ?? '2097152', 10)
   },
   modelRuntime: {

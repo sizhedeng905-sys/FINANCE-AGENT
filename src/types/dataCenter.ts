@@ -588,6 +588,9 @@ export interface OCRAttempt {
   modelName: string;
   modelVersion?: string;
   endpointSnapshot?: string;
+  providerConfig?: Record<string, unknown>;
+  providerConfigHash?: string;
+  secretRef?: string;
   correlationId: string;
   startedAt?: string;
   completedAt?: string;
@@ -635,6 +638,7 @@ export interface OCRTask {
   latencyMs?: number;
   attemptCount: number;
   retryCount: number;
+  queuedAt?: string;
   errorMessage?: string;
   uploadedBy: string;
   uploadedById?: string;

@@ -1,10 +1,15 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { ResilientHttpClientService } from '../model-runtime/resilient-http-client.service';
 import { StructuredOutputValidatorService } from '../model-runtime/structured-output-validator.service';
-import { OcrProvider, OcrProviderInput, OcrProviderResult, OcrProviderSnapshot } from './ocr-provider';
+import {
+  OcrProvider,
+  OcrProviderExecutionConfig,
+  OcrProviderInput,
+  OcrProviderResult,
+  OcrProviderSnapshot
+} from './ocr-provider';
 
 @Injectable()
 export class LocalPaddleOcrProvider implements OcrProvider {
@@ -20,7 +25,6 @@ export class LocalPaddleOcrProvider implements OcrProvider {
   constructor(
     config: ConfigService,
     private readonly http: ResilientHttpClientService,
-    private readonly gate: ModelExecutionGateService,
     private readonly outputValidator: StructuredOutputValidatorService
   ) {
     this.modelName = config.get<string>('ocr.model') ?? 'PaddleOCR-VL';
@@ -37,11 +41,18 @@ export class LocalPaddleOcrProvider implements OcrProvider {
       provider: this.name,
       modelName: this.modelName,
       modelVersion: this.modelVersion,
-      endpoint: this.baseUrl
+      endpoint: this.baseUrl,
+      secretRef: 'OCR_API_KEY',
+      timeoutMs: this.timeoutMs,
+      maxConcurrency: this.maxConcurrency,
+      configSummary: { source: 'environment', transport: 'multipart' }
     };
   }
 
-  async recognize(input: OcrProviderInput): Promise<OcrProviderResult> {
+  async recognize(input: OcrProviderInput, config?: OcrProviderExecutionConfig): Promise<OcrProviderResult> {
+    const endpoint = (config?.endpoint ?? this.baseUrl).replace(/\/+$/, '');
+    const apiKey = config?.secret ?? this.apiKey;
+    const timeoutMs = config?.timeoutMs ?? this.timeoutMs;
     const body = new FormData();
     body.set('file', new Blob([Uint8Array.from(input.buffer)], { type: input.mimeType }), input.fileName);
     body.set('documentId', input.documentId);
@@ -56,14 +67,14 @@ export class LocalPaddleOcrProvider implements OcrProvider {
 
     let response: Response;
     try {
-      response = await this.gate.run('ocr', this.maxConcurrency, () => this.http.request(`${this.baseUrl}/ocr`, {
+      response = await this.http.request(`${endpoint}/ocr`, {
         method: 'POST',
-        headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : undefined,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
         body
       }, {
-        circuitKey: `ocr:${this.baseUrl}`,
-        timeoutMs: this.timeoutMs
-      }));
+        circuitKey: `ocr:${endpoint}`,
+        timeoutMs
+      });
     } catch {
       throw new BadGatewayException('本地 Paddle OCR 服务不可用');
     }

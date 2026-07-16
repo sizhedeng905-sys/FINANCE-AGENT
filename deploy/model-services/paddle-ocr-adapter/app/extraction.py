@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
@@ -179,8 +180,13 @@ def normalize_value(raw_value: str, field_type: str) -> Any:
             compact = re.sub(r"(?:元|圆)$", "", compact)
         match = re.fullmatch(r"[-+]?(?:\d+(?:\.\d+)?|\.\d+)", compact)
         if match:
-            number = float(compact)
-            return int(number) if number.is_integer() else number
+            try:
+                number = Decimal(compact)
+            except InvalidOperation:
+                return value
+            if not number.is_finite():
+                return value
+            return format(number, "f")
         return value
     if field_type == "date":
         match = re.fullmatch(r"(\d{4})[年./-](\d{1,2})[月./-](\d{1,2})(?:日)?", value)

@@ -74,10 +74,19 @@ export interface OcrProviderSnapshot {
   modelName: string;
   modelVersion?: string;
   endpoint?: string;
+  secretRef?: string;
+  timeoutMs: number;
+  maxConcurrency: number;
+  configSummary: Record<string, unknown>;
+  configHash?: string;
+}
+
+export interface OcrProviderExecutionConfig extends OcrProviderSnapshot {
+  secret?: string;
 }
 
 export interface OcrProvider {
   readonly name: string;
   snapshot(): OcrProviderSnapshot;
-  recognize(input: OcrProviderInput): Promise<OcrProviderResult>;
+  recognize(input: OcrProviderInput, config?: OcrProviderExecutionConfig): Promise<OcrProviderResult>;
 }

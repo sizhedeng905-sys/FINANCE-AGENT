@@ -80,7 +80,7 @@ export default function DataOcrPage() {
         pageStart: values.pageStart,
         pageEnd: values.pageEnd,
       });
-      message.success('OCR 识别完成，请人工核对字段');
+      message.success('OCR 任务已排队，页面将自动刷新状态');
       navigate(`/data/ocr/${task.id}`);
     } finally {
       setUploading(false);

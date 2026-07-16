@@ -25,6 +25,12 @@ export default function DataOcrTasksPage() {
     void fetchTasks().catch(() => undefined);
   }, [fetchTasks]);
 
+  useEffect(() => {
+    if (!tasks.some((task) => ['queued', 'processing'].includes(task.status))) return undefined;
+    const timer = window.setInterval(() => void fetchTasks({ page, pageSize }).catch(() => undefined), 2000);
+    return () => window.clearInterval(timer);
+  }, [fetchTasks, page, pageSize, tasks]);
+
   const columns: ColumnsType<OCRTask> = [
     { title: '文件名', render: (_, task) => task.rawFile.fileName },
     { title: '项目', dataIndex: 'projectName' },
@@ -45,7 +51,7 @@ export default function DataOcrTasksPage() {
           {task.status === 'failed' ? (
             <Button type="link" loading={loading} onClick={() => void retryTask(task.id).then(() => navigate(`/data/ocr/${task.id}`)).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '重试失败'))}>重试</Button>
           ) : null}
-          {!['confirmed', 'processing', 'cancelled'].includes(task.status) ? (
+          {!['confirmed', 'cancelled'].includes(task.status) ? (
             <Popconfirm title="确认取消该 OCR 任务？" onConfirm={() => void cancelTask(task.id).then(() => message.success('任务已取消')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '取消失败'))}>
               <Button type="link" danger>取消</Button>
             </Popconfirm>

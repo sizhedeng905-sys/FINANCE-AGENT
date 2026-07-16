@@ -41,6 +41,8 @@ import { ResponseInterceptor } from '../../src/common/interceptors/response.inte
 import { LocalFileStorageService } from '../../src/files/local-file-storage.service';
 import { ExcelParserService } from '../../src/import-tasks/excel-parser.service';
 import { ImportTasksService } from '../../src/import-tasks/import-tasks.service';
+import { MockOcrProvider } from '../../src/ocr/mock-ocr.provider';
+import { OcrTasksService } from '../../src/ocr/ocr-tasks.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { dayRange, formatChinaDate, monthRange } from '../../src/reports/report-period';
 
@@ -96,6 +98,20 @@ describe('real PostgreSQL integration', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error(`Timed out waiting for import confirmation ${taskId}`);
+  };
+
+  const waitForOcrStatus = async (
+    taskId: string,
+    statuses: OcrTaskStatus[],
+    timeoutMs = 30_000
+  ) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const task = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      if (statuses.includes(task.status)) return task;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out waiting for OCR task ${taskId}: ${statuses.join(',')}`);
   };
 
   it('logs in all eight seeded Chinese and English accounts from PostgreSQL', async () => {
@@ -5238,7 +5254,12 @@ describe('real PostgreSQL integration', () => {
       .expect(200);
     const token = login.body.data.accessToken as string;
     const enabled = await prisma.projectTemplate.findFirstOrThrow({
-      where: { isActive: true, project: { status: ProjectStatus.active } },
+      where: {
+        projectId: 'dp-001',
+        templateId: 'dt-reimbursement',
+        isActive: true,
+        project: { status: ProjectStatus.active }
+      },
       include: { project: true, template: true }
     });
     const workbook = new ExcelJS.Workbook();
@@ -5279,7 +5300,11 @@ describe('real PostgreSQL integration', () => {
     const waitForFinished = async (taskId: string) => {
       for (let attempt = 0; attempt < 400; attempt += 1) {
         const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
-        if (task.status !== ImportTaskStatus.parsing) return task;
+        if (
+          task.status === ImportTaskStatus.pending_confirm ||
+          task.status === ImportTaskStatus.failed ||
+          task.status === ImportTaskStatus.cancelled
+        ) return task;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       throw new Error('Background import did not finish in time');
@@ -5589,10 +5614,16 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.ocrTask.findUniqueOrThrow({ where: { id: rangedTaskId } })).toMatchObject({
         providerOptions: { pageRange: { pageStart: 16, pageEnd: 21 } }
       });
-      const rangedRecognized = await request(app.getHttpServer())
+      const rangedQueued = await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${rangedTaskId}/run`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(201);
+      expect(rangedQueued.body.data).toMatchObject({ status: OcrTaskStatus.queued, attemptCount: 0 });
+      await waitForOcrStatus(rangedTaskId, [OcrTaskStatus.pending_confirm]);
+      const rangedRecognized = await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${rangedTaskId}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
       expect(rangedRecognized.body.data).toMatchObject({
         status: OcrTaskStatus.pending_confirm,
         textBlocks: [expect.objectContaining({ page: 16 })],
@@ -5668,11 +5699,17 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.boss}`)
         .expect(200);
 
-      const recognized = await request(app.getHttpServer())
+      const queued = await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/run`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', `integration-ocr-run-${suffix}`)
         .expect(201);
+      expect(queued.body.data).toMatchObject({ status: OcrTaskStatus.queued, attemptCount: 0 });
+      await waitForOcrStatus(taskId, [OcrTaskStatus.pending_confirm]);
+      const recognized = await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${taskId}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
       expect(recognized.body.data).toMatchObject({
         status: OcrTaskStatus.pending_confirm,
         extractedText: expect.stringContaining('金额'),
@@ -5753,7 +5790,14 @@ describe('real PostgreSQL integration', () => {
       expect(storedOcrRecord.sourceSnapshot).toMatchObject({
         sourceType: RecordSourceType.ocr,
         sourceId: taskId,
-        metadata: { ocrTaskId: taskId, rawFileId, provider: 'mock', attemptCount: 1 }
+        metadata: {
+          ocrTaskId: taskId,
+          ocrAttemptId: expect.any(String),
+          rawFileId,
+          provider: 'mock',
+          attemptNo: 1,
+          providerConfigHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }
       });
       expect(storedOcrRecord.confirmationSnapshot).toMatchObject({
         projectId: 'dp-001',
@@ -5789,15 +5833,27 @@ describe('real PostgreSQL integration', () => {
       await request(app.getHttpServer())
         .post(`/api/ocr/tasks/${failureTaskId}/recognize`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .expect(503);
+        .expect(201)
+        .expect(({ body }) => expect(body.data.status).toBe(OcrTaskStatus.queued));
+      await waitForOcrStatus(failureTaskId, [OcrTaskStatus.failed]);
       expect(await prisma.ocrTask.findUniqueOrThrow({ where: { id: failureTaskId } })).toMatchObject({
         status: OcrTaskStatus.failed,
         attemptCount: 1
       });
-      const retried = await request(app.getHttpServer())
+      const retryQueued = await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${failureTaskId}/retry`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(201);
+      expect(retryQueued.body.data).toMatchObject({
+        status: OcrTaskStatus.queued,
+        retryCount: 1,
+        attemptCount: 1
+      });
+      await waitForOcrStatus(failureTaskId, [OcrTaskStatus.pending_confirm]);
+      const retried = await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${failureTaskId}`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
       expect(retried.body.data).toMatchObject({
         status: OcrTaskStatus.pending_confirm,
         retryCount: 1,
@@ -5822,6 +5878,255 @@ describe('real PostgreSQL integration', () => {
       await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
       await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
     }
+  });
+
+  describe('B8-04 asynchronous OCR execution', () => {
+    const setupHarness = async (label: string) => {
+      const suffix = `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      const token = login.body.data.accessToken as string;
+      const pdf = await PDFDocument.create();
+      pdf.addPage([320, 480]).drawText('Synthetic B8 OCR queue fixture', { x: 24, y: 430, size: 12 });
+      const upload = await request(app.getHttpServer())
+        .post('/api/files/upload')
+        .set('Authorization', `Bearer ${token}`)
+        .field('relatedProjectId', 'dp-001')
+        .attach('file', Buffer.from(await pdf.save()), {
+          filename: `${suffix}.pdf`,
+          contentType: 'application/pdf'
+        })
+        .expect(201);
+      const rawFileId = upload.body.data.id as string;
+      const rawFile = await prisma.rawFile.findUniqueOrThrow({ where: { id: rawFileId } });
+      const taskIds: string[] = [];
+
+      return {
+        token,
+        rawFileId,
+        taskIds,
+        createTask: async () => {
+          const created = await request(app.getHttpServer())
+            .post('/api/ocr-tasks')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ rawFileId, projectId: 'dp-001', templateId: 'dt-reimbursement' })
+            .expect(201);
+          const taskId = created.body.data.id as string;
+          taskIds.push(taskId);
+          return taskId;
+        },
+        cleanup: async () => {
+          const records = taskIds.length
+            ? await prisma.businessRecord.findMany({
+              where: { sourceType: RecordSourceType.ocr, sourceId: { in: taskIds } },
+              select: { id: true }
+            })
+            : [];
+          if (records.length) {
+            await prisma.businessRecord.deleteMany({ where: { id: { in: records.map((item) => item.id) } } });
+          }
+          if (taskIds.length) await prisma.ocrTask.deleteMany({ where: { id: { in: taskIds } } });
+          await fileStorage.remove(rawFile.storagePath);
+          await prisma.rawFile.delete({ where: { id: rawFileId } });
+          const resourceIds = [rawFileId, ...taskIds, ...records.map((item) => item.id)];
+          await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
+          await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
+        }
+      };
+    };
+
+    it.each([1, 3, 5])(
+      'honors OCR concurrency %i, persists actual snapshots, and never auto-posts',
+      async (maxConcurrency) => {
+        const harness = await setupHarness(`concurrency-${maxConcurrency}`);
+        const provider = app.get(MockOcrProvider);
+        const originalSnapshot = provider.snapshot.bind(provider);
+        const originalRecognize = provider.recognize.bind(provider);
+        let active = 0;
+        let peak = 0;
+        const snapshotSpy = jest.spyOn(provider, 'snapshot').mockImplementation(() => ({
+          ...originalSnapshot(),
+          maxConcurrency,
+          configSummary: { source: 'b8_integration', maxConcurrency }
+        }));
+        const recognizeSpy = jest.spyOn(provider, 'recognize').mockImplementation(async (input) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 60));
+          try {
+            return await originalRecognize(input);
+          } finally {
+            active -= 1;
+          }
+        });
+        const recordsBefore = await prisma.businessRecord.count();
+        try {
+          const taskIds = await Promise.all(Array.from({ length: 5 }, () => harness.createTask()));
+          const apiStarted = Date.now();
+          const queued = await Promise.all(taskIds.map((taskId) => request(app.getHttpServer())
+            .post(`/api/ocr-tasks/${taskId}/run`)
+            .set('Authorization', `Bearer ${harness.token}`)
+            .expect(201)));
+          expect(Date.now() - apiStarted).toBeLessThan(2_000);
+          expect(queued.every((response) => response.body.data.status === OcrTaskStatus.queued)).toBe(true);
+          await Promise.all(taskIds.map((taskId) => waitForOcrStatus(taskId, [OcrTaskStatus.pending_confirm])));
+
+          expect(peak).toBe(maxConcurrency);
+          expect(recognizeSpy).toHaveBeenCalledTimes(5);
+          const stored = await prisma.ocrTask.findMany({
+            where: { id: { in: taskIds } },
+            include: { attempts: true }
+          });
+          const queueLatencies = stored.map((task) => {
+            const attempt = task.attempts[0];
+            expect(attempt).toMatchObject({
+              status: OcrAttemptStatus.succeeded,
+              provider: 'mock',
+              providerConfigHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+              providerConfig: { source: 'b8_integration', maxConcurrency }
+            });
+            expect(JSON.stringify(attempt.providerConfig)).not.toContain('secret');
+            return attempt.startedAt!.getTime() - task.queuedAt!.getTime();
+          });
+          if (maxConcurrency === 1) expect(Math.max(...queueLatencies)).toBeGreaterThan(60);
+          expect(await prisma.businessRecord.count()).toBe(recordsBefore);
+        } finally {
+          snapshotSpy.mockRestore();
+          recognizeSpy.mockRestore();
+          await harness.cleanup();
+        }
+      }
+    );
+
+    it('renews the processing lease and discards results after queued or processing cancellation', async () => {
+      const harness = await setupHarness('cancel-heartbeat');
+      const provider = app.get(MockOcrProvider);
+      const service = app.get(OcrTasksService);
+      const originalSnapshot = provider.snapshot.bind(provider);
+      const originalRecognize = provider.recognize.bind(provider);
+      const originalLeaseMs = (service as any).processingLeaseMs as number;
+      let release!: () => void;
+      const blocker = new Promise<void>((resolve) => { release = resolve; });
+      const snapshotSpy = jest.spyOn(provider, 'snapshot').mockImplementation(() => ({
+        ...originalSnapshot(),
+        maxConcurrency: 1,
+        configSummary: { source: 'b8_cancel_test' }
+      }));
+      const recognizeSpy = jest.spyOn(provider, 'recognize').mockImplementation(async (input) => {
+        await blocker;
+        return originalRecognize(input);
+      });
+      (service as any).processingLeaseMs = 1_500;
+      const recordsBefore = await prisma.businessRecord.count();
+      try {
+        const processingId = await harness.createTask();
+        const queuedId = await harness.createTask();
+        await request(app.getHttpServer())
+          .post(`/api/ocr-tasks/${processingId}/run`)
+          .set('Authorization', `Bearer ${harness.token}`)
+          .expect(201);
+        const processing = await waitForOcrStatus(processingId, [OcrTaskStatus.processing]);
+        const firstLease = processing.leaseUntil!.getTime();
+
+        await request(app.getHttpServer())
+          .post(`/api/ocr-tasks/${queuedId}/run`)
+          .set('Authorization', `Bearer ${harness.token}`)
+          .expect(201);
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
+        const heartbeat = await prisma.ocrTask.findUniqueOrThrow({ where: { id: processingId } });
+        expect(heartbeat.leaseUntil!.getTime()).toBeGreaterThan(firstLease);
+
+        await request(app.getHttpServer())
+          .post(`/api/ocr-tasks/${queuedId}/cancel`)
+          .set('Authorization', `Bearer ${harness.token}`)
+          .expect(201);
+        await request(app.getHttpServer())
+          .post(`/api/ocr-tasks/${processingId}/cancel`)
+          .set('Authorization', `Bearer ${harness.token}`)
+          .expect(201);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(recognizeSpy).toHaveBeenCalledTimes(1);
+        expect(await prisma.ocrTask.findUniqueOrThrow({ where: { id: queuedId } }))
+          .toMatchObject({ status: OcrTaskStatus.cancelled, attemptCount: 0 });
+        expect(await prisma.ocrTask.findUniqueOrThrow({ where: { id: processingId } }))
+          .toMatchObject({ status: OcrTaskStatus.cancelled, generatedRecordId: null });
+        expect(await prisma.businessRecord.count()).toBe(recordsBefore);
+      } finally {
+        release();
+        (service as any).processingLeaseMs = originalLeaseMs;
+        snapshotSpy.mockRestore();
+        recognizeSpy.mockRestore();
+        await harness.cleanup();
+      }
+    });
+
+    it('recovers queued and expired processing tasks from durable database state', async () => {
+      const harness = await setupHarness('restart-recovery');
+      const service = app.get(OcrTasksService);
+      const finance = await prisma.user.findUniqueOrThrow({ where: { username: 'finance' } });
+      const recordsBefore = await prisma.businessRecord.count();
+      try {
+        const queuedId = await harness.createTask();
+        await prisma.ocrTask.update({
+          where: { id: queuedId },
+          data: {
+            status: OcrTaskStatus.queued,
+            queuedAt: new Date(),
+            runRequestedBy: finance.id,
+            runRequestId: `restart-${queuedId}`
+          }
+        });
+        await service.recoverQueuedTasks();
+        await waitForOcrStatus(queuedId, [OcrTaskStatus.pending_confirm]);
+
+        const expiredId = await harness.createTask();
+        await prisma.ocrTask.update({
+          where: { id: expiredId },
+          data: {
+            status: OcrTaskStatus.processing,
+            attemptCount: 1,
+            runRequestedBy: finance.id,
+            runRequestId: `expired-${expiredId}`,
+            leaseToken: `expired-${expiredId}`,
+            leaseUntil: new Date(Date.now() - 1_000)
+          }
+        });
+        await prisma.ocrAttempt.create({
+          data: {
+            ocrTaskId: expiredId,
+            attemptNo: 1,
+            status: OcrAttemptStatus.processing,
+            provider: 'mock',
+            modelName: 'stale-model',
+            modelVersion: 'stale-version',
+            providerConfig: { source: 'expired_worker' },
+            providerConfigHash: 'f'.repeat(64),
+            inputSha256: (await prisma.rawFile.findUniqueOrThrow({ where: { id: harness.rawFileId } })).sha256,
+            correlationId: `expired-${expiredId}`,
+            startedAt: new Date(Date.now() - 2_000)
+          }
+        });
+        await expect(service.recoverExpiredTasks()).resolves.toBe(1);
+        await service.recoverQueuedTasks();
+        await waitForOcrStatus(expiredId, [OcrTaskStatus.pending_confirm]);
+
+        const attempts = await prisma.ocrAttempt.findMany({
+          where: { ocrTaskId: expiredId },
+          orderBy: { attemptNo: 'asc' }
+        });
+        expect(attempts).toMatchObject([
+          { attemptNo: 1, status: OcrAttemptStatus.failed },
+          { attemptNo: 2, status: OcrAttemptStatus.succeeded }
+        ]);
+        expect(await prisma.businessRecord.count()).toBe(recordsBefore);
+      } finally {
+        await harness.cleanup();
+      }
+    });
   });
 
   it('rolls back a real database transaction when the callback fails', async () => {

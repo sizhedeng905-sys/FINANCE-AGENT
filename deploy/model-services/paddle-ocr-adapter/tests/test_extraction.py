@@ -38,7 +38,7 @@ class ExtractionTests(unittest.TestCase):
 
     def test_normalizes_dates_and_financial_numbers_conservatively(self):
         self.assertEqual(normalize_value("2026年7月14日", "date"), "2026-07-14")
-        self.assertEqual(normalize_value("￥1,280.50元", "money"), 1280.5)
+        self.assertEqual(normalize_value("￥1,280.50元", "money"), "1280.50")
         self.assertEqual(normalize_value("约1280元", "money"), "约1280元")
         self.assertEqual(normalize_value("2026-02-30", "date"), "2026-02-30")
 
@@ -47,6 +47,22 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(has_valid_file_signature(".png", b"\x89PNG\r\n\x1a\nrest"))
         self.assertFalse(has_valid_file_signature(".pdf", b"not-a-pdf"))
         self.assertFalse(has_valid_file_signature(".exe", b"MZ"))
+
+    def test_preserves_precision_sensitive_numbers_as_json_strings(self):
+        cases = {
+            ".01": "0.01",
+            ".09": "0.09",
+            ".99": "0.99",
+            "9,007,199,254,740,991": "9007199254740991",
+            "9,007,199,254,740,993": "9007199254740993",
+            "99,999,999,999,999.99": "99999999999999.99",
+            "-1,280.50": "-1280.50",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                value = normalize_value(source, "money")
+                self.assertIsInstance(value, str)
+                self.assertEqual(value, expected)
 
     def test_builds_low_confidence_candidates_with_page_evidence(self):
         fixture = {
@@ -63,7 +79,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("日期", response["extractedText"])
         self.assertEqual(len(response["tables"]), 1)
         self.assertEqual(response["fieldCandidates"][0]["normalizedValue"], "2026-07-14")
-        self.assertEqual(response["fieldCandidates"][1]["normalizedValue"], 1280.5)
+        self.assertEqual(response["fieldCandidates"][1]["normalizedValue"], "1280.50")
         self.assertTrue(all(item["confidence"] < 0.8 for item in response["fieldCandidates"]))
         self.assertEqual(response["fieldCandidates"][1]["boundingBox"]["width"], 300.0)
 

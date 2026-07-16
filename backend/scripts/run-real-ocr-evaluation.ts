@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { PrismaClient, RecordSourceType } from '@prisma/client';
 
 import { OCR_EVALUATION_FIELDS } from '../src/real-data-test/ocr-field-catalog';
 import {
@@ -58,7 +59,9 @@ async function main() {
   assertLoopbackUrl(options.baseUrl);
   const manifest = JSON.parse(await readFile(options.manifest, 'utf8')) as LocalManifest;
   const plan = JSON.parse(await readFile(options.plan, 'utf8')) as LocalPlan;
+  await assertBlindLabelsFrozen(options.split, options.labels, options.labelsFreeze);
   const labels = await readLabels(options.labels);
+  const recordsBefore = await countOcrRecords();
   const sourceRoot = resolve(manifest.sourceRoot);
   if (!(await stat(sourceRoot)).isDirectory()) throw new Error('Manifest source root is not a directory');
   const manifestById = new Map(manifest.samples.map((sample) => [sample.sampleId, sample]));
@@ -136,9 +139,10 @@ async function main() {
 
   const evaluatedIds = new Set(planned.map((sample) => sample.sampleId));
   const evaluatedLabels = labels.filter((label) => evaluatedIds.has(label.sampleId));
+  const recordsAfter = await countOcrRecords();
   const evaluation = evaluateOcrPredictions(evaluatedLabels, predictions, {
     lowConfidenceThreshold: options.lowConfidenceThreshold,
-    unconfirmedAutoRecordCount: 0
+    unconfirmedAutoRecordCount: Math.max(0, recordsAfter - recordsBefore)
   });
   const runArtifact = {
     schemaVersion: 1,
@@ -205,6 +209,7 @@ function parseOptions(args: string[]) {
     manifest: resolve(repositoryRoot, values.get('--manifest') ?? '.realdata-test/inventory.local.json'),
     plan: resolve(repositoryRoot, values.get('--plan') ?? '.realdata-test/ocr-sample-plan.local.json'),
     labels: resolve(repositoryRoot, values.get('--labels') ?? '.realdata-test/labels.local.jsonl'),
+    labelsFreeze: resolve(repositoryRoot, values.get('--labels-freeze') ?? '.realdata-test/labels.freeze.local.json'),
     output: resolve(repositoryRoot, values.get('--output') ?? `.realdata-test/reports/ocr-provider-output.${outputSuffix}.local.json`),
     summary: resolve(repositoryRoot, values.get('--summary') ?? `.realdata-test/reports/ocr-evaluation-summary.${outputSuffix}.local.json`),
     apiKeyEnvFile: resolve(repositoryRoot, values.get('--api-key-env-file') ?? 'deploy/model-services/.env'),
@@ -217,6 +222,33 @@ function parseOptions(args: string[]) {
     includeOverPageLimit: flags.has('--include-over-page-limit'),
     restart: flags.has('--restart')
   };
+}
+
+async function assertBlindLabelsFrozen(
+  split: OcrEvaluationSplit | 'all',
+  labelsPath: string,
+  freezePath: string
+) {
+  if (split !== 'blind' && split !== 'all') return;
+  let freeze: unknown;
+  try {
+    freeze = JSON.parse(await readFile(freezePath, 'utf8'));
+  } catch {
+    throw new Error('Blind OCR evaluation requires a reviewed labels freeze marker');
+  }
+  const labelsSha256 = hash(await readFile(labelsPath));
+  if (!isRecord(freeze) || freeze.schemaVersion !== 1 || freeze.labelsSha256 !== labelsSha256) {
+    throw new Error('Blind OCR labels changed after the freeze marker was created');
+  }
+}
+
+async function countOcrRecords() {
+  const prisma = new PrismaClient();
+  try {
+    return await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr } });
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 async function readPriorResults(path: string, baseUrl: string, split: OcrEvaluationSplit | 'all') {

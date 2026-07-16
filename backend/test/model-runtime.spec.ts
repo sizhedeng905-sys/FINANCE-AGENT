@@ -104,6 +104,25 @@ describe('model runtime safeguards', () => {
     expect(client.snapshot()).toMatchObject({ 'local-model': { failures: 2, open: true } });
   });
 
+  it('enforces provider HTTP timeout after execution begins', async () => {
+    const client = new ResilientHttpClientService(config({
+      'modelRuntime.httpMaxRetries': 0,
+      'modelRuntime.circuitFailureThreshold': 3,
+      'modelRuntime.circuitResetMs': 30000
+    }));
+    jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError')), { once: true });
+    }));
+    const startedAt = Date.now();
+    await expect(client.request('http://127.0.0.1:65534/slow', { method: 'GET' }, {
+      circuitKey: 'timeout-test',
+      timeoutMs: 25,
+      maxRetries: 0
+    })).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(20);
+  });
+
   it('uses only allowlisted environment secret names for authenticated health checks', async () => {
     process.env.MODEL_TEST_API_KEY = 'local-test-secret';
     const deployment = {

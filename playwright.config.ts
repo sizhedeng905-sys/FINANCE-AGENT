@@ -48,6 +48,7 @@ const serverEnvironment = {
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'ocr-real-provider.spec.ts',
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),

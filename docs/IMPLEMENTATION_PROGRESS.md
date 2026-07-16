@@ -1,9 +1,9 @@
 # 财务 Agent 实施进度
 
-更新日期：2026-07-15
+更新日期：2026-07-16
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-03 工程门禁完成，下一步进入 B8-04 OCR 精度与异步任务化
+当前批次：B8-04 工程门禁完成，下一步进入 B8-05 AI 财务 Grounding 与真实基准
 
 ## 完成口径
 
@@ -20,6 +20,17 @@
 | B8-01 导入终态 | 完成 | 仅 `pending_confirm` 可确认；`confirmed` 重放幂等；取消/确认使用确定性锁顺序 |
 | B8-02 财务确认一致性 | 完成 | 金额可见、默认值落库、预览/确认边界一致，四类资金入口统一持久化幂等 |
 | B8-03 大批量 Excel 确认 | 完成 | 短事务 Worker、lease/恢复、原子发布及 5,001/30,196/49,999 行完整入账门禁通过 |
+| B8-04 OCR 精度与异步任务 | 完成 | Decimal 字符串、持久化队列、真实执行槽、lease/恢复、实际 attempt 快照及 Mock/真实 UI 门禁通过 |
+
+B8-04 已完成的工程证据：
+
+- Python Provider 用 `Decimal` 输出金额/数字字符串，后端拒绝精度字段 JSON number；`.01/.09/.99`、2^53 附近、最大金额、负号和千分位均有往返测试。
+- OCR run 只持久化排队并快速返回；取得真实执行槽后才创建 attempt 和 processing lease。heartbeat、Provider 内部超时、queued/processing 取消、晚到结果丢弃及重启恢复均已验证。
+- attempt 保存实际 provider/model/version/endpoint/config hash/input hash/secretRef；最终 BusinessRecord 引用成功 attempt，密钥值不进入数据库或 API。
+- 评测从 PostgreSQL 前后差值计算未确认自动入账数，并按高置信预测数计算错误率；盲测必须在人工复核后生成冻结标记才能运行。
+- 标准 Mock Playwright 14/14、本地真实 Paddle UI 1/1；真实 Provider 流程确认前经营记录差值为 0，人工纠错后才生成一条记录。
+- 详细证据见 `docs/B8_04_OCR_ASYNC_PRECISION_REPORT.md`。H-04/H-05 仍需人工完成 17 份真值与盲测冻结，本阶段不声明真实准确率。
+- 自动化结果：22/22 migrations；17/17 Jest suites、186/186 tests；53/53 PostgreSQL integration；Python 5/5；前后端 production build、Prisma、hygiene 和生产依赖审计全部通过。
 
 B8-03 已完成的工程证据：
 

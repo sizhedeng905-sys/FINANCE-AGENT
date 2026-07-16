@@ -87,7 +87,8 @@ describe('real OCR evaluation', () => {
     expect(result.gate).toBe('human_assisted');
     expect(result.counts).toMatchObject({ falsePositive: 2, falseNegative: 2, errorCases: 3 });
     expect(result.metrics.lowConfidenceRecall).toBeCloseTo(1 / 3, 6);
-    expect(result.metrics.highConfidenceErrorRate).toBeCloseTo(1 / OCR_EVALUATION_FIELDS.length, 6);
+    expect(result.metrics.highConfidenceErrorRate).toBe(1);
+    expect(result.counts).toMatchObject({ highConfidencePredictions: 1 });
     expect(result.samples.missingPredictions).toBe(0);
   });
 

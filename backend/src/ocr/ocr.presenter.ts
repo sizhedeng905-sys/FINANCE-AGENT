@@ -52,6 +52,7 @@ export function toOcrTask(task: OcrTaskDetail) {
     latencyMs: task.latencyMs ?? undefined,
     attemptCount: task.attemptCount,
     retryCount: task.retryCount,
+    queuedAt: task.queuedAt?.toISOString(),
     errorMessage: task.errorMessage ?? undefined,
     uploadedBy: task.uploader.name,
     uploadedById: task.uploadedBy,
@@ -75,6 +76,11 @@ export function toOcrTask(task: OcrTaskDetail) {
       modelName: attempt.modelName,
       modelVersion: attempt.modelVersion ?? undefined,
       endpointSnapshot: attempt.endpointSnapshot ?? undefined,
+      providerConfig: attempt.providerConfig && typeof attempt.providerConfig === 'object' && !Array.isArray(attempt.providerConfig)
+        ? attempt.providerConfig
+        : undefined,
+      providerConfigHash: attempt.providerConfigHash ?? undefined,
+      secretRef: attempt.secretRef ?? undefined,
       correlationId: attempt.correlationId,
       startedAt: attempt.startedAt?.toISOString(),
       completedAt: attempt.completedAt?.toISOString(),

@@ -8,6 +8,7 @@ import { LocalPaddleOcrProvider } from '../src/ocr/local-paddle-ocr.provider';
 import { MockOcrProvider } from '../src/ocr/mock-ocr.provider';
 import { OcrProviderRegistry } from '../src/ocr/ocr-provider.registry';
 import { OcrProviderInput, OcrTemplateField } from '../src/ocr/ocr-provider';
+import { OcrTasksService } from '../src/ocr/ocr-tasks.service';
 
 function config(values: Record<string, unknown>) {
   return { get: (key: string) => values[key] } as ConfigService;
@@ -48,10 +49,32 @@ function input(attemptNo = 1): OcrProviderInput {
 
 describe('OCR phase 10 providers and preprocessing', () => {
   it('selects an enabled database OCR route before the environment fallback', async () => {
-    const mock = { name: 'mock' } as any;
-    const local = { name: 'local_paddle' } as any;
+    const snapshot = (provider: string) => ({
+      provider,
+      modelName: `${provider}-model`,
+      timeoutMs: 1000,
+      maxConcurrency: 1,
+      configSummary: { source: 'test' }
+    });
+    const mock = { name: 'mock', snapshot: () => snapshot('mock') } as any;
+    const local = { name: 'local_paddle', snapshot: () => snapshot('local_paddle') } as any;
     const runtime = {
-      resolve: jest.fn(async () => ({ deployment: { provider: 'local_paddle' } }))
+      resolve: jest.fn(async () => ({
+        id: 'route-1',
+        taskType: 'ocr_document',
+        deployment: {
+          provider: 'local_paddle',
+          modelName: 'paddle-test',
+          modelVersion: 'v1',
+          endpoint: 'http://127.0.0.1:8868',
+          secretRef: 'OCR_API_KEY',
+          timeoutMs: 1000,
+          maxConcurrency: 1,
+          key: 'paddle-test',
+          isLocal: true
+        }
+      })),
+      resolveSecret: jest.fn(() => 'test-secret')
     } as any;
     const registry = new OcrProviderRegistry(config({ 'ocr.provider': 'mock' }), mock, local, runtime);
 
@@ -67,6 +90,8 @@ describe('OCR phase 10 providers and preprocessing', () => {
     expect(normal).toMatchObject({ documentId: 'ocr-test', extractedText: expect.stringContaining('金额') });
     expect(normal.fieldCandidates).toHaveLength(2);
     expect(normal.fieldCandidates.every((candidate) => candidate.confidence >= 0.8)).toBe(true);
+    expect(normal.fieldCandidates.find((candidate) => candidate.targetFieldId === 'f-amount')?.normalizedValue)
+      .toBe('1280.50');
 
     const low = await provider.recognize({ ...input(), scenario: 'low_confidence' });
     expect(low.fieldCandidates[0]).toMatchObject({ confidence: 0.55, evidence: expect.stringContaining('需人工确认') });
@@ -84,6 +109,26 @@ describe('OCR phase 10 providers and preprocessing', () => {
       documentId: 'ocr-test',
       fieldCandidates: expect.any(Array)
     });
+  });
+
+  it('round-trips allowed decimal boundaries without accepting JSON numbers or unsafe magnitudes', () => {
+    const service = Object.create(OcrTasksService.prototype) as any;
+    const moneyField = { fieldType: FieldType.money } as any;
+    const numberField = { fieldType: FieldType.number } as any;
+    const cases = [
+      ['.01', '0.01'],
+      ['.09', '0.09'],
+      ['.99', '0.99'],
+      ['99,999,999,999,999.99', '99999999999999.99'],
+      ['-1,280.50', '-1280.5']
+    ];
+    for (const [source, expected] of cases) {
+      expect(service.normalizeFieldValue(moneyField, source, 'raw-test')).toBe(expected);
+    }
+    expect(service.normalizeFieldValue(numberField, '42.0001', 'raw-test')).toBe('42.0001');
+    expect(() => service.normalizeFieldValue(moneyField, 0.01, 'raw-test')).toThrow('字符串');
+    expect(() => service.normalizeFieldValue(numberField, '9007199254740991', 'raw-test')).toThrow('超出允许范围');
+    expect(() => service.normalizeFieldValue(numberField, '9007199254740993', 'raw-test')).toThrow('超出允许范围');
   });
 
   it('reads real PDF pages and rejects page limits, damaged files, and encrypted markers', async () => {
@@ -129,7 +174,7 @@ describe('OCR phase 10 providers and preprocessing', () => {
         targetFieldKey: 'amount',
         sourceLabel: '金额',
         rawValue: '100',
-        normalizedValue: 100,
+        normalizedValue: '100',
         page: 2,
         confidence: 0.9,
         evidence: 'synthetic'
@@ -142,7 +187,6 @@ describe('OCR phase 10 providers and preprocessing', () => {
         headers: { 'Content-Type': 'application/json' }
       }))
     };
-    const gate = { run: jest.fn(async (_key, _limit, operation) => operation()) };
     const outputValidator = { validate: jest.fn((_schema, value) => value) };
     const provider = new LocalPaddleOcrProvider(config({
       'ocr.model': 'PaddleOCR-VL',
@@ -152,7 +196,7 @@ describe('OCR phase 10 providers and preprocessing', () => {
       'ocr.timeoutMs': 1000,
       'modelRuntime.ocrMaxConcurrency': 1,
       'ocr.maxResponseBytes': 1024 * 1024
-    }), http as any, gate as any, outputValidator as any);
+    }), http as any, outputValidator as any);
     const slicedInput = {
       ...input(),
       pages: [

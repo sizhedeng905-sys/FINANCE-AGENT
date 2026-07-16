@@ -23,7 +23,14 @@ export class MockOcrProvider implements OcrProvider {
   }
 
   snapshot(): OcrProviderSnapshot {
-    return { provider: this.name, modelName: this.modelName, modelVersion: this.modelVersion };
+    return {
+      provider: this.name,
+      modelName: this.modelName,
+      modelVersion: this.modelVersion,
+      timeoutMs: 30_000,
+      maxConcurrency: 5,
+      configSummary: { source: 'environment', deterministic: true }
+    };
   }
 
   async recognize(input: OcrProviderInput): Promise<OcrProviderResult> {
@@ -81,8 +88,8 @@ export class MockOcrProvider implements OcrProvider {
   private valueFor(field: OcrTemplateField, input: OcrProviderInput): string | number | string[] {
     if (field.fieldType === FieldType.file || field.semanticType === SemanticType.file) return [input.rawFileId];
     if (field.fieldType === FieldType.date || field.semanticType === SemanticType.date) return this.chinaDate();
-    if (field.fieldType === FieldType.money || field.semanticType === SemanticType.amount) return 1280.5;
-    if (field.fieldType === FieldType.number) return 3;
+    if (field.fieldType === FieldType.money || field.semanticType === SemanticType.amount) return '1280.50';
+    if (field.fieldType === FieldType.number) return '3';
     if (field.semanticType === SemanticType.person) return '临时仓库';
     if (field.semanticType === SemanticType.category) return '票据费用';
     if (field.semanticType === SemanticType.location) return '太和中转场';
