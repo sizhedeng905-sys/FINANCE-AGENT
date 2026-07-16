@@ -34,9 +34,23 @@ export class AiToolsService {
     const normalized = question.trim().toLowerCase();
     const comparisonKind = this.comparisonKind(normalized);
     const period = this.periodIntent(question, comparisonKind !== undefined);
+    const ranking = this.rankingIntent(question);
 
     if (workOrderId || WORK_ORDER_NUMBER_PATTERN.test(question)) {
       contexts.push(await this.workOrderContext(question, workOrderId, user));
+    }
+
+    if (ranking) {
+      contexts.push({
+        name: 'get_finance_ranking',
+        data: await this.reports.ranking({
+          period: period.bossPeriod,
+          date: period.date,
+          groupBy: ranking.groupBy,
+          direction: ranking.direction,
+          metric: ranking.metric
+        })
+      });
     }
 
     if (/项目|客户|收入|成本|支出|利润|赚钱|亏损/.test(question)) {
@@ -86,6 +100,7 @@ export class AiToolsService {
       && !contexts.some((context) => [
         'get_project_summary',
         'get_finance_report',
+        'get_finance_ranking',
         'get_work_order_detail'
       ].includes(context.name))
       && (/今天|今日|本周|这周|本月|这个月|上月|上个月|经营情况|日报|周报|月报|\d{4}\s*年/.test(question)
@@ -152,6 +167,21 @@ export class AiToolsService {
     if (/同比|去年同期/.test(question)) return 'year_over_year';
     if (/环比|较上月|比上月|比上个月|与上月相比|和上月相比/.test(question)) return 'month_over_month';
     return undefined;
+  }
+
+  private rankingIntent(question: string) {
+    const asksProject = /哪个项目|项目.*(?:排行|最高|最低|最赚钱|最亏)/.test(question);
+    const asksCustomer = /哪个客户|客户.*(?:排行|最高|最低|最赚钱|最亏)/.test(question);
+    if (!asksProject && !asksCustomer) return undefined;
+    return {
+      groupBy: asksCustomer ? 'customer' as const : 'project' as const,
+      direction: /最低|最少|最亏|倒数/.test(question) ? 'lowest' as const : 'highest' as const,
+      metric: /收入/.test(question)
+        ? 'income' as const
+        : /成本|支出/.test(question)
+          ? 'expense' as const
+          : 'profit' as const
+    };
   }
 
   private asksForAnomalyList(question: string) {

@@ -33,3 +33,23 @@ export class QueryMonthlyReportDto {
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
   month?: string;
 }
+
+export class QueryRankingReportDto {
+  @IsOptional()
+  @IsIn(['daily', 'weekly', 'monthly'])
+  period?: 'daily' | 'weekly' | 'monthly' = 'monthly';
+
+  @IsOptional()
+  @Matches(REPORT_DATE_PATTERN)
+  date?: string;
+
+  @IsIn(['project', 'customer'])
+  groupBy!: 'project' | 'customer';
+
+  @IsIn(['highest', 'lowest'])
+  direction!: 'highest' | 'lowest';
+
+  @IsOptional()
+  @IsIn(['income', 'expense', 'profit'])
+  metric?: 'income' | 'expense' | 'profit' = 'profit';
+}

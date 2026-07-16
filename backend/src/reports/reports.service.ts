@@ -7,9 +7,16 @@ import {
   RiskLevel,
   WorkOrderStatus
 } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { QueryBossReportDto, QueryDailyReportDto, QueryFinanceReportDto, QueryMonthlyReportDto } from './dto/query-reports.dto';
+import {
+  QueryBossReportDto,
+  QueryDailyReportDto,
+  QueryFinanceReportDto,
+  QueryMonthlyReportDto,
+  QueryRankingReportDto
+} from './dto/query-reports.dto';
 import { dayRange, formatChinaDate, monthRange, reportRange, shiftMonthDate } from './report-period';
 
 type RecordWithProject = Prisma.BusinessRecordGetPayload<{ include: { project: true } }>;
@@ -163,6 +170,59 @@ export class ReportsService {
       aiSummary: `本周期确认收入${totals.income}元，确认支出${totals.expense}元，利润${totals.profit}元。`,
       aiSuggestion: suggestions.join('；'),
       aiSuggestions: suggestions
+    };
+  }
+
+  async ranking(dto: QueryRankingReportDto) {
+    const period = dto.period ?? 'monthly';
+    const reportPeriod = period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'today';
+    const range = reportRange(reportPeriod, dto.date);
+    const records = await this.findRecords(range.start, range.end);
+    const groupBy = dto.groupBy;
+    const direction = dto.direction;
+    const metric = dto.metric ?? 'profit';
+    const groups = new Map<string, { scopeId: string; scopeName: string; records: RecordWithProject[] }>();
+
+    for (const record of records) {
+      const customerName = record.project.customerName.trim();
+      const key = groupBy === 'project' ? record.projectId : customerName.toLocaleLowerCase('zh-CN');
+      const current = groups.get(key);
+      if (current) {
+        current.records.push(record);
+        continue;
+      }
+      groups.set(key, {
+        scopeId: groupBy === 'project' ? record.projectId : this.customerScopeId(customerName),
+        scopeName: groupBy === 'project' ? record.project.name : customerName,
+        records: [record]
+      });
+    }
+
+    const items = [...groups.values()]
+      .map((group) => ({
+        scopeType: groupBy,
+        scopeId: group.scopeId,
+        scopeName: group.scopeName,
+        ...this.totals(group.records),
+        recordCount: group.records.length
+      }))
+      .sort((first, second) => {
+        const comparison = new Prisma.Decimal(first[metric]).comparedTo(second[metric]);
+        const directed = direction === 'highest' ? -comparison : comparison;
+        return directed || first.scopeId.localeCompare(second.scopeId);
+      });
+
+    return {
+      groupBy,
+      direction,
+      metric,
+      period: period === 'monthly'
+        ? range.startDate.slice(0, 7)
+        : period === 'daily'
+          ? range.startDate
+          : `${range.startDate}/${range.endDate}`,
+      range: this.rangeMetadata(range),
+      items
     };
   }
 
@@ -417,6 +477,11 @@ export class ReportsService {
           new Prisma.Decimal(second.profit).comparedTo(first.profit) ||
           first.projectName.localeCompare(second.projectName)
       );
+  }
+
+  private customerScopeId(customerName: string) {
+    const normalized = customerName.normalize('NFKC').trim().toLocaleLowerCase('zh-CN');
+    return `customer-${createHash('sha256').update(normalized).digest('hex').slice(0, 24)}`;
   }
 
   private presentAnomaly(item: AnomalyWithWorkOrder) {

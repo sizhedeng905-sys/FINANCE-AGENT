@@ -4,6 +4,8 @@ export type AiToolName =
   | 'get_today_report'
   | 'get_finance_report'
   | 'get_project_summary'
+  | 'get_period_comparison'
+  | 'get_finance_ranking'
   | 'get_pending_approvals'
   | 'get_anomalies'
   | 'get_work_order_detail';
@@ -36,4 +38,16 @@ export interface AIChatResponse {
   provider: string;
   model: string;
   fallback: boolean;
+  claims?: AiFinancialClaim[];
+}
+
+export interface AiFinancialClaim {
+  scopeType: 'company' | 'project' | 'customer' | 'work_order';
+  scopeId: string;
+  period: string;
+  metric: 'income' | 'expense' | 'profit' | 'record_count' | 'risk';
+  value: string;
+  unit: 'CNY' | 'count';
+  sourceTool: AiToolName;
+  sourcePath: string;
 }

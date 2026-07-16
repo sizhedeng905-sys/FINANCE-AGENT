@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B7 与 B8-01 至 B8-04 工程门禁已完成：Excel 49,999 行最终入账与 OCR Decimal/异步队列/真实 Paddle UI 均有自动化证据；财务 L3 对账和 OCR 17 份人工标签仍待外部签字
+- 真实业务数据 B0-B7 与 B8-01 至 B8-05 工程门禁已完成：Excel 49,999 行、OCR 异步真实 Paddle UI、AI Claim/PostgreSQL 黄金账与本地 Qwen 72 条基准均有证据；财务、OCR 和老板口径仍待外部签字
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行并通过 30 分钟稳定性、服务切换和并发推理；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 按需启动
 
 ## 技术栈
@@ -175,7 +175,7 @@ http://localhost:3001/api/health
 | 真实化批次 D-H | 已完成 | 30 条 PostgreSQL、14 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
-| B8-01 至 B8-04 | 工程完成 | Excel 后台确认以及 OCR Decimal 字符串、异步队列、恢复、实际 attempt 快照和 Mock/真实 UI 通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 与 `docs/B8_04_OCR_ASYNC_PRECISION_REPORT.md` |
+| B8-01 至 B8-05 | 工程完成 | Excel/OCR 后台闭环与 AI 严格 Claim、确定性渲染、项目/客户排行、PostgreSQL 黄金账及本地 Qwen 基准通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md`、`docs/B8_04_OCR_ASYNC_PRECISION_REPORT.md`、`docs/B8_05_AI_CLAIM_GROUNDING_REPORT.md` |
 | 本地模型部署 | 稳定性通过 | 四套资产完整；文本/OCR 常驻和 VL 按需切换已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -313,7 +313,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B8-04 验收基线为 17/17 Jest suites、186/186 tests、53/53 真实 PostgreSQL 集成测试、14/14 标准 Playwright 和 1/1 本地真实 Paddle Playwright。测试库已应用 22/22 Prisma migrations且无待应用迁移；前后端 production build、Prisma、repository hygiene 和生产依赖审计均通过。详细证据见 `docs/B8_04_OCR_ASYNC_PRECISION_REPORT.md`。
+当前 B8-05 验收基线为 18/18 Jest suites、199/199 tests、54/54 真实 PostgreSQL 集成测试和 14/14 标准 Playwright；Mock 与本地 Qwen 的 72 条 Claim 基准均通过。测试库已应用 22/22 Prisma migrations且无待应用迁移，前后端 production build 通过。详细证据见 `docs/B8_05_AI_CLAIM_GROUNDING_REPORT.md`。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

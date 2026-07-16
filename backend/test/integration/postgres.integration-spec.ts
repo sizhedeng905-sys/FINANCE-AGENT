@@ -3092,6 +3092,8 @@ describe('real PostgreSQL integration', () => {
     const requestPrefix = `integration-ai-${suffix}`;
     const callLogIds: string[] = [];
     let conversationId: string | undefined;
+    let otherConversationId: string | undefined;
+    let otherCallLogId: string | undefined;
 
     const chat = async (message: string, index: number, extra: Record<string, unknown> = {}) => {
       const response = await request(app.getHttpServer())
@@ -3206,6 +3208,14 @@ describe('real PostgreSQL integration', () => {
         .get(`/api/ai/conversations/${conversationId}/messages`)
         .set('Authorization', `Bearer ${tokens['老板']}`)
         .expect(403);
+      const otherChat = await request(app.getHttpServer())
+        .post('/api/ai/chat')
+        .set('Authorization', `Bearer ${tokens['老板']}`)
+        .set('X-Request-Id', `${requestPrefix}-other-boss`)
+        .send({ message: '今天经营情况' })
+        .expect(201);
+      otherConversationId = otherChat.body.data.conversationId as string;
+      otherCallLogId = otherChat.body.data.callLogId as string;
       await request(app.getHttpServer())
         .get('/api/ai/call-logs')
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -3219,6 +3229,15 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.boss}`)
         .expect(200);
       expect(callLogPage.body.data.items.map((item: { id: string }) => item.id)).toEqual(
+        expect.arrayContaining(callLogIds)
+      );
+      expect(callLogPage.body.data.items.map((item: { id: string }) => item.id)).not.toContain(otherCallLogId);
+      const otherCallLogPage = await request(app.getHttpServer())
+        .get('/api/ai/call-logs?provider=mock&page=1&pageSize=100')
+        .set('Authorization', `Bearer ${tokens['老板']}`)
+        .expect(200);
+      expect(otherCallLogPage.body.data.items.map((item: { id: string }) => item.id)).toContain(otherCallLogId);
+      expect(otherCallLogPage.body.data.items.map((item: { id: string }) => item.id)).not.toEqual(
         expect.arrayContaining(callLogIds)
       );
 
@@ -3245,10 +3264,272 @@ describe('real PostgreSQL integration', () => {
       ));
     } finally {
       if (callLogIds.length) await prisma.aiCallLog.deleteMany({ where: { id: { in: callLogIds } } });
+      if (otherCallLogId) await prisma.aiCallLog.deleteMany({ where: { id: otherCallLogId } });
       if (conversationId) {
         await prisma.auditLog.deleteMany({ where: { resourceId: conversationId } });
         await prisma.aiConversation.deleteMany({ where: { id: conversationId } });
       }
+      if (otherConversationId) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: otherConversationId } });
+        await prisma.aiConversation.deleteMany({ where: { id: otherConversationId } });
+      }
+    }
+  });
+
+  it('matches B8-05 PostgreSQL golden reports, rankings, and structured AI claims', async () => {
+    const usernames = ['finance', 'boss', 'employee', 'reviewer'] as const;
+    const tokens = Object.fromEntries(await Promise.all(usernames.map(async (username) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username, password: '123456' })
+        .expect(200);
+      return [username, response.body.data.accessToken as string] as const;
+    }))) as Record<(typeof usernames)[number], string>;
+    const suffix = Date.now().toString(36);
+    const requestPrefix = `integration-ai-golden-${suffix}`;
+    const projectIds: string[] = [];
+    const recordIds: string[] = [];
+    const conversationIds: string[] = [];
+    const projects = [
+      {
+        caseId: 'golden-project-a',
+        name: `${TEST_USER_PREFIX}gold_a_${suffix}`,
+        customerName: `${TEST_USER_PREFIX}customer_x_${suffix}`,
+        income: '1000.00',
+        expense: '250.00',
+        profit: '750.00'
+      },
+      {
+        caseId: 'golden-project-b',
+        name: `${TEST_USER_PREFIX}gold_b_${suffix}`,
+        customerName: `${TEST_USER_PREFIX}customer_x_${suffix}`,
+        income: '600.00',
+        expense: '100.00',
+        profit: '500.00'
+      },
+      {
+        caseId: 'golden-project-c',
+        name: `${TEST_USER_PREFIX}gold_c_${suffix}`,
+        customerName: `${TEST_USER_PREFIX}customer_y_${suffix}`,
+        income: '900.00',
+        expense: '700.00',
+        profit: '200.00'
+      }
+    ];
+
+    const assertGolden = (actual: unknown, expected: unknown, caseId: string, path: string) => {
+      if (String(actual) !== String(expected)) throw new Error(`[${caseId}] ${path}: mismatch`);
+    };
+    const chat = async (message: string, caseId: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/ai/chat')
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .set('X-Request-Id', `${requestPrefix}-${caseId}`)
+        .send({ message })
+        .expect(201);
+      conversationIds.push(response.body.data.conversationId as string);
+      return response.body.data as {
+        fallback: boolean;
+        toolsUsed: string[];
+        claims: Array<{
+          scopeType: string;
+          scopeId: string;
+          period: string;
+          metric: string;
+          value: string;
+          unit: string;
+          sourceTool: string;
+          sourcePath: string;
+        }>;
+      };
+    };
+
+    try {
+      for (const [projectIndex, project] of projects.entries()) {
+        const created = await request(app.getHttpServer())
+          .post('/api/projects')
+          .set('Authorization', `Bearer ${tokens.finance}`)
+          .set('X-Request-Id', `${requestPrefix}-project-${projectIndex}`)
+          .send({ name: project.name, customerName: project.customerName, ownerName: 'Golden owner' })
+          .expect(201);
+        const projectId = created.body.data.id as string;
+        projectIds.push(projectId);
+        Object.assign(project, { id: projectId });
+
+        for (const [templateIndex, templateId] of ['dt-revenue', 'dt-reimbursement'].entries()) {
+          await request(app.getHttpServer())
+            .post(`/api/projects/${projectId}/templates`)
+            .set('Authorization', `Bearer ${tokens.finance}`)
+            .set('X-Request-Id', `${requestPrefix}-template-${projectIndex}-${templateIndex}`)
+            .send({ templateId })
+            .expect(201);
+        }
+
+        const entries = [
+          {
+            templateId: 'dt-revenue',
+            recordType: DataRecordType.revenue,
+            amount: project.income,
+            values: [
+              { fieldId: 'f-date', value: '2038-05-15' },
+              { fieldId: 'f-site', value: 'Golden site' },
+              { fieldId: 'f-ticket', value: '1' },
+              { fieldId: 'f-income', value: project.income }
+            ]
+          },
+          {
+            templateId: 'dt-reimbursement',
+            recordType: DataRecordType.reimbursement,
+            amount: project.expense,
+            values: [
+              { fieldId: 'f-date', value: '2038-05-15' },
+              { fieldId: 'f-reason', value: 'Golden expense' },
+              { fieldId: 'f-cost-category', value: 'Golden category' },
+              { fieldId: 'f-amount', value: project.expense }
+            ]
+          }
+        ];
+
+        for (const [entryIndex, entry] of entries.entries()) {
+          const record = await request(app.getHttpServer())
+            .post('/api/records')
+            .set('Authorization', `Bearer ${tokens.finance}`)
+            .set('X-Request-Id', `${requestPrefix}-record-${projectIndex}-${entryIndex}`)
+            .send({
+              projectId,
+              templateId: entry.templateId,
+              recordType: entry.recordType,
+              recordDate: '2038-05-15',
+              amount: entry.amount,
+              sourceType: RecordSourceType.manual,
+              sourceId: 'manual',
+              status: BusinessRecordStatus.pending_confirm,
+              values: entry.values,
+              attachments: []
+            })
+            .expect(201);
+          const recordId = record.body.data.id as string;
+          recordIds.push(recordId);
+          await request(app.getHttpServer())
+            .post(`/api/records/${recordId}/confirm`)
+            .set('Authorization', `Bearer ${tokens.finance}`)
+            .set('X-Request-Id', `${requestPrefix}-confirm-${projectIndex}-${entryIndex}`)
+            .expect(201);
+        }
+      }
+
+      for (const project of projects as Array<(typeof projects)[number] & { id: string }>) {
+        const report = await request(app.getHttpServer())
+          .get(`/api/reports/projects/${project.id}/monthly?month=2038-05`)
+          .set('Authorization', `Bearer ${tokens.boss}`)
+          .expect(200);
+        for (const metric of ['income', 'expense', 'profit'] as const) {
+          assertGolden(report.body.data[metric], project[metric], project.caseId, `reports.${metric}`);
+        }
+        assertGolden(report.body.data.recordCount, 2, project.caseId, 'reports.recordCount');
+
+        const answer = await chat(`${project.name}2038年5月收入成本利润是多少？`, project.caseId);
+        assertGolden(answer.fallback, false, project.caseId, 'ai.fallback');
+        assertGolden(answer.toolsUsed.join(','), 'get_project_summary', project.caseId, 'ai.tools');
+        assertGolden(answer.claims.length, 3, project.caseId, 'ai.claims.length');
+        for (const metric of ['income', 'expense', 'profit'] as const) {
+          const claim = answer.claims.find((item) => item.metric === metric);
+          assertGolden(claim?.scopeType, 'project', project.caseId, `claims.${metric}.scopeType`);
+          assertGolden(claim?.scopeId, project.id, project.caseId, `claims.${metric}.scopeId`);
+          assertGolden(claim?.period, '2038-05', project.caseId, `claims.${metric}.period`);
+          assertGolden(claim?.value, report.body.data[metric], project.caseId, `claims.${metric}.value`);
+          assertGolden(claim?.unit, 'CNY', project.caseId, `claims.${metric}.unit`);
+          assertGolden(claim?.sourceTool, 'get_project_summary', project.caseId, `claims.${metric}.sourceTool`);
+          assertGolden(claim?.sourcePath, `data.${metric}`, project.caseId, `claims.${metric}.sourcePath`);
+        }
+      }
+
+      const rankingQuery = 'period=monthly&date=2038-05-01&metric=profit';
+      const projectHighest = await request(app.getHttpServer())
+        .get(`/api/reports/ranking?${rankingQuery}&groupBy=project&direction=highest`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      const projectLowest = await request(app.getHttpServer())
+        .get(`/api/reports/ranking?${rankingQuery}&groupBy=project&direction=lowest`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .expect(200);
+      assertGolden(projectHighest.body.data.items.length, 3, 'golden-ranking-project', 'reports.items.length');
+      assertGolden(projectHighest.body.data.items[0].scopeId, projectIds[0], 'golden-ranking-project-high', 'reports.scopeId');
+      assertGolden(projectLowest.body.data.items[0].scopeId, projectIds[2], 'golden-ranking-project-low', 'reports.scopeId');
+
+      const customerHighest = await request(app.getHttpServer())
+        .get(`/api/reports/ranking?${rankingQuery}&groupBy=customer&direction=highest`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      const customerLowest = await request(app.getHttpServer())
+        .get(`/api/reports/ranking?${rankingQuery}&groupBy=customer&direction=lowest`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      assertGolden(customerHighest.body.data.items.length, 2, 'golden-ranking-customer', 'reports.items.length');
+      assertGolden(customerHighest.body.data.items[0].profit, '1250.00', 'golden-ranking-customer-high', 'reports.profit');
+      assertGolden(customerLowest.body.data.items[0].profit, '200.00', 'golden-ranking-customer-low', 'reports.profit');
+
+      const rankingCases = [
+        {
+          caseId: 'golden-ai-project-high',
+          question: '2038年5月哪个项目利润最高？',
+          report: projectHighest.body.data,
+          scopeType: 'project'
+        },
+        {
+          caseId: 'golden-ai-project-low',
+          question: '2038年5月哪个项目利润最低？',
+          report: projectLowest.body.data,
+          scopeType: 'project'
+        },
+        {
+          caseId: 'golden-ai-customer-low',
+          question: '2038年5月哪个客户利润最低？',
+          report: customerLowest.body.data,
+          scopeType: 'customer'
+        }
+      ];
+      for (const rankingCase of rankingCases) {
+        const answer = await chat(rankingCase.question, rankingCase.caseId);
+        const claim = answer.claims[0];
+        assertGolden(answer.toolsUsed.join(','), 'get_finance_ranking', rankingCase.caseId, 'ai.tools');
+        assertGolden(claim?.scopeType, rankingCase.scopeType, rankingCase.caseId, 'claim.scopeType');
+        assertGolden(claim?.scopeId, rankingCase.report.items[0].scopeId, rankingCase.caseId, 'claim.scopeId');
+        assertGolden(claim?.period, '2038-05', rankingCase.caseId, 'claim.period');
+        assertGolden(claim?.metric, 'profit', rankingCase.caseId, 'claim.metric');
+        assertGolden(claim?.value, rankingCase.report.items[0].profit, rankingCase.caseId, 'claim.value');
+        assertGolden(claim?.sourcePath, 'data.items[0].profit', rankingCase.caseId, 'claim.sourcePath');
+      }
+
+      await request(app.getHttpServer())
+        .get(`/api/reports/ranking?${rankingQuery}&direction=highest`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(400);
+      for (const role of ['employee', 'reviewer'] as const) {
+        await request(app.getHttpServer())
+          .get(`/api/reports/ranking?${rankingQuery}&groupBy=project&direction=highest`)
+          .set('Authorization', `Bearer ${tokens[role]}`)
+          .expect(403);
+      }
+      for (const role of ['finance', 'employee', 'reviewer'] as const) {
+        await request(app.getHttpServer())
+          .post('/api/ai/chat')
+          .set('Authorization', `Bearer ${tokens[role]}`)
+          .send({ message: '2038年5月利润是多少？' })
+          .expect(403);
+      }
+    } finally {
+      if (conversationIds.length) {
+        await prisma.aiCallLog.deleteMany({ where: { conversationId: { in: conversationIds } } });
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: conversationIds } } });
+        await prisma.aiConversation.deleteMany({ where: { id: { in: conversationIds } } });
+      }
+      if (recordIds.length) {
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: recordIds } } });
+        await prisma.businessRecord.deleteMany({ where: { id: { in: recordIds } } });
+      }
+      await prisma.auditLog.deleteMany({ where: { requestId: { startsWith: requestPrefix } } });
+      if (projectIds.length) await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
     }
   });
 

@@ -62,6 +62,39 @@ function comparison(project = false) {
   };
 }
 
+function ranking(query: {
+  period: 'daily' | 'weekly' | 'monthly';
+  date?: string;
+  groupBy: 'project' | 'customer';
+  direction: 'highest' | 'lowest';
+  metric: 'income' | 'expense' | 'profit';
+}) {
+  const report = bossReport({ period: query.period, date: query.date });
+  const projectItems = [
+    { scopeType: 'project', scopeId: 'project-benchmark-1', scopeName: '太和项目', income: '1200.00', expense: '450.00', profit: '750.00', recordCount: 3 },
+    { scopeType: 'project', scopeId: 'project-benchmark-2', scopeName: '城北项目', income: '800.00', expense: '300.00', profit: '500.00', recordCount: 2 },
+    { scopeType: 'project', scopeId: 'project-benchmark-3', scopeName: '港区项目', income: '600.00', expense: '400.00', profit: '200.00', recordCount: 2 }
+  ];
+  const customerItems = [
+    { scopeType: 'customer', scopeId: 'customer-benchmark-1', scopeName: '太和物流', income: '2000.00', expense: '750.00', profit: '1250.00', recordCount: 5 },
+    { scopeType: 'customer', scopeId: 'customer-benchmark-2', scopeName: '海港物流', income: '600.00', expense: '400.00', profit: '200.00', recordCount: 2 }
+  ];
+  const items = [...(query.groupBy === 'customer' ? customerItems : projectItems)].sort((first, second) => {
+    const comparison = Number(first[query.metric]) - Number(second[query.metric]);
+    return query.direction === 'highest' ? -comparison : comparison;
+  });
+  return {
+    ...query,
+    period: query.period === 'monthly'
+      ? report.range.startDate.slice(0, 7)
+      : query.period === 'daily'
+        ? report.range.startDate
+        : `${report.range.startDate}/${report.range.endDate}`,
+    range: report.range,
+    items
+  };
+}
+
 export function createAiBenchmarkHarness() {
   const project = {
     id: 'project-benchmark-1',
@@ -115,6 +148,7 @@ export function createAiBenchmarkHarness() {
     })),
     bossComparison: tracked(async (kind: string) => ({ ...comparison(false), kind, label: kind === 'year_over_year' ? '月同比' : '月环比' })),
     projectComparison: tracked(async (_projectId: string, kind: string) => ({ ...comparison(true), kind, label: kind === 'year_over_year' ? '月同比' : '月环比' })),
+    ranking: tracked(async (query: any) => ranking(query)),
     pendingApprovals: tracked(async () => [{
       orderNo: 'WO-BENCH-001',
       projectName: '太和项目',

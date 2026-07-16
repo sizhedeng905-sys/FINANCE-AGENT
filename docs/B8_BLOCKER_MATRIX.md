@@ -82,6 +82,18 @@
 | 完整回归 | 22 migrations；186/186 unit；53/53 PostgreSQL；Python 5/5；前后端 build、Prisma、437-file hygiene 与依赖审计通过 |
 | 真实业务文件 | 未读取、未修改；测试仅使用合成 PDF；真实标签与冻结标记保持在 Git 忽略目录 |
 
+## B8-05 验证证据
+
+| 门禁 | 结果 |
+| --- | --- |
+| 结构化 Claim | scope/period/metric/value/unit/sourceTool/sourcePath 严格 Schema 与完整元组校验；后端确定性渲染 |
+| 错位攻击 | 收支、scope、月份、记录数/日期/工单号、最高/最低、项目/客户、注入和无数据攻击全部拒绝或 fallback |
+| 工具正确性 | `get_finance_ranking` 强制显式 groupBy/direction；3 项目、2 客户、不同利润的 PostgreSQL 排序通过 |
+| PostgreSQL 黄金账 | 正式 API 创建 6 条已确认记录；Reports 与 AI Claim 每个字段一致；失败只报匿名 caseId/path/category |
+| 本地模型 | Qwen 72 条：原始 Claim 98.61%，有效 grounding/事实/无数据/注入/Schema 100%，1 fallback，0 Provider 错误 |
+| 完整回归 | 22 migrations；199/199 unit；54/54 PostgreSQL；14/14 Playwright；前后端 build、Prisma、439-file hygiene 与依赖审计通过 |
+| 真实业务数据 | 未读取、未修改；测试只使用合成黄金数据；本地明细报告位于 Git 忽略目录 |
+
 ## 问题矩阵
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
@@ -93,7 +105,8 @@
 | B8-EXCEL-004 | P0 | B8-03 | 大批量确认 | 30,196 行只证明解析，未证明最终入账 | 短事务确认 Worker、lease、恢复和原子发布 | 5,001/30,196/49,999 完整闭环 | verified | H-03 仍作为跨来源业务去重政策输入，不阻断本阶段工程门禁 |
 | B8-OCR-001 | P0 | B8-04 | OCR 金额与执行任务 | Provider 精度和长同步 HTTP 尚未满足 B8 要求 | Decimal 字符串、异步队列、续租、恢复和 attempt 快照 | Mock/真实 Provider 并发与恢复 | verified | 无 |
 | B8-OCR-002 | P0 | B8-04/08 | 真实 OCR 准确率 | 17 份字段真值及盲测冻结需要独立人工复核 | 完成签名标签并冻结盲测后计算真实指标 | 金额/日期关键错误、高置信错误率和未确认入账差值 | blocked_external | H-04/H-05 |
-| B8-AI-001 | P0 | B8-05 | 老板 AI grounding | 仅验证数字出现，未绑定 scope/period/metric/sourcePath | 结构化 Claim、确定性 renderer、PostgreSQL 黄金数据 | 错位数字攻击与黄金测试 | queued | H-08/H-12 |
+| B8-AI-001 | P0 | B8-05 | 老板 AI grounding | 仅验证数字出现，未绑定 scope/period/metric/sourcePath | 结构化 Claim、确定性 renderer、PostgreSQL 黄金数据 | 错位数字攻击与黄金测试 | verified | 无 |
+| B8-AI-002 | P1 | B8-05/08/09 | 老板问题口径与外部 Provider | 标准答案和真实数据外发政策需要授权人决定 | 审核标准问题；决定脱敏、地域、保留和外发边界 | 人工标准答案与外部数据政策签字 | blocked_external | H-08/H-12 |
 | B8-SEC-001 | P0 | B8-06 | AI 日志/Cookie/文件/DLP | 多项生产隔离与资源边界未按 B8 门禁证明 | 权限隔离、生产 Cookie、主动内容、资源上限和 CI DLP | 权限与攻击测试 | queued | H-10/H-11 |
 | B8-MODEL-001 | P1 | B8-07 | 模型控制面/GPU/代理 | 路由配置快照、鉴权 ready、跨进程 GPU 锁和代理边界待收口 | 同一 resolved deployment、互斥锁、固定容器和代理错误契约 | 路由/GPU/代理测试 | queued | H-13 |
 | B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 财务、OCR、重复、冲销、部署和恢复尚无签字 | 人工结论与 Staging 演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |

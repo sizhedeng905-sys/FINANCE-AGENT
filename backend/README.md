@@ -104,7 +104,7 @@ Current verification baseline (2026-07-15, B7 engineering handoff):
 - File upload/preview/download/void: `/api/files`
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
 - Risk rules and anomalies: `/api/risk-rules`, `/api/reports/anomalies`, `/api/ai/anomalies`
-- Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/projects/:projectId/{daily|monthly}`
+- Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/ranking`, `/api/reports/projects/:projectId/{daily|monthly}`
 - Boss AI assistant: `POST /api/ai/chat`
 - Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
 - AI call logs: `GET /api/ai/call-logs`
@@ -138,7 +138,7 @@ Errors use the same envelope:
 
 Notification visibility is always derived from the authenticated user: a notification must target that user or the user's role. Read state is stored per user in `notification_receipts`, so one user cannot read a shared role notification on behalf of another. Repeated read and read-all requests are idempotent and do not duplicate audit logs.
 
-Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, and voided records are excluded; money is aggregated with `Prisma.Decimal`, and day/week/month boundaries use `Asia/Shanghai`. The boss AI report tools call the same `ReportsService` used by the normal report APIs.
+Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, and voided records are excluded; money and explicit project/customer rankings are aggregated with `Prisma.Decimal`, and day/week/month boundaries use `Asia/Shanghai`. Boss AI providers return only strict Claim JSON; the backend validates the complete source tuple and deterministically renders answers from the same `ReportsService` used by normal report APIs.
 
 All accounting amounts in JSON are fixed-decimal strings, not JavaScript numbers. Templates define immutable `accountingDirection`, `primaryAmountFieldId`, and `primaryDateFieldId`; manual entry, work orders, Excel, and OCR use the shared record policy so top-level amount/date and dynamic values cannot diverge.
 
@@ -240,7 +240,7 @@ Completed:
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
 - Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
-- B8-01 to B8-04: terminal-state hardening, persistent request idempotency, asynchronous Excel confirmation, and Decimal-safe asynchronous OCR with execution-slot leases, recovery, actual-attempt snapshots, and human-only publication.
+- B8-01 to B8-05: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, and strict financial Claim grounding with deterministic rendering and PostgreSQL golden records.
 
 Explicitly deferred by the user:
 
@@ -251,6 +251,7 @@ Completed audit follow-up:
 - Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001/30,196-row memory, persistence, cancellation, lease recovery, and uniqueness benchmarks (audit P1-08).
 - Complete 5,001/30,196/49,999-row Excel confirmation with BusinessRecord/RecordValue totals, Decimal sums, unique sources, reports, failure recovery, and bounded resource profiles (B8-03).
 - Mock and local Paddle OCR UI flows with Decimal strings, concurrency 1/3/5, queue/heartbeat/cancel/restart behavior, actual provider snapshots, and a measured zero-record delta before human confirmation (B8-04).
+- Strict AI Claim tuples, explicit project/customer and highest/lowest ranking, 3-project/2-customer API-built PostgreSQL golden data, owner-scoped boss logs, and 72-case Mock/local-Qwen benchmarks (B8-05).
 - Legacy `.xls` conversion in a Node.js 22+ permission-model child process; no Excel/COM dependency and no converted artifact at rest.
 
 Deployment or data work still required:

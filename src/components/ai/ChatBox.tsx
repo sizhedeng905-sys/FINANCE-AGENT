@@ -21,6 +21,8 @@ const toolLabels: Record<AiToolName, string> = {
   get_today_report: '经营报表',
   get_finance_report: '财务报表',
   get_project_summary: '项目汇总',
+  get_period_comparison: '期间对比',
+  get_finance_ranking: '经营排行',
   get_pending_approvals: '待审批',
   get_anomalies: '异常记录',
   get_work_order_detail: '工单详情',

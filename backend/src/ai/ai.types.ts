@@ -1,13 +1,35 @@
+export type AiToolName =
+  | 'get_today_report'
+  | 'get_finance_report'
+  | 'get_project_summary'
+  | 'get_period_comparison'
+  | 'get_finance_ranking'
+  | 'get_pending_approvals'
+  | 'get_anomalies'
+  | 'get_work_order_detail';
+
 export interface AiToolContext {
-  name:
-    | 'get_today_report'
-    | 'get_finance_report'
-    | 'get_project_summary'
-    | 'get_period_comparison'
-    | 'get_pending_approvals'
-    | 'get_anomalies'
-    | 'get_work_order_detail';
+  name: AiToolName;
   data: unknown;
+}
+
+export type AiClaimScopeType = 'company' | 'project' | 'customer' | 'work_order';
+export type AiClaimMetric = 'income' | 'expense' | 'profit' | 'record_count' | 'risk';
+export type AiClaimUnit = 'CNY' | 'count';
+
+export interface AiFinancialClaim {
+  scopeType: AiClaimScopeType;
+  scopeId: string;
+  period: string;
+  metric: AiClaimMetric;
+  value: string;
+  unit: AiClaimUnit;
+  sourceTool: AiToolName;
+  sourcePath: string;
+}
+
+export interface AiClaimEnvelope {
+  claims: AiFinancialClaim[];
 }
 
 export interface AiHistoryMessage {
@@ -24,6 +46,7 @@ export interface AiProviderRequest {
   question: string;
   history: AiHistoryMessage[];
   contexts: AiToolContext[];
+  claimCandidates?: AiFinancialClaim[];
 }
 
 export interface AiProviderResult {

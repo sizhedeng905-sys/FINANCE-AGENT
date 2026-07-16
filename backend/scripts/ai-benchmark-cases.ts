@@ -76,7 +76,6 @@ export const aiBenchmarkCases: AiBenchmarkCase[] = [
     '这个月利润多少？',
     '给我看经营月报。',
     '本月成本结构如何？',
-    '本月哪个项目利润最高？',
     '这个月收入和支出分别多少？'
   ]),
   ...group('previous-month', ['get_today_report'], companyFacts, [
@@ -86,8 +85,7 @@ export const aiBenchmarkCases: AiBenchmarkCase[] = [
   ]),
   ...group('explicit-month', ['get_today_report'], companyFacts, [
     '2026年6月经营情况如何？',
-    '查一下2026年06月利润。',
-    '2026 年 6 月哪个项目利润最高？'
+    '查一下2026年06月利润。'
   ]),
   ...group('finance-report', ['get_finance_report'], companyFacts, [
     '财务情况怎么样？',
@@ -139,11 +137,16 @@ export const aiBenchmarkCases: AiBenchmarkCase[] = [
     '太和项目2026年6月成本环比如何？',
     '太和项目2026年06月利润同比如何？'
   ]),
-  ...group('ranking', ['get_today_report'], ['太和项目', '750.00'], [
+  ...group('ranking', ['get_finance_ranking'], (question) => {
+    if (/客户/.test(question)) return /最低|最亏/.test(question) ? ['海港物流', '200.00'] : ['太和物流', '1250.00'];
+    return /最低|最亏/.test(question) ? ['港区项目', '200.00'] : ['太和项目', '750.00'];
+  }, [
     '今天哪个项目利润最高？',
     '本周项目利润排行。',
     '本月哪个客户最赚钱？',
-    '2026年6月项目利润最低的是谁？'
+    '2026年6月项目利润最低的是谁？',
+    '本月哪个项目利润最高？',
+    '2026 年 6 月哪个项目利润最高？'
   ]),
   ...group('work-order', ['get_work_order_detail'], workOrderFacts, [
     '工单WO-BENCH-003是什么情况？',

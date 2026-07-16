@@ -32,6 +32,13 @@ describe('phase 8 boss AI assistant', () => {
       projectPeriodSummary: jest.fn(async () => ({ project: { id: project.id, name: project.name }, income: 700, expense: 250, profit: 450, recordCount: 3 })),
       bossComparison: jest.fn(async () => ({ current: { recordCount: 1 }, baseline: { recordCount: 1 } })),
       projectComparison: jest.fn(async () => ({ current: { recordCount: 1 }, baseline: { recordCount: 1 } })),
+      ranking: jest.fn(async ({ groupBy, direction, metric }) => ({
+        groupBy,
+        direction,
+        metric,
+        period: '2026-07',
+        items: [{ scopeType: groupBy, scopeId: 'project_1', scopeName: project.name, profit: '450.00' }]
+      })),
       pendingApprovals: jest.fn(async () => [{ orderNo: 'WO1', projectName: project.name, amount: 200, riskLevel: 'medium' }])
     };
     const riskRules: any = {
@@ -50,8 +57,14 @@ describe('phase 8 boss AI assistant', () => {
     expect(reports.projectPeriodSummary).toHaveBeenCalledWith(project.id, 'month', undefined);
 
     const monthlyRanking = await tools.buildContext('本月哪个项目利润最高', undefined, boss);
-    expect(monthlyRanking.map((item) => item.name)).toEqual(['get_today_report']);
-    expect(reports.boss).toHaveBeenCalledWith({ period: 'monthly' });
+    expect(monthlyRanking.map((item) => item.name)).toEqual(['get_finance_ranking']);
+    expect(reports.ranking).toHaveBeenCalledWith({
+      period: 'monthly',
+      date: undefined,
+      groupBy: 'project',
+      direction: 'highest',
+      metric: 'profit'
+    });
     expect(prisma.project.findMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: expect.anything() }));
 
     const operations = await tools.buildContext('列出待审批和异常工单', undefined, boss);
@@ -82,9 +95,11 @@ describe('phase 8 boss AI assistant', () => {
       name: 'get_today_report',
       data: { income: '100.00', expense: '40.00', profit: '60.00', recordCount: 2 }
     }];
-    expect(grounding.validate('收入100元。', reportContexts, '多少'.repeat(1000))).toEqual({ accepted: true });
-    expect(grounding.validate('共有2条记录。', reportContexts, '一共有多少条记录')).toEqual({ accepted: true });
-    expect(grounding.validate('收入100元。', reportContexts, '一共有多少条记录')).toMatchObject({ accepted: false });
+    const income = grounding.createExpectedEnvelope(reportContexts, '收入多少');
+    expect(grounding.validate(JSON.stringify(income), reportContexts, '收入多少')).toMatchObject({ accepted: true });
+    const count = grounding.createExpectedEnvelope(reportContexts, '一共有多少条记录');
+    expect(grounding.validate(JSON.stringify(count), reportContexts, '一共有多少条记录')).toMatchObject({ accepted: true });
+    expect(grounding.validate(JSON.stringify(income), reportContexts, '一共有多少条记录')).toMatchObject({ accepted: false });
   });
 
   it('uses the mock provider without a model deployment and logs every call', async () => {

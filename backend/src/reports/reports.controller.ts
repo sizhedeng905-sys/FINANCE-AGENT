@@ -5,7 +5,13 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { QueryBossReportDto, QueryDailyReportDto, QueryFinanceReportDto, QueryMonthlyReportDto } from './dto/query-reports.dto';
+import {
+  QueryBossReportDto,
+  QueryDailyReportDto,
+  QueryFinanceReportDto,
+  QueryMonthlyReportDto,
+  QueryRankingReportDto
+} from './dto/query-reports.dto';
 import { ReportsService } from './reports.service';
 
 @ApiTags('reports')
@@ -25,6 +31,12 @@ export class ReportsController {
   @Roles(UserRole.boss)
   boss(@Query() query: QueryBossReportDto) {
     return this.reports.boss(query);
+  }
+
+  @Get('ranking')
+  @Roles(UserRole.finance, UserRole.boss)
+  ranking(@Query() query: QueryRankingReportDto) {
+    return this.reports.ranking(query);
   }
 
   @Get('projects/:projectId/daily')

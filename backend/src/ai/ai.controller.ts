@@ -44,7 +44,7 @@ export class AiController {
 
   @Get('call-logs')
   @Roles(UserRole.boss)
-  callLogs(@Query() query: QueryAiCallLogsDto) {
-    return this.ai.callLogs(query);
+  callLogs(@Query() query: QueryAiCallLogsDto, @CurrentUserDecorator() user: CurrentUser) {
+    return this.ai.callLogs(query, user);
   }
 }

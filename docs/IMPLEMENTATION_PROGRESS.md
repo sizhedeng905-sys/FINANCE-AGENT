@@ -3,7 +3,7 @@
 更新日期：2026-07-16
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-04 工程门禁完成，下一步进入 B8-05 AI 财务 Grounding 与真实基准
+当前批次：B8-05 工程门禁完成，下一步进入 B8-06 权限、Cookie、文件与数据安全
 
 ## 完成口径
 
@@ -21,6 +21,18 @@
 | B8-02 财务确认一致性 | 完成 | 金额可见、默认值落库、预览/确认边界一致，四类资金入口统一持久化幂等 |
 | B8-03 大批量 Excel 确认 | 完成 | 短事务 Worker、lease/恢复、原子发布及 5,001/30,196/49,999 行完整入账门禁通过 |
 | B8-04 OCR 精度与异步任务 | 完成 | Decimal 字符串、持久化队列、真实执行槽、lease/恢复、实际 attempt 快照及 Mock/真实 UI 门禁通过 |
+| B8-05 AI Claim Grounding | 完成 | 严格 Claim 元组、确定性 renderer、显式项目/客户排行、PostgreSQL 黄金账与本地 Qwen 基准通过 |
+
+B8-05 已完成的工程证据：
+
+- Provider 只返回 `{"claims": [...]}`；后端逐项验证 scope、period、metric、value、unit、sourceTool 和 sourcePath 后确定性渲染中文，不再依赖“数字曾出现”。
+- 攻击测试覆盖收支互换、项目互换、月份互换、记录数/日期/工单号冒充金额、最高/最低、项目/客户排行、Prompt Injection 和无数据编造。
+- 新增显式排行 API/工具；`groupBy=project|customer` 与 `direction=highest|lowest` 必填，Decimal 排序由 3 项目、2 客户和不同利润值验证。
+- PostgreSQL 黄金测试通过正式 API 创建 6 条已确认收支记录，Reports API 与 AI Claim 的完整字段逐项一致；失败输出不含问题全文或业务值。
+- 两个 boss 的会话和调用日志互相隔离；finance/employee/reviewer 调用 AI 继续返回 403。
+- 72 条 Mock 基准全部通过；本地 Qwen 原始 Claim 通过率 98.61%，1 条数量偏移被 fallback 拦截，有效 grounding、事实、无数据、注入和 Schema 均为 100%，Provider 错误 0。
+- 详细证据见 `docs/B8_05_AI_CLAIM_GROUNDING_REPORT.md`。H-08/H-12 仍需老板标准答案和外部 AI 数据政策签字。
+- 自动化结果：22/22 migrations；18/18 Jest suites、199/199 tests；54/54 PostgreSQL integration；14/14 Playwright；前后端 production build、Prisma、439-file hygiene 与生产依赖审计通过。
 
 B8-04 已完成的工程证据：
 
