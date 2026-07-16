@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { chmod, mkdir, readFile, statfs, unlink, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { access, chmod, mkdir, readFile, readdir, statfs, unlink } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { FileStorage } from './file-storage';
 
@@ -27,7 +29,13 @@ export class LocalFileStorageService implements FileStorage {
     await chmod(directory, 0o700);
     const absolutePath = resolve(directory, storageName);
     this.assertInsideRoot(absolutePath);
-    await writeFile(absolutePath, file.buffer, { flag: 'wx', mode: 0o600 });
+    const source = file.path ? createReadStream(file.path) : Readable.from(file.buffer);
+    try {
+      await pipeline(source, createWriteStream(absolutePath, { flags: 'wx', mode: 0o600 }));
+    } catch (error) {
+      await unlink(absolutePath).catch(() => undefined);
+      throw error;
+    }
     return relative(this.root, absolutePath).split(sep).join('/');
   }
 
@@ -52,6 +60,36 @@ export class LocalFileStorageService implements FileStorage {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+  }
+
+  async exists(storagePath: string) {
+    try {
+      await access(this.resolvePath(storagePath));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async listPaths() {
+    const paths: string[] = [];
+    const walk = async (directory: string) => {
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        const absolutePath = resolve(directory, entry.name);
+        this.assertInsideRoot(absolutePath);
+        if (entry.isDirectory()) await walk(absolutePath);
+        else if (entry.isFile()) paths.push(relative(this.root, absolutePath).split(sep).join('/'));
+      }
+    };
+    await walk(this.root);
+    return paths.sort();
   }
 
   private resolvePath(storagePath: string) {

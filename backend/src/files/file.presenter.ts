@@ -16,6 +16,9 @@ export function toRawFile(file: RawFile) {
     status: file.status,
     scanStatus: file.scanStatus,
     previewStatus: file.previewStatus,
+    trustStatus: 'untrusted_original',
+    safePreviewAvailable: file.fileType === 'image' && file.scanStatus === 'clean',
+    downloadPolicy: 'untrusted_original_attachment',
     isVoided: file.isVoided,
     voidReason: file.voidReason ?? undefined
   };

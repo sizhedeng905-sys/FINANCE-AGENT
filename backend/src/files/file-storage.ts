@@ -8,4 +8,6 @@ export interface FileStorage {
   openReadStream(storagePath: string): Readable;
   availableBytes(): Promise<bigint>;
   remove(storagePath: string): Promise<void>;
+  listPaths?(): Promise<string[]>;
+  exists?(storagePath: string): Promise<boolean>;
 }

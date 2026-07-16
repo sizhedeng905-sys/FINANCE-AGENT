@@ -33,6 +33,9 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public
       TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public
       JWT_SECRET: ci-only-finance-agent-jwt-secret-2026-07-11
+      JWT_ISSUER: finance-agent
+      JWT_AUDIENCE: finance-agent-api
+      JWT_ALGORITHM: HS256
       PORT: 3101
       SEED_ALLOW_NONSTANDARD_DATABASE: "false"
       UPLOAD_DIR: test-uploads/ci

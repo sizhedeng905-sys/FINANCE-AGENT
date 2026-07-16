@@ -147,6 +147,7 @@ class InMemoryPrisma {
   recordValues: RecordValueRecord[] = [];
   ledgerEvents: Array<Record<string, unknown>> = [];
   rawFiles: Array<Record<string, unknown>> = [];
+  notifications: Array<Record<string, unknown>> = [];
   auditLogs: Array<Record<string, unknown>> = [];
   private userCounter = 0;
   private projectCounter = 0;
@@ -217,6 +218,14 @@ class InMemoryPrisma {
 
       const [deleted] = this.users.splice(index, 1);
       return deleted;
+    }
+  };
+
+  notification = {
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      const notification = { id: `notification_${this.notifications.length + 1}`, createdAt: new Date(), ...data };
+      this.notifications.push(notification);
+      return notification;
     }
   };
 
@@ -745,7 +754,9 @@ class InMemoryPrisma {
       { username: 'employee', name: '员工', role: UserRole.employee, department: '运营部', phone: '13800000011' },
       { username: 'finance', name: '财务', role: UserRole.finance, department: '财务部', phone: '13800000012' },
       { username: 'reviewer', name: '复核员', role: UserRole.reviewer, department: '复核部', phone: '13800000013' },
-      { username: 'boss', name: '老板', role: UserRole.boss, department: '总经办', phone: '13800000014' }
+      { username: 'boss', name: '老板', role: UserRole.boss, department: '总经办', phone: '13800000014' },
+      { username: 'admin', name: '系统管理员', role: UserRole.admin, department: '系统管理', phone: '13800000015' },
+      { username: 'auditor', name: '安全审计员', role: UserRole.auditor, department: '安全审计', phone: '13800000016' }
     ];
 
     for (const account of accounts) {
@@ -1013,7 +1024,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public';
-    process.env.JWT_SECRET = '4f9d2a7c8e1b6f305d7a9c2e4b8f1d603a7e5c9b2f6d8a104c3e7b9f5a2d6c81';
+    process.env.JWT_SECRET = 'test-only-jwt-secret-with-32-characters';
     process.env.AI_PROVIDER = 'mock';
     const { AppModule } = await import('../src/app.module');
     prisma = new InMemoryPrisma();
@@ -1279,24 +1290,24 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
       .expect(403);
   });
 
-  it('does not allow the last active boss to be disabled', async () => {
-    const bossToken = await login('boss');
+  it('allows only admin to manage protected accounts and preserves the last active boss', async () => {
+    const adminToken = await login('admin');
     const chineseBoss = prisma.users.find((user) => user.username === '老板')!;
     const englishBoss = prisma.users.find((user) => user.username === 'boss')!;
 
     await request(app.getHttpServer())
       .patch(`/api/users/${chineseBoss.id}/status`)
-      .set('Authorization', `Bearer ${bossToken}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: UserStatus.disabled })
       .expect(200);
     await request(app.getHttpServer())
       .patch(`/api/users/${englishBoss.id}/status`)
-      .set('Authorization', `Bearer ${bossToken}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: UserStatus.disabled })
       .expect(409);
     await request(app.getHttpServer())
       .patch(`/api/users/${chineseBoss.id}/status`)
-      .set('Authorization', `Bearer ${bossToken}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: UserStatus.active })
       .expect(200);
   });

@@ -47,4 +47,22 @@ export class AiController {
   callLogs(@Query() query: QueryAiCallLogsDto, @CurrentUserDecorator() user: CurrentUser) {
     return this.ai.callLogs(query, user);
   }
+
+  @Get('call-logs/:id')
+  @Roles(UserRole.boss)
+  callLog(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser) {
+    return this.ai.callLog(id, user);
+  }
+
+  @Get('audit/call-logs')
+  @Roles(UserRole.auditor)
+  auditCallLogs(@Query() query: QueryAiCallLogsDto) {
+    return this.ai.auditCallLogs(query);
+  }
+
+  @Get('audit/call-logs/:id')
+  @Roles(UserRole.auditor)
+  auditCallLog(@Param('id') id: string) {
+    return this.ai.auditCallLog(id);
+  }
 }

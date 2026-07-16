@@ -103,6 +103,20 @@ async function main() {
       role: 'boss' as const,
       department: '总经办',
       phone: '13800000014'
+    },
+    {
+      username: 'admin',
+      name: '系统管理员',
+      role: 'admin' as const,
+      department: '系统管理',
+      phone: '13800000015'
+    },
+    {
+      username: 'auditor',
+      name: '安全审计员',
+      role: 'auditor' as const,
+      department: '安全审计',
+      phone: '13800000016'
     }
   ];
 

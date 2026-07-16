@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prepare": "node backend/scripts/install-git-hooks.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
@@ -12,6 +13,7 @@
     "test:e2e:ocr-real": "npm run test:e2e:prepare && playwright test --config playwright.ocr-real.config.ts",
     "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
     "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
+    "check:hygiene:staged": "node backend/scripts/check-repository-hygiene.mjs --staged",
     "realdata:scan": "npm --prefix backend run realdata:scan --",
     "realdata:xlsx-profile": "npm --prefix backend run realdata:xlsx-profile --",
     "realdata:large-xlsx-profile": "npm --prefix backend run realdata:large-xlsx-profile --",

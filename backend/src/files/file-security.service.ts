@@ -5,20 +5,17 @@ import {
   UnprocessableEntityException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PDFDocument } from 'pdf-lib';
 import { Socket } from 'node:net';
 import { extname } from 'node:path';
-import * as yauzl from 'yauzl';
 
-import { isStructurallyValidJpeg, isStructurallyValidPng } from './image-security';
-import { hasActivePdfContent } from './pdf-security';
+import { assertSafeCsv, CsvSecurityError } from './csv-security';
 import { inspectOleCompoundFile, OleCompoundPolicyError } from './ole-compound-security';
+import { isStructurallyValidJpeg, isStructurallyValidPng } from './image-security';
+import { jpegDimensions, pngDimensions, webpDimensions } from './image-dimensions';
+import { OoxmlSecurityError, validateOoxmlPackage } from './ooxml-security';
+import { inspectPdfInWorker } from './pdf-inspection-runner';
 
 const EICAR_SIGNATURE = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
-const MAX_ARCHIVE_ENTRIES = 2_000;
-const MAX_ARCHIVE_EXPANDED_BYTES = 100 * 1024 * 1024;
-const MAX_ARCHIVE_RATIO = 100;
-const MAX_INSPECTED_XML_BYTES = 5 * 1024 * 1024;
 
 @Injectable()
 export class FileSecurityService {
@@ -26,30 +23,45 @@ export class FileSecurityService {
   private readonly clamavHost: string;
   private readonly clamavPort: number;
   private readonly clamavTimeoutMs: number;
+  private readonly imageMaxWidth: number;
+  private readonly imageMaxHeight: number;
+  private readonly imageMaxPixels: bigint;
+  private readonly imageMaxDecodedBytes: bigint;
+  private readonly pdfMaxPages: number;
+  private readonly pdfMaxObjects: number;
+  private readonly parseTimeoutMs: number;
 
   constructor(config: ConfigService) {
     this.scanMode = config.get<'basic' | 'clamav'>('fileScan.mode') ?? 'basic';
     this.clamavHost = config.get<string>('fileScan.clamavHost') ?? '127.0.0.1';
     this.clamavPort = config.get<number>('fileScan.clamavPort') ?? 3310;
     this.clamavTimeoutMs = config.get<number>('fileScan.timeoutMs') ?? 15_000;
+    this.imageMaxWidth = config.get<number>('fileLimits.imageMaxWidth') ?? 20_000;
+    this.imageMaxHeight = config.get<number>('fileLimits.imageMaxHeight') ?? 20_000;
+    this.imageMaxPixels = BigInt(config.get<number>('fileLimits.imageMaxPixels') ?? 100_000_000);
+    this.imageMaxDecodedBytes = BigInt(config.get<number>('fileLimits.imageMaxDecodedMb') ?? 400) * 1024n * 1024n;
+    this.pdfMaxPages = config.get<number>('fileLimits.pdfMaxPages') ?? 200;
+    this.pdfMaxObjects = config.get<number>('fileLimits.pdfMaxObjects') ?? 100_000;
+    this.parseTimeoutMs = config.get<number>('fileLimits.parseTimeoutMs') ?? 5_000;
   }
 
   async scan(fileName: string, buffer: Buffer) {
     if (buffer.includes(Buffer.from(EICAR_SIGNATURE, 'ascii'))) {
-      throw new UnprocessableEntityException('文件安全扫描发现恶意内容');
+      throw new UnprocessableEntityException('File security scan detected malicious content');
     }
-    const extension = extname(fileName).toLowerCase();
-    await this.validateStructure(extension, buffer);
+    await this.validateStructure(extname(fileName).toLowerCase(), buffer);
     if (this.scanMode === 'clamav') await this.scanWithClamAv(buffer);
   }
 
   private async validateStructure(extension: string, buffer: Buffer) {
     if (extension === '.png') {
-      this.assert(isStructurallyValidPng(buffer), 'PNG 文件结构不完整');
+      this.assert(isStructurallyValidPng(buffer), 'PNG structure is invalid');
+      this.assertImageDimensions(pngDimensions(buffer));
       return;
     }
     if (extension === '.jpg' || extension === '.jpeg') {
-      this.assert(isStructurallyValidJpeg(buffer), 'JPEG 文件结构不完整');
+      this.assert(isStructurallyValidJpeg(buffer), 'JPEG structure is invalid');
+      this.assertImageDimensions(jpegDimensions(buffer));
       return;
     }
     if (extension === '.webp') {
@@ -58,8 +70,9 @@ export class FileSecurityService {
           buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
           buffer.subarray(8, 12).toString('ascii') === 'WEBP' &&
           buffer.readUInt32LE(4) + 8 === buffer.length,
-        'WebP 文件结构不完整'
+        'WebP structure is invalid'
       );
+      this.assertImageDimensions(webpDimensions(buffer));
       return;
     }
     if (extension === '.pdf') {
@@ -67,145 +80,60 @@ export class FileSecurityService {
       return;
     }
     if (extension === '.xls') {
-      this.validateLegacyExcel(buffer);
+      try {
+        inspectOleCompoundFile(buffer);
+      } catch (error) {
+        if (error instanceof OleCompoundPolicyError) throw new BadRequestException(error.message);
+        throw new BadRequestException('XLS OLE structure cannot be inspected safely');
+      }
       return;
     }
     if (extension === '.xlsx' || extension === '.docx') {
-      await this.validateOoxml(buffer, extension);
+      try {
+        await validateOoxmlPackage(buffer, extension);
+      } catch (error) {
+        if (error instanceof OoxmlSecurityError) throw new BadRequestException(error.message);
+        throw new BadRequestException('Office file cannot be inspected safely');
+      }
       return;
     }
     if (extension === '.csv') {
       try {
         const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-        this.assert(text.length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text), 'CSV 内容不合法');
-      } catch {
-        throw new BadRequestException('CSV 必须使用 UTF-8 编码');
+        assertSafeCsv(text);
+      } catch (error) {
+        if (error instanceof CsvSecurityError) throw new BadRequestException(error.message);
+        throw new BadRequestException('CSV must use valid UTF-8 encoding');
       }
       return;
     }
-    throw new BadRequestException('不支持的文件类型');
+    throw new BadRequestException('Unsupported file type');
   }
 
   private async validatePdf(buffer: Buffer) {
     this.assert(
       buffer.subarray(0, 5).toString('ascii') === '%PDF-' &&
         buffer.subarray(Math.max(0, buffer.length - 2048)).includes(Buffer.from('%%EOF')),
-      'PDF 文件结构不完整'
+      'PDF structure is invalid'
     );
     try {
-      const document = await PDFDocument.load(buffer, { ignoreEncryption: false, updateMetadata: false });
-      if (hasActivePdfContent(document)) throw new BadRequestException('PDF 包含活动内容或嵌入文件');
-      const pages = document.getPageCount();
-      this.assert(pages > 0 && pages <= 500, 'PDF 页数超出允许范围');
+      const result = await inspectPdfInWorker(buffer, this.parseTimeoutMs);
+      this.assert(!result.activeContent, 'PDF contains active content or embedded files');
+      this.assert(result.pages > 0 && result.pages <= this.pdfMaxPages, 'PDF page limit exceeded');
+      this.assert(result.objects > 0 && result.objects <= this.pdfMaxObjects, 'PDF object complexity limit exceeded');
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
-      throw new BadRequestException('PDF 无法安全解析或已加密');
+      throw new BadRequestException(error instanceof Error ? error.message : 'PDF cannot be inspected safely');
     }
   }
 
-  private validateLegacyExcel(buffer: Buffer) {
-    try {
-      inspectOleCompoundFile(buffer);
-    } catch (error) {
-      if (error instanceof OleCompoundPolicyError) throw new BadRequestException(error.message);
-      throw new BadRequestException('XLS OLE 结构无法安全检查');
-    }
-  }
-
-  private validateOoxml(buffer: Buffer, extension: '.xlsx' | '.docx') {
-    return new Promise<void>((resolve, reject) => {
-      yauzl.fromBuffer(buffer, { lazyEntries: true, decodeStrings: true }, (openError, zip) => {
-        if (openError || !zip) {
-          reject(new BadRequestException('Office 文件不是有效的 OOXML 压缩包'));
-          return;
-        }
-        let entries = 0;
-        let totalCompressed = 0;
-        let totalExpanded = 0;
-        let hasContentTypes = false;
-        let hasMainDocument = false;
-        let settled = false;
-        const finish = (error?: Error) => {
-          if (settled) return;
-          settled = true;
-          zip.close();
-          if (error) reject(error);
-          else resolve();
-        };
-        zip.on('error', () => finish(new BadRequestException('Office 压缩包读取失败')));
-        zip.on('end', () => {
-          if (!hasContentTypes || !hasMainDocument) {
-            finish(new BadRequestException('Office 文件缺少必要的 OOXML 结构'));
-            return;
-          }
-          finish();
-        });
-        zip.on('entry', (entry: yauzl.Entry) => {
-          try {
-            entries += 1;
-            totalCompressed += entry.compressedSize;
-            totalExpanded += entry.uncompressedSize;
-            this.assert(entries <= MAX_ARCHIVE_ENTRIES, 'Office 压缩包条目过多');
-            this.assert(totalExpanded <= MAX_ARCHIVE_EXPANDED_BYTES, 'Office 文件展开后过大');
-            this.assert(
-              totalExpanded / Math.max(1, totalCompressed) <= MAX_ARCHIVE_RATIO,
-              'Office 文件总压缩比异常'
-            );
-            this.assert(
-              entry.uncompressedSize / Math.max(1, entry.compressedSize) <= MAX_ARCHIVE_RATIO,
-              'Office 文件压缩比异常'
-            );
-            this.assert((entry.generalPurposeBitFlag & 0x1) === 0, '不支持加密 Office 文件');
-            this.assert(
-              !entry.fileName.startsWith('/') &&
-                !entry.fileName.includes('\\') &&
-                !entry.fileName.split('/').includes('..'),
-              'Office 压缩包包含非法路径'
-            );
-            if (entry.fileName === '[Content_Types].xml') hasContentTypes = true;
-            if (extension === '.xlsx' && entry.fileName === 'xl/workbook.xml') hasMainDocument = true;
-            if (extension === '.docx' && entry.fileName === 'word/document.xml') hasMainDocument = true;
-            if (/vbaProject|macrosheets|embeddings|externalLinks|oleObject/i.test(entry.fileName)) {
-              throw new BadRequestException('Office 文件包含宏、嵌入对象或外部链接');
-            }
-            const inspectContent = entry.fileName.endsWith('.rels') || entry.fileName === '[Content_Types].xml';
-            if (!inspectContent || /\/$/.test(entry.fileName)) {
-              zip.readEntry();
-              return;
-            }
-            this.assert(entry.uncompressedSize <= MAX_INSPECTED_XML_BYTES, 'Office XML 条目过大');
-            zip.openReadStream(entry, (streamError, stream) => {
-              if (streamError || !stream) {
-                finish(new BadRequestException('Office XML 条目读取失败'));
-                return;
-              }
-              const chunks: Buffer[] = [];
-              let size = 0;
-              stream.on('data', (chunk: Buffer) => {
-                size += chunk.length;
-                if (size > MAX_INSPECTED_XML_BYTES) {
-                  stream.destroy(new Error('entry too large'));
-                  return;
-                }
-                chunks.push(chunk);
-              });
-              stream.on('error', () => finish(new BadRequestException('Office XML 条目读取失败')));
-              stream.on('end', () => {
-                const xml = Buffer.concat(chunks).toString('utf8');
-                if (/TargetMode\s*=\s*["']External["']/i.test(xml)) {
-                  finish(new BadRequestException('Office 文件包含外部关系'));
-                  return;
-                }
-                zip.readEntry();
-              });
-            });
-          } catch (error) {
-            finish(error instanceof Error ? error : new BadRequestException('Office 文件结构不合法'));
-          }
-        });
-        zip.readEntry();
-      });
-    });
+  private assertImageDimensions(dimensions: { width: number; height: number } | undefined) {
+    this.assert(dimensions && dimensions.width > 0 && dimensions.height > 0, 'Image dimensions cannot be determined');
+    const pixels = BigInt(dimensions.width) * BigInt(dimensions.height);
+    this.assert(dimensions.width <= this.imageMaxWidth, 'Image width limit exceeded');
+    this.assert(dimensions.height <= this.imageMaxHeight, 'Image height limit exceeded');
+    this.assert(pixels <= this.imageMaxPixels, 'Image pixel limit exceeded');
+    this.assert(pixels * 4n <= this.imageMaxDecodedBytes, 'Image decoded-memory limit exceeded');
   }
 
   private scanWithClamAv(buffer: Buffer) {
@@ -220,31 +148,53 @@ export class FileSecurityService {
         if (error) reject(error);
         else resolve();
       };
-      socket.setTimeout(this.clamavTimeoutMs, () =>
-        finish(new ServiceUnavailableException('ClamAV 扫描超时'))
-      );
-      socket.on('error', () => finish(new ServiceUnavailableException('无法连接 ClamAV 扫描服务')));
+      socket.setTimeout(this.clamavTimeoutMs, () => finish(new ServiceUnavailableException('ClamAV scan timed out')));
+      socket.on('error', () => finish(new ServiceUnavailableException('ClamAV is unavailable')));
       socket.on('data', (chunk) => {
         response += chunk.toString('utf8');
-        if (response.length > 4096) finish(new ServiceUnavailableException('ClamAV 返回异常响应'));
+        if (response.length > 4096) finish(new ServiceUnavailableException('ClamAV returned an invalid response'));
       });
       socket.on('end', () => {
-        if (/\bFOUND\b/.test(response)) finish(new UnprocessableEntityException('文件安全扫描发现恶意内容'));
+        if (/\bFOUND\b/.test(response)) finish(new UnprocessableEntityException('File security scan detected malicious content'));
         else if (/\bOK\b/.test(response)) finish();
-        else finish(new ServiceUnavailableException('ClamAV 未返回有效扫描结果'));
+        else finish(new ServiceUnavailableException('ClamAV did not return a valid result'));
       });
       socket.connect(this.clamavPort, this.clamavHost, () => {
-        socket.write(Buffer.from('zINSTREAM\0'));
-        for (let offset = 0; offset < buffer.length; offset += 64 * 1024) {
-          const chunk = buffer.subarray(offset, Math.min(offset + 64 * 1024, buffer.length));
-          const length = Buffer.allocUnsafe(4);
-          length.writeUInt32BE(chunk.length);
-          socket.write(length);
-          socket.write(chunk);
-        }
-        const terminator = Buffer.alloc(4);
-        socket.end(terminator);
+        void this.writeClamAvStream(socket, buffer).catch(() => finish(new ServiceUnavailableException('ClamAV stream failed')));
       });
+    });
+  }
+
+  private async writeClamAvStream(socket: Socket, buffer: Buffer) {
+    await this.writeWithBackpressure(socket, Buffer.from('zINSTREAM\0'));
+    for (let offset = 0; offset < buffer.length; offset += 64 * 1024) {
+      const chunk = buffer.subarray(offset, Math.min(offset + 64 * 1024, buffer.length));
+      const length = Buffer.allocUnsafe(4);
+      length.writeUInt32BE(chunk.length);
+      await this.writeWithBackpressure(socket, length);
+      await this.writeWithBackpressure(socket, chunk);
+    }
+    await this.writeWithBackpressure(socket, Buffer.alloc(4));
+    socket.end();
+  }
+
+  private writeWithBackpressure(socket: Socket, chunk: Buffer) {
+    if (socket.write(chunk)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const cleanup = () => {
+        socket.off('drain', onDrain);
+        socket.off('error', onError);
+      };
+      socket.once('drain', onDrain);
+      socket.once('error', onError);
     });
   }
 

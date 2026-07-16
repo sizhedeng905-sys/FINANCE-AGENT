@@ -6,12 +6,13 @@ import { Response } from 'express';
 
 import { CurrentUser as CurrentUserDecorator } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/types/current-user';
-import { AuthenticatedRequest } from '../common/types/current-user';
-import { getRequestContext } from '../common/utils/request-context';
+import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { csrfCookieName, sessionCookieName } from '../common/utils/auth-cookies';
+import { getRequestContext } from '../common/utils/request-context';
+import { getRoleTitle } from '../common/utils/user-presenter';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { StepUpDto } from './dto/step-up.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -23,26 +24,8 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({
-    schema: {
-      example: {
-        code: 0,
-        message: 'success',
-        data: {
-          accessToken: 'jwt-token',
-          user: {
-            id: 'user-id',
-            username: 'finance',
-            name: '财务',
-            role: 'finance',
-            department: '财务部',
-            title: '财务审核'
-          }
-        }
-      }
-    }
-  })
-  @ApiUnauthorizedResponse({ description: '账号或密码错误' })
+  @ApiOkResponse({ description: 'Returns an access token and the authenticated user.' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials or disabled account.' })
   async login(
     @Body() dto: LoginDto,
     @Req() request: AuthenticatedRequest,
@@ -63,8 +46,30 @@ export class AuthController {
       name: user.name,
       role: user.role,
       department: user.department,
-      title: this.getTitle(user.role)
+      title: getRoleTitle(user.role)
     };
+  }
+
+  @Get('security-capabilities')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  securityCapabilities() {
+    return {
+      mfa: { status: 'reserved', enabled: false },
+      stepUp: { status: 'available', endpoint: '/api/auth/step-up', expiresInSeconds: 300 }
+    };
+  }
+
+  @Post('step-up')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  stepUp(
+    @Body() dto: StepUpDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.authService.stepUp(dto, user, getRequestContext(request));
   }
 
   @Post('logout')
@@ -83,6 +88,7 @@ export class AuthController {
 
   private setSessionCookies(response: Response, accessToken: string) {
     const production = this.config.get<string>('nodeEnv') === 'production';
+    this.clearCookieFamily(response, !production);
     const options = {
       httpOnly: true,
       secure: production,
@@ -97,20 +103,13 @@ export class AuthController {
   }
 
   private clearSessionCookies(response: Response) {
-    const production = this.config.get<string>('nodeEnv') === 'production';
+    this.clearCookieFamily(response, false);
+    this.clearCookieFamily(response, true);
+  }
+
+  private clearCookieFamily(response: Response, production: boolean) {
     const options = { secure: production, sameSite: 'strict' as const, path: '/' };
     response.clearCookie(sessionCookieName(production), { ...options, httpOnly: true });
     response.clearCookie(csrfCookieName(production), { ...options, httpOnly: false });
-  }
-
-  private getTitle(role: CurrentUser['role']): string {
-    const titleMap: Record<CurrentUser['role'], string> = {
-      employee: '员工',
-      finance: '财务审核',
-      reviewer: '复核员',
-      boss: '老板'
-    };
-
-    return titleMap[role];
   }
 }

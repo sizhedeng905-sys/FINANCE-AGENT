@@ -156,7 +156,8 @@ export class FilesService {
             relatedProjectId: projectId,
             relatedWorkOrderId: dto.workOrderId,
             status: RawFileStatus.uploaded,
-            scanStatus: FileScanStatus.clean
+            scanStatus: FileScanStatus.clean,
+            previewStatus: 'untrusted_original'
           }
         });
         if (dto.workOrderId) {
@@ -220,7 +221,8 @@ export class FilesService {
       fileName: file.originalFileName,
       mimeType: file.mimeType,
       fileSize: file.fileSize,
-      inlineAllowed: file.fileType === 'image'
+      inlineAllowed: file.fileType === 'image',
+      trustStatus: file.previewStatus
     };
   }
 

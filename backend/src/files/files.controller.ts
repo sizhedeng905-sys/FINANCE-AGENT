@@ -28,6 +28,7 @@ import { UploadFileDto } from './dto/upload-file.dto';
 import { VoidFileDto } from './dto/void-file.dto';
 import { FilesService } from './files.service';
 import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
+import { UploadAdmissionInterceptor } from './upload-admission.interceptor';
 
 @ApiTags('files')
 @ApiBearerAuth()
@@ -50,7 +51,7 @@ export class FilesController {
       required: ['file']
     }
   })
-  @UseInterceptors(FileInterceptor('file'), TempUploadCleanupInterceptor)
+  @UseInterceptors(UploadAdmissionInterceptor, FileInterceptor('file'), TempUploadCleanupInterceptor)
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: UploadFileDto,
@@ -78,6 +79,8 @@ export class FilesController {
     );
     response.setHeader('Content-Length', file.fileSize.toString());
     response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-File-Trust', file.trustStatus);
+    response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     return new StreamableFile(file.stream);
   }
 
@@ -92,10 +95,12 @@ export class FilesController {
     @Res({ passthrough: true }) response: Response
   ) {
     const file = await this.files.read(id, user, getRequestContext(request), 'download');
-    response.setHeader('Content-Type', file.mimeType);
+    response.setHeader('Content-Type', 'application/octet-stream');
     response.setHeader('Content-Disposition', this.contentDisposition('attachment', file.fileName));
     response.setHeader('Content-Length', file.fileSize.toString());
     response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Download-Options', 'noopen');
+    response.setHeader('X-File-Trust', file.trustStatus);
     return new StreamableFile(file.stream);
   }
 

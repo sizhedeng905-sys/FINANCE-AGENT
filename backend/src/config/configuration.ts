@@ -4,10 +4,20 @@ export default () => ({
   port: Number.parseInt(process.env.PORT ?? '3001', 10),
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || (process.env.NODE_ENV === 'production' ? '30m' : '8h'),
+  jwtIssuer: process.env.JWT_ISSUER || 'finance-agent',
+  jwtAudience: process.env.JWT_AUDIENCE || 'finance-agent-api',
+  jwtAlgorithm: process.env.JWT_ALGORITHM || 'HS256',
   databaseUrl: process.env.DATABASE_URL,
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
   uploadQuarantineDir: process.env.UPLOAD_QUARANTINE_DIR || '.upload-quarantine',
   maxFileSizeMb: Number.parseInt(process.env.MAX_FILE_SIZE_MB ?? '10', 10),
+  uploadAdmission: {
+    maxConcurrentPerUser: Number.parseInt(process.env.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5', 10),
+    maxInFlightMbPerUser: Number.parseInt(process.env.UPLOAD_MAX_INFLIGHT_MB_PER_USER ?? '260', 10),
+    rateWindowMs: Number.parseInt(process.env.UPLOAD_RATE_WINDOW_MS ?? '60000', 10),
+    rateMaxPerUser: Number.parseInt(process.env.UPLOAD_RATE_MAX_PER_USER ?? '60', 10)
+  },
+  uploadQuarantineMaxAgeMs: Number.parseInt(process.env.UPLOAD_QUARANTINE_MAX_AGE_MS ?? '3600000', 10),
   fileQuotas: {
     userMb: Number.parseInt(process.env.FILE_USER_QUOTA_MB ?? '500', 10),
     projectMb: Number.parseInt(process.env.FILE_PROJECT_QUOTA_MB ?? '5000', 10),
@@ -18,6 +28,15 @@ export default () => ({
     clamavHost: process.env.CLAMAV_HOST || '127.0.0.1',
     clamavPort: Number.parseInt(process.env.CLAMAV_PORT ?? '3310', 10),
     timeoutMs: Number.parseInt(process.env.FILE_SCAN_TIMEOUT_MS ?? '15000', 10)
+  },
+  fileLimits: {
+    imageMaxWidth: Number.parseInt(process.env.FILE_IMAGE_MAX_WIDTH ?? '20000', 10),
+    imageMaxHeight: Number.parseInt(process.env.FILE_IMAGE_MAX_HEIGHT ?? '20000', 10),
+    imageMaxPixels: Number.parseInt(process.env.FILE_IMAGE_MAX_PIXELS ?? '100000000', 10),
+    imageMaxDecodedMb: Number.parseInt(process.env.FILE_IMAGE_MAX_DECODED_MB ?? '400', 10),
+    pdfMaxPages: Number.parseInt(process.env.FILE_PDF_MAX_PAGES ?? '200', 10),
+    pdfMaxObjects: Number.parseInt(process.env.FILE_PDF_MAX_OBJECTS ?? '100000', 10),
+    parseTimeoutMs: Number.parseInt(process.env.FILE_PARSE_TIMEOUT_MS ?? '5000', 10)
   },
   xlsConverter: {
     timeoutMs: Number.parseInt(process.env.XLS_CONVERTER_TIMEOUT_MS ?? '30000', 10),
@@ -51,7 +70,8 @@ export default () => ({
     apiKey: process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '',
     timeoutMs: Number.parseInt(process.env.AI_TIMEOUT_MS ?? '30000', 10),
     maxOutputTokens: Number.parseInt(process.env.AI_MAX_OUTPUT_TOKENS ?? '1200', 10),
-    maxResponseBytes: Number.parseInt(process.env.AI_MAX_RESPONSE_BYTES ?? '2097152', 10)
+    maxResponseBytes: Number.parseInt(process.env.AI_MAX_RESPONSE_BYTES ?? '2097152', 10),
+    auditRetentionDays: Number.parseInt(process.env.AI_AUDIT_RETENTION_DAYS ?? '90', 10)
   },
   ocr: {
     provider: process.env.OCR_PROVIDER || 'mock',

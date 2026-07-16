@@ -12,6 +12,10 @@ __pycache__/
 *.py[cod]
 backend/uploads/
 backend/test-uploads/
+.upload-quarantine/
+backend/.upload-quarantine/
+.hygiene-fixtures/
+.dlp-internal-terms.local.txt
 # Local company source documents must never be committed.
 数据文件/
 # Local manifests, labels, derived samples, and raw benchmark output.

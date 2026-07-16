@@ -44,7 +44,7 @@ async function bootstrap() {
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id', 'X-CSRF-Token'],
-    exposedHeaders: ['X-Request-Id', 'Content-Disposition', 'Content-Length'],
+    exposedHeaders: ['X-Request-Id', 'Content-Disposition', 'Content-Length', 'X-File-Trust'],
     credentials: true
   });
   app.setGlobalPrefix('api');

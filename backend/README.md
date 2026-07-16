@@ -66,15 +66,15 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-15, B7 engineering handoff):
+Current verification baseline (2026-07-16, B8-06 engineering gate):
 
-- Backend build and Prisma validation pass with 18 applied migrations.
-- Jest: 17/17 suites and 184/184 tests.
-- Real PostgreSQL integration: 30/30 tests.
+- Backend build and Prisma validation pass with 23 applied migrations and 41 expected business tables.
+- Jest: 21/21 suites and 230/230 tests.
+- Real PostgreSQL integration: 57/57 tests, including 30,196/49,999-row final posting.
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
-- Backend/database restart, ClamAV/disk fail-closed paths, 1/3/5 concurrency, model restart/VL switch, and simultaneous Qwen/OCR inference pass. Private aggregate reports stay under `.realdata-test/reports/`.
-- Finance L3 reconciliation and reviewed OCR labels remain external UAT gates; see `docs/B7_FINANCE_UAT_ACCEPTANCE.md`.
+- Owner-scoped AI logs, production Cookie/JWT boundaries, admin/auditor separation, active-content checks, upload admission, storage reconciliation, and Git/DLP gates pass.
+- H-10/H-11, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_06_SECURITY_HARDENING_REPORT.md`.
 
 ## API
 
@@ -82,6 +82,7 @@ Current verification baseline (2026-07-15, B7 engineering handoff):
 - Login: `POST /api/auth/login`
 - Current user: `GET /api/auth/me`
 - Logout: `POST /api/auth/logout`
+- Authentication capabilities and step-up: `GET /api/auth/security-capabilities`, `POST /api/auth/step-up`
 - User management: `GET/POST/PATCH/DELETE /api/users`
 - Projects: `GET/POST/PATCH/DELETE /api/projects`
 - Project structure: `GET /api/projects/:id/structure`
@@ -107,7 +108,8 @@ Current verification baseline (2026-07-15, B7 engineering handoff):
 - Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/ranking`, `/api/reports/projects/:projectId/{daily|monthly}`
 - Boss AI assistant: `POST /api/ai/chat`
 - Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
-- AI call logs: `GET /api/ai/call-logs`
+- Owner-scoped AI call logs: `GET /api/ai/call-logs`, `GET /api/ai/call-logs/:id`
+- Auditor-only redacted AI logs: `GET /api/ai/audit/call-logs`, `GET /api/ai/audit/call-logs/:id`
 - Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/inspect`, `POST /api/import-tasks/:id/parse`
 - Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
 - Excel confirmation: `POST /api/import-tasks/:id/confirm`; field suggestions: `/api/field-suggestions`
@@ -162,14 +164,22 @@ Accounts:
 | `finance` | `123456` | `finance` |
 | `reviewer` | `123456` | `reviewer` |
 | `boss` | `123456` | `boss` |
+| `admin` | `123456` | `admin` |
+| `auditor` | `123456` | `auditor` |
 
-The seed also creates default projects, templates, fields, six risk rules, one pending high-risk work order, and model deployment/route metadata. Only the deterministic Mock deployment is enabled; local Qwen/Paddle/Embedding deployments remain disabled.
+The seed also creates default projects, templates, fields, six risk rules, one pending high-risk work order, and model deployment/route metadata. Only the deterministic Mock deployment is enabled; local Qwen/Paddle/Embedding deployments remain disabled. Seed is intended for deterministic development/test databases and resets seeded account passwords, statuses, and token versions.
 
 ## File Storage
 
-Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. The API validates images, PDF, OOXML, CSV, and Word content structurally, rejects active/forged documents and EICAR, records SHA-256 metadata, limits work-order attachments, and enforces user/project quotas plus a minimum disk-waterline.
+Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. File, import, and OCR upload routes share per-user concurrency, in-flight byte, and rate admission controls. The API validates images, PDF, OOXML, CSV, Word, and legacy XLS content structurally; rejects active/forged documents and EICAR; limits image decoded memory and PDF pages/objects/time; records SHA-256 metadata; and enforces user/project quotas plus a minimum disk-waterline.
 
-`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Downloads are streamed, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. The storage implementation remains isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local disk later; the ClamAV daemon, object storage, backup, and retention jobs are deployment responsibilities.
+`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with disk. The storage implementation remains isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local disk later; the ClamAV daemon, object storage, backup, and retention jobs are deployment responsibilities.
+
+## Authentication Boundary
+
+Development accepts only `finance_agent_session` / `finance_agent_csrf`; production accepts only `__Host-finance_agent_session` / `__Host-finance_agent_csrf`. Mixed families, duplicate names (including malformed or empty first values), and environment-incompatible names are rejected and cleared. Cookie writes require exact double-submit CSRF matching. JWT verification is fixed to `HS256`, configured issuer/audience, and `typ=access`.
+
+The `admin` role manages privileged accounts. `finance` and `boss` can manage employee accounts only; `reviewer`, `employee`, and `auditor` cannot use user administration. Privileged role, password, and status changes are audited and notify the target user. The step-up endpoint issues a five-minute purpose-bound token after password verification; MFA remains explicitly reserved until H-10 is approved.
 
 ## AI Provider
 

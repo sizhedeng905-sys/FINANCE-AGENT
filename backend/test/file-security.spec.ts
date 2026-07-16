@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
@@ -12,6 +13,37 @@ import {
   resolveQuarantinedUploadPath,
   resolveUploadQuarantineRoot
 } from '../src/files/secure-upload-options';
+
+async function minimalOoxml(
+  extension: '.xlsx' | '.docx',
+  options: { activeField?: boolean; unsafePart?: boolean; activeContentType?: boolean } = {}
+) {
+  const zip = new JSZip();
+  if (extension === '.xlsx') {
+    const mainType = options.activeContentType
+      ? 'application/vnd.ms-excel.sheet.macroEnabled.main+xml'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
+    zip.file('[Content_Types].xml', `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="${mainType}"/></Types>`);
+    zip.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>');
+    zip.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>');
+  } else {
+    zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+    zip.file('word/document.xml', options.activeField
+      ? '<w:document xmlns:w="urn:test"><w:instrText> DDEAUTO cmd.exe </w:instrText></w:document>'
+      : '<w:document xmlns:w="urn:test"><w:body/></w:document>');
+  }
+  if (options.unsafePart) zip.file('xl/unsafe/payload.bin', 'synthetic-active-part');
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+function updatePngHeaderCrc(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer.subarray(12, 29)) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  buffer.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 29);
+}
 
 describe('FileSecurityService', () => {
   const config = {
@@ -44,7 +76,7 @@ describe('FileSecurityService', () => {
     const action = pdf.context.obj({ S: 'JavaScript', JS: PDFString.of('app.alert(1)') });
     pdf.catalog.set(PDFName.of('OpenAction'), action);
     const active = Buffer.from(await pdf.save());
-    await expect(security.scan('active.pdf', active)).rejects.toThrow('PDF 包含活动内容');
+    await expect(security.scan('active.pdf', active)).rejects.toThrow('PDF contains active content');
   });
 
   it('accepts active-content words inside a PDF stream instead of treating stream data as PDF actions', async () => {
@@ -81,7 +113,60 @@ describe('FileSecurityService', () => {
     const sheet = workbook.addWorksheet('Sheet1');
     sheet.getCell('A1').value = { text: '外部链接', hyperlink: 'https://example.invalid/data' };
     await expect(security.scan('external.xlsx', Buffer.from(await workbook.xlsx.writeBuffer())))
-      .rejects.toThrow('Office 文件包含外部关系');
+      .rejects.toThrow('Office file contains an external relationship');
+  });
+
+  it('fails closed for active formulas, field codes, content types, atypical parts, and forged extensions', async () => {
+    for (const formula of [
+      'WEBSERVICE("https://attacker.invalid")',
+      'HYPERLINK("file:///tmp/payload","open")',
+      'cmd|\'/C calc\'!A0'
+    ]) {
+      const activeWorkbook = new ExcelJS.Workbook();
+      activeWorkbook.addWorksheet('Data').getCell('A1').value = { formula, result: 'x' };
+      await expect(security.scan('active-formula.xlsx', Buffer.from(await activeWorkbook.xlsx.writeBuffer())))
+        .rejects.toThrow('active formula');
+    }
+    await expect(security.scan('active-field.docx', await minimalOoxml('.docx', { activeField: true })))
+      .rejects.toThrow('active field code');
+    await expect(security.scan('macro-type.xlsx', await minimalOoxml('.xlsx', { activeContentType: true })))
+      .rejects.toThrow('active content');
+    await expect(security.scan('atypical.xlsx', await minimalOoxml('.xlsx', { unsafePart: true })))
+      .rejects.toThrow('atypical or unsafe part');
+
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    await expect(security.scan('forged-extension.xlsx', Buffer.from(await pdf.save())))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('enforces an explicit CSV formula policy while retaining plain signed numeric values', async () => {
+    for (const value of ['=2+3', '@SUM(A1:A2)', '+cmd|\'/C calc\'!A0', '-cmd|\'/C calc\'!A0']) {
+      await expect(security.scan('formula.csv', Buffer.from(`name,value\nsynthetic,"${value}"\n`)))
+        .rejects.toThrow('formula-like cell');
+    }
+    await expect(security.scan('signed.csv', Buffer.from('name,value\ncredit,+12.50\nrefund,-12.50\n')))
+      .resolves.toBeUndefined();
+  });
+
+  it('rejects decoded-image bombs and PDF page complexity before business processing', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    );
+    png.writeUInt32BE(50_000, 16);
+    png.writeUInt32BE(50_000, 20);
+    updatePngHeaderCrc(png);
+    await expect(security.scan('pixel-bomb.png', png)).rejects.toThrow(/width|pixel|memory/);
+
+    const limited = new FileSecurityService({
+      get: jest.fn((key: string) => ({ 'fileScan.mode': 'basic', 'fileLimits.pdfMaxPages': 1 })[key])
+    } as unknown as ConfigService);
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    pdf.addPage([100, 100]);
+    await expect(limited.scan('too-many-pages.pdf', Buffer.from(await pdf.save())))
+      .rejects.toThrow('PDF page limit exceeded');
   });
 
   it('fails closed with a recoverable error when ClamAV is offline', async () => {

@@ -53,5 +53,6 @@ run(process.execPath, [
   resolve(backendRoot, 'node_modules/jest/bin/jest.js'),
   '--config',
   'test/jest.integration.json',
-  '--runInBand'
+  '--runInBand',
+  ...process.argv.slice(2)
 ]);

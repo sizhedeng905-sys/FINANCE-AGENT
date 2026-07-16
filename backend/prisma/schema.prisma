@@ -12,6 +12,8 @@ enum UserRole {
   finance
   reviewer
   boss
+  admin
+  auditor
 }
 
 enum UserStatus {
@@ -531,7 +533,7 @@ model RawFile {
   relatedWorkOrderId String?        @map("related_work_order_id")
   status             RawFileStatus  @default(uploaded)
   scanStatus         FileScanStatus @default(pending) @map("scan_status")
-  previewStatus      String         @default("original") @map("preview_status")
+  previewStatus      String         @default("untrusted_original") @map("preview_status")
   isVoided           Boolean        @default(false) @map("is_voided")
   voidReason         String?        @map("void_reason")
   voidedAt           DateTime?      @map("voided_at")

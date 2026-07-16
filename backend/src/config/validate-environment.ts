@@ -12,11 +12,19 @@ const FILE_SCAN_MODES = new Set(['basic', 'clamav']);
 export function validateEnvironment(environment: Record<string, unknown>) {
   const databaseUrl = String(environment.DATABASE_URL ?? '');
   const jwtSecret = String(environment.JWT_SECRET ?? '');
+  const jwtIssuer = String(environment.JWT_ISSUER ?? 'finance-agent');
+  const jwtAudience = String(environment.JWT_AUDIENCE ?? 'finance-agent-api');
+  const jwtAlgorithm = String(environment.JWT_ALGORITHM ?? 'HS256');
   const host = String(environment.HOST ?? '127.0.0.1');
   const port = Number(String(environment.PORT ?? '3001'));
   const jwtExpiresIn = String(environment.JWT_EXPIRES_IN ?? (environment.NODE_ENV === 'production' ? '30m' : '8h'));
   const aiProvider = String(environment.AI_PROVIDER ?? 'mock');
   const maxFileSizeMb = Number(String(environment.MAX_FILE_SIZE_MB ?? '10'));
+  const uploadMaxConcurrentPerUser = Number(String(environment.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5'));
+  const uploadMaxInFlightMbPerUser = Number(String(environment.UPLOAD_MAX_INFLIGHT_MB_PER_USER ?? '260'));
+  const uploadRateWindowMs = Number(String(environment.UPLOAD_RATE_WINDOW_MS ?? '60000'));
+  const uploadRateMaxPerUser = Number(String(environment.UPLOAD_RATE_MAX_PER_USER ?? '60'));
+  const uploadQuarantineMaxAgeMs = Number(String(environment.UPLOAD_QUARANTINE_MAX_AGE_MS ?? '3600000'));
   const fileUserQuotaMb = Number(String(environment.FILE_USER_QUOTA_MB ?? '500'));
   const fileProjectQuotaMb = Number(String(environment.FILE_PROJECT_QUOTA_MB ?? '5000'));
   const fileMinimumFreeMb = Number(String(environment.FILE_MINIMUM_FREE_MB ?? '1024'));
@@ -24,6 +32,13 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const clamavHost = String(environment.CLAMAV_HOST ?? '127.0.0.1');
   const clamavPort = Number(String(environment.CLAMAV_PORT ?? '3310'));
   const fileScanTimeoutMs = Number(String(environment.FILE_SCAN_TIMEOUT_MS ?? '15000'));
+  const imageMaxWidth = Number(String(environment.FILE_IMAGE_MAX_WIDTH ?? '20000'));
+  const imageMaxHeight = Number(String(environment.FILE_IMAGE_MAX_HEIGHT ?? '20000'));
+  const imageMaxPixels = Number(String(environment.FILE_IMAGE_MAX_PIXELS ?? '100000000'));
+  const imageMaxDecodedMb = Number(String(environment.FILE_IMAGE_MAX_DECODED_MB ?? '400'));
+  const pdfMaxPages = Number(String(environment.FILE_PDF_MAX_PAGES ?? '200'));
+  const pdfMaxObjects = Number(String(environment.FILE_PDF_MAX_OBJECTS ?? '100000'));
+  const fileParseTimeoutMs = Number(String(environment.FILE_PARSE_TIMEOUT_MS ?? '5000'));
   const xlsConverterTimeoutMs = Number(String(environment.XLS_CONVERTER_TIMEOUT_MS ?? '30000'));
   const xlsConverterMaxOutputMb = Number(String(environment.XLS_CONVERTER_MAX_OUTPUT_MB ?? '50'));
   const importConfirmBatchSize = Number(String(environment.IMPORT_CONFIRM_BATCH_SIZE ?? '500'));
@@ -49,6 +64,7 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const trustedProxies = String(environment.TRUSTED_PROXIES ?? '');
   const aiMaxOutputTokens = Number(String(environment.AI_MAX_OUTPUT_TOKENS ?? '1200'));
   const aiMaxResponseBytes = Number(String(environment.AI_MAX_RESPONSE_BYTES ?? '2097152'));
+  const aiAuditRetentionDays = Number(String(environment.AI_AUDIT_RETENTION_DAYS ?? '90'));
   const ocrMaxResponseBytes = Number(String(environment.OCR_MAX_RESPONSE_BYTES ?? '2097152'));
 
   if (!NODE_ENVIRONMENTS.has(nodeEnv)) {
@@ -67,6 +83,15 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   if (nodeEnv === 'production' && !['15m', '30m', '1h'].includes(jwtExpiresIn)) {
     throw new Error('JWT_EXPIRES_IN must not exceed 1h in production.');
   }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(jwtIssuer)) {
+    throw new Error('JWT_ISSUER must be a stable identifier between 3 and 128 characters.');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(jwtAudience)) {
+    throw new Error('JWT_AUDIENCE must be a stable identifier between 3 and 128 characters.');
+  }
+  if (jwtAlgorithm !== 'HS256') {
+    throw new Error('JWT_ALGORITHM must be HS256.');
+  }
   if (!/^(?:localhost|[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:.]+)$/.test(host)) {
     throw new Error('HOST must be a valid bind host or IP address.');
   }
@@ -78,6 +103,21 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(maxFileSizeMb) || maxFileSizeMb < 1 || maxFileSizeMb > 50) {
     throw new Error('MAX_FILE_SIZE_MB must be an integer between 1 and 50.');
+  }
+  if (!Number.isInteger(uploadMaxConcurrentPerUser) || uploadMaxConcurrentPerUser < 1 || uploadMaxConcurrentPerUser > 10) {
+    throw new Error('UPLOAD_MAX_CONCURRENT_PER_USER must be an integer between 1 and 10.');
+  }
+  if (!Number.isInteger(uploadMaxInFlightMbPerUser) || uploadMaxInFlightMbPerUser < maxFileSizeMb || uploadMaxInFlightMbPerUser > 1000) {
+    throw new Error('UPLOAD_MAX_INFLIGHT_MB_PER_USER must be between MAX_FILE_SIZE_MB and 1000.');
+  }
+  if (!Number.isInteger(uploadRateWindowMs) || uploadRateWindowMs < 1000 || uploadRateWindowMs > 3600000) {
+    throw new Error('UPLOAD_RATE_WINDOW_MS must be an integer between 1000 and 3600000.');
+  }
+  if (!Number.isInteger(uploadRateMaxPerUser) || uploadRateMaxPerUser < 1 || uploadRateMaxPerUser > 1000) {
+    throw new Error('UPLOAD_RATE_MAX_PER_USER must be an integer between 1 and 1000.');
+  }
+  if (!Number.isInteger(uploadQuarantineMaxAgeMs) || uploadQuarantineMaxAgeMs < 60000 || uploadQuarantineMaxAgeMs > 604800000) {
+    throw new Error('UPLOAD_QUARANTINE_MAX_AGE_MS must be between 60000 and 604800000.');
   }
   if (!Number.isInteger(fileUserQuotaMb) || fileUserQuotaMb < maxFileSizeMb || fileUserQuotaMb > 100000) {
     throw new Error('FILE_USER_QUOTA_MB must be an integer between MAX_FILE_SIZE_MB and 100000.');
@@ -102,6 +142,27 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(fileScanTimeoutMs) || fileScanTimeoutMs < 100 || fileScanTimeoutMs > 300000) {
     throw new Error('FILE_SCAN_TIMEOUT_MS must be an integer between 100 and 300000.');
+  }
+  if (!Number.isInteger(imageMaxWidth) || imageMaxWidth < 1 || imageMaxWidth > 100000) {
+    throw new Error('FILE_IMAGE_MAX_WIDTH must be an integer between 1 and 100000.');
+  }
+  if (!Number.isInteger(imageMaxHeight) || imageMaxHeight < 1 || imageMaxHeight > 100000) {
+    throw new Error('FILE_IMAGE_MAX_HEIGHT must be an integer between 1 and 100000.');
+  }
+  if (!Number.isInteger(imageMaxPixels) || imageMaxPixels < 1 || imageMaxPixels > 1000000000) {
+    throw new Error('FILE_IMAGE_MAX_PIXELS must be an integer between 1 and 1000000000.');
+  }
+  if (!Number.isInteger(imageMaxDecodedMb) || imageMaxDecodedMb < 1 || imageMaxDecodedMb > 4096) {
+    throw new Error('FILE_IMAGE_MAX_DECODED_MB must be an integer between 1 and 4096.');
+  }
+  if (!Number.isInteger(pdfMaxPages) || pdfMaxPages < 1 || pdfMaxPages > 1000) {
+    throw new Error('FILE_PDF_MAX_PAGES must be an integer between 1 and 1000.');
+  }
+  if (!Number.isInteger(pdfMaxObjects) || pdfMaxObjects < 100 || pdfMaxObjects > 1000000) {
+    throw new Error('FILE_PDF_MAX_OBJECTS must be an integer between 100 and 1000000.');
+  }
+  if (!Number.isInteger(fileParseTimeoutMs) || fileParseTimeoutMs < 100 || fileParseTimeoutMs > 300000) {
+    throw new Error('FILE_PARSE_TIMEOUT_MS must be an integer between 100 and 300000.');
   }
   if (!Number.isInteger(xlsConverterTimeoutMs) || xlsConverterTimeoutMs < 1000 || xlsConverterTimeoutMs > 300000) {
     throw new Error('XLS_CONVERTER_TIMEOUT_MS must be an integer between 1000 and 300000.');
@@ -138,6 +199,9 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(aiMaxResponseBytes) || aiMaxResponseBytes < 1024 || aiMaxResponseBytes > 10485760) {
     throw new Error('AI_MAX_RESPONSE_BYTES must be an integer between 1024 and 10485760.');
+  }
+  if (!Number.isInteger(aiAuditRetentionDays) || aiAuditRetentionDays < 1 || aiAuditRetentionDays > 3650) {
+    throw new Error('AI_AUDIT_RETENTION_DAYS must be an integer between 1 and 3650.');
   }
   if (!Number.isInteger(ocrMaxResponseBytes) || ocrMaxResponseBytes < 1024 || ocrMaxResponseBytes > 10485760) {
     throw new Error('OCR_MAX_RESPONSE_BYTES must be an integer between 1024 and 10485760.');

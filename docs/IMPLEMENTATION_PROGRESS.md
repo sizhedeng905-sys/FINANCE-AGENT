@@ -3,7 +3,7 @@
 更新日期：2026-07-16
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-05 工程门禁完成，下一步进入 B8-06 权限、Cookie、文件与数据安全
+当前批次：B8-06 工程门禁完成，下一步进入 B8-07 模型控制面、GPU 与反向代理
 
 ## 完成口径
 
@@ -22,6 +22,19 @@
 | B8-03 大批量 Excel 确认 | 完成 | 短事务 Worker、lease/恢复、原子发布及 5,001/30,196/49,999 行完整入账门禁通过 |
 | B8-04 OCR 精度与异步任务 | 完成 | Decimal 字符串、持久化队列、真实执行槽、lease/恢复、实际 attempt 快照及 Mock/真实 UI 门禁通过 |
 | B8-05 AI Claim Grounding | 完成 | 严格 Claim 元组、确定性 renderer、显式项目/客户排行、PostgreSQL 黄金账与本地 Qwen 基准通过 |
+| B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
+
+B8-06 已完成的工程证据：
+
+- 老板 AI 调用日志按 JWT owner 隔离并只返回必要元数据；auditor-only 接口提供有保留期限的脱敏详情，端点只保留 origin。
+- 开发/生产 Cookie family 严格分离；混合、重复、空值、非法编码和 CSRF mismatch 全部拒绝并清理。JWT 固定 HS256、issuer、audience 和 access purpose。
+- 新增独立 admin/auditor；finance/boss 仅管理 employee。高权限角色、密码和状态变化同时写 audit 并通知目标，最后一个 boss/admin 受保护；step-up 已预留但 MFA 未伪装为完成。
+- OOXML/CSV/XLS/PDF/图片增加主动内容、伪格式、压缩/复杂度、像素/内存和解析超时门禁；PDF/XLS 使用受限 Worker/子进程，ClamAV 与存储处理 backpressure。
+- 三个上传入口共用每用户并发、在途字节和速率准入；健康检查在槽位饱和时仍响应，1/3/5 路并发上传与导入保持唯一完整。
+- 原件标记不可信并强制 attachment 下载；启动时执行隔离区清理和数据库—磁盘对账。
+- Git 默认拒绝常见业务文件扩展名；显式合成 allowlist、手机号/身份证/银行卡/内部词典/高熵 DLP 同时运行于 pre-commit 和 CI。
+- 详细证据见 `docs/B8_06_SECURITY_HARDENING_REPORT.md`。H-10/H-11 仍需管理层、安全和业务负责人签字。
+- 自动化结果：23/23 migrations；21/21 Jest suites、230/230 tests；57/57 PostgreSQL integration；14/14 Playwright；前后端 build、Prisma、hygiene 与生产依赖审计通过。
 
 B8-05 已完成的工程证据：
 

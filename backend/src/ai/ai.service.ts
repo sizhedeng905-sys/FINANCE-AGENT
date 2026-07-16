@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiMessageRole, Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
@@ -33,6 +33,9 @@ const OUTPUT_SYSTEM_PROMPT = [
 ].join('\n');
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 12_000;
+type AiCallLogWithConfig = Prisma.AiCallLogGetPayload<{
+  include: { promptVersion: true; modelConfig: true };
+}>;
 
 @Injectable()
 export class AiService {
@@ -215,31 +218,50 @@ export class AiService {
       this.prisma.aiCallLog.count({ where })
     ]);
     return {
-      items: items.map((item) => ({
-        id: item.id,
-        conversationId: item.conversationId ?? undefined,
-        provider: item.provider,
-        model: item.modelName,
-        promptVersion: item.promptVersion
-          ? `${item.promptVersion.promptKey}:v${item.promptVersion.versionNo}`
-          : undefined,
-        input: item.requestPayload,
-        output: item.responsePayload ?? undefined,
-        tokenUsage: { input: item.inputTokens, output: item.outputTokens, total: item.inputTokens + item.outputTokens },
-        latency: item.latencyMs,
-        success: item.success,
-        error: item.errorMessage ?? undefined,
-        inputHash: item.inputHash ?? undefined,
-        correlationId: item.correlationId ?? undefined,
-        endpointSnapshot: item.endpointSnapshot ?? undefined,
-        attemptNo: item.attemptNo,
-        fallback: item.fallback,
-        createdAt: item.createdAt.toISOString()
-      })),
+      items: items.map((item) => this.toCallLogMetadata(item)),
       page,
       pageSize,
       total
     };
+  }
+
+  async callLog(id: string, actor: CurrentUser) {
+    const item = await this.prisma.aiCallLog.findFirst({
+      where: { id, createdBy: actor.id, createdAt: { gte: this.auditRetentionCutoff() } },
+      include: { promptVersion: true, modelConfig: true }
+    });
+    if (!item) throw new NotFoundException('AI call log not found');
+    return this.toCallLogMetadata(item);
+  }
+
+  async auditCallLogs(query: QueryAiCallLogsDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const where: Prisma.AiCallLogWhereInput = {
+      provider: query.provider,
+      success: query.success,
+      createdAt: { gte: this.auditRetentionCutoff() }
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.aiCallLog.findMany({
+        where,
+        include: { promptVersion: true, modelConfig: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      }),
+      this.prisma.aiCallLog.count({ where })
+    ]);
+    return { items: items.map((item) => this.toAuditorCallLog(item)), page, pageSize, total };
+  }
+
+  async auditCallLog(id: string) {
+    const item = await this.prisma.aiCallLog.findFirst({
+      where: { id, createdAt: { gte: this.auditRetentionCutoff() } },
+      include: { promptVersion: true, modelConfig: true }
+    });
+    if (!item) throw new NotFoundException('AI call log not found');
+    return this.toAuditorCallLog(item);
   }
 
   async conversations(query: QueryAiConversationsDto, actor: CurrentUser) {
@@ -344,6 +366,82 @@ export class AiService {
       remaining -= content.length;
     }
     return selected.reverse();
+  }
+
+  private toCallLogMetadata(item: AiCallLogWithConfig) {
+    return {
+      id: item.id,
+      provider: item.provider,
+      model: item.modelName,
+      promptVersion: item.promptVersion
+        ? `${item.promptVersion.promptKey}:v${item.promptVersion.versionNo}`
+        : undefined,
+      latencyMs: item.latencyMs,
+      status: item.success ? 'succeeded' : 'failed',
+      success: item.success,
+      fallback: item.fallback,
+      inputHash: item.inputHash ?? undefined,
+      correlationId: item.correlationId ?? undefined,
+      attemptNo: item.attemptNo,
+      createdAt: item.createdAt.toISOString()
+    };
+  }
+
+  private toAuditorCallLog(item: AiCallLogWithConfig) {
+    return {
+      ...this.toCallLogMetadata(item),
+      conversationId: item.conversationId ?? undefined,
+      ownerUserId: item.createdBy ?? undefined,
+      endpointSnapshot: this.sanitizeEndpoint(item.endpointSnapshot),
+      requestPayload: this.redactAuditValue(item.requestPayload),
+      responsePayload: item.responsePayload === null ? undefined : this.redactAuditValue(item.responsePayload),
+      tokenUsage: {
+        input: item.inputTokens,
+        output: item.outputTokens,
+        total: item.inputTokens + item.outputTokens
+      },
+      error: item.errorMessage ? this.redactText(item.errorMessage) : undefined
+    };
+  }
+
+  private auditRetentionCutoff() {
+    const days = this.config.get<number>('ai.auditRetentionDays') ?? 90;
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  }
+
+  private redactAuditValue(value: unknown, key = ''): unknown {
+    if (/authorization|cookie|password|secret|token|api.?key|credential/i.test(key)) return '[REDACTED]';
+    if (typeof value === 'string') return this.redactText(value);
+    if (Array.isArray(value)) return value.map((item) => this.redactAuditValue(item));
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+          childKey,
+          this.redactAuditValue(childValue, childKey)
+        ])
+      );
+    }
+    return value;
+  }
+
+  private redactText(value: string) {
+    return value
+      .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+      .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+      .replace(/\b1[3-9]\d{9}\b/g, '[REDACTED_PHONE]')
+      .replace(/\b\d{17}[\dXx]\b/g, '[REDACTED_ID]')
+      .replace(/\b(?:\d[ -]?){16,19}\b/g, '[REDACTED_ACCOUNT]')
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]');
+  }
+
+  private sanitizeEndpoint(value: string | null) {
+    if (!value) return undefined;
+    try {
+      const endpoint = new URL(value);
+      return endpoint.origin;
+    } catch {
+      return '[REDACTED_ENDPOINT]';
+    }
   }
 
   private json(value: unknown): Prisma.InputJsonValue {

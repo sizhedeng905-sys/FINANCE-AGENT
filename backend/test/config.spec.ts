@@ -20,6 +20,14 @@ describe('environment validation', () => {
     [{ ...valid, AI_PROVIDER: 'unknown' }, 'AI_PROVIDER'],
     [{ ...valid, MAX_FILE_SIZE_MB: '0' }, 'MAX_FILE_SIZE_MB'],
     [{ ...valid, MAX_FILE_SIZE_MB: '51' }, 'MAX_FILE_SIZE_MB'],
+    [{ ...valid, JWT_ALGORITHM: 'none' }, 'JWT_ALGORITHM'],
+    [{ ...valid, JWT_ISSUER: 'x' }, 'JWT_ISSUER'],
+    [{ ...valid, UPLOAD_MAX_CONCURRENT_PER_USER: '0' }, 'UPLOAD_MAX_CONCURRENT_PER_USER'],
+    [{ ...valid, UPLOAD_MAX_INFLIGHT_MB_PER_USER: '1', MAX_FILE_SIZE_MB: '10' }, 'UPLOAD_MAX_INFLIGHT_MB_PER_USER'],
+    [{ ...valid, FILE_IMAGE_MAX_PIXELS: '0' }, 'FILE_IMAGE_MAX_PIXELS'],
+    [{ ...valid, FILE_PDF_MAX_OBJECTS: '99' }, 'FILE_PDF_MAX_OBJECTS'],
+    [{ ...valid, FILE_PARSE_TIMEOUT_MS: '99' }, 'FILE_PARSE_TIMEOUT_MS'],
+    [{ ...valid, AI_AUDIT_RETENTION_DAYS: '0' }, 'AI_AUDIT_RETENTION_DAYS'],
     [{ ...valid, XLS_CONVERTER_TIMEOUT_MS: '999' }, 'XLS_CONVERTER_TIMEOUT_MS'],
     [{ ...valid, XLS_CONVERTER_MAX_OUTPUT_MB: '101' }, 'XLS_CONVERTER_MAX_OUTPUT_MB']
   ])('rejects an invalid required setting', (environment, expectedMessage) => {

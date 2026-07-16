@@ -9,6 +9,7 @@ import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toAuthUser } from '../common/utils/user-presenter';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
+import { StepUpDto } from './dto/step-up.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
 
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('finance-agent-dummy-password', 10);
@@ -63,15 +64,11 @@ export class AuthService {
 
     this.loginRateLimit.success(reservation);
 
-    const accessToken = await this.jwtService.signAsync(
-      {
-        sub: user.id,
-        ver: user.tokenVersion
-      },
-      {
-        secret: this.configService.getOrThrow<string>('jwtSecret'),
-        expiresIn: (this.configService.get<string>('jwtExpiresIn') ?? '8h') as JwtSignOptions['expiresIn']
-      }
+    const accessToken = await this.signToken(
+      user.id,
+      user.tokenVersion,
+      'access',
+      (this.configService.get<string>('jwtExpiresIn') ?? '8h') as JwtSignOptions['expiresIn']
     );
 
     await this.auditLogs.writeAuthentication(
@@ -92,5 +89,56 @@ export class AuthService {
       await this.auditLogs.write(tx, actor, 'auth.logout', 'auth_session', actor.id, { revokedVersion: actor.tokenVersion }, context);
       return { success: true };
     });
+  }
+
+  async stepUp(dto: StepUpDto, actor: CurrentUser, context: RequestContext) {
+    const user = await this.prisma.user.findUnique({ where: { id: actor.id } });
+    const passwordMatched = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    if (!user || user.status !== UserStatus.active || !passwordMatched) {
+      await this.auditLogs.write(
+        this.prisma,
+        actor,
+        'auth.step_up.failure',
+        'auth_session',
+        actor.id,
+        { success: false },
+        context
+      );
+      throw new UnauthorizedException('Step-up authentication failed');
+    }
+
+    const stepUpToken = await this.signToken(user.id, user.tokenVersion, 'step_up', '5m');
+    await this.auditLogs.write(
+      this.prisma,
+      actor,
+      'auth.step_up.success',
+      'auth_session',
+      actor.id,
+      { success: true, expiresInSeconds: 300 },
+      context
+    );
+    return {
+      stepUpToken,
+      expiresInSeconds: 300,
+      mfa: { status: 'reserved', verified: false }
+    };
+  }
+
+  private signToken(
+    userId: string,
+    tokenVersion: number,
+    type: 'access' | 'step_up',
+    expiresIn: JwtSignOptions['expiresIn']
+  ) {
+    return this.jwtService.signAsync(
+      { sub: userId, ver: tokenVersion, typ: type },
+      {
+        secret: this.configService.getOrThrow<string>('jwtSecret'),
+        expiresIn,
+        algorithm: 'HS256',
+        issuer: this.configService.getOrThrow<string>('jwtIssuer'),
+        audience: this.configService.getOrThrow<string>('jwtAudience')
+      }
+    );
   }
 }

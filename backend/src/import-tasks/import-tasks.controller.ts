@@ -23,6 +23,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
+import { UploadAdmissionInterceptor } from '../files/upload-admission.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
@@ -52,7 +53,7 @@ export class ImportTasksController {
       }
     }
   })
-  @UseInterceptors(FileInterceptor('file'), TempUploadCleanupInterceptor)
+  @UseInterceptors(UploadAdmissionInterceptor, FileInterceptor('file'), TempUploadCleanupInterceptor)
   create(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateImportTaskDto,

@@ -39,6 +39,7 @@ import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { ResponseInterceptor } from '../../src/common/interceptors/response.interceptor';
 import { LocalFileStorageService } from '../../src/files/local-file-storage.service';
+import { UploadAdmissionService } from '../../src/files/upload-admission.service';
 import { ExcelParserService } from '../../src/import-tasks/excel-parser.service';
 import { ImportTasksService } from '../../src/import-tasks/import-tasks.service';
 import { MockOcrProvider } from '../../src/ocr/mock-ocr.provider';
@@ -134,20 +135,32 @@ describe('real PostgreSQL integration', () => {
     const user = await prisma.user.findUniqueOrThrow({ where: { username: 'employee' } });
     const jwt = app.get(JwtService);
     const secret = app.get(ConfigService).getOrThrow<string>('jwtSecret');
+    const issuer = app.get(ConfigService).getOrThrow<string>('jwtIssuer');
+    const audience = app.get(ConfigService).getOrThrow<string>('jwtAudience');
     const expiredToken = await jwt.signAsync(
-      { sub: user.id, ver: user.tokenVersion },
-      { secret, expiresIn: -1 }
+      { sub: user.id, ver: user.tokenVersion, typ: 'access' },
+      { secret, expiresIn: -1, algorithm: 'HS256', issuer, audience }
     );
     const staleToken = await jwt.signAsync(
-      { sub: user.id, ver: user.tokenVersion + 1 },
-      { secret, expiresIn: '5m' }
+      { sub: user.id, ver: user.tokenVersion + 1, typ: 'access' },
+      { secret, expiresIn: '5m', algorithm: 'HS256', issuer, audience }
+    );
+    const wrongAudienceToken = await jwt.signAsync(
+      { sub: user.id, ver: user.tokenVersion, typ: 'access' },
+      { secret, expiresIn: '5m', algorithm: 'HS256', issuer, audience: 'other-api' }
+    );
+    const wrongAlgorithmToken = await jwt.signAsync(
+      { sub: user.id, ver: user.tokenVersion, typ: 'access' },
+      { secret, expiresIn: '5m', algorithm: 'HS384', issuer, audience }
     );
 
     const attempts = [
       () => request(app.getHttpServer()).get('/api/auth/me'),
       () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', 'Bearer forged.token.value'),
       () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', `Bearer ${expiredToken}`),
-      () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', `Bearer ${staleToken}`)
+      () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', `Bearer ${staleToken}`),
+      () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', `Bearer ${wrongAudienceToken}`),
+      () => request(app.getHttpServer()).get('/api/auth/me').set('Authorization', `Bearer ${wrongAlgorithmToken}`)
     ];
 
     for (const attempt of attempts) {
@@ -208,6 +221,58 @@ describe('real PostgreSQL integration', () => {
     await agent.get('/api/auth/me').expect(401);
   });
 
+  it('reserves MFA and issues a purpose-bound short-lived step-up token', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'boss', password: '123456' })
+      .expect(200);
+    const accessToken = login.body.data.accessToken as string;
+    const capabilities = await request(app.getHttpServer())
+      .get('/api/auth/security-capabilities')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(capabilities.body.data).toMatchObject({
+      mfa: { status: 'reserved', enabled: false },
+      stepUp: { status: 'available', expiresInSeconds: 300 }
+    });
+    await request(app.getHttpServer())
+      .post('/api/auth/step-up')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ password: 'wrong-password' })
+      .expect(401);
+    const elevated = await request(app.getHttpServer())
+      .post('/api/auth/step-up')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ password: '123456' })
+      .expect(200);
+    expect(elevated.body.data).toMatchObject({ stepUpToken: expect.any(String), expiresInSeconds: 300 });
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${elevated.body.data.stepUpToken}`)
+      .expect(401);
+
+    const boss = await prisma.user.findUniqueOrThrow({ where: { username: 'boss' } });
+    const auditActions = await prisma.auditLog.findMany({
+      where: { actorUserId: boss.id, action: { in: ['auth.step_up.failure', 'auth.step_up.success'] } }
+    });
+    expect(auditActions.map((item) => item.action)).toEqual(expect.arrayContaining([
+      'auth.step_up.failure',
+      'auth.step_up.success'
+    ]));
+  });
+
+  it('keeps liveness responsive while a user has saturated large-upload slots', async () => {
+    const admission = app.get(UploadAdmissionService);
+    const releases = Array.from({ length: 5 }, () => admission.reserve('synthetic-load-user', 20 * 1024 * 1024));
+    try {
+      expect(() => admission.reserve('synthetic-load-user', 1024)).toThrow('Concurrent upload limit exceeded');
+      const health = await request(app.getHttpServer()).get('/api/health/live').expect(200);
+      expect(health.body.data).toEqual({ status: 'ok' });
+    } finally {
+      for (const release of releases) release();
+    }
+  });
+
   it('enforces the finance-to-boss management boundary in PostgreSQL mode', async () => {
     const loginResponse = await request(app.getHttpServer())
       .post('/api/auth/login')
@@ -223,25 +288,86 @@ describe('real PostgreSQL integration', () => {
       .expect(403);
   });
 
+  it('separates system administration and notifies protected account targets', async () => {
+    const suffix = Date.now().toString(36);
+    const tokens = Object.fromEntries(await Promise.all(['finance', 'admin'].map(async (username) => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username, password: '123456' })
+        .expect(200);
+      return [username, response.body.data.accessToken as string];
+    }))) as Record<'finance' | 'admin', string>;
+    const createdIds: string[] = [];
+    try {
+      const reviewer = await request(app.getHttpServer())
+        .post('/api/users')
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .send({ username: `b8_reviewer_${suffix}`, password: '123456', name: 'B8 Reviewer', role: UserRole.employee })
+        .expect(201);
+      const reviewerId = reviewer.body.data.id as string;
+      createdIds.push(reviewerId);
+      await request(app.getHttpServer())
+        .patch(`/api/users/${reviewerId}`)
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .send({ role: UserRole.reviewer })
+        .expect(200);
+
+      const financeTarget = await request(app.getHttpServer())
+        .post('/api/users')
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .send({ username: `b8_finance_${suffix}`, password: '123456', name: 'B8 Finance', role: UserRole.finance })
+        .expect(201);
+      const financeTargetId = financeTarget.body.data.id as string;
+      createdIds.push(financeTargetId);
+
+      for (const targetId of [reviewerId, financeTargetId]) {
+        await request(app.getHttpServer())
+          .patch(`/api/users/${targetId}/password`)
+          .set('Authorization', `Bearer ${tokens.finance}`)
+          .send({ newPassword: '654321' })
+          .expect(403);
+      }
+      await request(app.getHttpServer())
+        .patch(`/api/users/${reviewerId}/password`)
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .send({ newPassword: '654321' })
+        .expect(200);
+
+      const [audits, notifications] = await Promise.all([
+        prisma.auditLog.findMany({ where: { resourceId: reviewerId } }),
+        prisma.notification.findMany({ where: { targetUserId: reviewerId } })
+      ]);
+      expect(audits.map((item) => item.action)).toEqual(expect.arrayContaining(['user.update', 'user.password.reset']));
+      expect(notifications.map((item) => item.title)).toEqual(expect.arrayContaining([
+        'Account privileges changed',
+        'Password reset'
+      ]));
+    } finally {
+      await prisma.notification.deleteMany({ where: { targetUserId: { in: createdIds } } });
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: createdIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: createdIds } } });
+    }
+  });
+
   it('protects the final active boss in PostgreSQL mode', async () => {
     const loginResponse = await request(app.getHttpServer())
       .post('/api/auth/login')
-      .send({ username: 'boss', password: '123456' })
+      .send({ username: 'admin', password: '123456' })
       .expect(200);
-    const bossToken = loginResponse.body.data.accessToken as string;
+    const adminToken = loginResponse.body.data.accessToken as string;
     const englishBoss = await prisma.user.findUniqueOrThrow({ where: { username: 'boss' } });
     const chineseBoss = await prisma.user.findUniqueOrThrow({ where: { username: '老板' } });
 
     try {
       await request(app.getHttpServer())
         .patch(`/api/users/${chineseBoss.id}/status`)
-        .set('Authorization', `Bearer ${bossToken}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ status: UserStatus.disabled })
         .expect(200);
 
       await request(app.getHttpServer())
         .patch(`/api/users/${englishBoss.id}/status`)
-        .set('Authorization', `Bearer ${bossToken}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ status: UserStatus.disabled })
         .expect(409);
     } finally {
@@ -2161,7 +2287,9 @@ describe('real PostgreSQL integration', () => {
         fileSize: validPdf.length,
         relatedProjectId: project.id,
         relatedWorkOrderId: workOrderId,
-        isVoided: false
+        isVoided: false,
+        trustStatus: 'untrusted_original',
+        downloadPolicy: 'untrusted_original_attachment'
       });
       expect(uploadedResponse.body.data.sha256).toMatch(/^[a-f0-9]{64}$/);
       const storedFile = await prisma.rawFile.findUniqueOrThrow({ where: { id: fileId } });
@@ -2192,6 +2320,7 @@ describe('real PostgreSQL integration', () => {
         .set('X-Request-Id', `integration-file-preview-${suffix}`)
         .expect('Content-Type', /application\/octet-stream/)
         .expect('Content-Disposition', /attachment/)
+        .expect('X-File-Trust', 'untrusted_original')
         .expect(200);
       expect(Buffer.isBuffer(preview.body)).toBe(true);
       expect(preview.body.equals(validPdf)).toBe(true);
@@ -2199,7 +2328,10 @@ describe('real PostgreSQL integration', () => {
         .get(`/api/files/${fileId}/download`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', `integration-file-download-${suffix}`)
+        .expect('Content-Type', /application\/octet-stream/)
         .expect('Content-Disposition', /attachment/)
+        .expect('X-File-Trust', 'untrusted_original')
+        .expect('X-Download-Options', 'noopen')
         .expect(200);
       expect(download.body.equals(validPdf)).toBe(true);
 
@@ -2444,7 +2576,9 @@ describe('real PostgreSQL integration', () => {
         [limitBytes - 1, 'below-limit.csv'],
         [limitBytes, 'at-limit.csv']
       ] as const) {
-        const response = await upload(Buffer.alloc(size, 0x61), name).expect(201);
+        const contents = Buffer.alloc(size, 0x61);
+        for (let index = 4095; index < contents.length; index += 4096) contents[index] = 0x0a;
+        const response = await upload(contents, name).expect(201);
         rawFileIds.push(response.body.data.id as string);
         expect(response.body.data.fileSize).toBe(size);
         const stored = await prisma.rawFile.findUniqueOrThrow({ where: { id: response.body.data.id } });
@@ -3079,7 +3213,7 @@ describe('real PostgreSQL integration', () => {
   });
 
   it('persists boss AI conversations through approved tools with ownership and call-log boundaries', async () => {
-    const usernames = ['boss', '老板', 'finance', 'employee', 'reviewer'] as const;
+    const usernames = ['boss', '老板', 'finance', 'employee', 'reviewer', 'auditor'] as const;
     const tokens = Object.fromEntries(await Promise.all(usernames.map(async (username) => {
       const response = await request(app.getHttpServer())
         .post('/api/auth/login')
@@ -3094,6 +3228,7 @@ describe('real PostgreSQL integration', () => {
     let conversationId: string | undefined;
     let otherConversationId: string | undefined;
     let otherCallLogId: string | undefined;
+    let expiredCallLogId: string | undefined;
 
     const chat = async (message: string, index: number, extra: Record<string, unknown> = {}) => {
       const response = await request(app.getHttpServer())
@@ -3216,6 +3351,25 @@ describe('real PostgreSQL integration', () => {
         .expect(201);
       otherConversationId = otherChat.body.data.conversationId as string;
       otherCallLogId = otherChat.body.data.callLogId as string;
+      await prisma.aiCallLog.update({
+        where: { id: callLogIds[0] },
+        data: {
+          requestPayload: { authorization: 'Bearer synthetic-secret-token', phone: '13800000000' },
+          responsePayload: { apiKey: 'synthetic-provider-secret', email: 'owner@example.com' },
+          endpointSnapshot: 'https://provider-user:provider-password@example.invalid/v1/synthetic-secret-token?api_key=secret#token'
+        }
+      });
+      const expiredCallLog = await prisma.aiCallLog.create({
+        data: {
+          provider: 'mock',
+          modelName: 'expired-audit-fixture',
+          requestPayload: {},
+          success: true,
+          createdBy: bossUser.id,
+          createdAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000)
+        }
+      });
+      expiredCallLogId = expiredCallLog.id;
       await request(app.getHttpServer())
         .get('/api/ai/call-logs')
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -3232,6 +3386,26 @@ describe('real PostgreSQL integration', () => {
         expect.arrayContaining(callLogIds)
       );
       expect(callLogPage.body.data.items.map((item: { id: string }) => item.id)).not.toContain(otherCallLogId);
+      const ordinaryMetadata = callLogPage.body.data.items.find((item: { id: string }) => item.id === callLogIds[0]);
+      expect(ordinaryMetadata).toMatchObject({
+        model: expect.any(String),
+        latencyMs: expect.any(Number),
+        status: 'succeeded',
+        fallback: false,
+        inputHash: expect.any(String)
+      });
+      expect(ordinaryMetadata).not.toHaveProperty('input');
+      expect(ordinaryMetadata).not.toHaveProperty('output');
+      expect(ordinaryMetadata).not.toHaveProperty('requestPayload');
+      expect(ordinaryMetadata).not.toHaveProperty('responsePayload');
+      await request(app.getHttpServer())
+        .get(`/api/ai/call-logs/${callLogIds[0]}`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .get(`/api/ai/call-logs/${otherCallLogId}`)
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(404);
       const otherCallLogPage = await request(app.getHttpServer())
         .get('/api/ai/call-logs?provider=mock&page=1&pageSize=100')
         .set('Authorization', `Bearer ${tokens['老板']}`)
@@ -3240,6 +3414,26 @@ describe('real PostgreSQL integration', () => {
       expect(otherCallLogPage.body.data.items.map((item: { id: string }) => item.id)).not.toEqual(
         expect.arrayContaining(callLogIds)
       );
+      await request(app.getHttpServer())
+        .get('/api/ai/audit/call-logs')
+        .set('Authorization', `Bearer ${tokens.boss}`)
+        .expect(403);
+      const auditorPage = await request(app.getHttpServer())
+        .get('/api/ai/audit/call-logs?provider=mock&page=1&pageSize=100')
+        .set('Authorization', `Bearer ${tokens.auditor}`)
+        .expect(200);
+      expect(auditorPage.body.data.items.map((item: { id: string }) => item.id)).toEqual(
+        expect.arrayContaining([...callLogIds, otherCallLogId])
+      );
+      expect(auditorPage.body.data.items.map((item: { id: string }) => item.id)).not.toContain(expiredCallLogId);
+      const redacted = auditorPage.body.data.items.find((item: { id: string }) => item.id === callLogIds[0]);
+      expect(redacted).toMatchObject({
+        ownerUserId: bossUser.id,
+        endpointSnapshot: 'https://example.invalid',
+        requestPayload: { authorization: '[REDACTED]', phone: '[REDACTED_PHONE]' },
+        responsePayload: { apiKey: '[REDACTED]', email: '[REDACTED_EMAIL]' }
+      });
+      expect(JSON.stringify(redacted)).not.toMatch(/synthetic-secret-token|provider-password|api_key|13800000000|owner@example\.com/);
 
       const [messages, logs, audits] = await Promise.all([
         prisma.aiMessage.findMany({ where: { conversationId } }),
@@ -3257,7 +3451,9 @@ describe('real PostgreSQL integration', () => {
         Array.from({ length: 8 }, (_, index) => `${requestPrefix}-${index + 1}`)
       ));
       expect(logs.every((item) => item.attemptNo === 1 && item.fallback === false)).toBe(true);
-      expect(JSON.stringify(logs.map((item) => item.requestPayload))).not.toMatch(/Bearer|123456|JWT_SECRET/i);
+      expect(JSON.stringify(
+        logs.filter((item) => item.id !== callLogIds[0]).map((item) => item.requestPayload)
+      )).not.toMatch(/Bearer|123456|JWT_SECRET/i);
       expect(audits).toHaveLength(8);
       expect(audits.map((item) => item.requestId)).toEqual(expect.arrayContaining(
         Array.from({ length: 8 }, (_, index) => `${requestPrefix}-${index + 1}`)
@@ -3265,6 +3461,7 @@ describe('real PostgreSQL integration', () => {
     } finally {
       if (callLogIds.length) await prisma.aiCallLog.deleteMany({ where: { id: { in: callLogIds } } });
       if (otherCallLogId) await prisma.aiCallLog.deleteMany({ where: { id: otherCallLogId } });
+      if (expiredCallLogId) await prisma.aiCallLog.deleteMany({ where: { id: expiredCallLogId } });
       if (conversationId) {
         await prisma.auditLog.deleteMany({ where: { resourceId: conversationId } });
         await prisma.aiConversation.deleteMany({ where: { id: conversationId } });

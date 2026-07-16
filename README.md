@@ -9,7 +9,7 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B7 与 B8-01 至 B8-05 工程门禁已完成：Excel 49,999 行、OCR 异步真实 Paddle UI、AI Claim/PostgreSQL 黄金账与本地 Qwen 72 条基准均有证据；财务、OCR 和老板口径仍待外部签字
+- 真实业务数据 B0-B7 与 B8-01 至 B8-06 工程门禁已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账，以及权限、Cookie、文件资源和 DLP 均有自动化证据；财务、OCR、安全和业务政策仍待外部签字
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行并通过 30 分钟稳定性、服务切换和并发推理；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 按需启动
 
 ## 技术栈
@@ -38,11 +38,13 @@
 | 角色 | 账号 | 密码 | 默认入口 | 权限说明 |
 | --- | --- | --- | --- | --- |
 | 员工 | `employee` | `123456` | `/employee/home` | 新建工单、查看自己的工单、查看审核进度、催办 |
-| 财务 | `finance` | `123456` | `/finance/home` | 财务审核、AI异常提示、财务日报、数据中心、员工管理 |
+| 财务 | `finance` | `123456` | `/finance/home` | 财务审核、AI异常提示、财务日报、数据中心、员工账号管理 |
 | 复核员 | `reviewer` | `123456` | `/reviewer/home` | 复核任务、审核历史 |
-| 老板 | `boss` | `123456` | `/boss/home` | 最终审批、AI助手、经营日报、项目数据只读、员工管理 |
+| 老板 | `boss` | `123456` | `/boss/home` | 最终审批、AI助手、经营日报、项目数据只读、员工账号管理 |
+| 系统管理员 | `admin` | `123456` | API only | 管理全部用户角色和高权限账号；前端管理页待独立产品设计 |
+| 安全审计员 | `auditor` | `123456` | API only | 读取保留期内的脱敏 AI 审计日志，不参与财务业务流程 |
 
-> 登录页也支持中文角色展示。真实后端接入后，角色 key 仍建议保持 `employee`、`finance`、`reviewer`、`boss`。
+> 登录页支持四个业务角色展示。`admin` 与 `auditor` 是 B8-06 新增的后端职责分离角色，目前不提供业务前端入口。
 
 ### 主要模块
 
@@ -57,7 +59,7 @@
 - 日报中心：财务日报、老板经营日报
 - 项目数据中心：项目、模板、字段、手工补录、Excel 导入、字段建议、数据记录
 - OCR中心：票据/PDF任务、识别证据与置信度、人工纠错、确认入库
-- 员工管理：财务和老板可新增、编辑、禁用、重置用户
+- 用户管理：财务和老板只能管理 employee；admin 管理高权限账号；reviewer、employee 和 auditor 无管理权限
 
 ## 2026-07-14 审计修复状态
 
@@ -71,6 +73,10 @@
 - 文件先授权、后进入隔离区并 fail-closed 扫描；生产强制 ClamAV，PDF/OOXML/CSV/图片做结构校验，上传下载流式处理，并有用户/项目配额与磁盘水位保护。
 - Excel/OCR 任务具备 lease、取消和过期恢复；OCR 使用原子上传建任务接口；不可变模板发生字段扩展时自动克隆新版本。
 - Cookie 登录使用 HttpOnly、SameSite 和双提交 CSRF；生产环境校验可信代理、远程 PostgreSQL TLS、JWT 熵和受保护 seed。
+- B8-06 进一步隔离开发/生产 Cookie 名，拒绝混合、重复、空值和非法编码 Cookie；JWT 固定算法、issuer、audience 和 token purpose。
+- 老板 AI 日志按 owner 隔离且只返回元数据；独立 auditor 才能读取保留期内的递归脱敏详情。
+- Office/CSV/PDF/图片主动内容与复杂度失败关闭，三个上传入口共用每用户并发、在途字节和速率限制；原件明确标记为不可信证据。
+- Git pre-commit 与 CI 默认拒绝业务文件，并执行手机号、身份证、银行卡、内部词典和高熵敏感内容 DLP。
 - AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
 - 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
 
@@ -80,7 +86,7 @@
 
 **P1-08 与 B8-03 已完成**：同步解析保持 5000 行上限，5001-50000 行解析进入后台流式任务；确认 API 也改为可恢复后台任务，每 500 行短事务写入，最终原子发布。解析阶段允许取消，确认开始后明确拒绝取消。5,001、30,196 与 49,999 行均通过真实 PostgreSQL 最终记录、动态字段、金额、唯一来源、审计、ledger 和日报闭环。
 
-因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重政策、真实模型/ClamAV/反向代理部署验收及脱敏业务真值校准前，不标记为生产就绪。
+因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重、H-10/H-11、真实模型/ClamAV/反向代理部署验收及脱敏业务真值校准前，不标记为生产就绪。
 
 ## 启动方式
 
@@ -175,7 +181,7 @@ http://localhost:3001/api/health
 | 真实化批次 D-H | 已完成 | 30 条 PostgreSQL、14 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
-| B8-01 至 B8-05 | 工程完成 | Excel/OCR 后台闭环与 AI 严格 Claim、确定性渲染、项目/客户排行、PostgreSQL 黄金账及本地 Qwen 基准通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md`、`docs/B8_04_OCR_ASYNC_PRECISION_REPORT.md`、`docs/B8_05_AI_CLAIM_GROUNDING_REPORT.md` |
+| B8-01 至 B8-06 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim，以及 AI 日志、Cookie/JWT、职责分离、文件资源和 Git/DLP 门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_06_SECURITY_HARDENING_REPORT.md` |
 | 本地模型部署 | 稳定性通过 | 四套资产完整；文本/OCR 常驻和 VL 按需切换已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -186,12 +192,16 @@ http://localhost:3001/api/health
 | `财务` / `finance` | `123456` | `finance` |
 | `复核员` / `reviewer` | `123456` | `reviewer` |
 | `老板` / `boss` | `123456` | `boss` |
+| `admin` | `123456` | `admin` |
+| `auditor` | `123456` | `auditor` |
 
 已实现后端接口：
 
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
+- `GET /api/auth/security-capabilities`
+- `POST /api/auth/step-up`
 - `GET /api/users`
 - `POST /api/users`
 - `GET /api/users/:id`
@@ -265,6 +275,9 @@ http://localhost:3001/api/health
 - `GET /api/ai/conversations`
 - `GET /api/ai/conversations/:id/messages`
 - `GET /api/ai/call-logs`
+- `GET /api/ai/call-logs/:id`
+- `GET /api/ai/audit/call-logs`
+- `GET /api/ai/audit/call-logs/:id`
 - `GET/POST /api/import-tasks`
 - `POST /api/import-tasks/:id/parse`
 - `PUT /api/import-tasks/:id/mappings`
