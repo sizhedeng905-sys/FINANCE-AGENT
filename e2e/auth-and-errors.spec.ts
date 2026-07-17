@@ -35,7 +35,9 @@ test('API mode: a 401 response clears the session and returns to login', async (
     });
   });
 
-  await page.reload();
+  await page.reload().catch((error: unknown) => {
+    if (!(error instanceof Error) || !error.message.includes('ERR_ABORTED')) throw error;
+  });
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.evaluate(() => localStorage.getItem('finance-agent-access-token-v1'))).resolves.toBeNull();
