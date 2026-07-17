@@ -109,6 +109,7 @@ jobs:
           npx prisma migrate deploy
           npx prisma migrate status
           npm run db:verify
+          npm run db:migration-paths
 
       - name: Build frontend and backend
         run: |

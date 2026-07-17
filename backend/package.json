@@ -21,6 +21,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
     "db:verify": "tsx scripts/verify-database.ts",
+    "db:migration-paths": "node scripts/verify-migration-paths.mjs",
     "realdata:scan": "tsx scripts/scan-real-business-data.ts",
     "realdata:xlsx-profile": "tsx scripts/profile-real-xlsx.ts",
     "realdata:xls-profile": "tsx scripts/profile-real-xls.ts",
