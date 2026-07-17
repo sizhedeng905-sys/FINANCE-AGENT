@@ -11,6 +11,7 @@ import { AiToolContext } from './ai.types';
 
 type ComparisonKind = 'month_over_month' | 'year_over_year';
 const WORK_ORDER_NUMBER_PATTERN = /\bWO(?=[A-Z0-9-]*\d)[A-Z0-9-]+\b/i;
+const RANKING_TERMS = ['排行', '最高', '最低', '最赚钱', '最亏'] as const;
 
 interface PeriodIntent {
   bossPeriod: 'daily' | 'weekly' | 'monthly';
@@ -170,8 +171,10 @@ export class AiToolsService {
   }
 
   private rankingIntent(question: string) {
-    const asksProject = /哪个项目|项目.*(?:排行|最高|最低|最赚钱|最亏)/.test(question);
-    const asksCustomer = /哪个客户|客户.*(?:排行|最高|最低|最赚钱|最亏)/.test(question);
+    const asksProject = question.includes('哪个项目')
+      || this.includesEntityBeforeAny(question, '项目', RANKING_TERMS);
+    const asksCustomer = question.includes('哪个客户')
+      || this.includesEntityBeforeAny(question, '客户', RANKING_TERMS);
     if (!asksProject && !asksCustomer) return undefined;
     return {
       groupBy: asksCustomer ? 'customer' as const : 'project' as const,
@@ -195,6 +198,13 @@ export class AiToolsService {
   private includesInOrder(value: string, first: string, second: string) {
     const firstIndex = value.indexOf(first);
     return firstIndex >= 0 && value.indexOf(second, firstIndex + first.length) >= 0;
+  }
+
+  private includesEntityBeforeAny(value: string, entity: string, terms: readonly string[]) {
+    const entityIndex = value.indexOf(entity);
+    if (entityIndex < 0) return false;
+    const searchFrom = entityIndex + entity.length;
+    return terms.some((term) => value.indexOf(term, searchFrom) >= 0);
   }
 
   private periodIntent(question: string, comparison: boolean): PeriodIntent {

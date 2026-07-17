@@ -79,7 +79,10 @@ describe('phase 8 boss AI assistant', () => {
       project: { findMany: jest.fn(async () => []) },
       workOrder: { findUnique: jest.fn(async () => null) }
     };
-    const reports: any = { boss: jest.fn(async () => ({ recordCount: 0 })) };
+    const reports: any = {
+      boss: jest.fn(async () => ({ recordCount: 0 })),
+      ranking: jest.fn(async ({ groupBy }) => ({ groupBy, items: [] }))
+    };
     const riskRules: any = { findAnomalies: jest.fn(async () => ({ items: [] })) };
     const workOrders: any = { findOne: jest.fn(async () => ({ id: 'work_order_1' })) };
     const tools = new AiToolsService(prisma, reports, riskRules, workOrders);
@@ -89,6 +92,17 @@ describe('phase 8 boss AI assistant', () => {
 
     expect(contexts.map((item) => item.name)).toEqual(['get_work_order_detail']);
     expect(riskRules.findAnomalies).not.toHaveBeenCalled();
+
+    const repeatedProjects = await tools.buildContext(`${'项目'.repeat(25_000)}最高`, undefined, boss);
+    expect(repeatedProjects.map((item) => item.name)).toEqual(['get_finance_ranking']);
+    expect(reports.ranking).toHaveBeenLastCalledWith(expect.objectContaining({ groupBy: 'project' }));
+
+    const repeatedCustomers = await tools.buildContext(`${'客户'.repeat(25_000)}最低`, undefined, boss);
+    expect(repeatedCustomers.map((item) => item.name)).toEqual(['get_finance_ranking']);
+    expect(reports.ranking).toHaveBeenLastCalledWith(expect.objectContaining({
+      groupBy: 'customer',
+      direction: 'lowest'
+    }));
 
     const grounding = new AiAnswerGroundingService();
     const reportContexts: any = [{

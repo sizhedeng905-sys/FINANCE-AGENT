@@ -17,8 +17,20 @@ describe('S3 file storage boundary', () => {
 
   it('accepts only relative normalized object keys', () => {
     const storage = new S3FileStorageService(config) as any;
-    expect(storage.assertKey('2026/07/123e4567-file.pdf')).toBe('2026/07/123e4567-file.pdf');
-    for (const value of ['', '/absolute.pdf', '../escape.pdf', 'folder/../escape.pdf', 'folder//file.pdf', 'bad\u0000.pdf']) {
+    const valid = '2026/07/123e4567-e89b-42d3-a456-426614174000.pdf';
+    expect(storage.assertKey(valid)).toBe(valid);
+    for (const value of [
+      '',
+      '/absolute.pdf',
+      'C:\\absolute.pdf',
+      '\\\\server\\share\\file.pdf',
+      '../escape.pdf',
+      '2026/07/../escape.pdf',
+      '2026\\07/123e4567-e89b-42d3-a456-426614174000.pdf',
+      '2026/07/%2e%2e%2fescape.pdf',
+      `2026/07/${'a'.repeat(200)}.pdf`,
+      'bad\u0000.pdf'
+    ]) {
       expect(() => storage.assertKey(value)).toThrow('Invalid object storage key');
     }
   });

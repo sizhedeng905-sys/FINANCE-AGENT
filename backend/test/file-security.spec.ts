@@ -1,13 +1,16 @@
 import { BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
 import { FileSecurityService } from '../src/files/file-security.service';
+import { LocalFileStorageService } from '../src/files/local-file-storage.service';
 import {
   createSecureUploadOptions,
   resolveQuarantinedUploadPath,
@@ -236,5 +239,55 @@ describe('FileSecurityService', () => {
     const filename = '123e4567-e89b-42d3-a456-426614174000';
     const expected = resolve(customRoot, filename);
     expect(resolveQuarantinedUploadPath({ filename, path: expected }, customRoot)).toBe(expected);
+  });
+
+  it('stores only validated buffers and confines every local path to a non-symlink root', async () => {
+    const uploadDir = await mkdtemp(join(tmpdir(), 'finance-agent-storage-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'finance-agent-outside-'));
+    try {
+      const outsidePath = join(outsideDir, 'outside.pdf');
+      await writeFile(outsidePath, 'untrusted-path-content');
+      const storage = new LocalFileStorageService({
+        get: jest.fn((key: string) => key === 'uploadDir' ? uploadDir : undefined)
+      } as unknown as ConfigService);
+      const validated = Buffer.from('validated-buffer-content');
+      const key = await storage.save({
+        originalname: '../../voucher.pdf',
+        path: outsidePath,
+        size: validated.length,
+        buffer: validated
+      } as Express.Multer.File);
+
+      expect(key).toMatch(/^\d{4}\/\d{2}\/[0-9a-f-]{36}\.pdf$/);
+      await expect(storage.read(key)).resolves.toEqual(validated);
+      for (const attack of [
+        '../outside.pdf',
+        '..\\outside.pdf',
+        '/etc/passwd',
+        'C:\\Windows\\win.ini',
+        '\\\\server\\share\\outside.pdf',
+        '2026/07/../outside.pdf',
+        '2026\\07/123e4567-e89b-42d3-a456-426614174000.pdf',
+        '2026/07/%2e%2e%2foutside.pdf',
+        '２０２６/07/123e4567-e89b-42d3-a456-426614174000.pdf',
+        `2026/07/${'a'.repeat(200)}.pdf`,
+        '2026/07/bad\u0000.pdf'
+      ]) {
+        await expect(storage.read(attack)).rejects.toThrow('非法文件路径');
+      }
+
+      const symlinkKey = '2026/07/123e4567-e89b-42d3-a456-426614174000.pdf';
+      const symlinkPath = join(uploadDir, ...symlinkKey.split('/'));
+      await mkdir(join(uploadDir, '2026', '07'), { recursive: true });
+      try {
+        await symlink(outsidePath, symlinkPath, 'file');
+        await expect(storage.read(symlinkKey)).rejects.toThrow('非法文件路径');
+      } catch (error) {
+        if (!['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+    } finally {
+      await rm(uploadDir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });

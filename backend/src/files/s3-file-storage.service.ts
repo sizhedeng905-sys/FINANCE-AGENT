@@ -10,12 +10,10 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { extname } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { FileStorage } from './file-storage';
+import { assertStorageKey, createStorageKey } from './storage-key';
 
 @Injectable()
 export class S3FileStorageService implements FileStorage {
@@ -39,14 +37,14 @@ export class S3FileStorageService implements FileStorage {
   }
 
   async save(file: Express.Multer.File) {
-    const now = new Date();
-    const extension = extname(file.originalname).toLowerCase();
-    const key = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${randomUUID()}${extension}`;
-    const body = file.path ? createReadStream(file.path) : Readable.from(file.buffer);
+    if (!Buffer.isBuffer(file.buffer) || file.size <= 0 || file.buffer.length !== file.size) {
+      throw new Error('Validated file buffer is required');
+    }
+    const key = createStorageKey(file.originalname);
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
-      Body: body,
+      Body: file.buffer,
       ContentLength: file.size,
       ContentType: 'application/octet-stream',
       Metadata: { source: 'finance-agent' }
@@ -132,17 +130,7 @@ export class S3FileStorageService implements FileStorage {
   }
 
   private assertKey(storagePath: string) {
-    const key = storagePath.replace(/\\/g, '/');
-    if (
-      !key ||
-      key.startsWith('/') ||
-      key.length > 1024 ||
-      key.split('/').some((segment) => !segment || segment === '.' || segment === '..') ||
-      /[\u0000-\u001f\u007f]/.test(key)
-    ) {
-      throw new Error('Invalid object storage key');
-    }
-    return key;
+    return assertStorageKey(storagePath, 'Invalid object storage key');
   }
 
   private contentDisposition(fileName: string) {
