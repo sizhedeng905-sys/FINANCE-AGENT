@@ -1,0 +1,90 @@
+groups:
+  - name: finance-agent-staging
+    rules:
+      - alert: FinanceAgentApiUnavailable
+        expr: up{job="finance-agent-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Finance Agent API is unavailable
+
+      - alert: FinanceAgentWorkerHeartbeatMissing
+        expr: finance_agent_worker_heartbeat_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Background worker heartbeat is missing
+
+      - alert: FinanceAgentHighServerErrorRate
+        expr: sum(rate(finance_agent_http_requests_total{status=~"5.."}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API server errors exceed the staging threshold
+
+      - alert: FinanceAgentQueueBacklog
+        expr: finance_agent_queue_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A durable task queue is backlogged
+
+      - alert: FinanceAgentTraceDrops
+        expr: increase(finance_agent_trace_spans_total{outcome="dropped"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: OTLP trace spans are being dropped
+
+      - alert: FinanceAgentProcessMemoryHigh
+        expr: process_resident_memory_bytes > 2147483648
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API resident memory exceeds 2 GiB
+
+      - alert: FinanceAgentLogicalStorageHigh
+        expr: finance_agent_stored_file_bytes > 879609302220
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Referenced raw files exceed 80 percent of the declared staging capacity
+
+      - alert: FinanceAgentBackupFailed
+        expr: finance_agent_backup_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The latest linked database and object backup failed
+
+      - alert: FinanceAgentBackupStale
+        expr: absent(finance_agent_backup_last_success_timestamp_seconds) or (time() - finance_agent_backup_last_success_timestamp_seconds > 25200)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful staging backup has completed for seven hours
+
+      - alert: FinanceAgentRestoreDrillStale
+        expr: absent(finance_agent_restore_drill_last_success_timestamp_seconds) or (time() - finance_agent_restore_drill_last_success_timestamp_seconds > 2592000)
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: No successful restore drill has been recorded for 30 days
+
+      - alert: FinanceAgentTlsCertificateExpiring
+        expr: absent(finance_agent_tls_certificate_not_after_timestamp_seconds) or (finance_agent_tls_certificate_not_after_timestamp_seconds - time() < 1209600)
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: A required Staging TLS certificate is missing or expires within 14 days

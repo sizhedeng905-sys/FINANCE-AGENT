@@ -94,6 +94,12 @@ jobs:
           npm audit --omit=dev --audit-level=high
           npm audit --prefix backend --omit=dev --audit-level=high
 
+      - name: Validate B8-09 staging topology and recovery scripts
+        run: |
+          npm run staging:init
+          npm run staging:check
+          find deploy/staging backend/docker -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
       - name: Validate Prisma schema and migrations
         working-directory: backend
         run: |

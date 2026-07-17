@@ -31,7 +31,13 @@
     "model:on-demand": "node backend/scripts/model-services.mjs start-on-demand",
     "model:restore": "node backend/scripts/model-services.mjs stop-on-demand",
     "model:status": "node backend/scripts/model-services.mjs status",
-    "model:stop": "node backend/scripts/model-services.mjs stop-all"
+    "model:stop": "node backend/scripts/model-services.mjs stop-all",
+    "staging:init": "node deploy/staging/scripts/init-staging.mjs",
+    "staging:check": "node deploy/staging/scripts/verify-config.mjs",
+    "staging:lock-images": "node deploy/staging/scripts/lock-images.mjs",
+    "staging:smoke": "node deploy/staging/scripts/smoke-test.mjs",
+    "staging:release": "node deploy/staging/scripts/release.mjs",
+    "staging:rollback": "node deploy/staging/scripts/rollback.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",

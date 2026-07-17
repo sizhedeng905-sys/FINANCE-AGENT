@@ -1,0 +1,6 @@
+.env
+.secrets/
+.runtime/
+.release/
+.evidence/
+!.env.example
