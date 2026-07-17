@@ -1011,6 +1011,8 @@ class InMemoryPrisma {
   }
 }
 
+const APP_BOOTSTRAP_TIMEOUT_MS = 20_000;
+
 describe('FINANCE-AGENT backend phases 1 and 2', () => {
   let app: INestApplication;
   let prisma: InMemoryPrisma;
@@ -1052,7 +1054,7 @@ describe('FINANCE-AGENT backend phases 1 and 2', () => {
     app.useGlobalFilters(new HttpExceptionFilter());
     app.useGlobalInterceptors(new ResponseInterceptor());
     await app.init();
-  });
+  }, APP_BOOTSTRAP_TIMEOUT_MS);
 
   afterAll(async () => {
     if (app) await app.close();
