@@ -9,8 +9,6 @@ import {
 import { App, Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkOrderStore } from '@/store/workOrderStore';
-import { useNotificationStore } from '@/store/notificationStore';
-import { useReportStore } from '@/store/reportStore';
 import { findMenuKey, getDefaultPath, isValidRole, roleMenus, type RoleMenuItem } from '@/router/roleMenus';
 import { roleLabelMap } from '@/utils/statusMap';
 import NotificationBell from '@/components/notification/NotificationBell';
@@ -22,8 +20,6 @@ export default function RoleBasedLayout() {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const fetchWorkOrders = useWorkOrderStore((state) => state.fetchWorkOrders);
-  const resetNotifications = useNotificationStore((state) => state.reset);
-  const resetReports = useReportStore((state) => state.resetReports);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -110,10 +106,8 @@ export default function RoleBasedLayout() {
                 } catch (error) {
                   message.warning(error instanceof Error ? error.message : '退出请求失败，本地会话已清理');
                 } finally {
-                  resetNotifications();
-                  resetReports();
                   setLoggingOut(false);
-                  navigate('/login', { replace: true });
+                  window.location.replace('/login');
                 }
               }}
             >

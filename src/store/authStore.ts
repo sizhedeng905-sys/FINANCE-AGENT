@@ -8,6 +8,7 @@ import {
 } from '@/api/authSession';
 import type { User } from '@/types/auth';
 import { runtimeConfig } from '@/config/runtime';
+import { resetUserScopedState } from './resetUserScopedState';
 
 interface AuthState {
   user: User | null;
@@ -55,6 +56,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   login: async (username, password) => {
     const session = await loginApi(username, password);
+    resetUserScopedState();
     if (runtimeConfig.dataMode !== 'api') setAccessToken(session.accessToken);
     else clearAccessToken();
     set({ user: session.user, initialized: true, initializationError: null });
@@ -68,6 +70,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       failure = error;
     } finally {
       clearAccessToken();
+      resetUserScopedState();
       set({ user: null, initialized: true, initializationError: null });
     }
     if (failure) throw failure;
@@ -75,5 +78,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 }));
 
 window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, () => {
+  resetUserScopedState();
   useAuthStore.setState({ user: null, initialized: true, initializationError: null });
+  if (window.location.pathname !== '/login') window.location.replace('/login');
 });

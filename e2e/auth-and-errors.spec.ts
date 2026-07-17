@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API_FRONTEND_URL, login, MOCK_FRONTEND_URL } from './support/app';
+import { API_FRONTEND_URL, login, logout, MOCK_FRONTEND_URL } from './support/app';
 
 const roles = [
   { username: 'employee', path: '/employee/home', heading: '员工首页' },
@@ -26,11 +26,46 @@ test('API mode: a 401 response clears the session and returns to login', async (
       body: JSON.stringify({ code: 401, message: '登录状态已失效', data: {} })
     });
   });
+  await page.route('**/api/auth/me', async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      headers: { 'X-Request-Id': 'e2e-expired-session-me' },
+      body: JSON.stringify({ code: 401, message: '登录状态已失效', data: {} }),
+    });
+  });
 
   await page.reload();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.evaluate(() => localStorage.getItem('finance-agent-access-token-v1'))).resolves.toBeNull();
+});
+
+test('API mode: logout clears user-scoped browser state before another account logs in', async ({ page }) => {
+  await login(page, 'employee', '/employee/home');
+  await page.evaluate(() => {
+    localStorage.setItem('audit-work-order-store-v4', JSON.stringify({
+      state: { selectedWorkOrderId: 'private-user-a-work-order' },
+      version: 0,
+    }));
+    localStorage.setItem('audit-data-center-store-api-v1', JSON.stringify({
+      state: { recordId: 'private-user-a-record' },
+      version: 0,
+    }));
+  });
+
+  await logout(page);
+  await expect(page.evaluate(() => ({
+    workOrders: localStorage.getItem('audit-work-order-store-v4'),
+    dataCenter: localStorage.getItem('audit-data-center-store-api-v1'),
+    token: sessionStorage.getItem('finance-agent-access-token-v2'),
+  }))).resolves.toEqual({ workOrders: null, dataCenter: null, token: null });
+
+  await login(page, '员工', '/employee/home');
+  await expect(page.evaluate(() => {
+    const raw = localStorage.getItem('audit-work-order-store-v4');
+    return raw ? JSON.parse(raw).state?.selectedWorkOrderId : undefined;
+  })).resolves.toBeUndefined();
 });
 
 test('API mode: network failures expose a retryable request-id error', async ({ page }) => {
