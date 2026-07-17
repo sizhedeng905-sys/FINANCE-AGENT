@@ -68,6 +68,53 @@ test('API mode: logout clears user-scoped browser state before another account l
   })).resolves.toBeUndefined();
 });
 
+test('API mode: boss home preserves cents in large decimal report values', async ({ page }) => {
+  const income = '99999999999999.99';
+  await page.route('**/api/reports/boss?**', async (route) => {
+    const period = new URL(route.request().url()).searchParams.get('period') ?? 'daily';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 0,
+        message: 'success',
+        data: {
+          id: `boss-${period}-decimal-test`,
+          period,
+          title: '经营报表',
+          date: '2026-07-17',
+          range: { startDate: '2026-07-17', endDate: '2026-07-17', timezone: 'Asia/Shanghai' },
+          generatedAt: '2026-07-17T00:00:00.000Z',
+          income,
+          expense: '0.01',
+          profit: '99999999999999.98',
+          profitRate: 1,
+          recordCount: 1,
+          anomalies: [],
+          highRiskItems: [],
+          anomalyCount: 0,
+          pendingApprovals: 0,
+          highRiskPending: 0,
+          approvedCount: 0,
+          rejectedCount: 0,
+          projectRanking: [],
+          expenseCategories: [],
+          aiSummary: 'decimal display fixture',
+          aiSuggestion: '',
+          aiSuggestions: [],
+        },
+      }),
+    });
+  });
+
+  await login(page, 'boss', '/boss/home');
+
+  const incomeMetric = page.locator('.ant-statistic').filter({ hasText: '确认收入' });
+  await expect(incomeMetric).toContainText('¥99,999,999,999,999.99');
+  const expenseMetric = page.locator('.ant-statistic').filter({ hasText: '确认支出' });
+  await expect(expenseMetric).toContainText('¥0.01');
+});
+
 test('API mode: network failures expose a retryable request-id error', async ({ page }) => {
   await login(page, 'employee', '/employee/home');
   await page.route('**/api/projects?**', (route) => route.abort('failed'));

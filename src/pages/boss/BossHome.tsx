@@ -41,9 +41,9 @@ export default function BossHome() {
 
         <Card title="今日经营摘要" className="section-row">
           <Row gutter={[16, 16]}>
-            <Col xs={24} md={8}><Statistic title="确认收入" value={daily?.income ?? 0} formatter={(value) => formatMoney(Number(value))} /></Col>
-            <Col xs={24} md={8}><Statistic title="确认支出" value={daily?.expense ?? 0} formatter={(value) => formatMoney(Number(value))} /></Col>
-            <Col xs={24} md={8}><Statistic title="确认利润" value={daily?.profit ?? 0} formatter={(value) => formatMoney(Number(value))} /></Col>
+            <Col xs={24} md={8}><Statistic title="确认收入" value={daily?.income ?? '0.00'} formatter={(value) => formatMoney(String(value))} /></Col>
+            <Col xs={24} md={8}><Statistic title="确认支出" value={daily?.expense ?? '0.00'} formatter={(value) => formatMoney(String(value))} /></Col>
+            <Col xs={24} md={8}><Statistic title="确认利润" value={daily?.profit ?? '0.00'} formatter={(value) => formatMoney(String(value))} /></Col>
             <Col xs={24} md={8}><Statistic title="规则异常" value={daily?.anomalyCount ?? 0} /></Col>
             <Col xs={24} md={8}><Statistic title="老板已通过" value={daily?.approvedCount ?? 0} /></Col>
             <Col xs={24} md={8}>
