@@ -2,11 +2,19 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter } from 'node:events';
 
 import { RequestIdMiddleware } from '../src/common/middleware/request-id.middleware';
+import { redisReconnectStrategy } from '../src/infrastructure/redis/redis.service';
 import { MetricsService } from '../src/observability/metrics.service';
 import { TraceExporterService } from '../src/observability/trace-exporter.service';
 import { TracingMiddleware } from '../src/observability/tracing.middleware';
 
 describe('observability', () => {
+  it('bounds initial Redis retries and keeps reconnecting after a healthy connection', () => {
+    expect(redisReconnectStrategy(0, false)).toBe(100);
+    expect(redisReconnectStrategy(1, false)).toBe(200);
+    expect(redisReconnectStrategy(2, false)).toBeInstanceOf(Error);
+    expect(redisReconnectStrategy(20, true)).toBe(5_000);
+  });
+
   it('continues a valid W3C trace and rejects malformed trace context', () => {
     const middleware = new RequestIdMiddleware();
     const response = { setHeader: jest.fn() } as any;

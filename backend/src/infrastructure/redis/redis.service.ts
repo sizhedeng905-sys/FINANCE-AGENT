@@ -23,6 +23,15 @@ end
 local ttl = redis.call('PTTL', KEYS[1])
 return {count, ttl}
 `;
+const REDIS_MAX_RECONNECT_DELAY_MS = 5_000;
+const REDIS_INITIAL_RETRY_LIMIT = 2;
+
+export function redisReconnectStrategy(retries: number, connectedOnce: boolean): number | Error {
+  if (!connectedOnce && retries >= REDIS_INITIAL_RETRY_LIMIT) {
+    return new Error('Redis initial connection retry limit reached');
+  }
+  return Math.min(100 * 2 ** Math.min(retries, 6), REDIS_MAX_RECONNECT_DELAY_MS);
+}
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
@@ -46,12 +55,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    let connectedOnce = false;
     const client = createClient({
       url: this.url,
       socket: {
         connectTimeout: this.connectTimeoutMs,
-        reconnectStrategy: false
+        reconnectStrategy: (retries) => redisReconnectStrategy(retries, connectedOnce)
       }
+    });
+    client.on('ready', () => {
+      connectedOnce = true;
     });
     client.on('error', (error) => {
       this.logger.warn(`Redis client error: ${this.safeMessage(error)}`);
