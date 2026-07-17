@@ -171,6 +171,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly processRole: string;
   private readonly workerPollIntervalMs: number;
   private leaseReaper?: NodeJS.Timeout;
+  private recoveryJob?: Promise<void>;
   private stopping = false;
 
   constructor(
@@ -193,19 +194,27 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!this.canRunBackgroundJobs()) return;
-    void this.recoverExpiredParses();
-    void this.recoverExpiredConfirmations();
-    this.leaseReaper = setInterval(() => {
-      void this.recoverExpiredParses();
-      void this.recoverExpiredConfirmations();
-    }, this.workerPollIntervalMs);
+    this.scheduleRecovery();
+    this.leaseReaper = setInterval(() => this.scheduleRecovery(), this.workerPollIntervalMs);
     this.leaseReaper.unref();
   }
 
   async onModuleDestroy() {
     this.stopping = true;
     if (this.leaseReaper) clearInterval(this.leaseReaper);
+    if (this.recoveryJob) await this.recoveryJob;
     await Promise.allSettled(this.backgroundJobs.values());
+  }
+
+  private scheduleRecovery() {
+    if (this.stopping || this.recoveryJob) return;
+    const active = Promise.all([
+      this.recoverExpiredParses(),
+      this.recoverExpiredConfirmations()
+    ]).then(() => undefined).finally(() => {
+      if (this.recoveryJob === active) this.recoveryJob = undefined;
+    });
+    this.recoveryJob = active;
   }
 
   async create(

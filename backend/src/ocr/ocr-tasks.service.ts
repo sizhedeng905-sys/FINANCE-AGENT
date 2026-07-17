@@ -70,6 +70,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly backgroundJobs = new Map<string, Promise<void>>();
   private stopping = false;
   private leaseReaper?: NodeJS.Timeout;
+  private recoveryJob?: Promise<void>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -99,14 +100,24 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!this.canRunBackgroundJobs()) return;
-    void this.recoverRunnableTasks();
-    this.leaseReaper = setInterval(() => void this.recoverRunnableTasks(), this.recoveryIntervalMs);
+    this.scheduleRecovery();
+    this.leaseReaper = setInterval(() => this.scheduleRecovery(), this.recoveryIntervalMs);
     this.leaseReaper.unref();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy() {
     this.stopping = true;
     if (this.leaseReaper) clearInterval(this.leaseReaper);
+    if (this.recoveryJob) await this.recoveryJob;
+    await Promise.allSettled(this.backgroundJobs.values());
+  }
+
+  private scheduleRecovery() {
+    if (this.stopping || this.recoveryJob) return;
+    const active = this.recoverRunnableTasks().finally(() => {
+      if (this.recoveryJob === active) this.recoveryJob = undefined;
+    });
+    this.recoveryJob = active;
   }
 
   private async recoverRunnableTasks() {
