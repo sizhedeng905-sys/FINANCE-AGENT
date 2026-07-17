@@ -6,7 +6,7 @@
 
 `engineering_complete / blocked_external`
 
-工程实现、配置渲染、证书链、静态恢复门禁和现有全量回归已完成。目标 Staging 的真实容器启动、关联备份恢复 RPO/RTO 和发布回退仍未通过，原因是本机到 Docker Hub 鉴权端点的 443 连接持续超时；H-12 至 H-16 也未由授权人员完成。因此本阶段不声明 Staging 验收通过或生产就绪。
+工程实现、配置渲染、证书链、静态恢复门禁和现有全量回归已完成。基础服务镜像已经拉取，backup 镜像也完成本地构建；目标 Staging 的真实容器启动、关联备份恢复 RPO/RTO 和发布回退仍未通过，原因是 Node 基础镜像 metadata 请求发生 registry TLS handshake timeout。H-12 至 H-16 也未由授权人员完成。因此本阶段不声明 Staging 验收通过或生产就绪。
 
 ## 2. 已完成工作
 
@@ -36,18 +36,19 @@
 | 门禁 | 结果 |
 | --- | --- |
 | 后端 production build | 通过 |
-| 后端 Jest | 27/27 suites，256/256 tests |
+| 后端 Jest | 29/29 suites，263/263 tests |
 | PostgreSQL integration | 2/2 suites，60/60 tests；正常 API→Worker 交接不增加 attempt，过期租约恢复仍增加 attempt |
 | 大批量回归 | 30,196 行 17.707 秒、49,999 行 32.253 秒；RSS 增量分别 152.21/295.71 MiB，连接峰值均 10 |
-| 前端 production build | 通过；3142 modules；保留既有 Ant Design 555.07 kB chunk |
-| Playwright | 14/14 tests；teardown 文件残留 0 |
+| 前端 production build | 通过；3143 modules；保留既有 Ant Design chunk |
+| Playwright | 16/16 tests；teardown 文件残留 0 |
+| Migration 双路径 | 空库 24/24；上一基线 23→24；最终 41 表、27 enum、173 index、77 foreign key |
 | Staging 初始化 | 随机 secret 与本地 CA 生成通过；生成目录被 Git 忽略 |
 | Compose 配置 | 18 services；证书链、固定版本标签、仅 TLS gateway 发布端口、PostgreSQL TLS、只读应用容器和 secret 未跟踪断言通过 |
 | Shell 语法 | 10/10 scripts 通过 Git Bash `bash -n` |
-| 容器构建 | `blocked_external`；两次在 `auth.docker.io` 匿名令牌请求阶段超时，未进入项目 build stage |
+| 容器构建 | `blocked_external`；基础服务镜像已拉取、backup 已构建；Node build metadata 请求 TLS timeout，未执行 Compose `up` |
 | 真实 restore/RPO/RTO | `blocked_external`；基础镜像不可拉取，未运行，未填写虚假结果 |
 
-测试没有读取、修改或提交 `数据文件/`、模型权重、`backend/.env` 或真实业务原件。
+测试没有读取、修改或提交真实业务原件和模型权重；`backend/.env` 仅由本地 Prisma/Nest 工具按既有配置消费，内容未输出、未修改、未暂存。
 
 ## 5. 未解决风险
 
@@ -81,7 +82,7 @@
 
 ## 8. 下一步
 
-1. 修复目标主机到受控 registry 的连接，完成镜像 digest 锁定。
+1. 修复目标主机到受控 registry 的连接，先取得固定 Node 基础镜像，再完成全部镜像 digest 锁定。
 2. 在 H-13 指定的 Linux Staging 执行 `staging:release`、smoke、真实 backup/restore 和应用/模型回退。
 3. 将实测 RPO/RTO、日志/指标/trace 截图和告警送达记录附到本报告。
 4. 完成 H-12/H-14/H-15/H-16；仅在问题全部关闭后把 B8-09 改为通过。

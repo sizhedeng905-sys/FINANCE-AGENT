@@ -12,7 +12,8 @@
 - 真实业务数据 B0-B7 与 B8-01 至 B8-09 工程实现已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账、安全/模型控制面，以及 Staging API/Worker、私有存储、观测和恢复工具均有自动化证据
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 的真实并发切换、能力探针、无 OOM 和文本恢复均已验收
 - B8-08 已提供八场景匿名 UAT 工作包和 `_test` PostgreSQL 逐分对账工具；当前状态仍为 `blocked_external`，不会用自动化结果代替财务、业务、老板或安全签字
-- B8-09 已提供 18 服务 Staging、TLS、Redis、MinIO、ClamAV、Prometheus/Loki/Tempo、关联备份恢复及应用/数据/模型回退；本机 Docker Hub 连接和 H-12 至 H-16 仍为外部阻断，尚未声明生产就绪
+- B8-09 已提供 18 服务 Staging、TLS、Redis、MinIO、ClamAV、Prometheus/Loki/Tempo、关联备份恢复及应用/数据/模型回退；基础服务镜像已拉取，但 Node 构建 metadata 请求仍受 registry TLS 超时阻断，H-12 至 H-16 也未完成，尚未声明生产就绪
+- RC-00 至 RC-04 的机器可执行审计已收口；详见 `docs/B8_OVERNIGHT_EXECUTION_REPORT.md`、`docs/RELEASE_CANDIDATE_AUDIT.md` 和 `docs/PR4_REVIEW_GUIDE.md`
 
 ## 技术栈
 
@@ -202,7 +203,7 @@ npm run staging:release
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
 | B8-01 至 B8-07 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim、安全边界，以及模型身份、GPU 互斥、SBOM/CVE 和代理上传门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md` |
 | B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景运行手册、匿名 manifest、逐分对账和问题/签字模板已交付；H-01 至 H-12、H-16 待授权人员完成 |
-| B8-09 Staging/试运行 | 工程完成 / 外部阻断 | API/Worker、Redis、S3/MinIO、PostgreSQL TLS、ClamAV、集中观测、备份恢复和三类回退已交付；Docker Hub/目标恢复与 H-12 至 H-16 待完成 |
+| B8-09 Staging/试运行 | 工程完成 / 外部阻断 | API/Worker、Redis、S3/MinIO、PostgreSQL TLS、ClamAV、集中观测、备份恢复和三类回退已交付；registry Node metadata、目标恢复与 H-12 至 H-16 待完成 |
 | 本地模型部署 | 控制面通过 | 四套资产完整；文本/OCR 常驻，VL/Embedding 按需真实切换和恢复已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -347,7 +348,13 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B8-09 工程基线为 27/27 Jest suites、256/256 tests、2/2 PostgreSQL suites（60/60 tests）和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build 通过。18 服务 Compose 静态门禁、随机 secret/CA、证书链和 10/10 shell syntax 已通过；真实容器 smoke/restore 因 Docker Hub 连接失败仍为 `blocked_external`。详细证据见 `docs/B8_09_STAGING_REPORT.md`。
+当前 RC 工程基线为 29/29 Jest suites、263/263 tests、2/2 PostgreSQL suites（60/60 tests）和 16/16 标准 Playwright；测试库已应用 24/24 Prisma migrations，空库 24 条和上一基线 23→24 升级路径均通过，前后端 production build 通过。18 服务 Compose 静态门禁、随机 secret/CA、证书链和 10/10 shell syntax 已通过；真实容器未执行 `up`，因为 Node 基础镜像 metadata 请求发生 registry TLS timeout，smoke/restore 仍为 `blocked_external`。详细证据见 `docs/B8_09_STAGING_REPORT.md` 和 `docs/RELEASE_CANDIDATE_AUDIT.md`。
+
+独立验证 migration 路径：
+
+```bash
+npm run db:migration-paths --prefix backend
+```
 
 初始化并校验本地匿名 UAT 工作包：
 

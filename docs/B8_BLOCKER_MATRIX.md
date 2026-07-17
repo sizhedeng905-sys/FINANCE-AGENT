@@ -7,11 +7,11 @@
 | 项目 | 结果 |
 | --- | --- |
 | B8 基线分支 | `agent/real-business-data-validation` |
-| B8 基线提交 | `888a0b9638b61f0b63ed728ef4f1517b0eb788f4` |
+| B8 基线提交 | `888a0b9` |
 | 执行分支 | `agent/b8-stable-hardening` |
 | Draft PR #3 | 基线提交对应的 PostgreSQL/E2E、CodeQL 均通过；开放 CodeQL 告警为 0 |
 | 工作树 | 基线无已跟踪修改；用户 IDE 配置、规划文档、模型下载脚本和 B8 需求文档保持未跟踪、未暂存 |
-| 远端复核 | 创建分支前一次 `git fetch` 因 GitHub 连接超时失败；本地 HEAD 与此前已验证的远端缓存 SHA 一致，发布前必须重试 |
+| 远端复核 | 分支已推送且与上游零分叉；PR #4 的 Build and acceptance 与 CodeQL 在审计代码 HEAD 均通过 |
 | 真实业务文件 | 本阶段未读取或修改原件；详细文件名、路径、业务值和完整哈希不进入本文件 |
 
 ## B8-00 基线证据
@@ -104,8 +104,8 @@
 | 观测 | Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana；W3C trace 与 OTLP bounded exporter；错误/容量/备份告警 |
 | 备份/回退 | logical/base/WAL、对象快照、SHA-256 manifest、临时 restore drill、应用/数据/模型回退脚本完成 |
 | 配置门禁 | 18 services；证书链、固定版本 tag、仅 TLS gateway 发布端口、只读应用容器、secret 未跟踪断言通过 |
-| 完整回归 | backend build；256/256 unit；60/60 PostgreSQL；14/14 Playwright；frontend build；10/10 shell syntax |
-| 容器/恢复 | `blocked_external`；两次 Docker build 均在 `auth.docker.io` token 连接超时，未取得镜像、smoke 或实测 RPO/RTO |
+| 完整回归 | backend build；263/263 unit；60/60 PostgreSQL；16/16 Playwright；frontend build；10/10 shell syntax |
+| 容器/恢复 | `blocked_external`；基础服务镜像已拉取且 backup image 已构建，Node build metadata 请求 TLS timeout；未执行 Compose `up`、smoke 或实测 RPO/RTO |
 | 真实业务数据 | 未读取、未修改；Staging seed 仅使用随机密码合成账号 |
 
 ## 问题矩阵
@@ -125,9 +125,12 @@
 | B8-MODEL-001 | P1 | B8-07 | 模型控制面/GPU/代理 | 路由配置快照、鉴权 ready、跨进程 GPU 锁和代理边界待收口 | 同一 resolved deployment、互斥锁、固定容器和代理错误契约 | 路由/GPU/代理测试 | verified | H-13 属于 B8-09 目标部署选择，不阻断本地工程门禁 |
 | B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 匿名 UAT 工具和自动对账已完成；财务/OCR/重复/冲销、部署和恢复仍无人工签字 | 授权人员完成八场景结论，目标环境完成恢复/回退演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |
 | B8-STAGING-001 | P1 | B8-09 | API/Worker、Redis、S3、TLS、观测 | 单进程、本地磁盘、内存限流和缺少集中观测不满足 Staging | 拆分运行角色，私有依赖、TLS、指标/日志/trace、不可变权限和回退脚本 | 单测、Compose JSON、安全配置、shell syntax、全量回归 | verified | 无 |
-| B8-STAGING-002 | P0 | B8-09 | 镜像、真实备份恢复与回退 | 本机访问 Docker Hub auth 443 超时，无法拉取 Node/数据服务镜像 | 在 H-13 指定服务器/registry 锁定 digest，运行 release、smoke、backup/restore 和 rollback | 镜像 lock、TLS smoke、RPO/RTO、对象/DB 恢复和回退证据 | blocked_external | H-13/H-14 |
+| B8-STAGING-002 | P0 | B8-09 | 镜像、真实备份恢复与回退 | 数据服务基础镜像已拉取；Node build metadata 请求发生 registry TLS handshake timeout，release 在 `up` 前停止 | 在 H-13 指定服务器/registry 锁定 digest，运行 release、smoke、backup/restore 和 rollback | 镜像 lock、TLS smoke、RPO/RTO、对象/DB 恢复和回退证据 | blocked_external | H-13/H-14 |
 | B8-PILOT-001 | P0 | B8-09 | 小范围试运行与最终批准 | 尚无目标用户/项目清单、外部 AI 政策、独立 Review 和最终 UAT 签字 | 使用日检表和正式 Issue 完成受控试运行，关闭 P0/P1 后签字 | H-12 至 H-16 文档、每日证据、Issue 关闭记录 | blocked_external | H-12/H-13/H-14/H-15/H-16 |
 | B8-STAGING-003 | P1 | B8-09/RC | 多实例登录、上传与模型闸门 | 全局请求限流已共享，但登录、上传准入和模型并发仍为进程内状态 | Staging 保持单 API/单 Worker；横向扩容前迁移到共享原子控制并验证故障恢复 | 拓扑断言、多实例并发和 Redis 故障测试 | open | H-13 若要求横向扩容则阻断 |
+| RC-MIGRATION-001 | P1 | RC-03 | 空库与升级 migration | 原门禁只验证已有测试库，无法单独证明空库和上一版本升级 | 创建随机 `_test` 临时库并分别验证 24 条空库和 23→24 升级，最后强制清理 | `npm run db:migration-paths --prefix backend` | verified | 无 |
+| RC-MODEL-001 | P2 | RC-03 | 模型韧性/soak 探针 | 脚本仍访问废弃的匿名 OCR `/health` | 使用 Bearer 认证 `/ready`；真实文本重启、VL 切换、文本恢复和并发推理 | 432 次 OCR readiness 0 失败；最终常驻状态正确 | verified | 无 |
+| RC-DASHBOARD-001 | P1 | RC-02 | 角色首页统计 | 首页只根据客户端前 100 条工单估算 | 后端按 token 角色范围 groupBy，全状态/风险补零；前端只消费服务端 summary | 125 条聚合单测、四角色 Playwright | verified | 无 |
 
 ## 状态规则
 
