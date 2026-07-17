@@ -39,7 +39,7 @@ import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
 import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
-import { OcrProviderRegistry } from './ocr-provider.registry';
+import { OcrProviderRegistry, ResolvedOcrProvider } from './ocr-provider.registry';
 import {
   MockOcrScenario,
   OcrFieldCandidate,
@@ -52,6 +52,11 @@ import { CanonicalOcrFieldCandidate } from './ocr.types';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 type TemplateFieldWithField = OcrTaskDetail['template']['templateFields'][number];
+type PreparedOcrTask = {
+  resolvedProvider: ResolvedOcrProvider;
+  pageSelection: OcrPageSelection;
+  pages: Awaited<ReturnType<DocumentPreprocessorService['inspect']>>;
+};
 const MAX_OCR_RESULT_BYTES = 2 * 1024 * 1024;
 
 @Injectable()
@@ -190,11 +195,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       { ...dto, rawFileSha256: rawFile.sha256 },
       false
     );
+    const prepared = await this.prepareTask(dto, actor);
     return this.prisma.$transaction((tx) => this.idempotency.execute(
       tx,
       scope,
       201,
-      () => this.createTaskWithinTransaction(tx, dto, rawFile, actor, context, idempotencyKey)
+      () => this.createTaskWithinTransaction(tx, dto, rawFile, prepared, actor, context, idempotencyKey)
     ));
   }
 
@@ -229,6 +235,14 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       false
     );
     try {
+      const prepared = await this.prepareTask({
+        rawFileId: rawFile.id,
+        projectId: dto.projectId,
+        templateId: dto.templateId,
+        mockScenario: dto.mockScenario,
+        pageStart: dto.pageStart,
+        pageEnd: dto.pageEnd
+      }, actor);
       const task = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, () =>
         this.createTaskWithinTransaction(tx, {
           rawFileId: rawFile.id,
@@ -237,7 +251,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           mockScenario: dto.mockScenario,
           pageStart: dto.pageStart,
           pageEnd: dto.pageEnd
-        }, rawFile, actor, context, idempotencyKey)
+        }, rawFile, prepared, actor, context, idempotencyKey)
       ));
       if (task.rawFileId !== rawFile.id) {
         await this.files.discardFailedUpload(
@@ -263,25 +277,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     tx: Prisma.TransactionClient,
     dto: CreateOcrTaskDto,
     rawFile: Pick<RawFile, 'sha256'>,
+    prepared: PreparedOcrTask,
     actor: CurrentUser,
     context: RequestContext,
     idempotencyKey?: string
   ) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
     const template = await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
-    const resolvedProvider = await this.providers.resolve();
+    const { resolvedProvider, pageSelection, pages } = prepared;
     const provider = resolvedProvider.provider;
-    if (dto.mockScenario && provider.name !== 'mock') {
-      throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
-    }
-    const file = await this.files.readForProcessing(dto.rawFileId, actor);
-    const pageSelection = this.pageSelectionFromDto(dto);
-    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
     const snapshot = resolvedProvider.config;
     const executionSnapshot = this.providerExecutionSnapshot(snapshot);
     const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
 
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
-    await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
     const task = await tx.ocrTask.create({
       data: {
         rawFileId: dto.rawFileId,
@@ -317,6 +325,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       pageRange: pageSelection.pageStart ? pageSelection : null
     }));
     return toOcrTask(await this.findDetailOrThrow(task.id, tx));
+  }
+
+  private async prepareTask(dto: CreateOcrTaskDto, actor: CurrentUser): Promise<PreparedOcrTask> {
+    const [resolvedProvider, file] = await Promise.all([
+      this.providers.resolve(),
+      this.files.readForProcessing(dto.rawFileId, actor)
+    ]);
+    if (dto.mockScenario && resolvedProvider.provider.name !== 'mock') {
+      throw new BadRequestException('mockScenario 仅可用于 Mock OCR Provider');
+    }
+    const pageSelection = this.pageSelectionFromDto(dto);
+    const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
+    return { resolvedProvider, pageSelection, pages };
   }
 
   async findMany(query: QueryOcrTasksDto) {

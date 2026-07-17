@@ -133,6 +133,77 @@ describe('OCR phase 10 providers and preprocessing', () => {
     });
   });
 
+  it('prepares OCR input before opening the database transaction', async () => {
+    const events: string[] = [];
+    const prisma = {
+      rawFile: {
+        findUnique: jest.fn(async () => ({
+          id: 'raw-test',
+          relatedProjectId: 'project-test',
+          isVoided: false,
+          sha256: 'a'.repeat(64)
+        }))
+      },
+      $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
+        events.push('transaction');
+        return callback({});
+      })
+    };
+    const files = {
+      readForProcessing: jest.fn(async () => {
+        events.push('file');
+        return { buffer: Buffer.from('image'), mimeType: 'image/png' };
+      })
+    };
+    const preprocessor = {
+      inspect: jest.fn(async () => {
+        events.push('preprocess');
+        return [{ page: 1 }];
+      })
+    };
+    const providers = {
+      resolve: jest.fn(async () => {
+        events.push('provider');
+        return {
+          provider: { name: 'mock' },
+          config: {
+            provider: 'mock',
+            modelName: 'mock-ocr',
+            timeoutMs: 1_000,
+            maxConcurrency: 1,
+            configSummary: { source: 'test' }
+          }
+        };
+      })
+    };
+    const idempotency = {
+      prepare: jest.fn(() => ({})),
+      execute: jest.fn(async (_tx: unknown, _scope: unknown, _status: number, execute: () => Promise<unknown>) => execute())
+    };
+    const service = new OcrTasksService(
+      prisma as any,
+      files as any,
+      preprocessor as any,
+      providers as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      idempotency as any,
+      {} as any,
+      config({})
+    );
+    jest.spyOn(service as any, 'createTaskWithinTransaction').mockResolvedValue({ id: 'ocr-test' });
+
+    await expect(service.create(
+      { rawFileId: 'raw-test', projectId: 'project-test', templateId: 'template-test' },
+      { id: 'finance-test' } as any,
+      {} as any
+    )).resolves.toEqual({ id: 'ocr-test' });
+
+    expect(events).toEqual(['provider', 'file', 'preprocess', 'transaction']);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('round-trips allowed decimal boundaries without accepting JSON numbers or unsafe magnitudes', () => {
     const service = Object.create(OcrTasksService.prototype) as any;
     const moneyField = { fieldType: FieldType.money } as any;
