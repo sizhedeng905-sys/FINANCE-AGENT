@@ -16,6 +16,7 @@ export class FileStorageMaintenanceService implements OnModuleInit {
   private readonly logger = new Logger(FileStorageMaintenanceService.name);
   private readonly quarantineRoot: string;
   private readonly quarantineMaxAgeMs: number;
+  private readonly processRole: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -24,9 +25,11 @@ export class FileStorageMaintenanceService implements OnModuleInit {
   ) {
     this.quarantineRoot = resolveUploadQuarantineRoot(config);
     this.quarantineMaxAgeMs = config.get<number>('uploadQuarantineMaxAgeMs') ?? 3_600_000;
+    this.processRole = config.get<string>('processRole') ?? 'all';
   }
 
   async onModuleInit() {
+    if (this.processRole === 'worker') return;
     await this.cleanupStaleQuarantine().catch((error: unknown) => {
       this.logger.error(`Quarantine cleanup failed: ${this.errorMessage(error)}`);
     });

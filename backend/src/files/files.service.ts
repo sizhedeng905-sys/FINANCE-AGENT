@@ -53,6 +53,7 @@ export class FilesService {
   private readonly projectQuotaBytes: bigint;
   private readonly minimumFreeBytes: bigint;
   private readonly quarantineRoot: string;
+  private readonly signedUrlTtlSeconds: number;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -69,6 +70,7 @@ export class FilesService {
     this.projectQuotaBytes = BigInt(config.get<number>('fileQuotas.projectMb') ?? 5000) * 1024n * 1024n;
     this.minimumFreeBytes = BigInt(config.get<number>('fileQuotas.minimumFreeMb') ?? 1024) * 1024n * 1024n;
     this.quarantineRoot = resolveUploadQuarantineRoot(config);
+    this.signedUrlTtlSeconds = config.get<number>('storage.s3.presignedUrlTtlSeconds') ?? 60;
   }
 
   async upload(
@@ -217,13 +219,47 @@ export class FilesService {
       context
     );
     return {
-      stream: this.storage.openReadStream(file.storagePath),
+      stream: await this.storage.openReadStream(file.storagePath),
       fileName: file.originalFileName,
       mimeType: file.mimeType,
       fileSize: file.fileSize,
       inlineAllowed: file.fileType === 'image',
       trustStatus: file.previewStatus
     };
+  }
+
+  async createSignedDownloadUrl(id: string, actor: CurrentUser, context: RequestContext) {
+    const file = await this.findAccessibleOrThrow(id, actor);
+    this.assertClean(file.scanStatus);
+    if (!this.storage.createSignedReadUrl) {
+      throw new ConflictException('当前存储后端不支持签名下载地址');
+    }
+    const url = await this.storage.createSignedReadUrl(file.storagePath, {
+      expiresInSeconds: this.signedUrlTtlSeconds,
+      fileName: file.originalFileName,
+      mimeType: 'application/octet-stream'
+    });
+    const expiresAt = new Date(Date.now() + this.signedUrlTtlSeconds * 1_000);
+    await this.prisma.$transaction(async (tx) => {
+      await this.auditLogs.write(
+        tx,
+        actor,
+        'file.signed_download_url',
+        'raw_file',
+        file.id,
+        { sha256: file.sha256, expiresAt: expiresAt.toISOString() },
+        context
+      );
+      await this.ledgerEvents.write(
+        tx,
+        actor,
+        'raw_file_signed_download_issued',
+        'raw_file',
+        file.id,
+        { expiresAt: expiresAt.toISOString() }
+      );
+    });
+    return { url, expiresAt: expiresAt.toISOString() };
   }
 
   async readForProcessing(id: string, actor: CurrentUser) {

@@ -104,6 +104,16 @@ export class FilesController {
     return new StreamableFile(file.stream);
   }
 
+  @Get(':id/signed-download')
+  @Roles(UserRole.employee, UserRole.finance, UserRole.reviewer, UserRole.boss)
+  signedDownload(
+    @Param('id') id: string,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.files.createSignedDownloadUrl(id, user, getRequestContext(request));
+  }
+
   @Get(':id')
   @Roles(UserRole.employee, UserRole.finance, UserRole.reviewer, UserRole.boss)
   get(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser) {

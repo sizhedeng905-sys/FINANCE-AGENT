@@ -61,6 +61,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly maxRetries: number;
   private readonly processingLeaseMs: number;
   private readonly recoveryIntervalMs: number;
+  private readonly processRole: string;
   private readonly backgroundJobs = new Map<string, Promise<void>>();
   private stopping = false;
   private leaseReaper?: NodeJS.Timeout;
@@ -84,10 +85,15 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       5_000,
       config.get<number>('ocr.processingLeaseMs') ?? providerTimeoutMs * 2 + 30_000
     );
-    this.recoveryIntervalMs = Math.max(1_000, config.get<number>('ocr.recoveryIntervalMs') ?? 5_000);
+    this.recoveryIntervalMs = Math.max(
+      1_000,
+      config.get<number>('worker.pollIntervalMs') ?? config.get<number>('ocr.recoveryIntervalMs') ?? 5_000
+    );
+    this.processRole = config.get<string>('processRole') ?? 'all';
   }
 
   onModuleInit() {
+    if (!this.canRunBackgroundJobs()) return;
     void this.recoverRunnableTasks();
     this.leaseReaper = setInterval(() => void this.recoverRunnableTasks(), this.recoveryIntervalMs);
     this.leaseReaper.unref();
@@ -920,6 +926,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   }
 
   private scheduleTask(id: string) {
+    if (!this.canRunBackgroundJobs()) return;
     if (this.stopping || this.backgroundJobs.has(id)) return;
     const job = (async () => {
       const frozen = await this.prisma.ocrTask.findUnique({
@@ -943,6 +950,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       this.backgroundJobs.delete(id);
     });
     this.backgroundJobs.set(id, job);
+  }
+
+  private canRunBackgroundJobs() {
+    return this.processRole === 'worker' || this.processRole === 'all';
   }
 
   private async backgroundRequest(id: string) {

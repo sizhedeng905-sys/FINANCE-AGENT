@@ -7,6 +7,19 @@ describe('environment validation', () => {
     PORT: '3001',
     AI_PROVIDER: 'mock'
   };
+  const productionRequired = {
+    PROCESS_ROLE: 'api',
+    FILE_STORAGE_DRIVER: 's3',
+    S3_ENDPOINT: 'https://objects.finance-agent.example.com',
+    S3_REGION: 'us-east-1',
+    S3_BUCKET: 'finance-agent-private',
+    S3_ACCESS_KEY_ID: 'finance-runtime',
+    S3_SECRET_ACCESS_KEY: 's3-secret-with-enough-entropy-12345',
+    REQUEST_RATE_LIMIT_STORE: 'redis',
+    REDIS_URL: 'rediss://runtime:redis-secret-12345@redis.example.com:6379',
+    METRICS_TOKEN: 'metrics-secret-1234567890-ABCDEFGHIJ-klmnop',
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://tempo.finance-agent.example.com/v1/traces'
+  };
 
   it('accepts a complete safe configuration', () => {
     expect(validateEnvironment({ ...valid })).toMatchObject(valid);
@@ -66,12 +79,18 @@ describe('environment validation', () => {
   });
 
   it('requires an explicit CORS allowlist in production', () => {
-    expect(() => validateEnvironment({ ...valid, NODE_ENV: 'production', FILE_SCAN_MODE: 'clamav' })).toThrow('CORS_ORIGINS');
+    expect(() => validateEnvironment({
+      ...valid,
+      ...productionRequired,
+      NODE_ENV: 'production',
+      FILE_SCAN_MODE: 'clamav'
+    })).toThrow('CORS_ORIGINS');
   });
 
   it('requires production ClamAV, verified remote PostgreSQL TLS, short JWTs, and named proxies', () => {
     const production = {
       ...valid,
+      ...productionRequired,
       NODE_ENV: 'production',
       CORS_ORIGINS: 'https://finance-agent.example.com',
       FILE_SCAN_MODE: 'clamav',
@@ -89,6 +108,21 @@ describe('environment validation', () => {
       DATABASE_URL: 'postgresql://finance:secret@db.example.com:5432/finance_agent?sslmode=verify-full',
       TRUSTED_PROXIES: '127.0.0.1'
     })).toMatchObject({ NODE_ENV: 'production' });
+  });
+
+  it('requires split runtime, private object storage, Redis, and metrics credentials in production', () => {
+    const production = {
+      ...valid,
+      ...productionRequired,
+      NODE_ENV: 'production',
+      CORS_ORIGINS: 'https://finance-agent.example.com',
+      FILE_SCAN_MODE: 'clamav',
+      JWT_EXPIRES_IN: '30m'
+    };
+    expect(() => validateEnvironment({ ...production, PROCESS_ROLE: 'all' })).toThrow('PROCESS_ROLE');
+    expect(() => validateEnvironment({ ...production, FILE_STORAGE_DRIVER: 'local' })).toThrow('FILE_STORAGE_DRIVER');
+    expect(() => validateEnvironment({ ...production, REQUEST_RATE_LIMIT_STORE: 'memory' })).toThrow('REQUEST_RATE_LIMIT_STORE');
+    expect(() => validateEnvironment({ ...production, METRICS_TOKEN: '' })).toThrow('METRICS_TOKEN');
   });
 
   it('rejects ambiguous environments and low-entropy secrets', () => {

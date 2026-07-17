@@ -23,8 +23,14 @@ function createController(overrides: Record<string, any> = {}) {
     }))
   };
   const gate: any = overrides.gate ?? { readiness: jest.fn(() => ({ status: 'ok', maxQueue: 20, queues: {} })) };
-  const config = { get: jest.fn(() => 1024) } as unknown as ConfigService;
-  return new HealthController(prisma, storage, fileSecurity, modelRuntime, gate, config);
+  const redis: any = overrides.redis ?? {
+    ping: jest.fn(async () => ({ status: 'not_required' })),
+    readWorkerHeartbeat: jest.fn(async () => undefined)
+  };
+  const config = {
+    get: jest.fn((key: string) => key === 'fileQuotas.minimumFreeMb' ? 1024 : key === 'processRole' ? 'all' : undefined)
+  } as unknown as ConfigService;
+  return new HealthController(prisma, storage, fileSecurity, modelRuntime, gate, redis, config);
 }
 
 describe('health readiness', () => {
@@ -39,7 +45,8 @@ describe('health readiness', () => {
         storage: { status: 'ok' },
         antivirus: { status: 'not_required' },
         queues: { status: 'ok', pending: { imports: 1, ocr: 2, ai: 3 } },
-        models: { status: 'ok', enabled: [expect.objectContaining({ key: 'mock', healthy: true })] }
+        models: { status: 'ok', enabled: [expect.objectContaining({ key: 'mock', healthy: true })] },
+        redis: { status: 'not_required' }
       }
     });
   });
@@ -69,5 +76,40 @@ describe('health readiness', () => {
       });
       expect(JSON.stringify((error as ServiceUnavailableException).getResponse())).not.toContain('sensitive');
     }
+  });
+
+  it('requires a current shared worker heartbeat for an API process', async () => {
+    const redis = {
+      ping: jest.fn(async () => ({ status: 'ok', latencyMs: 1 })),
+      readWorkerHeartbeat: jest.fn(async () => undefined)
+    };
+    const controller = createController({ redis });
+    (controller as any).processRole = 'api';
+    await expect(controller.ready()).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('reports worker readiness without exposing host or process metadata', async () => {
+    const redis = {
+      ping: jest.fn(async () => ({ status: 'ok', latencyMs: 1 })),
+      readWorkerHeartbeat: jest.fn(async () => ({
+        instanceId: 'internal-worker-host',
+        processRole: 'worker',
+        pid: 1234,
+        timestamp: new Date().toISOString(),
+        ttlMs: 15_000
+      }))
+    };
+    const controller = createController({ redis });
+    (controller as any).processRole = 'api';
+
+    const response = await controller.ready();
+
+    expect(response.checks.redis).toEqual({
+      status: 'ok',
+      latencyMs: 1,
+      worker: { status: 'ok' }
+    });
+    expect(JSON.stringify(response)).not.toContain('internal-worker-host');
+    expect(JSON.stringify(response)).not.toContain('1234');
   });
 });

@@ -14,6 +14,7 @@ import { FileStorageMaintenanceService } from './file-storage-maintenance.servic
 import { FILE_STORAGE } from './file-storage';
 import { FilesService } from './files.service';
 import { LocalFileStorageService } from './local-file-storage.service';
+import { S3FileStorageService } from './s3-file-storage.service';
 import { createSecureUploadOptions } from './secure-upload-options';
 import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
 import { UploadAdmissionInterceptor } from './upload-admission.interceptor';
@@ -39,7 +40,16 @@ import { UploadAdmissionService } from './upload-admission.service';
     UploadAdmissionInterceptor,
     UploadAdmissionService,
     LocalFileStorageService,
-    { provide: FILE_STORAGE, useExisting: LocalFileStorageService },
+    S3FileStorageService,
+    {
+      provide: FILE_STORAGE,
+      inject: [ConfigService, LocalFileStorageService, S3FileStorageService],
+      useFactory: (
+        config: ConfigService,
+        local: LocalFileStorageService,
+        s3: S3FileStorageService
+      ) => config.get<string>('storage.driver') === 's3' ? s3 : local
+    },
     JwtAuthGuard,
     RolesGuard
   ],

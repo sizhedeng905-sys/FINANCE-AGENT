@@ -43,8 +43,15 @@ async function bootstrap() {
       callback(null, !origin || allowedOrigins.has(origin));
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id', 'X-CSRF-Token'],
-    exposedHeaders: ['X-Request-Id', 'Content-Disposition', 'Content-Length', 'X-File-Trust'],
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'Idempotency-Key',
+      'X-Request-Id',
+      'X-CSRF-Token',
+      'traceparent'
+    ],
+    exposedHeaders: ['X-Request-Id', 'traceparent', 'Content-Disposition', 'Content-Length', 'X-File-Trust'],
     credentials: true
   });
   app.setGlobalPrefix('api');

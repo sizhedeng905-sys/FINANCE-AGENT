@@ -130,6 +130,7 @@ const IMPORT_BACKGROUND_THRESHOLD_ROWS = 5_000;
 const IMPORT_BACKGROUND_MAX_ROWS = 50_000;
 const IMPORT_ROW_BATCH_SIZE = 500;
 const IMPORT_MAX_PARSE_ATTEMPTS = 3;
+const WORKER_HANDOFF_LEASE_PREFIX = 'worker-handoff:';
 
 class ImportParseLeaseLostError extends Error {}
 class ImportParseWorkerStoppingError extends Error {}
@@ -167,6 +168,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly confirmationBatchSize: number;
   private readonly confirmationLeaseMs: number;
   private readonly confirmationMaxAttempts: number;
+  private readonly processRole: string;
+  private readonly workerPollIntervalMs: number;
   private leaseReaper?: NodeJS.Timeout;
   private stopping = false;
 
@@ -184,15 +187,18 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     this.confirmationBatchSize = config.get<number>('importConfirmation.batchSize') ?? 500;
     this.confirmationLeaseMs = config.get<number>('importConfirmation.leaseMs') ?? 60_000;
     this.confirmationMaxAttempts = config.get<number>('importConfirmation.maxAttempts') ?? 3;
+    this.processRole = config.get<string>('processRole') ?? 'all';
+    this.workerPollIntervalMs = config.get<number>('worker.pollIntervalMs') ?? IMPORT_PARSE_REAPER_MS;
   }
 
   onModuleInit() {
+    if (!this.canRunBackgroundJobs()) return;
     void this.recoverExpiredParses();
     void this.recoverExpiredConfirmations();
     this.leaseReaper = setInterval(() => {
       void this.recoverExpiredParses();
       void this.recoverExpiredConfirmations();
-    }, IMPORT_PARSE_REAPER_MS);
+    }, this.workerPollIntervalMs);
     this.leaseReaper.unref();
   }
 
@@ -480,7 +486,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         return true;
       });
       if (!scheduled) throw new ConflictException('Excel 解析租约已失效');
-      this.scheduleBackgroundParse({
+      await this.scheduleBackgroundParse({
         taskId: id,
         leaseToken: prepared.leaseToken,
         actor,
@@ -618,7 +624,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           const job = await this.claimExpiredBackgroundParse(id);
           if (!job) continue;
           recovered += 1;
-          this.scheduleBackgroundParse(job);
+          await this.scheduleBackgroundParse(job);
         } catch (error) {
           this.logger.warn(`Import parse ${id} recovery failed: ${this.errorMessage(error)}`);
         }
@@ -652,7 +658,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         : undefined;
       const actor = this.toCurrentUser(requestedUser ?? task.uploader);
       const options = this.readParseConfig(task.parseConfig);
-      if (!options || task.parseAttempts >= IMPORT_MAX_PARSE_ATTEMPTS) {
+      const workerHandoff = this.isWorkerHandoffLease(task.leaseToken);
+      if (!options || (!workerHandoff && task.parseAttempts >= IMPORT_MAX_PARSE_ATTEMPTS)) {
         const reason = options
           ? `后台解析连续中断 ${task.parseAttempts} 次，已停止自动恢复`
           : '后台解析配置无效，已停止自动恢复';
@@ -690,9 +697,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         return undefined;
       }
 
-      const attempt = task.parseAttempts + 1;
+      const attempt = workerHandoff ? task.parseAttempts : task.parseAttempts + 1;
       const leaseToken = randomUUID();
-      const context = { requestId: `import-recovery-${id}-${attempt}` };
+      const context = {
+        requestId: workerHandoff
+          ? `import-worker-claim-${id}-${attempt}`
+          : `import-recovery-${id}-${attempt}`
+      };
       await tx.importSheet.deleteMany({ where: { importTaskId: id } });
       await tx.importTask.update({
         where: { id },
@@ -710,25 +721,33 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         }
       });
       await tx.rawFile.update({ where: { id: task.rawFileId }, data: { status: RawFileStatus.uploaded } });
-      await this.auditLogs.write(tx, actor, 'import_task.parse_recovered', 'import_task', id, {
+      const auditAction = workerHandoff ? 'import_task.parse_claimed' : 'import_task.parse_recovered';
+      const eventType = workerHandoff ? 'import_task_parse_claimed' : 'import_task_parse_recovered';
+      const eventSuffix = workerHandoff ? 'worker_claimed' : 'recovered';
+      await this.auditLogs.write(tx, actor, auditAction, 'import_task', id, {
         attempt,
         previousLeaseUntil: task.leaseUntil.toISOString(),
-        restartFromRow: 0
+        restartFromRow: 0,
+        workerHandoff
       }, context);
       await this.ledgerEvents.write(
         tx,
         actor,
-        'import_task_parse_recovered',
+        eventType,
         'import_task',
         id,
-        { attempt, restartFromRow: 0 },
-        `import_task:${id}:parse_attempt:${attempt}:recovered`
+        { attempt, restartFromRow: 0, workerHandoff },
+        `import_task:${id}:parse_attempt:${attempt}:${eventSuffix}`
       );
       return { taskId: id, leaseToken, actor, context, options, attempt };
     });
   }
 
-  private scheduleBackgroundParse(job: BackgroundParseJob) {
+  private async scheduleBackgroundParse(job: BackgroundParseJob) {
+    if (!this.canRunBackgroundJobs()) {
+      await this.handoffParseToWorker(job.taskId, job.leaseToken);
+      return;
+    }
     const jobKey = `${job.taskId}:${job.leaseToken}`;
     if (this.backgroundJobs.has(jobKey) || this.stopping) return;
     const running = this.executeBackgroundParse(job)
@@ -1229,7 +1248,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       claimedJob = { taskId: id, leaseToken, actor, context, attempt };
       return this.confirmationResponse(await this.findDetailOrThrow(id, tx), false);
     }));
-    if (claimedJob) this.scheduleBackgroundConfirmation(claimedJob);
+    if (claimedJob) await this.scheduleBackgroundConfirmation(claimedJob);
     return result;
   }
 
@@ -1249,7 +1268,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           const job = await this.claimExpiredBackgroundConfirmation(id);
           if (!job) continue;
           recovered += 1;
-          this.scheduleBackgroundConfirmation(job);
+          await this.scheduleBackgroundConfirmation(job);
         } catch (error) {
           this.logger.warn(`Import confirmation ${id} recovery failed: ${this.errorMessage(error)}`);
         }
@@ -1279,8 +1298,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         ? await tx.user.findUnique({ where: { id: task.confirmRequestedBy } })
         : undefined;
       const actor = this.toCurrentUser(requestedUser ?? task.uploader);
-      const context = { requestId: `import-confirm-recovery-${id}-${task.confirmationAttempts + 1}` };
-      if (task.confirmationAttempts >= this.confirmationMaxAttempts) {
+      const workerHandoff = this.isWorkerHandoffLease(task.leaseToken);
+      const attempt = workerHandoff ? task.confirmationAttempts : task.confirmationAttempts + 1;
+      const context = {
+        requestId: workerHandoff
+          ? `import-confirm-worker-claim-${id}-${attempt}`
+          : `import-confirm-recovery-${id}-${attempt}`
+      };
+      if (!workerHandoff && task.confirmationAttempts >= this.confirmationMaxAttempts) {
         const reason = `后台确认连续中断 ${task.confirmationAttempts} 次，已停止自动恢复`;
         await tx.importTask.update({
           where: { id },
@@ -1316,7 +1341,6 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           where: { importTaskId: id, confirmationProcessedAt: { not: null }, status: ImportRowStatus.error }
         })
       ]);
-      const attempt = task.confirmationAttempts + 1;
       const leaseToken = randomUUID();
       await tx.importTask.update({
         where: { id },
@@ -1333,26 +1357,36 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           version: { increment: 1 }
         }
       });
-      await this.auditLogs.write(tx, actor, 'import_task.confirm_recovered', 'import_task', id, {
+      const auditAction = workerHandoff ? 'import_task.confirm_claimed' : 'import_task.confirm_recovered';
+      const eventType = workerHandoff
+        ? 'import_task_confirmation_claimed'
+        : 'import_task_confirmation_recovered';
+      const eventSuffix = workerHandoff ? 'worker_claimed' : 'recovered';
+      await this.auditLogs.write(tx, actor, auditAction, 'import_task', id, {
         attempt,
         previousLeaseUntil: task.leaseUntil.toISOString(),
         processedRows,
-        totalRows
+        totalRows,
+        workerHandoff
       }, context);
       await this.ledgerEvents.write(
         tx,
         actor,
-        'import_task_confirmation_recovered',
+        eventType,
         'import_task',
         id,
-        { attempt, processedRows, totalRows },
-        `import_task:${id}:confirm_attempt:${attempt}:recovered`
+        { attempt, processedRows, totalRows, workerHandoff },
+        `import_task:${id}:confirm_attempt:${attempt}:${eventSuffix}`
       );
       return { taskId: id, leaseToken, actor, context, attempt };
     });
   }
 
-  private scheduleBackgroundConfirmation(job: BackgroundConfirmationJob) {
+  private async scheduleBackgroundConfirmation(job: BackgroundConfirmationJob) {
+    if (!this.canRunBackgroundJobs()) {
+      await this.handoffConfirmationToWorker(job.taskId, job.leaseToken);
+      return;
+    }
     const jobKey = `confirm:${job.taskId}:${job.leaseToken}`;
     if (this.backgroundJobs.has(jobKey) || this.stopping) return;
     const running = this.executeBackgroundConfirmation(job)
@@ -1709,14 +1743,26 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     ));
   }
 
-  private async releaseConfirmationForRecovery(id: string, leaseToken: string, reason: string) {
+  private async releaseConfirmationForRecovery(id: string, leaseToken: string, reason?: string) {
     await this.prisma.importTask.updateMany({
       where: { id, status: ImportTaskStatus.confirming, leaseToken },
       data: {
         leaseUntil: new Date(Date.now() - 1),
-        errorMessage: `后台确认中断，等待租约恢复：${reason}`.slice(0, 1000)
+        errorMessage: reason ? `后台确认中断，等待租约恢复：${reason}`.slice(0, 1000) : null
       }
     }).catch(() => undefined);
+  }
+
+  private async handoffConfirmationToWorker(id: string, leaseToken: string) {
+    const updated = await this.prisma.importTask.updateMany({
+      where: { id, status: ImportTaskStatus.confirming, leaseToken },
+      data: {
+        leaseToken: `${WORKER_HANDOFF_LEASE_PREFIX}${leaseToken}`,
+        leaseUntil: new Date(Date.now() - 1),
+        errorMessage: null
+      }
+    });
+    if (updated.count !== 1) throw new ConflictException('Excel 确认任务交接 Worker 失败');
   }
 
   private async assertOwnedConfirmation(tx: Prisma.TransactionClient, id: string, leaseToken: string) {
@@ -2568,14 +2614,34 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async releaseParseForRecovery(id: string, leaseToken: string) {
+  private async releaseParseForRecovery(id: string, leaseToken: string, reason: string | null = '后台解析进程已停止，等待租约恢复') {
     await this.prisma.importTask.updateMany({
       where: { id, status: ImportTaskStatus.parsing, leaseToken },
       data: {
         leaseUntil: new Date(Date.now() - 1),
-        errorMessage: '后台解析进程已停止，等待租约恢复'
+        errorMessage: reason
       }
     }).catch(() => undefined);
+  }
+
+  private async handoffParseToWorker(id: string, leaseToken: string) {
+    const updated = await this.prisma.importTask.updateMany({
+      where: { id, status: ImportTaskStatus.parsing, leaseToken },
+      data: {
+        leaseToken: `${WORKER_HANDOFF_LEASE_PREFIX}${leaseToken}`,
+        leaseUntil: new Date(Date.now() - 1),
+        errorMessage: null
+      }
+    });
+    if (updated.count !== 1) throw new ConflictException('Excel 解析任务交接 Worker 失败');
+  }
+
+  private isWorkerHandoffLease(leaseToken: string | null) {
+    return leaseToken?.startsWith(WORKER_HANDOFF_LEASE_PREFIX) ?? false;
+  }
+
+  private canRunBackgroundJobs() {
+    return this.processRole === 'worker' || this.processRole === 'all';
   }
 
   private async assertOwnedParse(tx: Prisma.TransactionClient, id: string, leaseToken: string) {

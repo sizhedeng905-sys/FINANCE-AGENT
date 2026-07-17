@@ -5,6 +5,7 @@ import { AiTaskStatus, ImportTaskStatus, OcrTaskStatus } from '@prisma/client';
 
 import { FileSecurityService } from '../files/file-security.service';
 import { FILE_STORAGE, FileStorage } from '../files/file-storage';
+import { RedisService } from '../infrastructure/redis/redis.service';
 import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ interface ReadinessCheck {
 @Controller('health')
 export class HealthController {
   private readonly minimumFreeBytes: bigint;
+  private readonly processRole: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -25,9 +27,11 @@ export class HealthController {
     private readonly fileSecurity: FileSecurityService,
     private readonly modelRuntime: ModelRuntimeService,
     private readonly executionGate: ModelExecutionGateService,
+    private readonly redis: RedisService,
     config: ConfigService
   ) {
     this.minimumFreeBytes = BigInt(config.get<number>('fileQuotas.minimumFreeMb') ?? 1024) * 1024n * 1024n;
+    this.processRole = config.get<string>('processRole') ?? 'all';
   }
 
   @Get()
@@ -51,14 +55,15 @@ export class HealthController {
 
   @Get('ready')
   async ready() {
-    const [database, storage, antivirus, queues, models] = await Promise.all([
+    const [database, storage, antivirus, queues, models, redis] = await Promise.all([
       this.capture(() => this.databaseReadiness()),
       this.capture(() => this.storageReadiness()),
       this.capture(() => this.fileSecurity.readiness()),
       this.capture(() => this.queueReadiness()),
-      this.capture(() => this.modelReadiness())
+      this.capture(() => this.modelReadiness()),
+      this.capture(() => this.redisReadiness())
     ]);
-    const checks = { database, storage, antivirus, queues, models };
+    const checks = { database, storage, antivirus, queues, models, redis };
     const ready = Object.values(checks).every((check) => ['ok', 'not_required'].includes(check.status));
     if (!ready) {
       throw new ServiceUnavailableException({
@@ -75,6 +80,7 @@ export class HealthController {
   }
 
   private async storageReadiness(): Promise<ReadinessCheck> {
+    await this.storage.healthCheck?.();
     const availableBytes = await this.storage.availableBytes();
     if (availableBytes < this.minimumFreeBytes) {
       return {
@@ -87,6 +93,18 @@ export class HealthController {
       status: 'ok',
       availableBytes: availableBytes.toString(),
       minimumFreeBytes: this.minimumFreeBytes.toString()
+    };
+  }
+
+  private async redisReadiness(): Promise<ReadinessCheck> {
+    const redis = await this.redis.ping();
+    if (redis.status === 'not_required') return redis;
+    if (this.processRole !== 'api') return redis;
+    const heartbeat = await this.redis.readWorkerHeartbeat();
+    if (!heartbeat) return { status: 'worker_unavailable' };
+    return {
+      ...redis,
+      worker: { status: 'ok' }
     };
   }
 

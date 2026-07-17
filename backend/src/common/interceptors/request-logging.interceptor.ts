@@ -15,6 +15,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     const base = {
       type: 'http_request',
       requestId: request.requestId,
+      traceId: request.traceId,
       method: request.method,
       path: (request.originalUrl || request.url).split('?')[0],
       actorUserId: request.user?.id,

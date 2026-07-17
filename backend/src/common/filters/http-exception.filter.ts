@@ -29,7 +29,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request & { requestId?: string }>();
+    const request = ctx.getRequest<Request & { requestId?: string; traceId?: string }>();
 
     const { status, code, message, data } = this.normalizeException(exception);
 
@@ -37,6 +37,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.error(JSON.stringify({
         type: 'http_exception',
         requestId: request.requestId,
+        traceId: request.traceId,
         method: request.method,
         path: (request.originalUrl || request.url).split('?')[0],
         statusCode: status,

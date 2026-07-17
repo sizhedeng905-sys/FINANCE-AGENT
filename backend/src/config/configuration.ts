@@ -1,5 +1,6 @@
 export default () => ({
   nodeEnv: process.env.NODE_ENV || 'development',
+  processRole: process.env.PROCESS_ROLE || 'all',
   host: process.env.HOST || '127.0.0.1',
   port: Number.parseInt(process.env.PORT ?? '3001', 10),
   jwtSecret: process.env.JWT_SECRET,
@@ -22,6 +23,21 @@ export default () => ({
     userMb: Number.parseInt(process.env.FILE_USER_QUOTA_MB ?? '500', 10),
     projectMb: Number.parseInt(process.env.FILE_PROJECT_QUOTA_MB ?? '5000', 10),
     minimumFreeMb: Number.parseInt(process.env.FILE_MINIMUM_FREE_MB ?? '1024', 10)
+  },
+  storage: {
+    driver: process.env.FILE_STORAGE_DRIVER || 'local',
+    s3: {
+      endpoint: process.env.S3_ENDPOINT || '',
+      region: process.env.S3_REGION || 'us-east-1',
+      bucket: process.env.S3_BUCKET || '',
+      accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === undefined
+        ? true
+        : process.env.S3_FORCE_PATH_STYLE === 'true',
+      capacityBytes: process.env.S3_CAPACITY_BYTES || '1099511627776',
+      presignedUrlTtlSeconds: Number.parseInt(process.env.S3_PRESIGNED_URL_TTL_SECONDS ?? '60', 10)
+    }
   },
   fileScan: {
     mode: process.env.FILE_SCAN_MODE || 'basic',
@@ -60,8 +76,30 @@ export default () => ({
     .map((value) => value.trim())
     .filter(Boolean),
   requestRateLimit: {
+    store: process.env.REQUEST_RATE_LIMIT_STORE || 'memory',
     windowMs: Number.parseInt(process.env.REQUEST_RATE_LIMIT_WINDOW_MS ?? '60000', 10),
     max: Number.parseInt(process.env.REQUEST_RATE_LIMIT_MAX ?? '600', 10)
+  },
+  redis: {
+    url: process.env.REDIS_URL || '',
+    required: process.env.NODE_ENV === 'production' || process.env.REQUEST_RATE_LIMIT_STORE === 'redis',
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'finance-agent',
+    connectTimeoutMs: Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10)
+  },
+  worker: {
+    pollIntervalMs: Number.parseInt(process.env.WORKER_POLL_INTERVAL_MS ?? '5000', 10),
+    heartbeatIntervalMs: Number.parseInt(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? '5000', 10),
+    heartbeatTtlMs: Number.parseInt(process.env.WORKER_HEARTBEAT_TTL_MS ?? '20000', 10)
+  },
+  metrics: {
+    token: process.env.METRICS_TOKEN || ''
+  },
+  tracing: {
+    endpoint: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || '',
+    serviceName: process.env.OTEL_SERVICE_NAME || 'finance-agent-api',
+    batchSize: Number.parseInt(process.env.OTEL_TRACE_BATCH_SIZE ?? '100', 10),
+    maxQueue: Number.parseInt(process.env.OTEL_TRACE_MAX_QUEUE ?? '1000', 10),
+    flushIntervalMs: Number.parseInt(process.env.OTEL_TRACE_FLUSH_INTERVAL_MS ?? '2000', 10)
   },
   ai: {
     provider: process.env.AI_PROVIDER || 'mock',

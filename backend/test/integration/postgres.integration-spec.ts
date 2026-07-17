@@ -5470,6 +5470,35 @@ describe('real PostgreSQL integration', () => {
       })).toBe(1);
     });
 
+    it('claims a normal API-to-worker confirmation handoff without consuming a retry', async () => {
+      const rowCount = 100;
+      const taskId = await createTask(rowCount, '2026-07-18');
+      await prisma.importTask.update({
+        where: { id: taskId },
+        data: {
+          status: ImportTaskStatus.confirming,
+          leaseToken: 'worker-handoff:integration-confirm-token',
+          leaseUntil: new Date(Date.now() - 1_000),
+          confirmRequestedBy: financeUserId,
+          confirmationTotalRows: rowCount,
+          confirmationAttempts: 1,
+          confirmationStartedAt: new Date()
+        }
+      });
+      expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: rowCount,
+        confirmationAttempts: 1
+      });
+      expect(await prisma.auditLog.count({
+        where: { resourceId: taskId, action: 'import_task.confirm_claimed' }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: taskId, eventType: 'import_task_confirmation_claimed' }
+      })).toBe(1);
+    });
+
     it('lets a recovered lease take over while the old worker can no longer commit', async () => {
       const rowCount = 5_001;
       const taskId = await createTask(rowCount, '2026-07-19');
@@ -5856,6 +5885,33 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.importRow.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
       expect(await prisma.importSheet.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
       expect(await prisma.businessRecord.count({ where: { importTaskId: cancelledTaskId } })).toBe(0);
+
+      const handoffTaskId = await createTask(`integration-large-handoff-${Date.now()}`, 'synthetic-large-handoff.xlsx');
+      await prisma.importTask.update({
+        where: { id: handoffTaskId },
+        data: {
+          status: ImportTaskStatus.parsing,
+          executionMode: 'background',
+          processingMode: 'streaming',
+          parseConfig: {},
+          parseAttempts: 1,
+          totalRows: 5001,
+          leaseToken: 'worker-handoff:integration-parse-token',
+          leaseUntil: new Date(Date.now() - 1_000)
+        }
+      });
+      expect(await imports.recoverExpiredParses()).toBe(1);
+      expect(await waitForFinished(handoffTaskId)).toMatchObject({
+        status: ImportTaskStatus.pending_confirm,
+        totalRows: 5001,
+        parseAttempts: 1
+      });
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.parse_claimed', resourceId: handoffTaskId }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_parse_claimed', aggregateId: handoffTaskId }
+      })).toBe(1);
 
       const recoveredTaskId = await createTask(`integration-large-recover-${Date.now()}`, 'synthetic-large-recover.xlsx');
       let recoveryBatchPersisted!: () => void;

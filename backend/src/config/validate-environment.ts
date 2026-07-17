@@ -8,6 +8,9 @@ const AI_PROVIDERS = new Set(['mock', 'openai', 'openai_compatible']);
 const OCR_PROVIDERS = new Set(['mock', 'local_paddle']);
 const NODE_ENVIRONMENTS = new Set(['development', 'test', 'production']);
 const FILE_SCAN_MODES = new Set(['basic', 'clamav']);
+const PROCESS_ROLES = new Set(['api', 'worker', 'all']);
+const FILE_STORAGE_DRIVERS = new Set(['local', 's3']);
+const RATE_LIMIT_STORES = new Set(['memory', 'redis']);
 
 export function validateEnvironment(environment: Record<string, unknown>) {
   const databaseUrl = String(environment.DATABASE_URL ?? '');
@@ -56,11 +59,34 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const aiMaxConcurrency = Number(String(environment.AI_MAX_CONCURRENCY ?? '1'));
   const ocrMaxConcurrency = Number(String(environment.OCR_MAX_CONCURRENCY ?? '1'));
   const nodeEnv = String(environment.NODE_ENV ?? 'development');
+  const processRole = String(environment.PROCESS_ROLE ?? 'all');
+  const fileStorageDriver = String(environment.FILE_STORAGE_DRIVER ?? 'local');
+  const s3Endpoint = String(environment.S3_ENDPOINT ?? '');
+  const s3Region = String(environment.S3_REGION ?? 'us-east-1');
+  const s3Bucket = String(environment.S3_BUCKET ?? '');
+  const s3AccessKeyId = String(environment.S3_ACCESS_KEY_ID ?? '');
+  const s3SecretAccessKey = String(environment.S3_SECRET_ACCESS_KEY ?? '');
+  const s3ForcePathStyle = environment.S3_FORCE_PATH_STYLE ?? 'true';
+  const s3CapacityBytes = String(environment.S3_CAPACITY_BYTES ?? '1099511627776');
+  const s3PresignedUrlTtlSeconds = Number(String(environment.S3_PRESIGNED_URL_TTL_SECONDS ?? '60'));
   const corsOrigins = String(environment.CORS_ORIGINS ?? '');
   const swaggerEnabled = environment.SWAGGER_ENABLED;
   const trustProxyHops = Number(String(environment.TRUST_PROXY_HOPS ?? '0'));
   const requestRateLimitWindowMs = Number(String(environment.REQUEST_RATE_LIMIT_WINDOW_MS ?? '60000'));
   const requestRateLimitMax = Number(String(environment.REQUEST_RATE_LIMIT_MAX ?? '600'));
+  const requestRateLimitStore = String(environment.REQUEST_RATE_LIMIT_STORE ?? 'memory');
+  const redisUrl = String(environment.REDIS_URL ?? '');
+  const redisKeyPrefix = String(environment.REDIS_KEY_PREFIX ?? 'finance-agent');
+  const redisConnectTimeoutMs = Number(String(environment.REDIS_CONNECT_TIMEOUT_MS ?? '5000'));
+  const workerPollIntervalMs = Number(String(environment.WORKER_POLL_INTERVAL_MS ?? '5000'));
+  const workerHeartbeatIntervalMs = Number(String(environment.WORKER_HEARTBEAT_INTERVAL_MS ?? '5000'));
+  const workerHeartbeatTtlMs = Number(String(environment.WORKER_HEARTBEAT_TTL_MS ?? '20000'));
+  const metricsToken = String(environment.METRICS_TOKEN ?? '');
+  const traceEndpoint = String(environment.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? '');
+  const traceServiceName = String(environment.OTEL_SERVICE_NAME ?? 'finance-agent-api');
+  const traceBatchSize = Number(String(environment.OTEL_TRACE_BATCH_SIZE ?? '100'));
+  const traceMaxQueue = Number(String(environment.OTEL_TRACE_MAX_QUEUE ?? '1000'));
+  const traceFlushIntervalMs = Number(String(environment.OTEL_TRACE_FLUSH_INTERVAL_MS ?? '2000'));
   const trustedProxies = String(environment.TRUSTED_PROXIES ?? '');
   const aiMaxOutputTokens = Number(String(environment.AI_MAX_OUTPUT_TOKENS ?? '1200'));
   const aiMaxResponseBytes = Number(String(environment.AI_MAX_RESPONSE_BYTES ?? '2097152'));
@@ -69,6 +95,12 @@ export function validateEnvironment(environment: Record<string, unknown>) {
 
   if (!NODE_ENVIRONMENTS.has(nodeEnv)) {
     throw new Error(`NODE_ENV must be one of: ${Array.from(NODE_ENVIRONMENTS).join(', ')}.`);
+  }
+  if (!PROCESS_ROLES.has(processRole)) {
+    throw new Error(`PROCESS_ROLE must be one of: ${Array.from(PROCESS_ROLES).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && processRole === 'all') {
+    throw new Error('PROCESS_ROLE must be api or worker in production.');
   }
 
   if (!/^postgres(?:ql)?:\/\//.test(databaseUrl)) {
@@ -130,6 +162,47 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!FILE_SCAN_MODES.has(fileScanMode)) {
     throw new Error(`FILE_SCAN_MODE must be one of: ${Array.from(FILE_SCAN_MODES).join(', ')}.`);
+  }
+  if (!FILE_STORAGE_DRIVERS.has(fileStorageDriver)) {
+    throw new Error(`FILE_STORAGE_DRIVER must be one of: ${Array.from(FILE_STORAGE_DRIVERS).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && fileStorageDriver !== 's3') {
+    throw new Error('FILE_STORAGE_DRIVER must be s3 in production.');
+  }
+  if (fileStorageDriver === 's3') {
+    let parsedEndpoint: URL;
+    try {
+      parsedEndpoint = new URL(s3Endpoint);
+    } catch {
+      throw new Error('S3_ENDPOINT must be a valid HTTP(S) URL.');
+    }
+    if (!['http:', 'https:'].includes(parsedEndpoint.protocol) || parsedEndpoint.username || parsedEndpoint.password) {
+      throw new Error('S3_ENDPOINT must be an HTTP(S) URL without embedded credentials.');
+    }
+    if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(s3Bucket)) {
+      throw new Error('S3_BUCKET must be a valid private bucket name.');
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(s3Region)) {
+      throw new Error('S3_REGION must be a valid region identifier.');
+    }
+    if (s3AccessKeyId.length < 3 || s3SecretAccessKey.length < 16) {
+      throw new Error('S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required for S3 storage.');
+    }
+    if (!['true', 'false', true, false].includes(s3ForcePathStyle as never)) {
+      throw new Error('S3_FORCE_PATH_STYLE must be true or false.');
+    }
+    let capacityBytes: bigint;
+    try {
+      capacityBytes = BigInt(s3CapacityBytes);
+    } catch {
+      throw new Error('S3_CAPACITY_BYTES must be a positive integer.');
+    }
+    if (capacityBytes < BigInt(fileMinimumFreeMb + maxFileSizeMb) * 1024n * 1024n) {
+      throw new Error('S3_CAPACITY_BYTES must exceed the configured minimum free space and upload size.');
+    }
+    if (!Number.isInteger(s3PresignedUrlTtlSeconds) || s3PresignedUrlTtlSeconds < 30 || s3PresignedUrlTtlSeconds > 300) {
+      throw new Error('S3_PRESIGNED_URL_TTL_SECONDS must be an integer between 30 and 300.');
+    }
   }
   if (nodeEnv === 'production' && fileScanMode !== 'clamav') {
     throw new Error('FILE_SCAN_MODE must be clamav in production.');
@@ -256,6 +329,78 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(requestRateLimitMax) || requestRateLimitMax < 10 || requestRateLimitMax > 100000) {
     throw new Error('REQUEST_RATE_LIMIT_MAX must be an integer between 10 and 100000.');
+  }
+  if (!RATE_LIMIT_STORES.has(requestRateLimitStore)) {
+    throw new Error(`REQUEST_RATE_LIMIT_STORE must be one of: ${Array.from(RATE_LIMIT_STORES).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && requestRateLimitStore !== 'redis') {
+    throw new Error('REQUEST_RATE_LIMIT_STORE must be redis in production.');
+  }
+  if (redisUrl) {
+    let parsedRedisUrl: URL;
+    try {
+      parsedRedisUrl = new URL(redisUrl);
+    } catch {
+      throw new Error('REDIS_URL must be a valid redis:// or rediss:// URL.');
+    }
+    if (!['redis:', 'rediss:'].includes(parsedRedisUrl.protocol)) {
+      throw new Error('REDIS_URL must use redis:// or rediss://.');
+    }
+    if (nodeEnv === 'production' && !parsedRedisUrl.password) {
+      throw new Error('Production REDIS_URL must include authentication.');
+    }
+  } else if (requestRateLimitStore === 'redis' || nodeEnv === 'production') {
+    throw new Error('REDIS_URL is required for Redis-backed runtime services.');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9:_-]{2,63}$/.test(redisKeyPrefix)) {
+    throw new Error('REDIS_KEY_PREFIX must be between 3 and 64 safe characters.');
+  }
+  if (!Number.isInteger(redisConnectTimeoutMs) || redisConnectTimeoutMs < 500 || redisConnectTimeoutMs > 30000) {
+    throw new Error('REDIS_CONNECT_TIMEOUT_MS must be an integer between 500 and 30000.');
+  }
+  if (!Number.isInteger(workerPollIntervalMs) || workerPollIntervalMs < 500 || workerPollIntervalMs > 60000) {
+    throw new Error('WORKER_POLL_INTERVAL_MS must be an integer between 500 and 60000.');
+  }
+  if (!Number.isInteger(workerHeartbeatIntervalMs) || workerHeartbeatIntervalMs < 1000 || workerHeartbeatIntervalMs > 60000) {
+    throw new Error('WORKER_HEARTBEAT_INTERVAL_MS must be an integer between 1000 and 60000.');
+  }
+  if (
+    !Number.isInteger(workerHeartbeatTtlMs) ||
+    workerHeartbeatTtlMs < workerHeartbeatIntervalMs * 2 ||
+    workerHeartbeatTtlMs > 300000
+  ) {
+    throw new Error('WORKER_HEARTBEAT_TTL_MS must be at least twice the heartbeat interval and at most 300000.');
+  }
+  if (metricsToken && (metricsToken.length < 32 || thisSecretHasLowEntropy(metricsToken))) {
+    throw new Error('METRICS_TOKEN must be a high-entropy secret of at least 32 characters.');
+  }
+  if (nodeEnv === 'production' && !metricsToken) {
+    throw new Error('METRICS_TOKEN is required in production.');
+  }
+  if (traceEndpoint) {
+    let parsedTraceEndpoint: URL;
+    try {
+      parsedTraceEndpoint = new URL(traceEndpoint);
+    } catch {
+      throw new Error('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be a valid HTTP(S) URL.');
+    }
+    if (!['http:', 'https:'].includes(parsedTraceEndpoint.protocol) || parsedTraceEndpoint.username || parsedTraceEndpoint.password) {
+      throw new Error('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be an HTTP(S) URL without embedded credentials.');
+    }
+  } else if (nodeEnv === 'production') {
+    throw new Error('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is required in production.');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/.test(traceServiceName)) {
+    throw new Error('OTEL_SERVICE_NAME must be between 3 and 64 safe characters.');
+  }
+  if (!Number.isInteger(traceBatchSize) || traceBatchSize < 1 || traceBatchSize > 500) {
+    throw new Error('OTEL_TRACE_BATCH_SIZE must be an integer between 1 and 500.');
+  }
+  if (!Number.isInteger(traceMaxQueue) || traceMaxQueue < traceBatchSize || traceMaxQueue > 10000) {
+    throw new Error('OTEL_TRACE_MAX_QUEUE must be between OTEL_TRACE_BATCH_SIZE and 10000.');
+  }
+  if (!Number.isInteger(traceFlushIntervalMs) || traceFlushIntervalMs < 500 || traceFlushIntervalMs > 30000) {
+    throw new Error('OTEL_TRACE_FLUSH_INTERVAL_MS must be an integer between 500 and 30000.');
   }
 
   if (nodeEnv === 'production') {

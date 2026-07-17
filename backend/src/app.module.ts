@@ -12,6 +12,10 @@ import { FilesModule } from './files/files.module';
 import { HealthModule } from './health/health.module';
 import { IdempotencyModule } from './idempotency/idempotency.module';
 import { ImportTasksModule } from './import-tasks/import-tasks.module';
+import { RedisModule } from './infrastructure/redis/redis.module';
+import { MetricsMiddleware } from './observability/metrics.middleware';
+import { ObservabilityModule } from './observability/observability.module';
+import { TracingMiddleware } from './observability/tracing.middleware';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RecordsModule } from './records/records.module';
@@ -23,6 +27,7 @@ import { OcrModule } from './ocr/ocr.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsersModule } from './users/users.module';
 import { WorkOrdersModule } from './work-orders/work-orders.module';
+import { WorkerRuntimeModule } from './worker/worker-runtime.module';
 
 @Module({
   imports: [
@@ -32,6 +37,7 @@ import { WorkOrdersModule } from './work-orders/work-orders.module';
       load: [configuration],
       validate: validateEnvironment
     }),
+    RedisModule,
     PrismaModule,
     IdempotencyModule,
     HealthModule,
@@ -49,11 +55,15 @@ import { WorkOrdersModule } from './work-orders/work-orders.module';
     OcrModule,
     RiskRulesModule,
     ReportsModule,
-    AiModule
+    AiModule,
+    ObservabilityModule,
+    WorkerRuntimeModule
   ]
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware, RequestRateLimitMiddleware).forRoutes('*');
+    consumer
+      .apply(RequestIdMiddleware, MetricsMiddleware, TracingMiddleware, RequestRateLimitMiddleware)
+      .forRoutes('*');
   }
 }
