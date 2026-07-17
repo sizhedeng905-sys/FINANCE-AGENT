@@ -50,7 +50,10 @@
     "model:cve:offline": "node scripts/scan-model-sboms-grype.mjs",
     "model:security": "node scripts/scan-model-images.mjs",
     "proxy:config:check": "node scripts/test-nginx-upload-boundary.mjs --config-only",
-    "proxy:boundary:test": "node scripts/test-nginx-upload-boundary.mjs"
+    "proxy:boundary:test": "node scripts/test-nginx-upload-boundary.mjs",
+    "uat:init": "tsx scripts/run-finance-uat.ts init",
+    "uat:validate": "tsx scripts/run-finance-uat.ts validate",
+    "uat:reconcile": "tsx scripts/run-finance-uat.ts reconcile"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.28",

@@ -11,6 +11,7 @@
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
 - 真实业务数据 B0-B7 与 B8-01 至 B8-07 工程门禁已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账、权限/文件安全及模型控制面均有自动化证据；财务、OCR、安全和业务政策仍待外部签字
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 的真实并发切换、能力探针、无 OOM 和文本恢复均已验收
+- B8-08 已提供八场景匿名 UAT 工作包和 `_test` PostgreSQL 逐分对账工具；当前状态仍为 `blocked_external`，不会用自动化结果代替财务、业务、老板或安全签字
 
 ## 技术栈
 
@@ -184,6 +185,7 @@ http://localhost:3001/api/health
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
 | B8-01 至 B8-07 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim、安全边界，以及模型身份、GPU 互斥、SBOM/CVE 和代理上传门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md` |
+| B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景运行手册、匿名 manifest、逐分对账和问题/签字模板已交付；H-01 至 H-12、H-16 待授权人员完成 |
 | 本地模型部署 | 控制面通过 | 四套资产完整；文本/OCR 常驻，VL/Embedding 按需真实切换和恢复已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -328,7 +330,17 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B8-07 验收基线为 23/23 Jest suites、235/235 tests、58/58 真实 PostgreSQL 集成测试和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build、真实 VL/Embedding 切换、真实 PaddleOCR、SBOM/CVE 与 Nginx 边界均通过。详细证据见 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md`。
+当前 B8-08 工程基线为 24/24 Jest suites、240/240 tests、2/2 PostgreSQL suites（59/59 tests）和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build 通过。B8-07 的真实模型/SBOM/代理门禁继续有效；B8-08 人工结论仍为 `blocked_external`。详细证据见 `docs/B8_08_FINANCE_UAT_REPORT.md`。
+
+初始化并校验本地匿名 UAT 工作包：
+
+```bash
+npm run uat:init --prefix backend
+npm run uat:validate --prefix backend
+npm run uat:reconcile --prefix backend
+```
+
+UAT 文件只写入被忽略的 `.realdata-test/uat/`，且对账命令拒绝非 `_test` 数据库。运行步骤见 `docs/B8_08_FINANCE_UAT_RUNBOOK.md`。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

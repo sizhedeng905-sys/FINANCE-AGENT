@@ -66,6 +66,9 @@ npm run model:sbom
 npm run model:cve:offline
 npm run proxy:config:check
 npm run proxy:boundary:test
+npm run uat:init
+npm run uat:validate
+npm run uat:reconcile
 ```
 
 Root-level Playwright acceptance uses a dedicated PostgreSQL database:
@@ -77,16 +80,17 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-17, B8-07 engineering gate):
+Current verification baseline (2026-07-17, B8-08 engineering tooling):
 
 - Backend build and Prisma validation pass with 24 applied migrations and no pending migration.
-- Jest: 23/23 suites and 235/235 tests.
-- Real PostgreSQL integration: 58/58 tests, including 30,196/49,999-row final posting.
+- Jest: 24/24 suites and 240/240 tests.
+- Real PostgreSQL integration: 2/2 suites and 59/59 tests, including 30,196/49,999-row final posting and finance UAT reconciliation.
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
 - Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
-- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md`.
+- B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
+- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_08_FINANCE_UAT_REPORT.md`.
 
 ## API
 
@@ -263,6 +267,7 @@ Completed:
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
 - Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
 - B8-01 to B8-07: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, strict financial Claim grounding, security boundaries, and an authenticated GPU/model control plane.
+- B8-08 engineering preparation: privacy-safe UAT manifests, integer-cent PostgreSQL reconciliation, issue tracking, and non-overwriting human signoff templates; human acceptance remains external.
 
 Explicitly deferred by the user:
 

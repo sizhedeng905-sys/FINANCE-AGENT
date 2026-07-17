@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "b8-08-v1",
+  "runId": "B8-08-UAT-EXAMPLE",
+  "dataClassification": "anonymized",
+  "cases": [
+    {
+      "id": "UAT-01",
+      "title": "Excel 运输账单与逐分对账",
+      "ownerRoles": ["finance", "business"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-01", "H-06"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-02",
+      "title": "考勤劳务入账粒度与互斥",
+      "ownerRoles": ["finance", "business"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-01", "H-02"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-03",
+      "title": "报销主表与内嵌凭证归属",
+      "ownerRoles": ["finance", "business"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-07", "H-11"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-04",
+      "title": "OCR 证据纠错与人工确认",
+      "ownerRoles": ["finance"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-04", "H-05"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-05",
+      "title": "日月项目报表与人工汇总",
+      "ownerRoles": ["finance", "boss"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-06"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-06",
+      "title": "老板 AI 期间口径与数字来源",
+      "ownerRoles": ["boss", "security"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-08", "H-12"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-07",
+      "title": "同源与跨来源重复业务",
+      "ownerRoles": ["finance", "business"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-03"],
+      "issueRefs": []
+    },
+    {
+      "id": "UAT-08",
+      "title": "冲销更正作废与历史一致性",
+      "ownerRoles": ["finance", "business"],
+      "status": "awaiting_human",
+      "sampleIds": [],
+      "recordIds": [],
+      "importTaskIds": [],
+      "ocrTaskIds": [],
+      "expected": { "recordCount": null, "invalidRecordCount": null, "income": null, "expense": null, "profit": null, "auditCoveredRecordCount": null, "ledgerCoveredRecordCount": null, "exactDuplicateSourceGroups": null, "importTaskCount": null, "importedRows": null, "ocrTaskCount": null, "ocrCorrectionCount": null, "ocrGeneratedRecordCount": null },
+      "humanDecisionRefs": ["H-02"],
+      "issueRefs": []
+    }
+  ],
+  "signoffs": [
+    { "role": "finance", "status": "awaiting", "approvalRef": null, "decidedAt": null },
+    { "role": "business", "status": "awaiting", "approvalRef": null, "decidedAt": null },
+    { "role": "boss", "status": "awaiting", "approvalRef": null, "decidedAt": null },
+    { "role": "security", "status": "awaiting", "approvalRef": null, "decidedAt": null }
+  ],
+  "issues": []
+}

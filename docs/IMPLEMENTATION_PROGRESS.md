@@ -3,7 +3,7 @@
 更新日期：2026-07-17
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-07 工程门禁完成，下一步进入 B8-08 人工财务 UAT 工具与证据准备
+当前批次：B8-08 工程工具完成、人工门禁 `blocked_external`，下一步进入 B8-09 Staging 与试运行工程准备
 
 ## 完成口径
 
@@ -24,6 +24,18 @@
 | B8-05 AI Claim Grounding | 完成 | 严格 Claim 元组、确定性 renderer、显式项目/客户排行、PostgreSQL 黄金账与本地 Qwen 基准通过 |
 | B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
 | B8-07 模型控制面、GPU 与反向代理 | 工程完成 | 不可变部署快照、认证身份探针、跨进程 GPU 状态机、容器/SBOM/CVE 和 50 MiB 代理边界通过 |
+| B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景匿名 manifest、逐分对账、问题/签字模板和 `_test` 数据库门禁完成；H-01 至 H-12、H-16 待授权人员完成 |
+
+B8-08 已完成的工程证据：
+
+- UAT-01 至 UAT-08 覆盖 Excel、劳务、报销/OCR、报表、老板 AI、重复业务和冲销/更正；运行手册明确每项人工负责人和回退阶段。
+- `uat:init` 只在 Git 忽略目录生成匿名 manifest、问题台账和签字模板，重复执行不覆盖人工内容；`uat:validate` 固定八场景和四类签字角色。
+- `uat:reconcile` 只允许 `_test` PostgreSQL，按整数分比较记录/报表金额，并核对导入、OCR、audit、ledger 和缺失证据。
+- 报告不输出项目、客户、描述、动态字段、OCR 原文或原文件信息；缺失 ID 只显示短哈希，自动失败未关联开放 Issue 时退出失败。
+- 空白人工输入烟测明确返回 `automatic=awaiting_input`、`human=external_unverified`；脚本不能把自动结果伪装成业务签字。
+- 详细工具与状态见 `docs/B8_08_FINANCE_UAT_RUNBOOK.md` 和 `docs/B8_08_FINANCE_UAT_REPORT.md`。
+- 自动化结果：24/24 migrations；24/24 Jest suites、240/240 tests；2/2 PostgreSQL suites、59/59 tests；14/14 Playwright；前后端 build 通过。
+- H-01 至 H-12 和 H-16 仍为 `blocked_external`；当前项目仍不声明财务验收通过或生产就绪。
 
 B8-07 已完成的工程证据：
 

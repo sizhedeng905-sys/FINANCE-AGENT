@@ -109,7 +109,7 @@
 | B8-AI-002 | P1 | B8-05/08/09 | 老板问题口径与外部 Provider | 标准答案和真实数据外发政策需要授权人决定 | 审核标准问题；决定脱敏、地域、保留和外发边界 | 人工标准答案与外部数据政策签字 | blocked_external | H-08/H-12 |
 | B8-SEC-001 | P0 | B8-06 | AI 日志/Cookie/文件/DLP | 多项生产隔离与资源边界未按 B8 门禁证明 | 权限隔离、生产 Cookie、主动内容、资源上限和 CI DLP | 权限与攻击测试 | verified | H-10/H-11 仍为生产政策签字，不阻断工程门禁 |
 | B8-MODEL-001 | P1 | B8-07 | 模型控制面/GPU/代理 | 路由配置快照、鉴权 ready、跨进程 GPU 锁和代理边界待收口 | 同一 resolved deployment、互斥锁、固定容器和代理错误契约 | 路由/GPU/代理测试 | verified | H-13 属于 B8-09 目标部署选择，不阻断本地工程门禁 |
-| B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 财务、OCR、重复、冲销、部署和恢复尚无签字 | 人工结论与 Staging 演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |
+| B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 匿名 UAT 工具和自动对账已完成；财务/OCR/重复/冲销、部署和恢复仍无人工签字 | 授权人员完成八场景结论，目标环境完成恢复/回退演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |
 
 ## 状态规则
 
