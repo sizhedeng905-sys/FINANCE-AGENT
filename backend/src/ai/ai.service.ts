@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { modelExecutionSnapshot } from '../model-runtime/model-deployment-config';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiChatDto } from './dto/ai-chat.dto';
@@ -73,6 +74,27 @@ export class AiService {
     ]);
     const model = providerName === 'mock' ? modelConfig?.modelName ?? 'mock-structured-v1' : runtimeModel || modelConfig?.modelName || 'gpt-5.4-mini';
     const endpoint = deployment?.endpoint ?? modelConfig?.baseUrl ?? this.config.get<string>('ai.baseUrl');
+    const modelVersion = deployment?.modelVersion;
+    const timeoutMs = deployment?.timeoutMs ?? this.config.get<number>('ai.timeoutMs') ?? 30_000;
+    const maxConcurrency = deployment?.maxConcurrency
+      ?? this.config.get<number>('modelRuntime.aiMaxConcurrency')
+      ?? 1;
+    const secretRef = deployment?.secretRef ?? (providerName === 'mock' ? undefined : 'AI_API_KEY');
+    const providerConfig = deployment
+      ? modelExecutionSnapshot(deployment)
+      : {
+          source: 'environment',
+          provider: providerName,
+          modelName: model,
+          modelVersion: modelVersion ?? null,
+          endpoint: endpoint ?? null,
+          secretRef: secretRef ?? null,
+          timeoutMs,
+          maxConcurrency
+        };
+    const providerConfigHash = deployment?.configHash ?? createHash('sha256')
+      .update(JSON.stringify(providerConfig))
+      .digest('hex');
     const instructions = `${SECURITY_SYSTEM_PROMPT}\n${OUTPUT_SYSTEM_PROMPT}\n${promptVersion?.systemPrompt || DEFAULT_SYSTEM_PROMPT}`;
     const correlationId = context.requestId || randomUUID();
     const startedAt = Date.now();
@@ -90,8 +112,15 @@ export class AiService {
       const providerRequest = {
         provider: providerName,
         model,
+        modelVersion,
+        deploymentId: deployment?.id,
+        deploymentKey: deployment?.key,
         baseUrl: endpoint,
         apiKey: this.modelRuntime.resolveSecret(deployment?.secretRef),
+        secretRef,
+        timeoutMs,
+        maxConcurrency,
+        configHash: providerConfigHash,
         instructions,
         question: dto.message,
         history,
@@ -139,10 +168,15 @@ export class AiService {
       const callLog = await tx.aiCallLog.create({
         data: {
           conversationId: conversation.id,
+          deploymentId: deployment?.id,
           modelConfigId: modelConfig?.id,
           promptVersionId: promptVersion?.id,
           provider: providerName,
           modelName: model,
+          modelVersion,
+          providerConfig: this.json(providerConfig),
+          providerConfigHash,
+          secretRef,
           requestPayload: this.json({
             message: dto.message,
             workOrderId: dto.workOrderId ?? null,
@@ -373,6 +407,7 @@ export class AiService {
       id: item.id,
       provider: item.provider,
       model: item.modelName,
+      modelVersion: item.modelVersion ?? undefined,
       promptVersion: item.promptVersion
         ? `${item.promptVersion.promptKey}:v${item.promptVersion.versionNo}`
         : undefined,
@@ -381,6 +416,7 @@ export class AiService {
       success: item.success,
       fallback: item.fallback,
       inputHash: item.inputHash ?? undefined,
+      providerConfigHash: item.providerConfigHash ?? undefined,
       correlationId: item.correlationId ?? undefined,
       attemptNo: item.attemptNo,
       createdAt: item.createdAt.toISOString()
@@ -393,6 +429,8 @@ export class AiService {
       conversationId: item.conversationId ?? undefined,
       ownerUserId: item.createdBy ?? undefined,
       endpointSnapshot: this.sanitizeEndpoint(item.endpointSnapshot),
+      providerConfig: item.providerConfig === null ? undefined : this.redactAuditValue(item.providerConfig),
+      secretRef: item.secretRef ?? undefined,
       requestPayload: this.redactAuditValue(item.requestPayload),
       responsePayload: item.responsePayload === null ? undefined : this.redactAuditValue(item.responsePayload),
       tokenUsage: {

@@ -28,6 +28,16 @@ export class ModelExecutionGateService {
     return Object.fromEntries([...this.states].map(([key, state]) => [key, { active: state.active, queued: state.queue.length }]));
   }
 
+  readiness() {
+    const queues = this.snapshot();
+    const saturated = Object.values(queues).some((state) => state.queued >= this.maxQueue);
+    return {
+      status: saturated ? 'saturated' : 'ok',
+      maxQueue: this.maxQueue,
+      queues
+    };
+  }
+
   private async acquire(key: string, maxConcurrency: number) {
     const state = this.state(key);
     if (state.active < maxConcurrency) {

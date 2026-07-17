@@ -14,6 +14,7 @@ interface ExceptionBody {
   message?: string | string[];
   error?: string;
   statusCode?: number;
+  data?: unknown;
 }
 
 interface PrismaKnownError {
@@ -71,7 +72,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         status,
         code: getErrorCode(status),
         message: this.resolveHttpMessage(status, body, exception.message),
-        data: {}
+        data: parsedBody?.data ?? {}
       };
     }
 

@@ -1,6 +1,9 @@
 import { ModelDeploymentStatus, PrismaClient } from '@prisma/client';
 import { loadEnvFile } from 'node:process';
 
+import { resolveModelDeployment } from '../src/model-runtime/model-deployment-config';
+import { probeModelDeployment } from '../src/model-runtime/model-health-probe';
+
 try {
   loadEnvFile('.env');
 } catch (error) {
@@ -17,7 +20,8 @@ async function main() {
       orderBy: { deploymentKey: 'asc' }
     });
     for (const deployment of deployments) {
-      console.log(`${deployment.deploymentKey}\t${deployment.isEnabled ? 'enabled' : 'disabled'}\t${deployment.provider}\t${deployment.modelName}`);
+      const resolved = resolveModelDeployment(deployment);
+      console.log(`${resolved.key}\t${resolved.isEnabled ? 'enabled' : 'disabled'}\t${resolved.provider}\t${resolved.modelName}\t${resolved.modelVersion ?? 'missing-version'}\t${resolved.configHash}`);
     }
     return;
   }
@@ -50,33 +54,14 @@ async function main() {
   console.log(`${deploymentKey} is now ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
-async function checkDeployment(deployment: {
-  provider: string;
-  endpoint: string | null;
-  secretRef: string | null;
-  timeoutMs: number;
-}) {
-  if (deployment.provider === 'mock') return { latencyMs: 0 };
-  if (!deployment.endpoint) throw new Error('Cannot enable a deployment without an endpoint.');
-  const secret = deployment.secretRef ? process.env[deployment.secretRef] : undefined;
-  if (deployment.secretRef && !secret) {
-    throw new Error(`Cannot enable deployment: environment variable ${deployment.secretRef} is missing.`);
-  }
-  const url = deployment.provider === 'local_paddle'
-    ? `${deployment.endpoint.replace(/\/+$/, '')}/health`
-    : `${deployment.endpoint.replace(/\/+$/, '')}/models`;
-  const startedAt = Date.now();
-  let response: Response;
+async function checkDeployment(deployment: Parameters<typeof resolveModelDeployment>[0]) {
+  const resolved = resolveModelDeployment(deployment);
+  const secret = resolved.secretRef ? process.env[resolved.secretRef] : undefined;
   try {
-    response = await fetch(url, {
-      headers: secret ? { Authorization: `Bearer ${secret}` } : undefined,
-      signal: AbortSignal.timeout(Math.min(deployment.timeoutMs, 10000))
-    });
+    return await probeModelDeployment(resolved, secret);
   } catch (error) {
-    throw new Error(`Cannot enable deployment because health check failed: ${error instanceof Error ? error.message : error}`);
+    throw new Error(`Cannot enable deployment because the authenticated identity probe failed: ${error instanceof Error ? error.message : error}`);
   }
-  if (!response.ok) throw new Error(`Cannot enable deployment because health check returned HTTP ${response.status}.`);
-  return { latencyMs: Date.now() - startedAt };
 }
 
 main()

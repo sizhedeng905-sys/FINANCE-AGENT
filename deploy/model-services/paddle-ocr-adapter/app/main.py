@@ -15,6 +15,7 @@ from .extraction import build_ocr_response, has_valid_file_signature, parse_temp
 
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", "/models/PaddleOCR-VL"))
 PIPELINE_VERSION = os.environ.get("PIPELINE_VERSION", "v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "PaddlePaddle/PaddleOCR-VL")
 DEVICE = os.environ.get("DEVICE", "gpu:0")
 API_KEY = os.environ.get("API_KEY", "")
 MAX_UPLOAD_SIZE = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "50")) * 1024 * 1024
@@ -67,14 +68,20 @@ app = FastAPI(
 )
 
 
-@app.get("/health")
-async def health():
+@app.get("/live")
+async def live():
+    return {"status": "live"}
+
+
+@app.get("/ready")
+async def ready(authorization: str | None = Header(default=None)):
+    authorize(authorization)
     if pipeline is None:
         raise HTTPException(status_code=503, detail="model is not loaded")
     return {
-        "status": "ok",
-        "model": "PaddlePaddle/PaddleOCR-VL",
-        "version": PIPELINE_VERSION,
+        "status": "ready",
+        "model": {"name": MODEL_NAME, "version": PIPELINE_VERSION},
+        "capabilities": ["ocr_document"],
         "device": DEVICE,
         "busy": inference_lock.locked(),
     }
@@ -120,7 +127,7 @@ async def recognize(
             document_id.strip(),
             results,
             template_fields,
-            "PaddlePaddle/PaddleOCR-VL",
+            MODEL_NAME,
             PIPELINE_VERSION,
         )
     except HTTPException:

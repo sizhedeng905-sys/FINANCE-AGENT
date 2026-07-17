@@ -46,6 +46,7 @@ import { UploadAdmissionService } from './upload-admission.service';
   exports: [
     FilesService,
     FileSecurityService,
+    FILE_STORAGE,
     UploadAdmissionInterceptor,
     UploadAdmissionService,
     MulterModule

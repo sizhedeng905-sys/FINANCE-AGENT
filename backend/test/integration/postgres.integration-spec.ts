@@ -273,6 +273,20 @@ describe('real PostgreSQL integration', () => {
     }
   });
 
+  it('reports real database, storage, security, queue, and model readiness', async () => {
+    const response = await request(app.getHttpServer()).get('/api/health/ready').expect(200);
+    expect(response.body.data).toMatchObject({
+      status: 'ok',
+      checks: {
+        database: { status: 'ok' },
+        storage: { status: 'ok' },
+        antivirus: { status: expect.stringMatching(/^(ok|not_required)$/) },
+        queues: { status: 'ok', pending: expect.any(Object) },
+        models: { status: 'ok', enabled: expect.any(Array) }
+      }
+    });
+  });
+
   it('enforces the finance-to-boss management boundary in PostgreSQL mode', async () => {
     const loginResponse = await request(app.getHttpServer())
       .post('/api/auth/login')

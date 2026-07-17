@@ -1,9 +1,9 @@
 # 财务 Agent 实施进度
 
-更新日期：2026-07-16
+更新日期：2026-07-17
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-06 工程门禁完成，下一步进入 B8-07 模型控制面、GPU 与反向代理
+当前批次：B8-07 工程门禁完成，下一步进入 B8-08 人工财务 UAT 工具与证据准备
 
 ## 完成口径
 
@@ -23,6 +23,18 @@
 | B8-04 OCR 精度与异步任务 | 完成 | Decimal 字符串、持久化队列、真实执行槽、lease/恢复、实际 attempt 快照及 Mock/真实 UI 门禁通过 |
 | B8-05 AI Claim Grounding | 完成 | 严格 Claim 元组、确定性 renderer、显式项目/客户排行、PostgreSQL 黄金账与本地 Qwen 基准通过 |
 | B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
+| B8-07 模型控制面、GPU 与反向代理 | 工程完成 | 不可变部署快照、认证身份探针、跨进程 GPU 状态机、容器/SBOM/CVE 和 50 MiB 代理边界通过 |
+
+B8-07 已完成的工程证据：
+
+- AI/OCR 使用同一 resolved deployment 完成健康和业务调用；endpoint、secretRef、模型/版本、超时和并发形成不可变快照与配置哈希，敏感字段拒绝持久化。
+- Paddle `/live` 无敏感信息，`/ready` 强制 Bearer 并验证身份/版本/能力；应用 liveness 只反映进程，readiness 覆盖 PostgreSQL、存储、ClamAV、队列和启用模型。
+- 文本、VL、Embedding 使用跨进程锁和显式状态机。真实 VL/Embedding 并发切换均只有一个赢家、无 OOM，并确定性恢复文本常驻。
+- vLLM/Paddle 基础镜像固定 digest；容器以 UID 10001、只读根、private IPC、cap drop、no-new-privileges 和资源限额运行。
+- SPDX 共识别 Paddle 762 个包、vLLM 1492 个包；固定 Grype 数据库复扫后两镜像 Critical/High 均为 0，剩余 11 Medium/5 Low 进入后续镜像更新台账。
+- Nginx 动态边界验证 19/50 MiB 到达应用、超限稳定失败、无临时残留，413/超时/5xx 统一响应；真实 Paddle 合成 PDF OCR 通过。
+- 详细证据见 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md`。真实 Staging/TLS、集中监控和备份恢复属于 B8-09，当前仍不声明生产就绪。
+- 自动化结果：24/24 migrations；23/23 Jest suites、235/235 tests；58/58 PostgreSQL integration；14/14 Playwright；前后端 build、Prisma、依赖审计、模型配置/切换/OCR/SBOM/CVE 和代理门禁通过。
 
 B8-06 已完成的工程证据：
 

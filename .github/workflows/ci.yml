@@ -88,6 +88,9 @@ jobs:
       - name: Check repository hygiene and production dependency risk
         run: |
           npm run check:hygiene
+          npm run model:config:check --prefix backend
+          npm run model:lock:test --prefix backend
+          npm run proxy:config:check --prefix backend
           npm audit --omit=dev --audit-level=high
           npm audit --prefix backend --omit=dev --audit-level=high
 

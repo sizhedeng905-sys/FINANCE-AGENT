@@ -1,9 +1,27 @@
 name: finance-agent-models
 
 x-vllm-common: &vllm-common
-  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+  image: finance-agent/vllm-runtime:0.23.0
+  build:
+    context: ./vllm-runtime
+    args:
+      VLLM_BASE_IMAGE: ${VLLM_BASE_IMAGE:-vllm/vllm-openai@sha256:6d8429e38e3747723ca07ee1b17972e09bb9c51c4032b266f24fb1cc3b22ed8f}
+      RUNTIME_UID: ${MODEL_RUNTIME_UID:-10001}
+      RUNTIME_GID: ${MODEL_RUNTIME_GID:-10001}
+  user: "${MODEL_RUNTIME_UID:-10001}:${MODEL_RUNTIME_GID:-10001}"
   gpus: all
-  ipc: host
+  ipc: private
+  shm_size: "8gb"
+  read_only: true
+  init: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 1024
+  mem_limit: ${VLLM_MEMORY_LIMIT:-28g}
+  cpus: ${VLLM_CPU_LIMIT:-8.0}
+  stop_grace_period: 2m
+  tmpfs:
+    - /tmp:rw,exec,nosuid,nodev,size=4g,mode=1777
   restart: unless-stopped
   volumes:
     - type: bind
@@ -11,8 +29,18 @@ x-vllm-common: &vllm-common
       target: /models
       read_only: true
   environment:
+    HOME: /tmp
+    HF_HOME: /tmp/huggingface
+    TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
+    NUMBA_CACHE_DIR: /tmp/numba
+    VLLM_CACHE_ROOT: /tmp/vllm
+    VLLM_API_KEY: ${LOCAL_MODEL_API_KEY}
+    TRITON_CACHE_DIR: /tmp/.triton
+    CUDA_CACHE_PATH: /tmp/cuda
+    TORCH_EXTENSIONS_DIR: /tmp/torch-extensions
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
+    LOCAL_MODEL_API_KEY: ${LOCAL_MODEL_API_KEY}
 
 services:
   qwen-text:
@@ -28,8 +56,6 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
-      - --api-key
-      - ${LOCAL_MODEL_API_KEY}
       - --max-model-len
       - ${QWEN_TEXT_MAX_MODEL_LEN:-8192}
       - --max-num-seqs
@@ -40,31 +66,46 @@ services:
       - qwen3
       - --enable-prefix-caching
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "curl --fail --silent --show-error -H \"Authorization: Bearer $${LOCAL_MODEL_API_KEY}\" http://127.0.0.1:8000/v1/models >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 10
       start_period: 10m
 
   paddle-ocr:
-    image: finance-agent/paddle-ocr-adapter:local
+    image: finance-agent/paddle-ocr-adapter:1.0.0
+    user: "${MODEL_RUNTIME_UID:-10001}:${MODEL_RUNTIME_GID:-10001}"
     build:
       context: ./paddle-ocr-adapter
       args:
-        PADDLE_OCR_BASE_IMAGE: ${PADDLE_OCR_BASE_IMAGE:-ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:latest-nvidia-gpu-sm120}
+        PADDLE_OCR_BASE_IMAGE: ${PADDLE_OCR_BASE_IMAGE:-ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl@sha256:659eb236d509966380c0ac938049cbb3494f1e84c5d5c53fcac3572c05463487}
+        RUNTIME_UID: ${MODEL_RUNTIME_UID:-10001}
+        RUNTIME_GID: ${MODEL_RUNTIME_GID:-10001}
     gpus: all
-    ipc: host
+    ipc: private
     shm_size: "8gb"
+    read_only: true
+    init: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: ${PADDLE_MEMORY_LIMIT:-16g}
+    cpus: ${PADDLE_CPU_LIMIT:-8.0}
+    stop_grace_period: 2m
     restart: unless-stopped
     ports:
       - "127.0.0.1:8868:8868"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=4g,mode=1777
     volumes:
       - type: bind
         source: ${MODEL_ROOT}
         target: /models
         read_only: true
     environment:
+      HOME: /tmp
       MODEL_PATH: ${PADDLE_OCR_MODEL:-/models/PaddleOCR-VL}
+      MODEL_NAME: PaddlePaddle/PaddleOCR-VL
       PIPELINE_VERSION: ${PADDLE_OCR_PIPELINE_VERSION:-v1}
       DEVICE: ${PADDLE_OCR_DEVICE:-gpu:0}
       API_KEY: ${LOCAL_MODEL_API_KEY}
@@ -72,7 +113,7 @@ services:
       MAX_TEMPLATE_FIELDS: ${OCR_MAX_TEMPLATE_FIELDS:-200}
       PYTHONUNBUFFERED: "1"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8868/health', timeout=3)"]
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8868/ready',headers={'Authorization':'Bearer '+os.environ['API_KEY']}); urllib.request.urlopen(r,timeout=3).read()\""]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -93,16 +134,20 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
-      - --api-key
-      - ${LOCAL_MODEL_API_KEY}
       - --max-model-len
-      - ${QWEN_VL_MAX_MODEL_LEN:-8192}
+      - ${QWEN_VL_MAX_MODEL_LEN:-4096}
       - --max-num-seqs
       - "1"
       - --gpu-memory-utilization
-      - ${ON_DEMAND_GPU_MEMORY_UTILIZATION:-0.88}
+      - ${QWEN_VL_GPU_MEMORY_UTILIZATION:-0.82}
+      - --limit-mm-per-prompt
+      - '{"image":{"count":1,"width":768,"height":768},"video":0}'
+      - --mm-processor-cache-gb
+      - "1"
+      - --mm-processor-kwargs
+      - '{"max_pixels":589824,"min_pixels":65536}'
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "curl --fail --silent --show-error -H \"Authorization: Bearer $${LOCAL_MODEL_API_KEY}\" http://127.0.0.1:8000/v1/models >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -119,22 +164,20 @@ services:
       - ${QWEN_EMBEDDING_MODEL:-/models/Qwen3-Embedding-8B}
       - --served-model-name
       - Qwen/Qwen3-Embedding-8B
-      - --task
-      - embed
+      - --runner
+      - pooling
       - --host
       - 0.0.0.0
       - --port
       - "8000"
-      - --api-key
-      - ${LOCAL_MODEL_API_KEY}
       - --max-model-len
       - ${QWEN_EMBEDDING_MAX_MODEL_LEN:-8192}
       - --max-num-seqs
       - "1"
       - --gpu-memory-utilization
-      - ${ON_DEMAND_GPU_MEMORY_UTILIZATION:-0.88}
+      - ${ON_DEMAND_GPU_MEMORY_UTILIZATION:-0.72}
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "curl --fail --silent --show-error -H \"Authorization: Bearer $${LOCAL_MODEL_API_KEY}\" http://127.0.0.1:8000/v1/models >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 10

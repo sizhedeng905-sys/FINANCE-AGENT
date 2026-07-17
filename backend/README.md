@@ -55,6 +55,17 @@ npm run model:services:init
 npm run model:services:resident
 npm run model:services:on-demand -- embedding
 npm run model:services:restore
+npm run model:services:status
+npm run model:lock:test
+npm run model:switch:acceptance -- vl
+npm run model:switch:acceptance -- embedding
+npm run model:ocr:acceptance
+npm run model:key:rotate
+npm run model:config:check
+npm run model:sbom
+npm run model:cve:offline
+npm run proxy:config:check
+npm run proxy:boundary:test
 ```
 
 Root-level Playwright acceptance uses a dedicated PostgreSQL database:
@@ -66,15 +77,16 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-16, B8-06 engineering gate):
+Current verification baseline (2026-07-17, B8-07 engineering gate):
 
-- Backend build and Prisma validation pass with 23 applied migrations and 41 expected business tables.
-- Jest: 21/21 suites and 230/230 tests.
-- Real PostgreSQL integration: 57/57 tests, including 30,196/49,999-row final posting.
+- Backend build and Prisma validation pass with 24 applied migrations and no pending migration.
+- Jest: 23/23 suites and 235/235 tests.
+- Real PostgreSQL integration: 58/58 tests, including 30,196/49,999-row final posting.
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
-- Owner-scoped AI logs, production Cookie/JWT boundaries, admin/auditor separation, active-content checks, upload admission, storage reconciliation, and Git/DLP gates pass.
-- H-10/H-11, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_06_SECURITY_HARDENING_REPORT.md`.
+- Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
+- Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
+- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md`.
 
 ## API
 
@@ -250,7 +262,7 @@ Completed:
 - Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
 - PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
 - Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
-- B8-01 to B8-05: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, and strict financial Claim grounding with deterministic rendering and PostgreSQL golden records.
+- B8-01 to B8-07: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, strict financial Claim grounding, security boundaries, and an authenticated GPU/model control plane.
 
 Explicitly deferred by the user:
 
@@ -262,11 +274,13 @@ Completed audit follow-up:
 - Complete 5,001/30,196/49,999-row Excel confirmation with BusinessRecord/RecordValue totals, Decimal sums, unique sources, reports, failure recovery, and bounded resource profiles (B8-03).
 - Mock and local Paddle OCR UI flows with Decimal strings, concurrency 1/3/5, queue/heartbeat/cancel/restart behavior, actual provider snapshots, and a measured zero-record delta before human confirmation (B8-04).
 - Strict AI Claim tuples, explicit project/customer and highest/lowest ranking, 3-project/2-customer API-built PostgreSQL golden data, owner-scoped boss logs, and 72-case Mock/local-Qwen benchmarks (B8-05).
+- Owner-scoped AI audit metadata, production Cookie/JWT separation, admin/auditor duties, active-content/resource/DLP gates, and storage reconciliation (B8-06).
+- Immutable model deployment hashes, authenticated identity probes, cross-process GPU state transitions, pinned/hardened model images, SPDX/Grype scanning, and the dynamic 50 MiB Nginx boundary (B8-07).
 - Legacy `.xls` conversion in a Node.js 22+ permission-model child process; no Excel/COM dependency and no converted artifact at rest.
 
 Deployment or data work still required:
 
 - Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
-- GPU container startup, 30-minute residency, OOM/latency observation, text/VL switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
+- GPU container startup, 30-minute residency, OOM/latency observation, text/VL/Embedding switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
 - Object storage, a running ClamAV service, production backup/restore, and retention jobs.
 - Shared/distributed rate limiting, centralized observability, managed secrets and production infrastructure validation.

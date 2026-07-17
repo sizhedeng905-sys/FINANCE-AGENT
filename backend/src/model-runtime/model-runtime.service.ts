@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ModelDeploymentStatus, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveModelDeployment } from './model-deployment-config';
 import { ModelExecutionGateService } from './model-execution-gate.service';
+import { probeModelDeployment } from './model-health-probe';
 import { ResilientHttpClientService } from './resilient-http-client.service';
 
 @Injectable()
@@ -39,7 +41,7 @@ export class ModelRuntimeService {
       include: { deployment: true },
       orderBy: { priority: 'asc' }
     });
-    return route ? { ...route, deployment: this.presentDeployment(route.deployment) } : undefined;
+    return route ? { ...route, deployment: resolveModelDeployment(route.deployment) } : undefined;
   }
 
   resolveSecret(secretRef?: string | null) {
@@ -50,9 +52,7 @@ export class ModelRuntimeService {
   async health() {
     const deployments = await this.prisma.modelDeployment.findMany({ orderBy: { deploymentKey: 'asc' } });
     const results = [];
-    for (const deployment of deployments) {
-      results.push(await this.checkDeployment(deployment));
-    }
+    for (const deployment of deployments) results.push(await this.checkDeployment(deployment));
     const enabled = results.filter((item) => item.enabled);
     return {
       status: enabled.every((item) => item.healthy) ? 'ok' : 'degraded',
@@ -66,42 +66,62 @@ export class ModelRuntimeService {
   }
 
   private async checkDeployment(deployment: Prisma.ModelDeploymentGetPayload<Record<string, never>>) {
-    if (!deployment.isEnabled) {
-      await this.updateHealth(deployment.id, ModelDeploymentStatus.disabled, 0, null);
-      return { key: deployment.deploymentKey, provider: deployment.provider, model: deployment.modelName, enabled: false, healthy: false, status: 'disabled', latencyMs: 0 };
-    }
-    if (deployment.provider === 'mock') {
-      await this.updateHealth(deployment.id, ModelDeploymentStatus.healthy, 0, null);
-      return { key: deployment.deploymentKey, provider: deployment.provider, model: deployment.modelName, enabled: true, healthy: true, status: 'healthy', latencyMs: 0 };
-    }
-    if (!deployment.endpoint) {
-      await this.updateHealth(deployment.id, ModelDeploymentStatus.unhealthy, 0, 'endpoint 未配置');
-      return { key: deployment.deploymentKey, provider: deployment.provider, model: deployment.modelName, enabled: true, healthy: false, status: 'unhealthy', latencyMs: 0, error: 'endpoint 未配置' };
+    const resolved = resolveModelDeployment(deployment);
+    if (!resolved.isEnabled) {
+      await this.updateHealth(resolved.id, ModelDeploymentStatus.disabled, 0, null);
+      return {
+        key: resolved.key,
+        provider: resolved.provider,
+        model: resolved.modelName,
+        modelVersion: resolved.modelVersion,
+        configHash: resolved.configHash,
+        enabled: false,
+        healthy: false,
+        status: 'disabled',
+        latencyMs: 0
+      };
     }
 
-    const url = deployment.provider === 'local_paddle'
-      ? `${deployment.endpoint.replace(/\/+$/, '')}/health`
-      : `${deployment.endpoint.replace(/\/+$/, '')}/models`;
     const startedAt = Date.now();
     try {
-      const secret = this.resolveSecret(deployment.secretRef);
-      const response = await this.http.request(url, {
-        method: 'GET',
-        headers: secret ? { Authorization: `Bearer ${secret}` } : undefined
-      }, {
-        circuitKey: `health:${deployment.deploymentKey}`,
-        timeoutMs: Math.min(deployment.timeoutMs, 10000),
-        maxRetries: 0
-      });
-      const latencyMs = Date.now() - startedAt;
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await this.updateHealth(deployment.id, ModelDeploymentStatus.healthy, latencyMs, null);
-      return { key: deployment.deploymentKey, provider: deployment.provider, model: deployment.modelName, enabled: true, healthy: true, status: 'healthy', latencyMs };
+      const probe = await probeModelDeployment(
+        resolved,
+        this.resolveSecret(resolved.secretRef),
+        (url, init, timeoutMs, operation) => this.http.request(url, init, {
+          circuitKey: `health:${resolved.key}:${operation}`,
+          timeoutMs,
+          maxRetries: 0
+        })
+      );
+      await this.updateHealth(resolved.id, ModelDeploymentStatus.healthy, probe.latencyMs, null);
+      return {
+        key: resolved.key,
+        provider: resolved.provider,
+        model: resolved.modelName,
+        modelVersion: probe.identity.modelVersion,
+        capabilities: probe.identity.capabilities,
+        configHash: resolved.configHash,
+        enabled: true,
+        healthy: true,
+        status: 'healthy',
+        latencyMs: probe.latencyMs
+      };
     } catch (error) {
       const latencyMs = Date.now() - startedAt;
-      const message = (error instanceof Error ? error.message : '健康检查失败').slice(0, 500);
-      await this.updateHealth(deployment.id, ModelDeploymentStatus.unhealthy, latencyMs, message);
-      return { key: deployment.deploymentKey, provider: deployment.provider, model: deployment.modelName, enabled: true, healthy: false, status: 'unhealthy', latencyMs, error: message };
+      const message = (error instanceof Error ? error.message : 'Model health check failed').slice(0, 500);
+      await this.updateHealth(resolved.id, ModelDeploymentStatus.unhealthy, latencyMs, message);
+      return {
+        key: resolved.key,
+        provider: resolved.provider,
+        model: resolved.modelName,
+        modelVersion: resolved.modelVersion,
+        configHash: resolved.configHash,
+        enabled: true,
+        healthy: false,
+        status: 'unhealthy',
+        latencyMs,
+        error: message
+      };
     }
   }
 
@@ -113,19 +133,21 @@ export class ModelRuntimeService {
   }
 
   private presentDeployment(item: Prisma.ModelDeploymentGetPayload<Record<string, never>>) {
+    const resolved = resolveModelDeployment(item);
     return {
-      id: item.id,
-      key: item.deploymentKey,
-      provider: item.provider,
-      modelName: item.modelName,
-      modelVersion: item.modelVersion ?? undefined,
-      endpoint: item.endpoint ?? undefined,
-      secretRef: item.secretRef ?? undefined,
-      taskTypes: Array.isArray(item.taskTypes) ? item.taskTypes : [],
-      maxConcurrency: item.maxConcurrency,
-      timeoutMs: item.timeoutMs,
-      isLocal: item.isLocal,
-      isEnabled: item.isEnabled,
+      id: resolved.id,
+      key: resolved.key,
+      provider: resolved.provider,
+      modelName: resolved.modelName,
+      modelVersion: resolved.modelVersion,
+      endpoint: resolved.endpoint,
+      secretRef: resolved.secretRef,
+      taskTypes: resolved.taskTypes,
+      maxConcurrency: resolved.maxConcurrency,
+      timeoutMs: resolved.timeoutMs,
+      isLocal: resolved.isLocal,
+      isEnabled: resolved.isEnabled,
+      configHash: resolved.configHash,
       status: item.status,
       lastHealthAt: item.lastHealthAt?.toISOString(),
       lastHealthLatencyMs: item.lastHealthLatencyMs ?? undefined,

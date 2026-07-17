@@ -9,8 +9,8 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B7 与 B8-01 至 B8-06 工程门禁已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账，以及权限、Cookie、文件资源和 DLP 均有自动化证据；财务、OCR、安全和业务政策仍待外部签字
-- Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行并通过 30 分钟稳定性、服务切换和并发推理；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 按需启动
+- 真实业务数据 B0-B7 与 B8-01 至 B8-07 工程门禁已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账、权限/文件安全及模型控制面均有自动化证据；财务、OCR、安全和业务政策仍待外部签字
+- Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 的真实并发切换、能力探针、无 OOM 和文本恢复均已验收
 
 ## 技术栈
 
@@ -77,6 +77,8 @@
 - 老板 AI 日志按 owner 隔离且只返回元数据；独立 auditor 才能读取保留期内的递归脱敏详情。
 - Office/CSV/PDF/图片主动内容与复杂度失败关闭，三个上传入口共用每用户并发、在途字节和速率限制；原件明确标记为不可信证据。
 - Git pre-commit 与 CI 默认拒绝业务文件，并执行手机号、身份证、银行卡、内部词典和高熵敏感内容 DLP。
+- B8-07 固定 vLLM/Paddle 基础镜像 digest，统一模型部署快照与身份探针，并使用跨进程 GPU 锁保证文本、VL、Embedding 互斥和失败恢复。
+- 模型容器以非 root、只读根、private IPC、cap drop 和资源限额运行；SPDX/Grype 复扫 Critical/High 为 0，Nginx 19/50 MiB 含 multipart 边界门禁通过。
 - AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
 - 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
 
@@ -86,7 +88,7 @@
 
 **P1-08 与 B8-03 已完成**：同步解析保持 5000 行上限，5001-50000 行解析进入后台流式任务；确认 API 也改为可恢复后台任务，每 500 行短事务写入，最终原子发布。解析阶段允许取消，确认开始后明确拒绝取消。5,001、30,196 与 49,999 行均通过真实 PostgreSQL 最终记录、动态字段、金额、唯一来源、审计、ledger 和日报闭环。
 
-因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重、H-10/H-11、真实模型/ClamAV/反向代理部署验收及脱敏业务真值校准前，不标记为生产就绪。
+因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重、人工财务/OCR/安全政策签字以及真实 Staging 的 TLS、ClamAV、对象存储、监控和恢复演练完成前，不标记为生产就绪。
 
 ## 启动方式
 
@@ -181,8 +183,8 @@ http://localhost:3001/api/health
 | 真实化批次 D-H | 已完成 | 30 条 PostgreSQL、14 条 Playwright、模型运行时、安全加固、CI 与交付文档 |
 | PR #2 审计修复 | 基本完成 | P1-08 超大 Excel 后台分块已完成；仅用户暂缓的 P1-07 跨来源业务去重未收口，其余 P1/P2/P3 已修复并回归 |
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
-| B8-01 至 B8-06 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim，以及 AI 日志、Cookie/JWT、职责分离、文件资源和 Git/DLP 门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_06_SECURITY_HARDENING_REPORT.md` |
-| 本地模型部署 | 稳定性通过 | 四套资产完整；文本/OCR 常驻和 VL 按需切换已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
+| B8-01 至 B8-07 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim、安全边界，以及模型身份、GPU 互斥、SBOM/CVE 和代理上传门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md` |
+| 本地模型部署 | 控制面通过 | 四套资产完整；文本/OCR 常驻，VL/Embedding 按需真实切换和恢复已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
 
@@ -326,7 +328,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B8-05 验收基线为 18/18 Jest suites、199/199 tests、54/54 真实 PostgreSQL 集成测试和 14/14 标准 Playwright；Mock 与本地 Qwen 的 72 条 Claim 基准均通过。测试库已应用 22/22 Prisma migrations且无待应用迁移，前后端 production build 通过。详细证据见 `docs/B8_05_AI_CLAIM_GROUNDING_REPORT.md`。
+当前 B8-07 验收基线为 23/23 Jest suites、235/235 tests、58/58 真实 PostgreSQL 集成测试和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build、真实 VL/Embedding 切换、真实 PaddleOCR、SBOM/CVE 与 Nginx 边界均通过。详细证据见 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md`。
 
 完整浏览器 E2E 会初始化独立测试库并启动 API/Mock 两套前端。先配置 `backend/.env.test`，数据库名必须以 `_test` 结尾：
 

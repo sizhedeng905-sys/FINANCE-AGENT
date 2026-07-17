@@ -30,7 +30,7 @@ export class HttpAiProviderService {
       instructions: request.instructions,
       input: this.messages(request),
       max_output_tokens: this.config.get<number>('ai.maxOutputTokens') ?? 1200
-    });
+    }, request);
     const text =
       typeof response.output_text === 'string'
         ? response.output_text
@@ -63,7 +63,12 @@ export class HttpAiProviderService {
       max_tokens: this.config.get<number>('ai.maxOutputTokens') ?? 1200
     };
     if (/qwen3/i.test(request.model)) body.chat_template_kwargs = { enable_thinking: false };
-    const response = await this.post(`${this.baseUrl(request.baseUrl)}/chat/completions`, this.apiKey(request), body);
+    const response = await this.post(
+      `${this.baseUrl(request.baseUrl)}/chat/completions`,
+      this.apiKey(request),
+      body,
+      request
+    );
     const text = response.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) throw new Error('模型未返回文本');
     if (text.length > MAX_OUTPUT_CHARACTERS) throw new Error('模型输出超过允许长度');
@@ -75,12 +80,13 @@ export class HttpAiProviderService {
     };
   }
 
-  private async post(url: string, apiKey: string, body: unknown): Promise<any> {
+  private async post(url: string, apiKey: string, body: unknown, request: AiProviderRequest): Promise<any> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const timeoutMs = this.config.get<number>('ai.timeoutMs') ?? 30000;
-    const maxConcurrency = this.config.get<number>('modelRuntime.aiMaxConcurrency') ?? 1;
-    const response = await this.gate.run('ai', maxConcurrency, () => this.http.request(url, {
+    const timeoutMs = request.timeoutMs ?? this.config.get<number>('ai.timeoutMs') ?? 30000;
+    const maxConcurrency = request.maxConcurrency ?? this.config.get<number>('modelRuntime.aiMaxConcurrency') ?? 1;
+    const gateKey = `ai:${request.configHash ?? new URL(url).origin}`;
+    const response = await this.gate.run(gateKey, maxConcurrency, () => this.http.request(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)

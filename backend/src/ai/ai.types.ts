@@ -40,8 +40,15 @@ export interface AiHistoryMessage {
 export interface AiProviderRequest {
   provider: string;
   model: string;
+  modelVersion?: string;
+  deploymentId?: string;
+  deploymentKey?: string;
   baseUrl?: string | null;
   apiKey?: string;
+  secretRef?: string;
+  timeoutMs?: number;
+  maxConcurrency?: number;
+  configHash?: string;
   instructions: string;
   question: string;
   history: AiHistoryMessage[];

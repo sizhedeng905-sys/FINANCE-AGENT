@@ -4,6 +4,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readModelState, withModelSwitchLock } from './model-switch-lock.mjs';
 import { verifyModelAssets } from './verify-model-assets.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -12,19 +13,31 @@ const deploymentDirectory = path.join(repositoryRoot, 'deploy', 'model-services'
 const composeFile = path.join(deploymentDirectory, 'compose.yaml');
 const envFile = path.join(deploymentDirectory, '.env');
 const exampleEnvFile = path.join(deploymentDirectory, '.env.example');
+const stateRoot = path.join(deploymentDirectory, '.state');
+const gpuServices = ['qwen-text', 'qwen-vl', 'qwen-embedding'];
+const paddleBaseImage = 'ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl@sha256:659eb236d509966380c0ac938049cbb3494f1e84c5d5c53fcac3572c05463487';
+
+const textService = {
+  service: 'qwen-text',
+  endpoint: 'http://127.0.0.1:8000/v1/models',
+  model: 'Qwen/Qwen3-14B-AWQ',
+  capability: 'chat'
+};
 
 const onDemandServices = {
   vl: {
     profile: 'vl',
     service: 'qwen-vl',
     endpoint: 'http://127.0.0.1:8001/v1/models',
-    model: 'Qwen/Qwen3-VL-8B-Instruct'
+    model: 'Qwen/Qwen3-VL-8B-Instruct',
+    capability: 'chat'
   },
   embedding: {
     profile: 'embedding',
     service: 'qwen-embedding',
     endpoint: 'http://127.0.0.1:8002/v1/models',
-    model: 'Qwen/Qwen3-Embedding-8B'
+    model: 'Qwen/Qwen3-Embedding-8B',
+    capability: 'embedding'
   }
 };
 
@@ -36,14 +49,19 @@ async function main() {
   const environment = await loadEnvironment();
   ensureDocker();
 
-  if (command === 'start-resident') return startResident(environment);
-  if (command === 'start-on-demand') return startOnDemand(argument, environment);
-  if (command === 'stop-on-demand') return stopOnDemand(environment);
   if (command === 'status') return status(environment);
-  if (command === 'stop-all') return stopAll();
   if (command === 'logs') return logs(argument);
-
-  throw new Error('Usage: model-services.mjs init|check [scope]|start-resident|start-on-demand <vl|embedding>|stop-on-demand|status|logs [service]|stop-all');
+  const operations = {
+    'start-resident': (lock) => startResident(environment, lock),
+    'start-on-demand': (lock) => startOnDemand(argument, environment, lock),
+    'stop-on-demand': (lock) => stopOnDemand(environment, lock),
+    'stop-all': (lock) => stopAll(lock)
+  };
+  const operation = operations[command];
+  if (!operation) {
+    throw new Error('Usage: model-services.mjs init|check [scope]|start-resident|start-on-demand <vl|embedding>|stop-on-demand|status|logs [service]|stop-all');
+  }
+  return withModelSwitchLock({ stateRoot, operation: `${command}${argument ? `:${argument}` : ''}` }, operation);
 }
 
 async function initializeEnvironment() {
@@ -76,75 +94,95 @@ async function checkAssets(scope) {
   if (!report.ok) throw new Error(`Model asset check failed for scope: ${scope}`);
 }
 
-async function startResident(environment) {
+async function startResident(environment, lock) {
+  await lock.transition('resident_starting', { target: 'qwen-text' });
   await requireAssets('resident', environment);
+  await stopAndVerify(['qwen-vl', 'qwen-embedding']);
   compose(['up', '-d', '--build', 'qwen-text', 'paddle-ocr']);
   const timeoutMs = startTimeout(environment);
   try {
     await Promise.all([
-      waitForOpenAiModel('http://127.0.0.1:8000/v1/models', 'Qwen/Qwen3-14B-AWQ', environment.LOCAL_MODEL_API_KEY, timeoutMs),
-      waitForJsonHealth('http://127.0.0.1:8868/health', timeoutMs)
+      waitForOpenAiModel(textService, environment.LOCAL_MODEL_API_KEY, timeoutMs),
+      waitForPaddleReady(environment, timeoutMs)
     ]);
+    await lock.transition('resident_ready', { active: ['qwen-text', 'paddle-ocr'] });
   } catch (error) {
     compose(['logs', '--tail', '100', 'qwen-text', 'paddle-ocr'], { allowFailure: true });
+    await lock.transition('failed', { target: 'resident', reason: safeReason(error) });
     throw error;
   }
   console.log('Resident model services are ready: qwen-text and paddle-ocr.');
 }
 
-async function startOnDemand(kind, environment) {
+async function startOnDemand(kind, environment, lock) {
   const definition = onDemandServices[kind];
   if (!definition) throw new Error('On-demand model must be one of: vl, embedding.');
-  await requireAssets(kind, environment);
+  await Promise.all([requireAssets(kind, environment), requireAssets('text', environment)]);
+  await lock.transition('switching', { from: 'qwen-text', target: definition.service });
 
-  console.log(`Stopping qwen-text before loading ${definition.service} on the shared GPU.`);
-  compose(['stop', 'qwen-text'], { allowFailure: true });
+  console.log(`Stopping all switchable GPU services before loading ${definition.service}.`);
+  await stopAndVerify(gpuServices);
   try {
     compose(['--profile', definition.profile, 'up', '-d', definition.service]);
-    await waitForOpenAiModel(
-      definition.endpoint,
-      definition.model,
-      environment.LOCAL_MODEL_API_KEY,
-      startTimeout(environment)
-    );
+    await waitForOpenAiModel(definition, environment.LOCAL_MODEL_API_KEY, startTimeout(environment));
+    await lock.transition('on_demand_ready', { active: [definition.service, 'paddle-ocr'], target: definition.service });
     console.log(`${definition.service} is ready. Paddle OCR remains resident.`);
-  } catch (error) {
+  } catch (switchError) {
     console.error(`${definition.service} did not become ready; restoring qwen-text.`);
     compose(['--profile', definition.profile, 'logs', '--tail', '100', definition.service], { allowFailure: true });
-    compose(['up', '-d', 'qwen-text'], { allowFailure: true });
-    throw error;
+    await lock.transition('restoring_text', { failedTarget: definition.service });
+    try {
+      await stopAndVerify(['qwen-vl', 'qwen-embedding']);
+      await restoreText(environment);
+      await lock.transition('resident_ready', {
+        active: ['qwen-text', 'paddle-ocr'],
+        recoveredFrom: definition.service
+      });
+    } catch (restoreError) {
+      await lock.transition('failed', {
+        target: definition.service,
+        reason: `${safeReason(switchError)}; restore failed: ${safeReason(restoreError)}`
+      });
+      throw new AggregateError([switchError, restoreError], 'On-demand switch and qwen-text restoration both failed.');
+    }
+    throw new Error(`${safeReason(switchError)} qwen-text was restored and passed its capability probe.`);
   }
 }
 
-async function stopOnDemand(environment) {
-  compose(['--profile', 'vl', '--profile', 'embedding', 'stop', 'qwen-vl', 'qwen-embedding'], { allowFailure: true });
+async function stopOnDemand(environment, lock) {
+  await lock.transition('restoring_text', { target: 'qwen-text' });
+  await stopAndVerify(['qwen-vl', 'qwen-embedding']);
   await requireAssets('text', environment);
-  compose(['up', '-d', 'qwen-text']);
-  await waitForOpenAiModel(
-    'http://127.0.0.1:8000/v1/models',
-    'Qwen/Qwen3-14B-AWQ',
-    environment.LOCAL_MODEL_API_KEY,
-    startTimeout(environment)
-  );
+  await restoreText(environment);
+  await lock.transition('resident_ready', { active: ['qwen-text', 'paddle-ocr'] });
   console.log('On-demand services are stopped and qwen-text is ready again.');
+}
+
+async function restoreText(environment) {
+  compose(['up', '-d', 'qwen-text']);
+  await waitForOpenAiModel(textService, environment.LOCAL_MODEL_API_KEY, startTimeout(environment));
+}
+
+async function stopAll(lock) {
+  await lock.transition('stopping', { target: 'all' });
+  compose(['--profile', 'vl', '--profile', 'embedding', 'down']);
+  await lock.transition('stopped', { active: [] });
 }
 
 async function status(environment) {
   compose(['--profile', 'vl', '--profile', 'embedding', 'ps'], { allowFailure: true });
+  const state = await readModelState(stateRoot);
+  console.log(`state\t${state?.status ?? 'unknown'}${state?.target ? `\ttarget=${state.target}` : ''}`);
   const endpoints = [
-    ['qwen-text', 'http://127.0.0.1:8000/v1/models', environment.LOCAL_MODEL_API_KEY],
-    ['paddle-ocr', 'http://127.0.0.1:8868/health'],
-    ['qwen-vl', 'http://127.0.0.1:8001/v1/models', environment.LOCAL_MODEL_API_KEY],
-    ['qwen-embedding', 'http://127.0.0.1:8002/v1/models', environment.LOCAL_MODEL_API_KEY]
+    ['qwen-text', textService.endpoint, environment.LOCAL_MODEL_API_KEY],
+    ['paddle-ocr', 'http://127.0.0.1:8868/ready', environment.LOCAL_MODEL_API_KEY],
+    ['qwen-vl', onDemandServices.vl.endpoint, environment.LOCAL_MODEL_API_KEY],
+    ['qwen-embedding', onDemandServices.embedding.endpoint, environment.LOCAL_MODEL_API_KEY]
   ];
   for (const [name, url, apiKey] of endpoints) {
     const healthy = await endpointAvailable(url, apiKey);
     console.log(`${healthy ? 'ready' : 'offline'}\t${name}\t${url}`);
   }
-}
-
-function stopAll() {
-  compose(['--profile', 'vl', '--profile', 'embedding', 'down']);
 }
 
 function logs(service) {
@@ -153,6 +191,21 @@ function logs(service) {
   const args = ['--profile', 'vl', '--profile', 'embedding', 'logs', '--tail', '200'];
   if (service) args.push(service);
   compose(args);
+}
+
+async function stopAndVerify(services) {
+  compose(['--profile', 'vl', '--profile', 'embedding', 'stop', ...services], { allowFailure: true });
+  await waitFor(async () => services.every((service) => !serviceRunning(service)), `services to stop: ${services.join(', ')}`, 60_000, 1000);
+}
+
+function serviceRunning(service) {
+  const containerId = composeOutput(['--profile', 'vl', '--profile', 'embedding', 'ps', '-q', service], { allowFailure: true }).trim();
+  if (!containerId) return false;
+  const result = spawnSync('docker', ['inspect', '--format', '{{.State.Running}}', containerId], {
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  return result.status === 0 && result.stdout.trim() === 'true';
 }
 
 async function requireAssets(scope, environment) {
@@ -171,23 +224,29 @@ function printAssetReport(report) {
 
 function compose(arguments_, options = {}) {
   const result = spawnSync('docker', [
-    'compose',
-    '--env-file', envFile,
-    '-f', composeFile,
-    ...arguments_
-  ], { cwd: deploymentDirectory, stdio: 'inherit' });
+    'compose', '--env-file', envFile, '-f', composeFile, ...arguments_
+  ], { cwd: deploymentDirectory, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0 && !options.allowFailure) throw new Error(`docker compose exited with code ${result.status}.`);
   return result.status === 0;
 }
 
+function composeOutput(arguments_, options = {}) {
+  const result = spawnSync('docker', [
+    'compose', '--env-file', envFile, '-f', composeFile, ...arguments_
+  ], { cwd: deploymentDirectory, encoding: 'utf8', windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && !options.allowFailure) throw new Error(`docker compose exited with code ${result.status}.`);
+  return result.stdout || '';
+}
+
 function ensureDocker() {
-  const docker = spawnSync('docker', ['version'], { stdio: 'ignore' });
+  const docker = spawnSync('docker', ['version'], { stdio: 'ignore', windowsHide: true });
   if (docker.error?.code === 'ENOENT') {
     throw new Error('Docker is not installed. Install Docker Desktop with WSL 2 support before starting model services.');
   }
   if (docker.status !== 0) throw new Error('Docker is installed but the daemon is not available. Start Docker Desktop and retry.');
-  const composeVersion = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' });
+  const composeVersion = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore', windowsHide: true });
   if (composeVersion.status !== 0) throw new Error('Docker Compose v2 is required.');
 }
 
@@ -198,6 +257,16 @@ async function loadEnvironment(options = {}) {
     if (!parsed.MODEL_ROOT) throw new Error(`MODEL_ROOT is required in ${envFile}.`);
     if (!parsed.LOCAL_MODEL_API_KEY || parsed.LOCAL_MODEL_API_KEY.length < 32) {
       throw new Error(`LOCAL_MODEL_API_KEY must contain at least 32 characters in ${envFile}.`);
+    }
+    if (parsed.PADDLE_OCR_BASE_IMAGE && parsed.PADDLE_OCR_BASE_IMAGE !== paddleBaseImage) {
+      throw new Error(`PADDLE_OCR_BASE_IMAGE must use the pinned digest from ${exampleEnvFile}.`);
+    }
+    const gpuUtilizations = [
+      Number(parsed.ON_DEMAND_GPU_MEMORY_UTILIZATION ?? '0.72'),
+      Number(parsed.QWEN_VL_GPU_MEMORY_UTILIZATION ?? '0.75')
+    ];
+    if (gpuUtilizations.some((value) => !Number.isFinite(value) || value < 0.5 || value > 0.82)) {
+      throw new Error('On-demand GPU memory utilization must be between 0.50 and 0.82.');
     }
     return { ...process.env, ...parsed };
   } catch (error) {
@@ -232,25 +301,56 @@ function startTimeout(environment) {
   return value;
 }
 
-async function waitForOpenAiModel(url, expectedModel, apiKey, timeoutMs) {
+async function waitForOpenAiModel(definition, apiKey, timeoutMs) {
   await waitFor(async () => {
-    const response = await request(url, apiKey, 5000);
+    const runtime = serviceRuntimeState(definition.service);
+    if (runtime && (['exited', 'dead'].includes(runtime.status) || (runtime.restarting && runtime.restartCount >= 2))) {
+      throw new FatalModelStartError(`${definition.service} entered a restart loop (exit ${runtime.exitCode}).`);
+    }
+    const response = await request(definition.endpoint, apiKey, 5000);
     if (!response.ok) return false;
     const payload = await response.json().catch(() => ({}));
-    return Array.isArray(payload.data) && payload.data.some((item) => item?.id === expectedModel);
-  }, `${expectedModel} at ${url}`, timeoutMs);
+    if (!Array.isArray(payload.data) || !payload.data.some((item) => item?.id === definition.model)) return false;
+    return probeOpenAiCapability(definition, apiKey);
+  }, `${definition.model} identity and ${definition.capability} capability at ${definition.endpoint}`, timeoutMs);
 }
 
-async function waitForJsonHealth(url, timeoutMs) {
+async function probeOpenAiCapability(definition, apiKey) {
+  const root = definition.endpoint.replace(/\/models$/, '');
+  const embedding = definition.capability === 'embedding';
+  const response = await request(`${root}/${embedding ? 'embeddings' : 'chat/completions'}`, apiKey, 30_000, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(embedding
+      ? { model: definition.model, input: 'health' }
+      : {
+          model: definition.model,
+          messages: [{ role: 'user', content: 'health' }],
+          temperature: 0,
+          max_tokens: 1,
+          chat_template_kwargs: { enable_thinking: false }
+        })
+  });
+  if (!response.ok) return false;
+  const payload = await response.json().catch(() => ({}));
+  return embedding ? Array.isArray(payload.data) : Array.isArray(payload.choices);
+}
+
+async function waitForPaddleReady(environment, timeoutMs) {
+  const expectedVersion = environment.PADDLE_OCR_PIPELINE_VERSION || 'v1';
   await waitFor(async () => {
-    const response = await request(url, undefined, 5000);
+    const response = await request('http://127.0.0.1:8868/ready', environment.LOCAL_MODEL_API_KEY, 5000);
     if (!response.ok) return false;
     const payload = await response.json().catch(() => ({}));
-    return payload.status === 'ok';
-  }, `health endpoint ${url}`, timeoutMs);
+    return payload.status === 'ready'
+      && payload.model?.name === 'PaddlePaddle/PaddleOCR-VL'
+      && payload.model?.version === expectedVersion
+      && Array.isArray(payload.capabilities)
+      && payload.capabilities.includes('ocr_document');
+  }, 'authenticated Paddle OCR identity and capability', timeoutMs);
 }
 
-async function waitFor(check, label, timeoutMs) {
+async function waitFor(check, label, timeoutMs, intervalMs = 5000) {
   const startedAt = Date.now();
   let attempt = 0;
   while (Date.now() - startedAt < timeoutMs) {
@@ -260,11 +360,12 @@ async function waitFor(check, label, timeoutMs) {
         console.log(`Ready: ${label}`);
         return;
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof FatalModelStartError) throw error;
       // Model servers commonly refuse connections while weights are loading.
     }
     if (attempt === 1 || attempt % 6 === 0) console.log(`Waiting for ${label} (${Math.round((Date.now() - startedAt) / 1000)}s)...`);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${label}.`);
 }
@@ -277,12 +378,35 @@ async function endpointAvailable(url, apiKey) {
   }
 }
 
-function request(url, apiKey, timeoutMs) {
-  const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
-  return fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+function request(url, apiKey, timeoutMs, init = {}) {
+  const headers = { ...(init.headers || {}) };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  return fetch(url, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
 }
 
+function safeReason(error) {
+  return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]').slice(0, 500);
+}
+
+function serviceRuntimeState(service) {
+  const containerId = composeOutput([
+    '--profile', 'vl', '--profile', 'embedding', 'ps', '--all', '-q', service
+  ], { allowFailure: true }).trim();
+  if (!containerId) return undefined;
+  const inspect = spawnSync('docker', ['inspect', containerId], { encoding: 'utf8', windowsHide: true });
+  if (inspect.status !== 0) return undefined;
+  const item = JSON.parse(inspect.stdout)[0];
+  return {
+    status: item.State?.Status,
+    restarting: Boolean(item.State?.Restarting),
+    exitCode: Number(item.State?.ExitCode ?? 0),
+    restartCount: Number(item.RestartCount ?? 0)
+  };
+}
+
+class FatalModelStartError extends Error {}
+
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(safeReason(error));
   process.exitCode = 1;
 });

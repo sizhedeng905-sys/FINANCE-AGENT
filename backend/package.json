@@ -39,7 +39,18 @@
     "model:services:on-demand": "node scripts/model-services.mjs start-on-demand",
     "model:services:restore": "node scripts/model-services.mjs stop-on-demand",
     "model:services:status": "node scripts/model-services.mjs status",
-    "model:services:stop": "node scripts/model-services.mjs stop-all"
+    "model:services:stop": "node scripts/model-services.mjs stop-all",
+    "model:lock:test": "node scripts/test-model-switch-lock.mjs",
+    "model:switch:acceptance": "node scripts/test-live-model-switch.mjs",
+    "model:ocr:acceptance": "node scripts/test-live-paddle-ocr.mjs",
+    "model:key:rotate": "node scripts/rotate-local-model-key.mjs",
+    "model:config:check": "node scripts/check-model-deployment-config.mjs",
+    "model:sbom": "node scripts/scan-model-images.mjs --sbom-only",
+    "model:cve": "node scripts/scan-model-images.mjs --cve-only",
+    "model:cve:offline": "node scripts/scan-model-sboms-grype.mjs",
+    "model:security": "node scripts/scan-model-images.mjs",
+    "proxy:config:check": "node scripts/test-nginx-upload-boundary.mjs --config-only",
+    "proxy:boundary:test": "node scripts/test-nginx-upload-boundary.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.28",

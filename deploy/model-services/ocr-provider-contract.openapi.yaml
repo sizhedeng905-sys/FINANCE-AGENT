@@ -3,20 +3,44 @@ info:
   title: FINANCE-AGENT Local OCR Provider Contract
   version: 1.0.0
 paths:
-  /health:
+  /live:
     get:
       responses:
         "200":
-          description: Provider is ready.
+          description: Provider process is alive; no model or device details are exposed.
           content:
             application/json:
               schema:
                 type: object
                 required: [status]
                 properties:
-                  status: { type: string, const: ok }
-                  model: { type: string }
-                  version: { type: string }
+                  status: { type: string, const: live }
+  /ready:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Authenticated model identity and capability readiness.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, model, capabilities]
+                properties:
+                  status: { type: string, const: ready }
+                  model:
+                    type: object
+                    required: [name, version]
+                    properties:
+                      name: { type: string }
+                      version: { type: string }
+                  capabilities:
+                    type: array
+                    contains: { type: string, const: ocr_document }
+        "401":
+          description: Missing or invalid Bearer token.
+        "503":
+          description: Model pipeline is not loaded.
   /ocr:
     post:
       security: [{ bearerAuth: [] }]

@@ -63,6 +63,7 @@ describe('OCR phase 10 providers and preprocessing', () => {
         id: 'route-1',
         taskType: 'ocr_document',
         deployment: {
+          id: 'deployment-1',
           provider: 'local_paddle',
           modelName: 'paddle-test',
           modelVersion: 'v1',
@@ -71,7 +72,10 @@ describe('OCR phase 10 providers and preprocessing', () => {
           timeoutMs: 1000,
           maxConcurrency: 1,
           key: 'paddle-test',
-          isLocal: true
+          taskTypes: ['ocr_document'],
+          isLocal: true,
+          isEnabled: true,
+          configHash: 'deployment-hash'
         }
       })),
       resolveSecret: jest.fn(() => 'test-secret')
@@ -79,6 +83,24 @@ describe('OCR phase 10 providers and preprocessing', () => {
     const registry = new OcrProviderRegistry(config({ 'ocr.provider': 'mock' }), mock, local, runtime);
 
     await expect(registry.current()).resolves.toBe(local);
+    const resolution = await registry.resolve();
+    expect(resolution.config).toMatchObject({
+      provider: 'local_paddle',
+      endpoint: 'http://127.0.0.1:8868',
+      secretRef: 'OCR_API_KEY',
+      secret: 'test-secret',
+      timeoutMs: 1000,
+      maxConcurrency: 1,
+      configHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
+    const { secret: _secret, ...persisted } = resolution.config;
+    expect(registry.fromSnapshot(JSON.parse(JSON.stringify(persisted)), persisted.configHash).config)
+      .toMatchObject({ ...persisted, secret: 'test-secret' });
+    expect(() => registry.fromSnapshot(persisted, '0'.repeat(64))).toThrow('hash does not match');
+    expect(() => registry.fromSnapshot({
+      ...persisted,
+      configSummary: { source: 'test', apiKey: 'must-not-persist' }
+    })).toThrow('must not contain a credential');
     runtime.resolve.mockResolvedValue(undefined);
     await expect(registry.current()).resolves.toBe(mock);
     expect(() => registry.byName('unknown')).toThrow('不支持的 OCR Provider');

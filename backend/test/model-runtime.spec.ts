@@ -2,9 +2,12 @@ import { ConfigService } from '@nestjs/config';
 import { ServiceUnavailableException } from '@nestjs/common';
 
 import { ModelExecutionGateService } from '../src/model-runtime/model-execution-gate.service';
+import { resolveModelDeployment } from '../src/model-runtime/model-deployment-config';
+import { probeModelDeployment } from '../src/model-runtime/model-health-probe';
 import { ModelRuntimeService } from '../src/model-runtime/model-runtime.service';
 import { ResilientHttpClientService } from '../src/model-runtime/resilient-http-client.service';
 import { StructuredOutputValidatorService } from '../src/model-runtime/structured-output-validator.service';
+import { HttpAiProviderService } from '../src/ai/http-ai-provider.service';
 
 function config(values: Record<string, unknown>) {
   return { get: (key: string) => values[key] } as ConfigService;
@@ -152,7 +155,15 @@ describe('model runtime safeguards', () => {
       }
     };
     const http: any = {
-      request: jest.fn(async () => new Response('{}', { status: 200 })),
+      request: jest.fn(async (url: string) => {
+        if (url.endsWith('/models')) {
+          return new Response(JSON.stringify({ data: [{ id: 'Qwen/test' }] }), { status: 200 });
+        }
+        if (url.endsWith('/version')) {
+          return new Response(JSON.stringify({ version: 'test' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), { status: 200 });
+      }),
       snapshot: jest.fn(() => ({}))
     };
     const gate: any = { snapshot: jest.fn(() => ({})) };
@@ -166,5 +177,84 @@ describe('model runtime safeguards', () => {
     );
     expect(runtime.resolveSecret('not-an-env-name')).toBeUndefined();
     delete process.env.MODEL_TEST_API_KEY;
+  });
+
+  it('rejects unauthenticated or mismatched Paddle readiness responses', async () => {
+    const deployment = resolveModelDeployment({
+      id: 'paddle-1',
+      deploymentKey: 'paddle-local',
+      provider: 'local_paddle',
+      modelName: 'PaddlePaddle/PaddleOCR-VL',
+      modelVersion: 'v1',
+      endpoint: 'http://127.0.0.1:8868/',
+      secretRef: 'OCR_API_KEY',
+      taskTypes: ['ocr_document'],
+      maxConcurrency: 1,
+      timeoutMs: 3000,
+      isLocal: true,
+      isEnabled: true
+    });
+    const unauthorized = jest.fn(async () => new Response(
+      JSON.stringify({ detail: 'invalid bearer token' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    ));
+    await expect(probeModelDeployment(deployment, 'wrong-key', unauthorized)).rejects.toThrow('HTTP 401');
+    expect(unauthorized).toHaveBeenCalledWith(
+      'http://127.0.0.1:8868/ready',
+      { method: 'GET', headers: { Authorization: 'Bearer wrong-key' } },
+      3000,
+      'ready'
+    );
+
+    const mismatch = jest.fn(async () => new Response(JSON.stringify({
+      status: 'ready',
+      model: { name: 'PaddlePaddle/PaddleOCR-VL', version: 'v2' },
+      capabilities: ['ocr_document']
+    }), { status: 200 }));
+    await expect(probeModelDeployment(deployment, 'correct-key', mismatch)).rejects.toThrow('version does not match');
+  });
+
+  it('passes the resolved endpoint, timeout, concurrency, and config hash to an AI request', async () => {
+    const http = {
+      request: jest.fn(async () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"claims":[]}' } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2 }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    } as any;
+    const gate = {
+      run: jest.fn(async (_key: string, _limit: number, operation: () => Promise<unknown>) => operation())
+    } as any;
+    const provider = new HttpAiProviderService(config({
+      'ai.maxOutputTokens': 120,
+      'ai.maxResponseBytes': 1024
+    }), http, gate);
+
+    await expect(provider.generate({
+      provider: 'openai_compatible',
+      model: 'Qwen/test',
+      modelVersion: '0.23.0',
+      deploymentId: 'deployment-1',
+      deploymentKey: 'qwen-test',
+      baseUrl: 'http://127.0.0.1:18000/v1',
+      apiKey: 'route-secret',
+      secretRef: 'MODEL_TEST_API_KEY',
+      timeoutMs: 4321,
+      maxConcurrency: 3,
+      configHash: 'config-hash-1',
+      instructions: 'Return JSON.',
+      question: 'health',
+      history: [],
+      contexts: []
+    })).resolves.toMatchObject({ text: '{"claims":[]}' });
+
+    expect(gate.run).toHaveBeenCalledWith('ai:config-hash-1', 3, expect.any(Function));
+    expect(http.request).toHaveBeenCalledWith(
+      'http://127.0.0.1:18000/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer route-secret' })
+      }),
+      expect.objectContaining({ timeoutMs: 4321 })
+    );
   });
 });

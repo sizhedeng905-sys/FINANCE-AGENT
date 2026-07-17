@@ -4,7 +4,17 @@ server {
 
     root /srv/finance-agent/dist;
     index index.html;
-    client_max_body_size 10m;
+    # The application accepts a 50 MiB file; 2 MiB is reserved for multipart framing and fields.
+    client_max_body_size 52m;
+    client_body_timeout 60s;
+    client_body_temp_path /tmp/nginx-client-body 1 2;
+    proxy_temp_path /tmp/nginx-proxy 1 2;
+    fastcgi_temp_path /tmp/nginx-fastcgi 1 2;
+    uwsgi_temp_path /tmp/nginx-uwsgi 1 2;
+    scgi_temp_path /tmp/nginx-scgi 1 2;
+
+    error_page 413 = @payload_too_large;
+    error_page 502 503 504 = @gateway_unavailable;
 
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
@@ -22,7 +32,20 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_request_buffering on;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 120s;
         proxy_read_timeout 120s;
+    }
+
+    location @payload_too_large {
+        default_type application/json;
+        return 413 '{"code":41301,"message":"File size exceeds upload limit","data":{}}';
+    }
+
+    location @gateway_unavailable {
+        default_type application/json;
+        return 503 '{"code":50001,"message":"Upstream service is unavailable","data":{}}';
     }
 
     location = /index.html {

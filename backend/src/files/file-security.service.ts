@@ -53,6 +53,12 @@ export class FileSecurityService {
     if (this.scanMode === 'clamav') await this.scanWithClamAv(buffer);
   }
 
+  async readiness() {
+    if (this.scanMode === 'basic') return { status: 'not_required', mode: 'basic' } as const;
+    await this.pingClamAv();
+    return { status: 'ok', mode: 'clamav' } as const;
+  }
+
   private async validateStructure(extension: string, buffer: Buffer) {
     if (extension === '.png') {
       this.assert(isStructurallyValidPng(buffer), 'PNG structure is invalid');
@@ -162,6 +168,32 @@ export class FileSecurityService {
       socket.connect(this.clamavPort, this.clamavHost, () => {
         void this.writeClamAvStream(socket, buffer).catch(() => finish(new ServiceUnavailableException('ClamAV stream failed')));
       });
+    });
+  }
+
+  private pingClamAv() {
+    return new Promise<void>((resolve, reject) => {
+      const socket = new Socket();
+      let response = '';
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
+      socket.setTimeout(this.clamavTimeoutMs, () => finish(new ServiceUnavailableException('ClamAV readiness timed out')));
+      socket.on('error', () => finish(new ServiceUnavailableException('ClamAV is unavailable')));
+      socket.on('data', (chunk) => {
+        response += chunk.toString('utf8');
+        if (response.length > 64) finish(new ServiceUnavailableException('ClamAV readiness response is invalid'));
+      });
+      socket.on('end', () => {
+        if (/^PONG\0?$/.test(response)) finish();
+        else finish(new ServiceUnavailableException('ClamAV readiness response is invalid'));
+      });
+      socket.connect(this.clamavPort, this.clamavHost, () => socket.end('zPING\0'));
     });
   }
 

@@ -271,6 +271,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     const pageSelection = this.pageSelectionFromDto(dto);
     const pages = await this.preprocessor.inspect(file.buffer, file.mimeType, pageSelection);
     const snapshot = resolvedProvider.config;
+    const executionSnapshot = this.providerExecutionSnapshot(snapshot);
     const providerOptions = this.providerOptions(dto.mockScenario, pageSelection);
 
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
@@ -286,6 +287,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         modelName: snapshot.modelName,
         modelVersion: snapshot.modelVersion,
         endpointSnapshot: snapshot.endpoint,
+        providerConfig: this.json(executionSnapshot),
+        providerConfigHash: snapshot.configHash,
         providerOptions: providerOptions ? this.json(providerOptions) : undefined,
         pages: this.json(pages),
         pageCount: pages.length,
@@ -400,9 +403,13 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     executionConfig: OcrProviderExecutionConfig
   ) {
+    const executionSnapshot = this.providerExecutionSnapshot(executionConfig);
     const prepared = await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
+      if (task.providerConfigHash && task.providerConfigHash !== executionConfig.configHash) {
+        throw new ConflictException('OCR task provider configuration snapshot changed');
+      }
       const completedStatuses: OcrTaskStatus[] = [OcrTaskStatus.pending_confirm, OcrTaskStatus.confirmed];
       if (completedStatuses.includes(task.status)) {
         return { skipped: true as const, task };
@@ -441,7 +448,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           modelName: executionConfig.modelName,
           modelVersion: executionConfig.modelVersion,
           endpointSnapshot: executionConfig.endpoint,
-          providerConfig: this.json(executionConfig.configSummary),
+          providerConfig: this.json(executionSnapshot),
           providerConfigHash: executionConfig.configHash,
           secretRef: executionConfig.secretRef,
           inputSha256: task.rawFile.sha256,
@@ -454,10 +461,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         data: {
           status: OcrTaskStatus.processing,
           attemptCount: attemptNo,
-          provider: executionConfig.provider,
-          modelName: executionConfig.modelName,
-          modelVersion: executionConfig.modelVersion,
-          endpointSnapshot: executionConfig.endpoint,
+          provider: task.providerConfig === null ? executionConfig.provider : undefined,
+          modelName: task.providerConfig === null ? executionConfig.modelName : undefined,
+          modelVersion: task.providerConfig === null ? executionConfig.modelVersion : undefined,
+          endpointSnapshot: task.providerConfig === null ? executionConfig.endpoint : undefined,
+          providerConfig: task.providerConfig === null ? this.json(executionSnapshot) : undefined,
+          providerConfigHash: task.providerConfigHash ?? executionConfig.configHash,
           errorMessage: null,
           leaseToken,
           leaseUntil: new Date(Date.now() + this.processingLeaseMs),
@@ -913,14 +922,20 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private scheduleTask(id: string) {
     if (this.stopping || this.backgroundJobs.has(id)) return;
     const job = (async () => {
-      const queuedResolution = await this.providers.resolve();
-      const gateKey = `ocr:${queuedResolution.config.configHash ?? queuedResolution.config.provider}`;
-      await this.executionGate.run(gateKey, queuedResolution.config.maxConcurrency, async () => {
+      const frozen = await this.prisma.ocrTask.findUnique({
+        where: { id },
+        select: { providerConfig: true, providerConfigHash: true }
+      });
+      if (!frozen) return;
+      const resolution = frozen.providerConfig === null
+        ? await this.providers.resolve()
+        : this.providers.fromSnapshot(frozen.providerConfig, frozen.providerConfigHash);
+      const gateKey = `ocr:${resolution.config.configHash ?? resolution.config.provider}`;
+      await this.executionGate.run(gateKey, resolution.config.maxConcurrency, async () => {
         if (this.stopping) return;
         const request = await this.backgroundRequest(id);
         if (!request) return;
-        const actualResolution = await this.providers.resolve();
-        await this.executeQueuedTask(id, request.actor, request.context, actualResolution.config);
+        await this.executeQueuedTask(id, request.actor, request.context, resolution.config);
       });
     })().catch((error) => {
       this.logger.warn(`OCR background task ${id} deferred: ${this.safeErrorMessage(error)}`);
@@ -1233,6 +1248,21 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
 
   private json(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  private providerExecutionSnapshot(config: OcrProviderExecutionConfig) {
+    return {
+      ...config.configSummary,
+      provider: config.provider,
+      modelName: config.modelName,
+      modelVersion: config.modelVersion ?? null,
+      endpoint: config.endpoint ?? null,
+      ...(config.secretRef ? { secretRef: config.secretRef } : {}),
+      timeoutMs: config.timeoutMs,
+      maxConcurrency: config.maxConcurrency,
+      configSummary: config.configSummary,
+      configHash: config.configHash ?? null
+    };
   }
 
   private async lockTask(tx: Prisma.TransactionClient, id: string) {
