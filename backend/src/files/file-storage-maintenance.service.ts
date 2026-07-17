@@ -57,7 +57,7 @@ export class FileStorageMaintenanceService implements OnModuleInit {
   }
 
   async reconcileDatabaseAndDisk() {
-    if (!this.storage.listPaths || !this.storage.exists) return { missing: 0, removed: 0 };
+    if (!this.storage.listPaths || !this.storage.exists) return { missing: 0, removed: 0, orphaned: 0 };
     const [records, diskPaths] = await Promise.all([
       this.prisma.rawFile.findMany({ select: { id: true, storagePath: true, isVoided: true } }),
       this.storage.listPaths()
@@ -68,36 +68,52 @@ export class FileStorageMaintenanceService implements OnModuleInit {
       if (!record.isVoided && !(await this.storage.exists(record.storagePath))) missing.push(record);
     }
 
-    if (missing.length > 0) {
+    const orphaned = diskPaths.filter((path) => !known.has(path));
+    if (missing.length > 0 || orphaned.length > 0) {
       await this.prisma.$transaction(async (tx) => {
-        await tx.rawFile.updateMany({
-          where: { id: { in: missing.map((record) => record.id) }, isVoided: false },
-          data: { status: RawFileStatus.failed, scanStatus: FileScanStatus.failed }
-        });
-        await tx.auditLog.create({
-          data: {
-            action: 'file.storage.reconcile_missing',
-            resourceType: 'raw_file',
-            metadata: {
-              count: missing.length,
-              pathHashes: missing.map((record) => this.pathHash(record.storagePath))
+        if (missing.length > 0) {
+          await tx.rawFile.updateMany({
+            where: { id: { in: missing.map((record) => record.id) }, isVoided: false },
+            data: { status: RawFileStatus.failed, scanStatus: FileScanStatus.failed }
+          });
+          await tx.auditLog.create({
+            data: {
+              action: 'file.storage.reconcile_missing',
+              resourceType: 'raw_file',
+              metadata: {
+                count: missing.length,
+                pathHashes: missing.map((record) => this.pathHash(record.storagePath))
+              }
             }
-          }
-        });
+          });
+        }
+        if (orphaned.length > 0) {
+          await tx.auditLog.create({
+            data: {
+              action: 'file.storage.reconcile_orphan_deferred',
+              resourceType: 'raw_file',
+              metadata: {
+                count: orphaned.length,
+                cleanupDeferred: true,
+                pathHashes: orphaned.map((path) => this.pathHash(path))
+              }
+            }
+          });
+        }
       });
     }
 
     let removed = 0;
     for (const path of diskPaths) {
       const record = known.get(path);
-      if (record && !record.isVoided) continue;
+      if (!record?.isVoided) continue;
       await this.storage.remove(path);
       removed += 1;
     }
-    if (missing.length > 0 || removed > 0) {
-      this.logger.warn(`Storage reconciliation: missing=${missing.length}, removed=${removed}`);
+    if (missing.length > 0 || removed > 0 || orphaned.length > 0) {
+      this.logger.warn(`Storage reconciliation: missing=${missing.length}, removed=${removed}, orphaned=${orphaned.length}`);
     }
-    return { missing: missing.length, removed };
+    return { missing: missing.length, removed, orphaned: orphaned.length };
   }
 
   private pathHash(path: string) {

@@ -72,7 +72,7 @@ describe('upload resource and storage safety', () => {
     }
   });
 
-  it('fails closed for missing database files and removes disk orphans and voided remnants', async () => {
+  it('fails closed for missing database files, removes voided remnants, and defers unknown objects', async () => {
     const records = [
       { id: 'active-present', storagePath: '2026/07/present.pdf', isVoided: false },
       { id: 'active-missing', storagePath: '2026/07/missing.pdf', isVoided: false },
@@ -93,7 +93,7 @@ describe('upload resource and storage safety', () => {
     };
     const service = new FileStorageMaintenanceService(prisma as any, storage as any, config({}));
 
-    await expect(service.reconcileDatabaseAndDisk()).resolves.toEqual({ missing: 1, removed: 2 });
+    await expect(service.reconcileDatabaseAndDisk()).resolves.toEqual({ missing: 1, removed: 1, orphaned: 1 });
     expect(tx.rawFile.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['active-missing'] }, isVoided: false },
       data: { status: RawFileStatus.failed, scanStatus: FileScanStatus.failed }
@@ -101,7 +101,13 @@ describe('upload resource and storage safety', () => {
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: 'file.storage.reconcile_missing' })
     }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'file.storage.reconcile_orphan_deferred',
+        metadata: expect.objectContaining({ count: 1, cleanupDeferred: true })
+      })
+    }));
     expect(storage.remove).toHaveBeenCalledWith('2026/07/voided.pdf');
-    expect(storage.remove).toHaveBeenCalledWith('2026/07/orphan.pdf');
+    expect(storage.remove).not.toHaveBeenCalledWith('2026/07/orphan.pdf');
   });
 });
