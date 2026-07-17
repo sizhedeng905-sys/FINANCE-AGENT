@@ -22,7 +22,11 @@ export default function ReviewerHistoryPage() {
     { title: '工单编号', dataIndex: 'orderNo' },
     { title: '项目', dataIndex: 'projectName' },
     { title: '金额', dataIndex: 'amount', render: (value) => formatMoney(value) },
-    { title: '财务审核人', render: () => '林雪' },
+    {
+      title: '财务审核人',
+      render: (_, record) =>
+        [...record.timeline].reverse().find((item) => item.role === 'finance')?.operator || '-',
+    },
     { title: '复核结果', dataIndex: 'status', render: (value) => statusTextMap[value as WorkOrder['status']] ?? '未知状态' },
     {
       title: '复核时间',
