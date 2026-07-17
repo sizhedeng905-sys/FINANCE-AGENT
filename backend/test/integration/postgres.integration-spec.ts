@@ -6494,6 +6494,16 @@ describe('real PostgreSQL integration', () => {
         const originalRecognize = provider.recognize.bind(provider);
         let active = 0;
         let peak = 0;
+        let releaseInitialBatch!: () => void;
+        let initialBatchReleased = false;
+        let initialBatchTimer!: ReturnType<typeof setTimeout>;
+        const initialBatchStarted = new Promise<void>((resolve, reject) => {
+          releaseInitialBatch = resolve;
+          initialBatchTimer = setTimeout(
+            () => reject(new Error(`Timed out waiting for OCR concurrency ${maxConcurrency}`)),
+            5_000
+          );
+        });
         const snapshotSpy = jest.spyOn(provider, 'snapshot').mockImplementation(() => ({
           ...originalSnapshot(),
           maxConcurrency,
@@ -6502,8 +6512,14 @@ describe('real PostgreSQL integration', () => {
         const recognizeSpy = jest.spyOn(provider, 'recognize').mockImplementation(async (input) => {
           active += 1;
           peak = Math.max(peak, active);
-          await new Promise((resolve) => setTimeout(resolve, 60));
           try {
+            if (!initialBatchReleased && active === maxConcurrency) {
+              initialBatchReleased = true;
+              clearTimeout(initialBatchTimer);
+              releaseInitialBatch();
+            }
+            await initialBatchStarted;
+            await new Promise((resolve) => setTimeout(resolve, 60));
             return await originalRecognize(input);
           } finally {
             active -= 1;
@@ -6541,6 +6557,7 @@ describe('real PostgreSQL integration', () => {
           if (maxConcurrency === 1) expect(Math.max(...queueLatencies)).toBeGreaterThan(60);
           expect(await prisma.businessRecord.count()).toBe(recordsBefore);
         } finally {
+          clearTimeout(initialBatchTimer);
           snapshotSpy.mockRestore();
           recognizeSpy.mockRestore();
           await harness.cleanup();
