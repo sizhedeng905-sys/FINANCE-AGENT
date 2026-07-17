@@ -11,7 +11,9 @@ Phase 0 through phase 10 backend for the logistics AI finance operations system.
 - JWT
 - class-validator/class-transformer
 - Swagger/OpenAPI
-- Helmet, CORS allowlist, request/login rate limiting, requestId logging
+- Helmet, CORS allowlist, Redis-backed global request limiting, bounded login/upload/model guards, requestId/traceId logging
+- S3-compatible private object storage, ClamAV, Prometheus metrics, OTLP traces
+- Split API/Worker production runtime with PostgreSQL durable task leases
 
 ## Setup
 
@@ -24,7 +26,7 @@ copy .env.example .env
 npm run prisma:generate
 ```
 
-Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires verified TLS for a remote PostgreSQL server, an explicit CORS allowlist, trusted proxy addresses when proxying, and `FILE_SCAN_MODE=clamav`; Swagger stays disabled unless `SWAGGER_ENABLED=true`. Then initialize the database:
+Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis shared limiting, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. Then initialize the database:
 
 ```bash
 npm run prisma:migrate
@@ -35,9 +37,11 @@ npm run prisma:seed
 
 ```bash
 npm run dev
+npm run dev:worker
 npm run start:e2e
 npm run build
 npm run start
+npm run start:worker
 npm run test
 npm run test:integration
 npm run prisma:generate
@@ -80,21 +84,24 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-17, B8-08 engineering tooling):
+Current verification baseline (2026-07-17, B8-09 engineering implementation):
 
 - Backend build and Prisma validation pass with 24 applied migrations and no pending migration.
-- Jest: 24/24 suites and 240/240 tests.
-- Real PostgreSQL integration: 2/2 suites and 59/59 tests, including 30,196/49,999-row final posting and finance UAT reconciliation.
+- Jest: 27/27 suites and 256/256 tests.
+- Real PostgreSQL integration: 2/2 suites and 60/60 tests, including API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
 - Root Playwright acceptance: 14/14 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
 - Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
 - B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
-- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, and target-environment deployment remain external gates. See `docs/B8_08_FINANCE_UAT_REPORT.md`.
+- B8-09 adds split API/Worker roles, Redis limiting/heartbeat, S3 storage and signed downloads, W3C/OTLP tracing, an 18-service TLS Staging topology, immutable runtime DB grants, linked backups, restore drills, and application/data/model rollback scripts.
+- Staging secret/CA initialization, certificate validation, rendered Compose security assertions, and 10 shell syntax checks pass. Docker image build and real restore remain `blocked_external` because this host cannot reach the Docker Hub auth endpoint.
+- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
 
 - Health checks: `GET /api/health`, `GET /api/health/live`, `GET /api/health/ready`
+- Authenticated Prometheus metrics: `GET /api/metrics`
 - Login: `POST /api/auth/login`
 - Current user: `GET /api/auth/me`
 - Logout: `POST /api/auth/logout`
@@ -118,7 +125,7 @@ Current verification baseline (2026-07-17, B8-08 engineering tooling):
 - Work orders: `GET/POST/PATCH /api/work-orders`
 - Approval actions: `POST /api/work-orders/:id/{finance-review|reviewer-review|run-rules|boss-approve}`
 - Work order timeline and urging: `GET /api/work-orders/:id/timeline`, `POST /api/work-orders/:id/urge`
-- File upload/preview/download/void: `/api/files`
+- File upload/preview/download/void and short signed object download: `/api/files`, `GET /api/files/:id/signed-download`
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
 - Risk rules and anomalies: `/api/risk-rules`, `/api/reports/anomalies`, `/api/ai/anomalies`
 - Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/ranking`, `/api/reports/projects/:projectId/{daily|monthly}`
@@ -187,9 +194,15 @@ The seed also creates default projects, templates, fields, six risk rules, one p
 
 ## File Storage
 
-Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. File, import, and OCR upload routes share per-user concurrency, in-flight byte, and rate admission controls. The API validates images, PDF, OOXML, CSV, Word, and legacy XLS content structurally; rejects active/forged documents and EICAR; limits image decoded memory and PDF pages/objects/time; records SHA-256 metadata; and enforces user/project quotas plus a minimum disk-waterline.
+Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. Production requires S3-compatible private storage; the backend can issue audited 30-300 second attachment URLs after resource authorization. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. File, import, and OCR upload routes share per-user concurrency, in-flight byte, and rate admission controls. The API validates images, PDF, OOXML, CSV, Word, and legacy XLS content structurally; rejects active/forged documents and EICAR; limits image decoded memory and PDF pages/objects/time; records SHA-256 metadata; and enforces user/project quotas plus a storage waterline.
 
-`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with disk. The storage implementation remains isolated in `src/files/local-file-storage.service.ts` so OSS/COS/S3 can replace local disk later; the ClamAV daemon, object storage, backup, and retention jobs are deployment responsibilities.
+## Staging
+
+The repository root exposes `staging:init`, `staging:check`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` for secret generation, database grants, backup/restore, observability, pilot checks, and rollback safety gates.
+
+`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with the selected storage adapter. Development can use `LocalFileStorageService`; production requires the private S3-compatible adapter. Real ClamAV, object-storage backup, encryption/retention policy, and restore evidence remain deployment responsibilities.
+
+The production global request limiter uses Redis. Login throttling, upload admission, and model concurrency gates remain process-local in B8-09, so the supplied Staging topology intentionally runs one API and one Worker. Do not scale either role horizontally until those controls are made distributed and their failover behavior is tested.
 
 ## Authentication Boundary
 
@@ -268,6 +281,7 @@ Completed:
 - Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
 - B8-01 to B8-07: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, strict financial Claim grounding, security boundaries, and an authenticated GPU/model control plane.
 - B8-08 engineering preparation: privacy-safe UAT manifests, integer-cent PostgreSQL reconciliation, issue tracking, and non-overwriting human signoff templates; human acceptance remains external.
+- B8-09 engineering implementation: split API/Worker runtime, Redis coordination, private S3 storage, PostgreSQL TLS/least privilege, centralized observability, linked backups, restore drills, and guarded application/data/model rollback; target-environment execution remains external.
 
 Explicitly deferred by the user:
 

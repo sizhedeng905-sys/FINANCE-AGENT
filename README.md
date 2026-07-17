@@ -9,9 +9,10 @@
 - 后端使用 PostgreSQL + Prisma，支持真实数据库连接
 - AI 默认使用不需要模型的结构化 mock provider，也可配置 OpenAI 或本地 OpenAI-compatible 服务
 - 项目、模板、字段、经营记录、完整审批、文件、通知、报表、AI 助手、Excel 和 OCR 页面已接真实 API
-- 真实业务数据 B0-B7 与 B8-01 至 B8-07 工程门禁已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账、权限/文件安全及模型控制面均有自动化证据；财务、OCR、安全和业务政策仍待外部签字
+- 真实业务数据 B0-B7 与 B8-01 至 B8-09 工程实现已完成：Excel 49,999 行、OCR 异步、AI Claim/PostgreSQL 黄金账、安全/模型控制面，以及 Staging API/Worker、私有存储、观测和恢复工具均有自动化证据
 - Qwen3-14B-AWQ 与 PaddleOCR-VL 已在 RTX 5090 上常驻运行；Qwen3-VL-8B-Instruct 与 Qwen3-Embedding-8B 的真实并发切换、能力探针、无 OOM 和文本恢复均已验收
 - B8-08 已提供八场景匿名 UAT 工作包和 `_test` PostgreSQL 逐分对账工具；当前状态仍为 `blocked_external`，不会用自动化结果代替财务、业务、老板或安全签字
+- B8-09 已提供 18 服务 Staging、TLS、Redis、MinIO、ClamAV、Prometheus/Loki/Tempo、关联备份恢复及应用/数据/模型回退；本机 Docker Hub 连接和 H-12 至 H-16 仍为外部阻断，尚未声明生产就绪
 
 ## 技术栈
 
@@ -31,6 +32,9 @@
 - JWT
 - class-validator
 - Swagger/OpenAPI
+- Redis shared rate limiting and worker heartbeat
+- S3-compatible private object storage
+- Prometheus/Loki/Tempo observability
 
 ## 功能概览
 
@@ -79,6 +83,8 @@
 - Office/CSV/PDF/图片主动内容与复杂度失败关闭，三个上传入口共用每用户并发、在途字节和速率限制；原件明确标记为不可信证据。
 - Git pre-commit 与 CI 默认拒绝业务文件，并执行手机号、身份证、银行卡、内部词典和高熵敏感内容 DLP。
 - B8-07 固定 vLLM/Paddle 基础镜像 digest，统一模型部署快照与身份探针，并使用跨进程 GPU 锁保证文本、VL、Embedding 互斥和失败恢复。
+- B8-09 生产运行拆分 API/Worker，Redis 提供共享限流和 Worker heartbeat；文件可落私有 S3/MinIO 并签发 60 秒授权下载地址。
+- PostgreSQL Staging 强制 TLS 和 migrator/runtime/backup 账号分离；runtime 在数据库层不能更新或删除 audit/ledger，日志、指标和 trace 集中到 Loki/Prometheus/Tempo。
 - 模型容器以非 root、只读根、private IPC、cap drop 和资源限额运行；SPDX/Grype 复扫 Critical/High 为 0，Nginx 19/50 MiB 含 multipart 边界门禁通过。
 - AI 使用有限服务端会话历史、项目唯一匹配、不可信工具数据边界和响应大小/token 限制；异常支持人工处置并在审批后闭环。
 - 前端 API 模式直接读取真实项目结构，路由按页懒加载；CI 固定 Action SHA，并加入 Gitleaks、CodeQL 和 Dependabot。
@@ -89,7 +95,7 @@
 
 **P1-08 与 B8-03 已完成**：同步解析保持 5000 行上限，5001-50000 行解析进入后台流式任务；确认 API 也改为可恢复后台任务，每 500 行短事务写入，最终原子发布。解析阶段允许取消，确认开始后明确拒绝取消。5,001、30,196 与 49,999 行均通过真实 PostgreSQL 最终记录、动态字段、金额、唯一来源、审计、ledger 和日报闭环。
 
-因此当前版本适合隔离开发和真实样本结构验收；在跨来源去重、人工财务/OCR/安全政策签字以及真实 Staging 的 TLS、ClamAV、对象存储、监控和恢复演练完成前，不标记为生产就绪。
+因此当前版本适合隔离开发、真实样本结构验收和目标 Staging 工程部署；在跨来源去重、人工财务/OCR/安全政策签字以及目标服务器上的镜像、恢复和回退实测完成前，不标记为生产就绪。
 
 ## 启动方式
 
@@ -166,6 +172,16 @@ Health：
 http://localhost:3001/api/health
 ```
 
+### Staging 初始化与发布
+
+```bash
+npm run staging:init
+npm run staging:check
+npm run staging:release
+```
+
+`staging:init` 只在 `deploy/staging/.secrets` 和 `.runtime` 生成被忽略的随机 secret/证书；`staging:release` 要求已跟踪工作树干净，并执行迁移、TLS smoke、关联备份恢复和 release manifest。完整说明及回退命令见 `docs/B8_09_STAGING_RUNBOOK.md`。
+
 ### 后端阶段进展
 
 | 阶段 | 状态 | 说明 |
@@ -186,6 +202,7 @@ http://localhost:3001/api/health
 | 真实业务数据 B0-B7 | 工程完成 | 112 个文件只读匿名基线、文件/Excel/OCR、四来源财务记录、72 条 AI 基准、并发与故障恢复均已验收；财务签字见 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` |
 | B8-01 至 B8-07 | 工程完成 | Excel/OCR 后台闭环、AI 严格 Claim、安全边界，以及模型身份、GPU 互斥、SBOM/CVE 和代理上传门禁通过；证据见 `docs/B8_03_LARGE_EXCEL_CONFIRMATION_REPORT.md` 至 `docs/B8_07_MODEL_CONTROL_PLANE_REPORT.md` |
 | B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景运行手册、匿名 manifest、逐分对账和问题/签字模板已交付；H-01 至 H-12、H-16 待授权人员完成 |
+| B8-09 Staging/试运行 | 工程完成 / 外部阻断 | API/Worker、Redis、S3/MinIO、PostgreSQL TLS、ClamAV、集中观测、备份恢复和三类回退已交付；Docker Hub/目标恢复与 H-12 至 H-16 待完成 |
 | 本地模型部署 | 控制面通过 | 四套资产完整；文本/OCR 常驻，VL/Embedding 按需真实切换和恢复已在 RTX 5090 实测，OCR 准确率仍等待人工标签 |
 
 阶段 1 后端测试账号：
@@ -330,7 +347,7 @@ npm test --prefix backend
 npm run test:integration --prefix backend
 ```
 
-当前 B8-08 工程基线为 24/24 Jest suites、240/240 tests、2/2 PostgreSQL suites（59/59 tests）和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build 通过。B8-07 的真实模型/SBOM/代理门禁继续有效；B8-08 人工结论仍为 `blocked_external`。详细证据见 `docs/B8_08_FINANCE_UAT_REPORT.md`。
+当前 B8-09 工程基线为 27/27 Jest suites、256/256 tests、2/2 PostgreSQL suites（60/60 tests）和 14/14 标准 Playwright；测试库已应用 24/24 Prisma migrations 且无待应用迁移，前后端 production build 通过。18 服务 Compose 静态门禁、随机 secret/CA、证书链和 10/10 shell syntax 已通过；真实容器 smoke/restore 因 Docker Hub 连接失败仍为 `blocked_external`。详细证据见 `docs/B8_09_STAGING_REPORT.md`。
 
 初始化并校验本地匿名 UAT 工作包：
 
@@ -471,10 +488,10 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 - 认证、用户管理和 C-1 至 C-11 已完成显式 Mock/API 切换；API 失败不会静默回退 Mock。
 - Excel 已使用真实解析器和 PostgreSQL；Qwen/Paddle 服务已在 Docker/GPU 上完成稳定性验证。默认开发配置仍使用确定性 Mock Provider，真实 OCR 准确率必须在财务复核 17 份标签后才能声明达标。
 - 后端权限已经按 JWT 角色和数据归属强制校验，前端路由仅用于界面体验。
-- 文件当前真实存储在 `backend/uploads`；开发可用基础扫描，生产配置强制使用 ClamAV 且只允许 `clean` 文件进入预览、下载、Excel 或 OCR。对象存储、备份和实际 ClamAV 服务部署仍需在目标环境完成。
+- 开发文件默认存储在 `backend/uploads`；Staging 已提供私有 S3/MinIO、ClamAV、关联备份和短签名下载适配，但实际服务与恢复仍需在目标环境验证。生产配置强制 ClamAV，只有 `clean` 文件可进入预览、下载、Excel 或 OCR。
 - 后端报表只聚合 PostgreSQL 中已确认经营记录，前端财务/老板/项目报表均已切换真实接口。
 - AI 默认使用结构化 mock provider；本地路由启用前强制健康检查。真实 Qwen 72 条基准暴露较高 grounding fallback，因此财务数字继续由结构化工具和受控 renderer 提供，模型不能自由生成金额。
-- 全局/登录限流当前为单实例内存实现；生产多副本需要共享限流。对象存储、ClamAV 服务、集中监控和备份仍待部署。
+- 生产全局 IP 限流已使用 Redis 原子窗口；登录、上传准入和模型并发闸门仍是进程内状态，因此当前 Staging 拓扑锁定为单 API、单 Worker，横向扩容前必须共享化并补多实例测试。
 - 跨 Excel/OCR/手工来源的业务去重仍按用户决定暂缓；Excel 当前只接受 50000 行以内，50 MiB 为含边界硬上限，超过时统一返回 413。旧 `.xls` 已进入隔离转换通道，但不会执行公式或接受缺失缓存的公式行。
 
 ## 推荐后续开发顺序
@@ -482,7 +499,7 @@ $listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Objec
 1. 财务按 `docs/B7_FINANCE_UAT_ACCEPTANCE.md` 完成 L3 逐分对账、入账粒度和负数/冲销政策签字，并复核 17 份 OCR 字段标签。
 2. 定义跨 Excel/OCR/手工来源的业务唯一性政策，再实现统一幂等键和重复入账攻击测试。
 3. 根据已签字标签校准 OCR 字段准确率、低置信度召回率和人工复核时长；达标前保持人工辅助模式。
-4. 上线前部署对象存储、ClamAV、共享限流、密钥托管、监控和备份，并在真实反向代理/PostgreSQL TLS 拓扑演练。
+4. 在 H-13 指定环境部署 S3、ClamAV、Redis、密钥托管、观测和备份，完成反向代理/PostgreSQL TLS、恢复与回退演练；横向扩容前共享化登录、上传和模型闸门。
 
 ## GitHub
 

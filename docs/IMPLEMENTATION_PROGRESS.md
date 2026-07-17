@@ -3,7 +3,7 @@
 更新日期：2026-07-17
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：B8-08 工程工具完成、人工门禁 `blocked_external`，下一步进入 B8-09 Staging 与试运行工程准备
+当前批次：B8-09 工程实现完成；真实容器/恢复演练与 H-12 至 H-16 为 `blocked_external`
 
 ## 完成口径
 
@@ -25,6 +25,20 @@
 | B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
 | B8-07 模型控制面、GPU 与反向代理 | 工程完成 | 不可变部署快照、认证身份探针、跨进程 GPU 状态机、容器/SBOM/CVE 和 50 MiB 代理边界通过 |
 | B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景匿名 manifest、逐分对账、问题/签字模板和 `_test` 数据库门禁完成；H-01 至 H-12、H-16 待授权人员完成 |
+| B8-09 Staging 与试运行 | 工程完成 / 外部阻断 | API/Worker、Redis、私有对象存储、TLS、观测、备份恢复和三类回退已交付；Docker Hub 网络、目标拓扑、真实恢复和 H-12 至 H-16 待完成 |
+
+B8-09 已完成的工程证据：
+
+- 生产强制拆分 `api/worker`；PostgreSQL 继续保存持久任务事实，Redis 提供共享限流和 Worker 心跳，readiness 会阻断无 Worker 的 API。
+- S3/MinIO 适配保持 private bucket、路径边界和短签名下载；URL 签发先做资源授权并写 audit/ledger，ClamAV/S3/Redis 失败均关闭。
+- W3C trace、JSON 日志、OTLP Tempo、Prometheus、Loki/Grafana 和错误/容量/备份告警配置完成；metrics 使用独立 Bearer secret。
+- 18 服务 Compose 只发布 TLS gateway；应用容器非 root、只读根、drop all capabilities；PostgreSQL TLS 且 migrator/runtime/backup 三账号分离。
+- runtime 对 `audit_logs/ledger_events` 只保留 INSERT/SELECT；关联数据库/对象备份、WAL/base backup、临时恢复演练、校验和与应用/数据/模型回退脚本完成。
+- 本机随机 secret/CA 初始化及 Compose JSON 门禁通过：18 services、证书链、固定版本 tag、私网端口和 Git secret 检查均通过；10/10 shell 脚本语法通过。
+- 自动化结果：后端 build；27/27 Jest suites、256/256 tests；2/2 PostgreSQL suites、60/60 tests；14/14 Playwright；前端 build 通过。正常 API→Worker 交接不增加 attempt，真实租约中断恢复仍增加 attempt。
+- 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
+- 两次容器 build 都在访问 `auth.docker.io` 匿名令牌时 443 超时，未进入项目 build stage，因此未伪造镜像、smoke、RPO/RTO 或 restore 通过结论。
+- 详细步骤与证据见 `docs/B8_09_STAGING_RUNBOOK.md` 和 `docs/B8_09_STAGING_REPORT.md`。H-12 至 H-16 及此前未签字项继续为 `blocked_external`。
 
 B8-08 已完成的工程证据：
 

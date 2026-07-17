@@ -94,6 +94,20 @@
 | 完整回归 | 22 migrations；199/199 unit；54/54 PostgreSQL；14/14 Playwright；前后端 build、Prisma、439-file hygiene 与依赖审计通过 |
 | 真实业务数据 | 未读取、未修改；测试只使用合成黄金数据；本地明细报告位于 Git 忽略目录 |
 
+## B8-09 验证证据
+
+| 门禁 | 结果 |
+| --- | --- |
+| API/Worker | 生产角色拆分；PostgreSQL durable queue；Redis 共享限流和 heartbeat；无 Worker 时 readiness 失败 |
+| 数据与文件 | PostgreSQL TLS、migrator/runtime/backup 分离；S3 private bucket/短签名 URL；ClamAV fail-closed |
+| 不可变日志 | runtime 对 `audit_logs/ledger_events` 只有 INSERT/SELECT，UPDATE/DELETE/TRUNCATE 被 revoke |
+| 观测 | Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana；W3C trace 与 OTLP bounded exporter；错误/容量/备份告警 |
+| 备份/回退 | logical/base/WAL、对象快照、SHA-256 manifest、临时 restore drill、应用/数据/模型回退脚本完成 |
+| 配置门禁 | 18 services；证书链、固定版本 tag、仅 TLS gateway 发布端口、只读应用容器、secret 未跟踪断言通过 |
+| 完整回归 | backend build；256/256 unit；60/60 PostgreSQL；14/14 Playwright；frontend build；10/10 shell syntax |
+| 容器/恢复 | `blocked_external`；两次 Docker build 均在 `auth.docker.io` token 连接超时，未取得镜像、smoke 或实测 RPO/RTO |
+| 真实业务数据 | 未读取、未修改；Staging seed 仅使用随机密码合成账号 |
+
 ## 问题矩阵
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
@@ -110,6 +124,10 @@
 | B8-SEC-001 | P0 | B8-06 | AI 日志/Cookie/文件/DLP | 多项生产隔离与资源边界未按 B8 门禁证明 | 权限隔离、生产 Cookie、主动内容、资源上限和 CI DLP | 权限与攻击测试 | verified | H-10/H-11 仍为生产政策签字，不阻断工程门禁 |
 | B8-MODEL-001 | P1 | B8-07 | 模型控制面/GPU/代理 | 路由配置快照、鉴权 ready、跨进程 GPU 锁和代理边界待收口 | 同一 resolved deployment、互斥锁、固定容器和代理错误契约 | 路由/GPU/代理测试 | verified | H-13 属于 B8-09 目标部署选择，不阻断本地工程门禁 |
 | B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 匿名 UAT 工具和自动对账已完成；财务/OCR/重复/冲销、部署和恢复仍无人工签字 | 授权人员完成八场景结论，目标环境完成恢复/回退演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |
+| B8-STAGING-001 | P1 | B8-09 | API/Worker、Redis、S3、TLS、观测 | 单进程、本地磁盘、内存限流和缺少集中观测不满足 Staging | 拆分运行角色，私有依赖、TLS、指标/日志/trace、不可变权限和回退脚本 | 单测、Compose JSON、安全配置、shell syntax、全量回归 | verified | 无 |
+| B8-STAGING-002 | P0 | B8-09 | 镜像、真实备份恢复与回退 | 本机访问 Docker Hub auth 443 超时，无法拉取 Node/数据服务镜像 | 在 H-13 指定服务器/registry 锁定 digest，运行 release、smoke、backup/restore 和 rollback | 镜像 lock、TLS smoke、RPO/RTO、对象/DB 恢复和回退证据 | blocked_external | H-13/H-14 |
+| B8-PILOT-001 | P0 | B8-09 | 小范围试运行与最终批准 | 尚无目标用户/项目清单、外部 AI 政策、独立 Review 和最终 UAT 签字 | 使用日检表和正式 Issue 完成受控试运行，关闭 P0/P1 后签字 | H-12 至 H-16 文档、每日证据、Issue 关闭记录 | blocked_external | H-12/H-13/H-14/H-15/H-16 |
+| B8-STAGING-003 | P1 | B8-09/RC | 多实例登录、上传与模型闸门 | 全局请求限流已共享，但登录、上传准入和模型并发仍为进程内状态 | Staging 保持单 API/单 Worker；横向扩容前迁移到共享原子控制并验证故障恢复 | 拓扑断言、多实例并发和 Redis 故障测试 | open | H-13 若要求横向扩容则阻断 |
 
 ## 状态规则
 
