@@ -11,6 +11,7 @@ import {
   DataRecordType,
   NotificationType,
   Prisma,
+  RiskLevel,
   UserRole,
   WorkOrderStatus,
   WorkOrderType
@@ -85,6 +86,33 @@ export class WorkOrdersService {
       this.prisma.workOrder.count({ where })
     ]);
     return { items: items.map(toWorkOrder), page, pageSize, total };
+  }
+
+  async summary(user: CurrentUser) {
+    const where: Prisma.WorkOrderWhereInput = {};
+    this.applyRoleScope(where, user);
+    const groups = await this.prisma.workOrder.groupBy({
+      by: ['status', 'riskLevel'],
+      where,
+      _count: { _all: true }
+    });
+    const statuses = Object.values(WorkOrderStatus);
+    const risks = Object.values(RiskLevel);
+    const byStatus = Object.fromEntries(statuses.map((status) => [status, 0])) as Record<WorkOrderStatus, number>;
+    const byRisk = Object.fromEntries(risks.map((risk) => [risk, 0])) as Record<RiskLevel, number>;
+    const byStatusAndRisk = Object.fromEntries(statuses.map((status) => [
+      status,
+      Object.fromEntries(risks.map((risk) => [risk, 0])) as Record<RiskLevel, number>
+    ])) as Record<WorkOrderStatus, Record<RiskLevel, number>>;
+    let total = 0;
+    for (const group of groups) {
+      const count = group._count._all;
+      total += count;
+      byStatus[group.status] += count;
+      byRisk[group.riskLevel] += count;
+      byStatusAndRisk[group.status][group.riskLevel] += count;
+    }
+    return { total, byStatus, byRisk, byStatusAndRisk };
   }
 
   async findOne(id: string, user: CurrentUser) {

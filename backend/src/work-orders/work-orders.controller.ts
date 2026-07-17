@@ -28,6 +28,12 @@ export class WorkOrdersController {
     return this.workOrders.findMany(query, user);
   }
 
+  @Get('summary')
+  @Roles(UserRole.employee, UserRole.finance, UserRole.reviewer, UserRole.boss)
+  summary(@CurrentUserDecorator() user: CurrentUser) {
+    return this.workOrders.summary(user);
+  }
+
   @Post()
   @Roles(UserRole.employee)
   create(

@@ -14,9 +14,10 @@ import { useNotificationStore } from './notificationStore';
 import { useOCRStore } from './ocrStore';
 import { useReportStore } from './reportStore';
 import { useUserStore } from './userStore';
-import { useWorkOrderStore } from './workOrderStore';
+import { resetWorkOrderRequestState, useWorkOrderStore } from './workOrderStore';
 
 export function resetUserScopedState() {
+  resetWorkOrderRequestState();
   useWorkOrderStore.setState({
     workOrders: [],
     selectedWorkOrderId: undefined,
@@ -25,6 +26,9 @@ export function resetUserScopedState() {
     page: 1,
     pageSize: 20,
     total: 0,
+    summary: undefined,
+    summaryLoading: false,
+    summaryError: null,
     lastQuery: { page: 1, pageSize: 100 },
   });
   useDataCenterStore.setState({

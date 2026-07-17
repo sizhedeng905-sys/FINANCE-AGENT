@@ -112,6 +112,13 @@ export interface PaginatedWorkOrders {
   total: number;
 }
 
+export interface WorkOrderSummary {
+  total: number;
+  byStatus: Record<WorkOrderStatus, number>;
+  byRisk: Record<RiskLevel, number>;
+  byStatusAndRisk: Record<WorkOrderStatus, Record<RiskLevel, number>>;
+}
+
 export interface WorkOrderReviewPayload {
   action: 'approve' | 'reject' | 'supplement' | 'reject_to_finance';
   comment?: string;

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PlusOutlined } from '@ant-design/icons';
 import { Button, Card, Col, Row, Space, Table, Typography } from 'antd';
@@ -10,15 +11,23 @@ import { useAuthStore } from '@/store/authStore';
 import { useWorkOrderStore } from '@/store/workOrderStore';
 import type { WorkOrder } from '@/types/workOrder';
 import { formatMoney } from '@/utils/format';
-import { statusTextMap, workOrderTypeMap } from '@/utils/statusMap';
+import { workOrderTypeMap } from '@/utils/statusMap';
 
 export default function EmployeeHome() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const workOrders = useWorkOrderStore((state) => state.workOrders);
+  const summary = useWorkOrderStore((state) => state.summary);
+  const fetchSummary = useWorkOrderStore((state) => state.fetchSummary);
   const mine = workOrders.filter((item) => item.creatorId === user?.id);
 
-  const count = (predicate: (item: WorkOrder) => boolean) => mine.filter(predicate).length;
+  const statusCount = (...statuses: WorkOrder['status'][]) => summary
+    ? statuses.reduce((total, status) => total + summary.byStatus[status], 0)
+    : '-';
+
+  useEffect(() => {
+    void fetchSummary().catch(() => undefined);
+  }, [fetchSummary]);
 
   const columns: ColumnsType<WorkOrder> = [
     { title: '工单编号', dataIndex: 'orderNo' },
@@ -51,24 +60,24 @@ export default function EmployeeHome() {
       />
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="待财务审核" value={count((item) => ['finance_reviewing', 'reviewer_rejected'].includes(item.status))} />
+          <MetricCard title="待财务审核" value={statusCount('finance_reviewing', 'reviewer_rejected')} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="待复核" value={count((item) => item.status === 'reviewer_reviewing')} />
+          <MetricCard title="待复核" value={statusCount('reviewer_reviewing')} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="AI复核中" value={count((item) => item.status === 'ai_reviewing')} />
+          <MetricCard title="AI复核中" value={statusCount('ai_reviewing')} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="老板待审批" value={count((item) => item.status === 'boss_pending')} />
+          <MetricCard title="老板待审批" value={statusCount('boss_pending')} />
         </Col>
         <Col xs={24} sm={12} xl={4}>
-          <MetricCard title="已完成" value={count((item) => item.status === 'completed')} color="#16a34a" />
+          <MetricCard title="已完成" value={statusCount('completed')} color="#16a34a" />
         </Col>
         <Col xs={24} sm={12} xl={4}>
           <MetricCard
             title="被驳回"
-            value={count((item) => (statusTextMap[item.status] ?? '').includes('驳回'))}
+            value={statusCount('finance_rejected', 'reviewer_rejected', 'boss_rejected')}
             color="#dc2626"
           />
         </Col>

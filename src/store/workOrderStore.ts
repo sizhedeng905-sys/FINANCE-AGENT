@@ -5,6 +5,7 @@ import {
   createIdempotencyKey,
   createWorkOrderApi,
   fetchWorkOrderDetailApi,
+  fetchWorkOrderSummaryApi,
   fetchWorkOrdersApi,
   financeReviewWorkOrderApi,
   reviewerReviewWorkOrderApi,
@@ -21,11 +22,21 @@ import type {
   WorkOrder,
   WorkOrderListQuery,
   WorkOrderReviewPayload,
+  WorkOrderSummary,
 } from '@/types/workOrder';
 
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : '请求失败');
 let listRequest: { key: string; promise: Promise<void> } | null = null;
+let summaryRequest: Promise<WorkOrderSummary> | null = null;
 const detailRequests = new Map<string, Promise<WorkOrder>>();
+let requestGeneration = 0;
+
+export function resetWorkOrderRequestState() {
+  requestGeneration += 1;
+  listRequest = null;
+  summaryRequest = null;
+  detailRequests.clear();
+}
 
 interface WorkOrderState {
   workOrders: WorkOrder[];
@@ -35,10 +46,14 @@ interface WorkOrderState {
   page: number;
   pageSize: number;
   total: number;
+  summary?: WorkOrderSummary;
+  summaryLoading: boolean;
+  summaryError: string | null;
   lastQuery: WorkOrderListQuery;
   setSelectedWorkOrder: (id?: string) => void;
   fetchWorkOrders: (query?: WorkOrderListQuery) => Promise<void>;
   fetchWorkOrder: (id: string) => Promise<WorkOrder>;
+  fetchSummary: () => Promise<WorkOrderSummary>;
   createWorkOrder: (payload: CreateWorkOrderPayload, submitImmediately: boolean) => Promise<WorkOrder>;
   updateWorkOrder: (id: string, payload: UpdateWorkOrderPayload) => Promise<WorkOrder>;
   submitWorkOrder: (id: string) => Promise<WorkOrder>;
@@ -56,17 +71,23 @@ export const useWorkOrderStore = create<WorkOrderState>()(
       const upsert = (workOrder: WorkOrder) => {
         set((state) => ({
           workOrders: [workOrder, ...state.workOrders.filter((item) => item.id !== workOrder.id)],
+          summary: undefined,
           loading: false,
           error: null,
         }));
         return workOrder;
       };
       const runAction = async (request: () => Promise<WorkOrder>) => {
+        const generation = requestGeneration;
         set({ loading: true, error: null });
         try {
-          return upsert(await request());
+          const workOrder = await request();
+          if (generation === requestGeneration) upsert(workOrder);
+          return workOrder;
         } catch (error) {
-          set({ loading: false, error: getErrorMessage(error) });
+          if (generation === requestGeneration) {
+            set({ loading: false, error: getErrorMessage(error) });
+          }
           throw error;
         }
       };
@@ -79,9 +100,13 @@ export const useWorkOrderStore = create<WorkOrderState>()(
         page: 1,
         pageSize: 20,
         total: 0,
+        summary: undefined,
+        summaryLoading: false,
+        summaryError: null,
         lastQuery: { page: 1, pageSize: 100 },
         setSelectedWorkOrder: (id) => set({ selectedWorkOrderId: id }),
         fetchWorkOrders: (query = get().lastQuery) => {
+          const generation = requestGeneration;
           const normalized = { page: query.page ?? 1, pageSize: query.pageSize ?? 100, ...query };
           const key = JSON.stringify(normalized);
           if (listRequest?.key === key) return listRequest.promise;
@@ -89,6 +114,7 @@ export const useWorkOrderStore = create<WorkOrderState>()(
             set({ loading: true, error: null, lastQuery: normalized });
             try {
               const result = await fetchWorkOrdersApi(normalized);
+              if (generation !== requestGeneration) return;
               set({
                 workOrders: result.items,
                 page: result.page,
@@ -97,6 +123,7 @@ export const useWorkOrderStore = create<WorkOrderState>()(
                 loading: false,
               });
             } catch (error) {
+              if (generation !== requestGeneration) return;
               set({ loading: false, error: getErrorMessage(error) });
               throw error;
             }
@@ -119,16 +146,42 @@ export const useWorkOrderStore = create<WorkOrderState>()(
           void promise.then(clear, clear);
           return promise;
         },
+        fetchSummary: () => {
+          if (summaryRequest) return summaryRequest;
+          const generation = requestGeneration;
+          set({ summaryLoading: true, summaryError: null });
+          const promise = fetchWorkOrderSummaryApi();
+          summaryRequest = promise;
+          const clear = () => {
+            if (summaryRequest === promise) summaryRequest = null;
+          };
+          void promise.then(
+            (summary) => {
+              if (generation === requestGeneration) set({ summary, summaryLoading: false });
+            },
+            (error) => {
+              if (generation === requestGeneration) {
+                set({ summaryLoading: false, summaryError: getErrorMessage(error) });
+              }
+            },
+          ).finally(clear);
+          return promise;
+        },
         createWorkOrder: async (payload, submitImmediately) => {
+          const generation = requestGeneration;
           set({ loading: true, error: null });
           const idempotencyKey = createIdempotencyKey('work-order-create');
           try {
             const draft = await createWorkOrderApi(payload, idempotencyKey);
-            upsert(draft);
+            if (generation === requestGeneration) upsert(draft);
             if (!submitImmediately) return draft;
-            return upsert(await submitWorkOrderApi(draft.id));
+            const submitted = await submitWorkOrderApi(draft.id);
+            if (generation === requestGeneration) upsert(submitted);
+            return submitted;
           } catch (error) {
-            set({ loading: false, error: getErrorMessage(error) });
+            if (generation === requestGeneration) {
+              set({ loading: false, error: getErrorMessage(error) });
+            }
             throw error;
           }
         },

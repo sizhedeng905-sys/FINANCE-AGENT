@@ -23,6 +23,8 @@ import type {
   WorkOrder,
   WorkOrderListQuery,
   WorkOrderReviewPayload,
+  WorkOrderStatus,
+  WorkOrderSummary,
 } from '@/types/workOrder';
 
 function queryString(query: WorkOrderListQuery = {}): string {
@@ -45,6 +47,29 @@ export function fetchWorkOrdersApi(query: WorkOrderListQuery = {}): Promise<Pagi
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<PaginatedWorkOrders>(`/work-orders${queryString(query)}`)
     : mockListWorkOrders(query);
+}
+
+export async function fetchWorkOrderSummaryApi(): Promise<WorkOrderSummary> {
+  if (runtimeConfig.dataMode === 'api') return httpClient.get<WorkOrderSummary>('/work-orders/summary');
+  const result = await mockListWorkOrders({ page: 1, pageSize: 100 });
+  const statuses: WorkOrderStatus[] = [
+    'draft', 'finance_reviewing', 'finance_rejected', 'reviewer_reviewing', 'reviewer_rejected',
+    'ai_reviewing', 'ai_passed', 'ai_flagged', 'boss_pending', 'boss_rejected', 'completed',
+    'returned_for_supplement',
+  ];
+  const risks = ['low', 'medium', 'high'] as const;
+  const byStatus = Object.fromEntries(statuses.map((status) => [status, 0])) as WorkOrderSummary['byStatus'];
+  const byRisk = Object.fromEntries(risks.map((risk) => [risk, 0])) as WorkOrderSummary['byRisk'];
+  const byStatusAndRisk = Object.fromEntries(statuses.map((status) => [
+    status,
+    Object.fromEntries(risks.map((risk) => [risk, 0])),
+  ])) as WorkOrderSummary['byStatusAndRisk'];
+  for (const item of result.items) {
+    byStatus[item.status] += 1;
+    byRisk[item.riskLevel] += 1;
+    byStatusAndRisk[item.status][item.riskLevel] += 1;
+  }
+  return { total: result.total, byStatus, byRisk, byStatusAndRisk };
 }
 
 export function fetchWorkOrderDetailApi(id: string): Promise<WorkOrder> {
