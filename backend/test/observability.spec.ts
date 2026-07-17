@@ -72,6 +72,53 @@ describe('observability', () => {
     fetchMock.mockRestore();
   });
 
+  it('waits for an active trace batch and drains the remaining queue during shutdown', async () => {
+    const config = {
+      get: (key: string) => ({
+        'tracing.endpoint': 'http://tempo:4318/v1/traces',
+        'tracing.batchSize': 2,
+        'tracing.maxQueue': 10,
+        'tracing.flushIntervalMs': 30_000
+      } as Record<string, unknown>)[key]
+    } as ConfigService;
+    const exporter = new TraceExporterService(config);
+    let releaseFirstBatch: (() => void) | undefined;
+    const firstBatch = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve;
+    });
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(async () => {
+        await firstBatch;
+        return { ok: true } as Response;
+      })
+      .mockResolvedValue({ ok: true } as Response);
+    const span = {
+      traceId: '1'.repeat(32),
+      spanId: '2'.repeat(16),
+      name: 'GET /api/health',
+      startTimeUnixNano: '1',
+      endTimeUnixNano: '2',
+      statusCode: 1,
+      method: 'GET',
+      httpStatusCode: 200
+    };
+    exporter.enqueue(span);
+    exporter.enqueue(span);
+    exporter.enqueue(span);
+
+    const shutdown = exporter.onModuleDestroy();
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseFirstBatch?.();
+    await shutdown;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(exporter.snapshot()).toEqual({ queued: 0, exported: 3, dropped: 0, errors: 0 });
+    exporter.enqueue(span);
+    expect(exporter.snapshot()).toEqual({ queued: 0, exported: 3, dropped: 1, errors: 0 });
+    fetchMock.mockRestore();
+  });
+
   it('records a normalized server span and Prometheus counters', () => {
     const exporter = { enqueue: jest.fn() } as any;
     const middleware = new TracingMiddleware(exporter);

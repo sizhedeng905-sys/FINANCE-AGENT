@@ -24,7 +24,8 @@ export class TraceExporterService implements OnModuleInit, OnModuleDestroy {
   private readonly flushIntervalMs: number;
   private readonly queue: TraceSpan[] = [];
   private timer?: NodeJS.Timeout;
-  private flushing = false;
+  private activeFlush?: Promise<boolean>;
+  private stopping = false;
   private exported = 0;
   private dropped = 0;
   private errors = 0;
@@ -44,12 +45,25 @@ export class TraceExporterService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    this.stopping = true;
     if (this.timer) clearInterval(this.timer);
-    await this.flush();
+    const errorsBeforeDrain = this.errors;
+    if (this.activeFlush) await this.activeFlush;
+    while (this.queue.length > 0 && this.errors === errorsBeforeDrain) {
+      await this.flush();
+    }
+    if (this.queue.length > 0) {
+      this.dropped += this.queue.length;
+      this.queue.length = 0;
+    }
   }
 
   enqueue(span: TraceSpan) {
     if (!this.endpoint) return;
+    if (this.stopping) {
+      this.dropped += 1;
+      return;
+    }
     if (this.queue.length >= this.maxQueue) {
       this.queue.shift();
       this.dropped += 1;
@@ -63,8 +77,18 @@ export class TraceExporterService implements OnModuleInit, OnModuleDestroy {
   }
 
   async flush() {
-    if (!this.endpoint || this.flushing || this.queue.length === 0) return;
-    this.flushing = true;
+    if (!this.endpoint) return;
+    if (!this.activeFlush && this.queue.length > 0) {
+      const active = this.flushBatch();
+      this.activeFlush = active;
+      void active.finally(() => {
+        if (this.activeFlush === active) this.activeFlush = undefined;
+      });
+    }
+    await this.activeFlush;
+  }
+
+  private async flushBatch() {
     const batch = this.queue.splice(0, this.batchSize);
     try {
       const response = await fetch(this.endpoint, {
@@ -75,12 +99,12 @@ export class TraceExporterService implements OnModuleInit, OnModuleDestroy {
       });
       if (!response.ok) throw new Error(`OTLP endpoint returned ${response.status}`);
       this.exported += batch.length;
+      return true;
     } catch (error) {
       this.errors += 1;
       this.dropped += batch.length;
       this.logger.warn(`Trace export failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-    } finally {
-      this.flushing = false;
+      return false;
     }
   }
 
