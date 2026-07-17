@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
+const repositoryRoot = resolve(import.meta.dirname, '../..');
+const modelEnvironment = parseEnv(await readFile(resolve(repositoryRoot, 'deploy/model-services/.env'), 'utf8'));
+const apiKey = modelEnvironment.LOCAL_MODEL_API_KEY;
+if (!apiKey || apiKey.length < 32) throw new Error('LOCAL_MODEL_API_KEY must contain at least 32 characters.');
 const CONTAINERS = [
   { key: 'text', name: 'finance-agent-models-qwen-text-1', healthUrl: 'http://127.0.0.1:8000/health' },
-  { key: 'ocr', name: 'finance-agent-models-paddle-ocr-1', healthUrl: 'http://127.0.0.1:8868/health' }
+  { key: 'ocr', name: 'finance-agent-models-paddle-ocr-1', healthUrl: 'http://127.0.0.1:8868/ready', authenticated: true }
 ];
 
 async function main() {
@@ -114,7 +118,10 @@ async function inspectEndpoints(timeoutMs) {
   const result = {};
   await Promise.all(CONTAINERS.map(async (container) => {
     try {
-      const response = await fetch(container.healthUrl, { signal: AbortSignal.timeout(timeoutMs) });
+      const response = await fetch(container.healthUrl, {
+        headers: container.authenticated ? { Authorization: `Bearer ${apiKey}` } : undefined,
+        signal: AbortSignal.timeout(timeoutMs)
+      });
       result[container.key] = response.ok;
     } catch {
       result[container.key] = false;
@@ -188,6 +195,23 @@ function minimum(items, key) {
 
 function matches(source, pattern) {
   return [...source.matchAll(pattern)].length;
+}
+
+function parseEnv(source) {
+  const values = {};
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator < 1) continue;
+    const key = trimmed.slice(0, separator).trim();
+    let value = trimmed.slice(separator + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
 }
 
 function delay(ms) {

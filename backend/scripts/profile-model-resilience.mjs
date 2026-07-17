@@ -211,9 +211,12 @@ async function monitorOcrWhile(operation) {
 }
 
 async function assertOcrReady() {
-  const response = await fetch('http://127.0.0.1:8868/health', { signal: AbortSignal.timeout(5_000) });
+  const response = await fetch('http://127.0.0.1:8868/ready', {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(5_000)
+  });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.status !== 'ok') throw new Error('Paddle OCR health check failed.');
+  if (!response.ok || payload.status !== 'ready') throw new Error('Paddle OCR readiness check failed.');
 }
 
 async function waitForModel(url, expectedModel, deadlineMs) {
