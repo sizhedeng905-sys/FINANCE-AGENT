@@ -17,6 +17,7 @@ backend/.upload-quarantine/
 deploy/model-services/.state/
 deploy/model-services/.model-security/
 .hygiene-fixtures/
+.evidence/
 .dlp-internal-terms.local.txt
 # Local company source documents must never be committed.
 数据文件/

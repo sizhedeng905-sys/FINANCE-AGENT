@@ -101,7 +101,7 @@
 | API/Worker | 生产角色拆分；PostgreSQL durable queue；Redis 共享限流和 heartbeat；无 Worker 时 readiness 失败 |
 | 数据与文件 | PostgreSQL TLS、migrator/runtime/backup 分离；S3 private bucket/短签名 URL；ClamAV fail-closed |
 | 不可变日志 | runtime 对 `audit_logs/ledger_events` 只有 INSERT/SELECT，UPDATE/DELETE/TRUNCATE 被 revoke |
-| 观测 | Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana；W3C trace 与 OTLP bounded exporter；错误/容量/备份告警 |
+| 观测 | Prometheus、Alertmanager、Loki、Alloy、Tempo、Grafana；W3C trace 与 OTLP bounded exporter；错误/容量/备份告警；不挂载 Docker socket |
 | 备份/回退 | logical/base/WAL、对象快照、SHA-256 manifest、临时 restore drill、应用/数据/模型回退脚本完成 |
 | 配置门禁 | 18 services；证书链、固定版本 tag、仅 TLS gateway 发布端口、只读应用容器、secret 未跟踪断言通过 |
 | 完整回归 | backend build；264/264 unit；60/60 PostgreSQL；16/16 Playwright；frontend build；runtime 4/4 |
@@ -134,7 +134,7 @@
 | R2-LOG-001 | P1 | Gateway/application access log | 工程执行者 | 红灯证明 `$request` 会记录完整 request line/query，且缺少安全 method/path/upstream 字段 | 本提交（R2） | 静态/应用日志 16/16；全量 unit 267/267；实际 29 条网关 JSON、15 个伪敏感标记泄露 0、200/400/503 与注入探针通过 | verified | H09/H14 仍约束 IP 保留 |
 | R3-STORAGE-001 | P1 | S3 capacity/readiness | 工程执行者 | 红灯证明 `HeadBucket` 后固定返回 1 TiB，无法区分物理容量未知 | 本提交（R3） | 结构化来源/新鲜度；79/79 定向；跨账号/项目 PostgreSQL 并发单赢家；写满零 DB 写入；MinIO v3/Prometheus/Nginx 实测 | verified | H13/H14 约束正式逻辑配额、保留水位、告警阈值/接收人；当前 `pending_human_decision` |
 | R4-RECOVERY-001 | P1 | Database/object backup restore | 工程执行者 | 红灯：同数量错 key/内容可通过；恢复先覆盖 live DB；migrator 无 CREATEDB 导致旧 drill 实际不可运行 | 本提交（R4） | `backup-manifest/1.0`；自测 9/9；有对象/空对象隔离恢复；5 类对象故障、migration/DB 引用篡改均拒绝 | verified | H13/H14 仍决定目标环境、正式 RPO/RTO、加密/异地/保留并授权每次 live restore |
-| R5-IMAGE-001 | P1 | Release/rollback image identity | 工程执行者 | 回退流程可能接受可漂移 tag，未强制证明 digest/本地 image ID | - | 待 digest lock 与篡改拒绝测试 | open | H13 决定目标 registry |
+| R5-IMAGE-001 | P1 | Release/rollback image identity | 工程执行者 | 红灯证明发布前无完整锁，rollback 可接受漂移 tag，配置/扫描/migration 未与 manifest 形成自校验证据链 | 本提交（R5） | 17/17 攻击测试；22 镜像/66 证据完整扫描；部署前锁与计划、运行 image ID、全 migration ledger、配置证据和回退篡改拒绝；见 `R5_IMMUTABLE_IMAGE_ROLLBACK_REPORT_2026-07-18.md` | verified | H13 决定目标 registry、签名身份和风险接受；目标回退仍 `blocked_external` |
 | R6-PREVIEW-001 | P1 | Excel preview API/browser | 工程执行者 | 预览可能一次返回接近 50,000 行，存在浏览器和 API 资源风险 | - | 待分页/上限 API、集成和浏览器测试 | open | 无 |
 | R6-TEMPLATE-LOCK-001 | P1 | Project template vs record/import/OCR/work order | 工程执行者 | 项目模板变更与消费入口可能没有统一项目级锁，存在 TOCTOU | - | 待真实 PostgreSQL 两种锁顺序矩阵 | open | H01/H07 只约束业务口径 |
 | R6-DUPLICATE-WINDOW-001 | P1 | Duplicate candidate calculation | 工程执行者 | `duplicate_submission.windowDays` 可能被接收但未进入候选时间范围 | - | 待边界日与跨来源候选测试 | open | H03 决定指纹和处置，不允许自动删单 |

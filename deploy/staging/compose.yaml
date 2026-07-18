@@ -40,7 +40,8 @@ x-backend-common: &backend-common
     context: ../../backend
     dockerfile: Dockerfile
     args:
-      NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim}
+      NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d}
+      BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
   restart: unless-stopped
   read_only: true
   tmpfs:
@@ -65,7 +66,16 @@ x-backend-common: &backend-common
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:17.6-bookworm}
+    image: ${POSTGRES_IMAGE:-finance-agent/staging-postgres:b8-09}
+    build:
+      context: ./postgres
+      args:
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        POSTGRES_PACKAGE_VERSION: ${POSTGRES_PACKAGE_VERSION:-17.10-1.pgdg12+1}
+        POSTGRES_COMMON_VERSION: ${POSTGRES_COMMON_VERSION:-293.pgdg12+1}
+        LIBPQ_PACKAGE_VERSION: ${LIBPQ_PACKAGE_VERSION:-18.4-1.pgdg12+1}
+        POSTGRES_ENTRYPOINT_SHA256: ${POSTGRES_ENTRYPOINT_SHA256:-9c440299ae04a0a79d55b8bf03307036d890a40979d2fb698073c9050d4b20a5}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/opt/staging/postgres-entrypoint.sh"]
     command:
@@ -116,7 +126,7 @@ services:
       - app
 
   redis:
-    image: ${REDIS_IMAGE:-redis:8.2.3-alpine}
+    image: ${REDIS_IMAGE:-redis:8.2.3-alpine@sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba}
     restart: unless-stopped
     user: "999:1000"
     entrypoint: ["/bin/sh", "/opt/staging/redis-entrypoint.sh"]
@@ -137,7 +147,7 @@ services:
       - app
 
   clamav:
-    image: ${CLAMAV_IMAGE:-clamav/clamav:1.4.3}
+    image: ${CLAMAV_IMAGE:-clamav/clamav:1.4.3@sha256:75fb5fd95fcbe1d7e6d240c369c1572b686ee2c95949d1042b5148de8eddebb4}
     restart: unless-stopped
     volumes:
       - clamav_data:/var/lib/clamav
@@ -152,7 +162,13 @@ services:
       - edge
 
   minio:
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-07-23T15-54-02Z}
+    image: ${MINIO_IMAGE:-finance-agent/staging-minio:b8-09}
+    build:
+      context: ./minio
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     command: server /data --console-address :9001
     environment:
@@ -166,6 +182,9 @@ services:
       - minio_root_password
     volumes:
       - minio_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10001,gid=10001
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
@@ -178,7 +197,7 @@ services:
       - app
 
   minio-init:
-    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-07-21T05-28-08Z}
+    image: ${BACKUP_IMAGE:-finance-agent/staging-backup:b8-09}
     restart: "no"
     entrypoint: ["/bin/sh", "/opt/staging/minio-init.sh"]
     depends_on:
@@ -201,8 +220,9 @@ services:
       context: ../..
       dockerfile: Dockerfile.frontend
       args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim}
-        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.0-alpine}
+        NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
         VITE_APP_DATA_MODE: api
         VITE_API_BASE_URL: /api
         VITE_API_TIMEOUT_MS: "15000"
@@ -224,7 +244,7 @@ services:
       - app
 
   gateway:
-    image: ${NGINX_IMAGE:-nginx:1.28.0-alpine}
+    image: ${NGINX_IMAGE:-nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284}
     restart: unless-stopped
     user: "101:101"
     entrypoint: ["nginx", "-g", "daemon off;"]
@@ -346,8 +366,16 @@ services:
     build:
       context: ./backup
       args:
-        POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:17.6-bookworm}
-        MINIO_MC_IMAGE: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-07-21T05-28-08Z}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        POSTGRES_PACKAGE_VERSION: ${POSTGRES_PACKAGE_VERSION:-17.10-1.pgdg12+1}
+        POSTGRES_COMMON_VERSION: ${POSTGRES_COMMON_VERSION:-293.pgdg12+1}
+        LIBPQ_PACKAGE_VERSION: ${LIBPQ_PACKAGE_VERSION:-18.4-1.pgdg12+1}
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        MC_SOURCE_COMMIT: ${MC_SOURCE_COMMIT:-77f82e18b5401a65958f1619df6ebb994634bd88}
+        MC_SOURCE_SHA256: ${MC_SOURCE_SHA256:-167415edd21bc29f5360943dac64272aa5cda0a39f3070b15cfeca671c43d975}
+        MC_SOURCE_VERSION: ${MC_SOURCE_VERSION:-SOURCE.2025-11-06T16-25-29Z}
+        MC_SOURCE_SHORT_COMMIT: ${MC_SOURCE_SHORT_COMMIT:-77f82e18b540}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     environment:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-21600}
@@ -356,6 +384,7 @@ services:
       RESTORE_DATABASE_URL_FILE: /run/secrets/restore_database_url
       MINIO_ENDPOINT: http://minio:9000
       BACKUP_SOURCE_ENVIRONMENT_ID: ${BACKUP_SOURCE_ENVIRONMENT_ID:-finance-agent-staging-local}
+      IMAGE_IDENTITY_POLICY: ${IMAGE_IDENTITY_POLICY:-local_identity}
       BACKUP_METRICS_FILE: /metrics/finance_agent_backup.prom
     secrets:
       - backup_database_url
@@ -376,7 +405,14 @@ services:
       - app
 
   prometheus:
-    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    image: ${PROMETHEUS_IMAGE:-finance-agent/staging-prometheus:b8-09}
+    build:
+      context: ./prometheus
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -388,6 +424,12 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend-api:
         condition: service_healthy
@@ -396,17 +438,35 @@ services:
       - app
 
   alertmanager:
-    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.28.1}
+    image: ${ALERTMANAGER_IMAGE:-finance-agent/staging-alertmanager:b8-09}
+    build:
+      context: ./alertmanager
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1770,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     networks:
       - observability
 
   node-exporter:
-    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.9.1}
+    image: ${NODE_EXPORTER_IMAGE:-finance-agent/staging-node-exporter:b8-09}
+    build:
+      context: ./node-exporter
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     command:
       - --collector.textfile.directory=/backup-metrics
@@ -414,11 +474,15 @@ services:
     volumes:
       - backup_metrics:/backup-metrics:ro
       - ./.runtime/metrics:/tls-metrics:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     networks:
       - observability
 
   loki:
-    image: ${LOKI_IMAGE:-grafana/loki:3.5.2}
+    image: ${LOKI_IMAGE:-grafana/loki:3.6.12@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a}
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
@@ -427,31 +491,57 @@ services:
     networks:
       - observability
 
-  promtail:
-    image: ${PROMTAIL_IMAGE:-grafana/promtail:3.5.2}
+  alloy:
+    image: ${ALLOY_IMAGE:-finance-agent/staging-alloy:b8-09}
+    build:
+      context: ./alloy
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
-    command: ["-config.file=/etc/promtail/promtail.yml"]
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
-      - ./monitoring/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ./monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy_data:/var/lib/alloy/data
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     depends_on:
       - loki
     networks:
       - observability
 
   tempo:
-    image: ${TEMPO_IMAGE:-grafana/tempo:2.8.2}
+    image: ${TEMPO_IMAGE:-finance-agent/staging-tempo:b8-09}
+    build:
+      context: ./tempo
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
-    command: ["-config.file=/etc/tempo/tempo.yml"]
+    command: ["--config.file=/etc/tempo/tempo.yml"]
     volumes:
       - ./monitoring/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo_data:/var/tempo
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     networks:
       - observability
       - app
 
   grafana:
-    image: ${GRAFANA_IMAGE:-grafana/grafana:12.1.0}
+    image: ${GRAFANA_IMAGE:-grafana/grafana:12.4.4@sha256:378f94b054e5384cd74322cbf7542cff6a43e068e4011f81ea5e75323247df02}
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: staging-admin
@@ -493,6 +583,7 @@ volumes:
   loki_data:
   tempo_data:
   grafana_data:
+  alloy_data:
 
 secrets:
   postgres_superuser_password:

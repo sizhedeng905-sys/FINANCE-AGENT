@@ -14,11 +14,11 @@
 - 增加 Redis 共享全局固定窗口限流、生产 fail-closed 连接、Worker 心跳和 readiness 依赖。登录、上传准入和模型并发闸门仍为进程内状态，因此本阶段 Compose 固定单 API、单 Worker。
 - 增加 S3/MinIO 文件适配、私有桶健康检查、路径边界、对象 inventory 和 30-300 秒签名 URL；签发动作写 audit/ledger。
 - 增加 W3C `traceparent`、JSON 日志关联、有限 OTLP 批量导出、Prometheus 请求/队列/Worker/模型/存储/trace 指标。
-- 增加 18 服务 Staging Compose：TLS gateway、前端、API、Worker、migrate、PostgreSQL TLS、Redis、ClamAV、MinIO、备份、Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana 和 node-exporter。
+- 增加 18 服务 Staging Compose：TLS gateway、前端、API、Worker、migrate、PostgreSQL TLS、Redis、ClamAV、MinIO、备份、Prometheus、Alertmanager、Loki、Alloy、Tempo、Grafana 和 node-exporter。
 - 数据库账号分离为 migrator/runtime/backup；运行账号只可 INSERT/SELECT `audit_logs` 和 `ledger_events`，数据库层禁止 UPDATE/DELETE/TRUNCATE。
 - 增加关联 logical/base/WAL 与对象快照备份、SHA-256 manifest、临时数据库 restore drill 和带精确确认值的破坏性恢复脚本。
 - 增加备份非空与 `pg_restore --list` 完整性检查、独立 backup/restore 指标、缺失指标告警及 TLS 证书 14 天到期告警。
-- 增加应用 Git SHA 镜像、迁移前检查、smoke、release manifest、应用/数据/模型路由回退脚本；发布成功后另存实际模型路由快照，回退恢复目标 release 的完整启停状态。
+- 增加应用 Git SHA 镜像、迁移前检查、smoke、release manifest、应用/数据/模型路由回退脚本；R5 又补齐部署前镜像锁、SBOM/扫描、release plan、完整 migration ledger、自校验 sidecar 和运行容器 image ID 复核。
 - 网关使用内建 request id 并贯穿 API/错误日志；客户端请求体上限为 52 MiB，使恰好 50 MiB 文件加 multipart 边界可到达后端统一校验。
 - 增加合成 Staging 四角色账号初始化；随机密码只存在 Docker secret，不使用仓库内 `123456` 演示密码。
 - 前端构建强制显式 `api` 模式并生成可核验的 `runtime-config.json`；支持同源 `/api`，拒绝协议相对、凭据、反斜线、查询和片段等危险 base URL。
@@ -51,14 +51,15 @@
 | 容器构建 | 通过；Node `sha256:6f7b...1452d`；frontend `83f5...933`、backend `877e...845`、backup `8c11...c5f` |
 | 本机隔离 18 服务 | 通过；Node smoke 与真实浏览器 API/CSP smoke 通过，合成项目软归档；容器和卷残留 0 |
 | R2 日志泄露 | 通过；200/400/503 探针、29 条可解析网关 JSON、15 个合成敏感标记泄露 0、注入伪造行 0 |
+| R5 镜像身份 | 17/17 篡改/漂移测试；22 个锁定镜像、66 份供应链证据；无可修复 Critical，仍有 53 High/88 Medium/38 Low；目标签名待 H13 |
 | 目标 restore/RPO/RTO | `blocked_external`；H13/H14 目标环境和政策未提供，未运行，未填写虚假结果 |
 
 测试没有读取、修改或提交真实业务原件和模型权重；`backend/.env` 仅由本地 Prisma/Nest 工具按既有配置消费，内容未输出、未修改、未暂存。
 
 ## 5. 未解决风险
 
-- 当前镜像锁只完成固定补丁/日期 tag 和锁定工具；共享 Staging 必须在 registry 恢复后解析 digest，并将自建镜像推入受控 registry。
-- 未在目标 Linux Staging 验证 Promtail 的 Docker JSON 日志挂载、MinIO 生命周期命令、PostgreSQL WAL archive 和完整 restore drill。
+- 本机镜像锁使用 `local_identity`，只对同一 Docker 主机有效；共享 Staging 必须由 H13 指定受控 registry、签名身份和信任根，签名当前为 `pending_h13`。
+- 未在目标 Linux Staging 验证 Alloy 的 Docker JSON 日志只读挂载、MinIO 生命周期命令、PostgreSQL WAL archive 和完整 restore drill。
 - 未取得真实 RPO/RTO，备份/保留/删除周期不能由 Codex代替管理层决定。
 - 当前对象桶保持 private/versioned，备份加密与正式 KMS/密钥托管方案尚未由 H-14 决定，不能据此声明静态数据已满足生产加密政策。
 - 登录、上传准入和模型并发闸门不是分布式控制；若 H-13 要求 API/Worker 横向扩容，该项必须先修复并通过多实例故障测试。
@@ -80,7 +81,7 @@
 
 ## 7. 回退说明
 
-- 应用：按 `.release/releases/<id>.json` 恢复 Git SHA 镜像，不执行 down migration。
+- 应用：按 `.release/releases/<id>.json` 的自校验计划和镜像锁恢复全部服务镜像，不执行 down migration；tag、配置、migration 或运行 image ID 不一致时拒绝。
 - 数据库/文件：先停止 API/Worker，校验 backupId 与 SHA-256，再恢复 PostgreSQL 和同批对象快照；恢复后重跑 migrate/runtime grants/smoke。
 - 模型：按不含 secret 的路由快照和 SHA-256 恢复；配置哈希不一致时拒绝。
 - 任何数据恢复都需要事件审批，不由自动发布脚本默认触发。

@@ -22,7 +22,7 @@
 | 应用 | frontend、backend-api、worker、migrate | API 与 Worker 使用同一固定镜像、不同 `PROCESS_ROLE`；非 root、只读根、drop all capabilities |
 | 数据 | PostgreSQL 17、Redis、MinIO | 不发布主机端口；PostgreSQL TLS；运行与迁移账号分离；桶保持私有和版本化 |
 | 文件安全 | ClamAV | 私网访问；生产配置不可切回 basic；不可用时上传失败关闭 |
-| 观测 | Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana、node-exporter | 指标令牌、JSON 日志、W3C trace、OTLP、错误/容量/备份告警 |
+| 观测 | Prometheus、Alertmanager、Loki、Alloy、Tempo、Grafana、node-exporter | 指标令牌、JSON 日志、W3C trace、OTLP、错误/容量/备份告警；Alloy 只读日志文件且不挂载 Docker socket |
 | 可靠性 | backup | PostgreSQL logical/base/WAL 与对象快照关联；恢复脚本带校验和与显式确认门 |
 
 持久化任务事实仍在 PostgreSQL。Redis 用于全局请求共享限流、Worker 心跳和运行协调，不作为唯一任务事实源。登录、上传准入和模型并发闸门仍为进程内控制，因此本版本只允许单 API、单 Worker；横向扩容前必须完成共享化和多实例故障测试。
@@ -45,6 +45,8 @@ npm run staging:check
 - 三个不同数据库账号的 TLS URL；
 - 本机忽略的初始化元数据。
 
+R5 收紧了镜像策略。已有 `deploy/staging/.env` 不会被初始化脚本覆盖；若它仍引用旧供应商镜像或无 digest 的第三方镜像，`staging:check` 会失败关闭。只同步 `.env.example` 中非敏感的镜像变量，不要覆盖现有 secret、URL 或人工环境配置。
+
 本地浏览器联调时，把下列名称指向 `127.0.0.1`：
 
 ```text
@@ -56,17 +58,23 @@ objects.finance-agent.local
 
 ## 4. 镜像和供应链
 
-`.env.example` 固定每个第三方镜像的补丁版或发布日期，不允许 `latest`。发布后运行：
+`.env.example`、Compose 和 Dockerfile 将第三方运行镜像及构建输入固定到 `sha256`，不允许 `latest` 或仅凭 tag 通过配置门禁。PostgreSQL、MinIO、Prometheus、Alertmanager、node-exporter、Alloy 和 Tempo 使用仓库中的固定源码/包版本 Dockerfile 构建。
+
+单独检查当前本机所有 Compose/模型/扫描镜像身份时运行：
 
 ```bash
 npm run staging:lock-images
 ```
 
-该命令把 registry digest 或本地 image ID 写入被忽略的 `.release/images.lock.json`。存在无法解析的镜像时退出非零，不得把未解析状态写成通过。发布到共享服务器前应将自建镜像推到受控 registry，并用 `repository@sha256:...` 再部署。
+该命令生成自校验的 `staging-image-lock/2.0`，记录 registry digest、本地 image ID、平台、OCI revision 和使用位置。存在无法解析镜像、`latest`、tag 漂移或 revision 不一致时退出非零，不得把未解析状态写成通过。
+
+`npm run staging:image-integrity:test` 运行 17 个合成攻击用例。完整 release 会为每个锁定镜像生成 SPDX SBOM、Grype SARIF 和 Critical 修复门禁，并在部署前生成 `staging-release-plan/2.0`。本机证据使用 `local_identity`，只在同一 Docker 主机有效。发布到共享服务器前必须由 H13 指定受控 registry、签名身份和信任根，使用 `repository@sha256:...` 与已验证签名；当前 `pending_h13` 不得视为签名通过。
+
+2026-07-18 本机完整门禁扫描 22 个镜像、生成 66 份证据并通过“无可修复 Critical”。扫描仍有 53 High、88 Medium、38 Low，必须继续升级和评估；详情见 `docs/R5_IMMUTABLE_IMAGE_ROLLBACK_REPORT_2026-07-18.md`。
 
 ## 5. 发布
 
-发布脚本要求已跟踪工作树干净，并按 Git SHA 标记前端、后端和备份镜像：
+发布脚本要求已跟踪工作树干净，并按 Git SHA 标记全部仓库自建镜像：
 
 ```bash
 npm run staging:release
@@ -74,17 +82,17 @@ npm run staging:release
 
 脚本顺序：
 
-1. 重新运行配置、证书、私网和 secret 门禁；
+1. 使用候选镜像变量重新运行配置、证书、私网、digest 和 secret 门禁，并保存配置证据；
 2. 若旧环境在线，先导出模型路由快照并创建关联备份；
-3. 构建固定镜像；
-4. 执行 `prisma migrate deploy`；
-5. 应用运行账号权限，数据库层禁止其更新/删除 `audit_logs` 与 `ledger_events`；
-6. 只在 `finance_agent_staging` 创建四个随机密码合成 UAT 账号；
-7. 启动 API、Worker、存储、安全和观测服务；
+3. 拉取固定第三方镜像，带 SBOM/provenance 请求构建全部仓库自建镜像；
+4. 生成镜像锁，验证配置引用，为全部锁定镜像生成 SBOM/扫描证据；
+5. 冻结完整 migration ledger 和部署前 release plan；任何门禁失败时尚未启动候选服务；
+6. 使用锁内环境和 `--no-build --pull never` 启动 API、Worker、存储、安全和观测服务；`migrate` 执行 `prisma migrate deploy`、运行账号授权和合成 Staging seed；
+7. 复核运行容器 image ID 与数据库完整 migration 集合；
 8. 运行 TLS、readiness、四角色登录、错误登录和 Metrics smoke；
 9. 运行真实浏览器 API/CSP smoke，并清理合成写入；
-10. 运行真实 logical restore drill；
-11. 写入不含 secret 的 release manifest。
+10. 运行关联 logical/object restore drill；
+11. 写入不含 secret 的自校验 release manifest、当前镜像锁和 runtime image 环境。
 
 `migrate` 使用 `finance_migrator`；API/Worker 使用 `finance_runtime`；备份使用只读且具备 replication 权限的 `finance_backup`。三者不得复用密码。
 
@@ -162,10 +170,10 @@ npm run staging:backup-integrity:test
 应用回退：
 
 ```bash
-npm run staging:rollback -- deploy/staging/.release/releases/<release>.json
+npm run staging:rollback -- .release/releases/<release>.json
 ```
 
-该操作先备份，再按旧 manifest 恢复前端、API、Worker 镜像和模型路由状态；数据库采用向前兼容迁移，不执行 down migration。
+manifest 路径相对 `deploy/staging`。该操作先验证 manifest/计划/镜像锁/供应链/配置/migration 的哈希与身份，再创建关联备份，按锁恢复全部 18 服务使用的镜像和模型路由状态；启动后复核实际容器 image ID。数据库采用向前兼容迁移，不执行 down migration。
 
 只有数据损坏或错误迁移，且 H13/H14 对本次目标、backupId、变更单和时间窗给出一次性批准时，才允许数据恢复。先从模板创建 Git 忽略目录中的授权 JSON，保持仓库内示例的 `h13Approved/h14Approved=false`，获得真实审批后再由授权人填写：
 
@@ -177,7 +185,7 @@ deploy/staging/backup/restore-authorization.example.json
 
 ```bash
 export RESTORE_AUTHORIZATION_FILE=/secure/path/restore-authorization.json
-npm run staging:rollback -- deploy/staging/.release/releases/<release>.json --restore-data <backupId>
+npm run staging:rollback -- .release/releases/<release>.json --restore-data <backupId>
 ```
 
 数据恢复会停止 API/Worker，先在临时数据库和临时桶完成与演练相同的全量校验，再对当前 live 数据建立数据库与对象补偿快照。授权文件必须绑定 `finance-agent-staging`、`finance_agent_staging`、`finance-agent-raw`、backupId、24 小时内到期时间、唯一 nonce 和 H13/H14 审批号；同一文件只能使用一次。通过后才按“对象切换 → 数据库单事务恢复 → 全量复核 → audit/ledger”执行；中途失败自动尝试恢复补偿快照并保留证据。

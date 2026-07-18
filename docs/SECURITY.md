@@ -71,7 +71,16 @@ R2 的静态与实际容器测试使用合成 X-Amz、普通业务 query、Autho
 
 ## 依赖审计
 
-2026-07-17 执行根目录与后端 `npm audit --omit=dev --audit-level=high`，两者均为 0 vulnerabilities。新增 AWS SDK、Redis 和 Prisma production CLI 后重新审计仍为 0；未使用 `--force`。
+2026-07-18 执行根目录与后端 `npm audit --omit=dev --audit-level=high`，两者均为 0 vulnerabilities。新增 AWS SDK、Redis 和 Prisma production CLI 后重新审计仍为 0；未使用 `--force`。
+
+## 镜像与供应链
+
+- 第三方运行镜像和 Docker build 输入在 `.env.example`/Compose/Dockerfile 中固定到 `sha256`；PostgreSQL、MinIO 和观测组件使用固定源码提交或固定包版本构建。
+- release 在启动候选服务前生成 `staging-image-lock/2.0`、逐镜像 SPDX/Grype 证据和 `staging-release-plan/2.0`，再以 `--no-build --pull never` 启动锁定镜像。
+- release 与 rollback 都验证配置镜像、完整 migration ledger、自校验 sidecar、供应链索引和运行容器 image ID；tag 漂移、证据篡改或 migration 不一致会失败关闭。
+- 本机 22 镜像完整扫描通过“无已有修复版本的 Critical”门禁，但仍有 53 High、88 Medium、38 Low；这不是零漏洞声明。升级、可利用性分析和风险接受继续受 H13 约束。
+- 本地身份锁只适用于同一 Docker 主机。共享环境必须使用 H13 批准的 registry、签名身份和信任根；当前签名状态为 `pending_h13`，不能发布为已签名镜像。
+- SBOM、SARIF、scanner cache 和完整本机 lock 证据保存在 Git 忽略的 `.evidence/`；CI 只上传受控 artifact，不把供应链缓存或包元数据提交仓库。
 
 ## 上线前必须补齐
 

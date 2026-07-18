@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R4 已依次关闭前端真实性、日志泄露、容量伪装和备份恢复完整性工程问题，仍有 6 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，仍有 5 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R4 已完成；R4 的强哈希关联恢复在本机隔离 PostgreSQL/MinIO 通过，R5 镜像身份进入下一顺位 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R5 已完成；R5 已在本机锁定 22 个镜像并验证发布/回退证据链，R6 后端资源与并发边界进入下一顺位 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -31,7 +31,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R4 重新审计进展
+### R0-R5 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -45,7 +45,9 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R4 将备份清单升级为 `backup-manifest/1.0`：数据库 dump/schema/migration、`raw_files` 引用、对象 key/size/version/metadata 与逐对象流式 SHA-256 均进入自校验清单；ETag 明确不作为强哈希，旧数量清单按未验证对象数拒绝恢复。
 - R4 的恢复演练先恢复到唯一临时数据库和临时桶，再核对 schema、migration、对象强哈希与数据库引用；有对象和空对象两条本机隔离路径均通过。5 类对象篡改、migration 篡改、悬空引用和清单篡改均有自动拒绝断言。
 - 正式数据恢复仍需 H13/H14 目标绑定的一次性授权、应用停写和补偿快照。PostgreSQL 与 S3 不存在跨系统原子事务，当前只声明“应用级分阶段切换并补偿”，没有执行或宣称生产恢复通过。
-- 当前开放工程问题为镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 6 个 P1/条件 P1。
+- R5 将 release/rollback 升级为自校验的镜像锁、发布计划、供应链索引和最终 manifest；部署前冻结全部服务身份、配置与 migration ledger，部署/回退后复核运行容器 image ID，tag 漂移、证据篡改和 migration 不一致均失败关闭。
+- R5 固定第三方构建输入 digest，并以固定源码/包版本构建 PostgreSQL、MinIO、Prometheus、Alertmanager、node-exporter、Alloy 和 Tempo；Promtail 已迁移到不挂载 Docker socket 的 Alloy。22 镜像完整扫描通过“无可修复 Critical”门禁，但仍有 53 High、88 Medium、38 Low，目标 registry/签名仍受 H13 阻断。
+- 当前开放工程问题为 Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 5 个 P1/条件 P1。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -116,7 +118,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R4 本地全量 31/31 suites，285/285 tests |
+| 后端 Jest | `passed` | R5 本地全量 31/31 suites，286/286 tests |
 | PostgreSQL 集成 | `passed` | R4 本地全量 2/2 suites，61/61 tests |
 | 浏览器 E2E | `passed` | Playwright 16/16 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
@@ -124,11 +126,12 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | Migration 路径 | `passed` | 空 `_test` 库 24 条；上一基线 23 条再升级第 24 条 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
 | OCR 并发 | `passed` | 1/3/5 精确并发门禁；最新 GitHub 集成 60/60 |
-| Repository hygiene | `passed` | 550 个 tracked/candidate 文件；真实数据、模型、secret 和构建产物排除 |
+| Repository hygiene | `passed` | 真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
 | 生产依赖审计 | `passed` | 根目录与后端均为 0 vulnerabilities |
 | Paddle adapter | `passed` | 运行镜像内 8/8；合成 PDF 实际 OCR 接受测试通过 |
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |
-| Staging 静态门禁 | `passed` | 18 services、17 secrets、TLS、固定 tag、私网和只读应用容器 |
+| Staging 静态门禁 | `passed` | 18 services、19 secrets、TLS、仓库自建服务、第三方 digest、私网和只读应用容器 |
+| R5 镜像身份与供应链 | `engineering_passed` | 17/17 篡改/漂移测试；22 个锁定镜像、66 份证据、无可修复 Critical；53 High/88 Medium/38 Low 仍在风险台账，签名与目标 registry 待 H13 |
 | 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
 | 日志泄露门禁 | `passed` | 实际 18 服务生成 200/400/503 日志；29 条网关 JSON 可解析，15 个合成敏感标记泄露 0，容器和卷残留 0 |
 | 存储容量真实性 | `engineering_passed` | S3 不再伪报固定容量；79/79 定向测试与 PostgreSQL 跨账号/项目并发通过；MinIO v3 物理指标实测存在；H13/H14 仍待签字 |
@@ -375,22 +378,22 @@ npm run staging:check
 npm run staging:release
 ```
 
-`staging:init` 只在被 Git 忽略的目录生成随机 secret、CA 和证书。`staging:release` 要求干净工作树，并执行 migration、权限、TLS smoke、关联备份恢复、release manifest 和必要回退检查。
+`staging:init` 只在被 Git 忽略的目录生成随机 secret、CA 和证书。`staging:release` 要求干净工作树，并在启动候选服务前完成配置、镜像锁、SBOM/CVE、migration ledger 和 release plan 门禁，再执行权限、TLS/browser smoke、关联备份恢复与最终 manifest。已有 `.env` 不会被自动覆盖；旧镜像配置会失败关闭。
 
 当前已完成：
 
 - 18 服务 Compose 拓扑和静态安全断言。
-- API/Worker 分离、Redis、MinIO、ClamAV、PostgreSQL TLS 和三套可观测性服务。
+- API/Worker 分离、Redis、MinIO、ClamAV、PostgreSQL TLS 和 Prometheus/Loki/Tempo/Alloy 可观测性链路。
 - migrator/runtime/backup 数据库账号分离；runtime 不能更新或删除 audit/ledger。
 - 应用回退、数据恢复和模型回退脚本及人工确认边界。
-- 固定 Node 镜像已拉取，本机前端、后端和 backup 镜像已按本地 image ID 构建。
+- 第三方构建输入已固定 digest；本机 22 镜像已锁定身份并生成 66 份 SBOM/扫描证据，发布/回退的配置、migration 和运行容器身份可自校验。
 - 本机隔离 18 服务真实 `up`，Node smoke、浏览器 API/CSP smoke 和合成项目写读软归档通过；测试容器与卷已全部删除。
 - 前端镜像只接受显式 `api`，构建后校验 `runtime-config.json`；Nginx CSP 阻断内联脚本、外部连接和外部 frame。
 
 当前未完成：
 
 - H13 指定的 Linux 服务器、域名、受控 registry、正式 secret 和监控接收人。
-- 目标环境的 Promtail、WAL archive、对象生命周期、告警送达和完整 release smoke。
+- 目标环境的 Alloy 日志采集、WAL archive、对象生命周期、告警送达和完整 release/rollback smoke。
 - 真实备份/对象恢复、RPO/RTO、应用/数据/模型 rollback 和独立签字。
 
 按 [`docs/B8_09_STAGING_RUNBOOK.md`](docs/B8_09_STAGING_RUNBOOK.md) 在获批目标环境重新运行 `npm run staging:release`，不得用本机隔离 smoke 替代 restore 或 rollback drill。

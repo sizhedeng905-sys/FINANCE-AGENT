@@ -99,7 +99,49 @@ jobs:
           npm run staging:init
           npm run staging:check
           npm run staging:backup-integrity:test
+          npm run staging:image-integrity:test -- --defer-scan --retain-fixtures
           find deploy/staging backend/docker -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Generate R5 fixture image SBOM
+        env:
+          DOCKER_SCOUT_CACHE_DIR: ${{ runner.temp }}/finance-agent-r5-scout
+          DOCKER_SCOUT_NO_CACHE: "true"
+          DOCKER_SCOUT_OFFLINE: "true"
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
+        with:
+          command: sbom
+          image: local://${{ env.R5_FIXTURE_IMAGE }}
+          format: spdx
+          output: ${{ env.R5_EVIDENCE_DIR }}/fixture.spdx.json
+          summary: false
+          write-comment: false
+
+      - name: Scan R5 fixture SBOM with pinned Grype
+        env:
+          GRYPE_ALLOW_NETWORK_UPDATE: "true"
+        run: >-
+          node deploy/staging/scripts/grype-sbom.mjs
+          --sbom "${{ env.R5_EVIDENCE_DIR }}/fixture.spdx.json"
+          --output "${{ env.R5_EVIDENCE_DIR }}/fixture.grype.sarif.json"
+          --gate-output "${{ env.R5_EVIDENCE_DIR }}/fixture.critical-fixed.txt"
+
+      - name: Finalize R5 supply-chain evidence
+        env:
+          R5_CRITICAL_GATE_PASSED: "true"
+        run: npm run staging:image-integrity:test -- --finalize-ci --retain-fixtures
+
+      - name: Clean R5 fixture images
+        if: always()
+        run: npm run staging:image-integrity:test -- --cleanup
+
+      - name: Upload R5 image identity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r5-image-identity-evidence
+          path: deploy/staging/.evidence/r5-image-integrity/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Validate Prisma schema and migrations
         working-directory: backend

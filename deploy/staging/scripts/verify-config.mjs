@@ -14,6 +14,22 @@ const requiredSecrets = [
   'staging_seed_password'
 ];
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
+const expectedCustomImages = {
+  'backend-api': 'finance-agent/backend:',
+  worker: 'finance-agent/backend:',
+  migrate: 'finance-agent/backend:',
+  frontend: 'finance-agent/frontend:',
+  backup: 'finance-agent/staging-backup:',
+  'minio-init': 'finance-agent/staging-backup:',
+  postgres: 'finance-agent/staging-postgres:',
+  minio: 'finance-agent/staging-minio:',
+  prometheus: 'finance-agent/staging-prometheus:',
+  alertmanager: 'finance-agent/staging-alertmanager:',
+  'node-exporter': 'finance-agent/staging-node-exporter:',
+  alloy: 'finance-agent/staging-alloy:',
+  tempo: 'finance-agent/staging-tempo:'
+};
+const digestPinnedRuntimeServices = ['redis', 'clamav', 'gateway', 'loki', 'grafana'];
 
 for (const name of requiredSecrets) assertFile(join(stagingRoot, '.secrets', name), 8);
 for (const name of requiredTls) assertFile(join(stagingRoot, '.runtime', 'tls', name), 64);
@@ -37,6 +53,14 @@ await writeFile(join(certificateMetrics, 'finance_agent_tls.prom'), [
 const composeResult = run('docker', ['compose', '--env-file', '.env', '-f', 'compose.yaml', 'config', '--format', 'json']);
 const compose = JSON.parse(composeResult.stdout);
 const services = compose.services ?? {};
+const sourceEnvironmentId = services.backup?.environment?.BACKUP_SOURCE_ENVIRONMENT_ID ?? '';
+const imageIdentityPolicy = services.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
+if (!['local_identity', 'signed_registry'].includes(imageIdentityPolicy)) {
+  throw new Error('IMAGE_IDENTITY_POLICY must be local_identity or signed_registry');
+}
+if (imageIdentityPolicy === 'local_identity' && !sourceEnvironmentId.endsWith('-local')) {
+  throw new Error('local_identity requires BACKUP_SOURCE_ENVIRONMENT_ID ending with -local');
+}
 for (const [name, service] of Object.entries(services)) {
   const image = service.image;
   if (typeof image !== 'string' || !/[:@]/.test(image) || /(^|:)latest(?:@|$)/i.test(image)) {
@@ -44,6 +68,19 @@ for (const [name, service] of Object.entries(services)) {
   }
   if (name !== 'gateway' && Array.isArray(service.ports) && service.ports.length > 0) {
     throw new Error(`Only gateway may publish host ports, but ${name} publishes ports`);
+  }
+}
+for (const [name, prefix] of Object.entries(expectedCustomImages)) {
+  if (!String(services[name]?.image ?? '').startsWith(prefix)) {
+    throw new Error(`Service ${name} must use the repository-built ${prefix} image`);
+  }
+}
+for (const name of digestPinnedRuntimeServices) {
+  assertDigestReference(services[name]?.image, `Service ${name}`);
+}
+for (const [name, service] of Object.entries(services)) {
+  for (const [argument, value] of Object.entries(service.build?.args ?? {})) {
+    if (argument.endsWith('_IMAGE')) assertDigestReference(value, `${name} build argument ${argument}`);
   }
 }
 for (const name of ['backend-api', 'worker']) {
@@ -78,10 +115,13 @@ const evidence = {
     secretsPresent: requiredSecrets.length,
     certificatesVerified: true,
     fixedImageTags: true,
+    immutableThirdPartyImages: true,
+    expectedRepositoryBuiltImages: true,
     onlyTlsGatewayPublished: true,
     databaseTlsEnabled: true,
     hardenedApplicationContainers: true,
     frontendApiModeExplicit: true,
+    imageIdentityPolicy,
     generatedMaterialUntracked: true
   }
 };
@@ -93,6 +133,12 @@ process.stdout.write(JSON.stringify(evidence, null, 2) + '\n');
 function assertFile(path, minimumBytes) {
   if (!existsSync(path)) throw new Error(`Required generated file is missing: ${path}`);
   if (statSync(path).size < minimumBytes) throw new Error(`Generated file is empty: ${path}`);
+}
+
+function assertDigestReference(reference, label) {
+  if (typeof reference !== 'string' || !/@sha256:[a-f0-9]{64}$/i.test(reference)) {
+    throw new Error(`${label} must use an immutable sha256 image reference`);
+  }
 }
 
 function run(command, args, options = {}) {

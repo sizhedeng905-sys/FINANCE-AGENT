@@ -147,21 +147,144 @@ describe('B8-09 staging deployment', () => {
   it('associates rollback with the target release model route snapshot', () => {
     const release = read(stagingRoot, 'scripts', 'release.mjs');
     const rollback = read(stagingRoot, 'scripts', 'rollback.mjs');
-    const postDeployExport = release.lastIndexOf('exportModelRoutes(runtimeEnv)');
+    const postDeployExport = release.lastIndexOf('exportModelRoutes(lockedEnv)');
     expect(release).toContain('previousModelRouteSnapshot');
     expect(postDeployExport).toBeGreaterThan(release.indexOf("run('node', ['scripts/smoke-test.mjs']"));
-    expect(release.indexOf('modelRouteSnapshot: releaseRelativePath(modelRouteSnapshot)')).toBeGreaterThan(postDeployExport);
+    expect(release.indexOf('modelRouteSnapshot: await fileReference(modelRouteSnapshot)')).toBeGreaterThan(postDeployExport);
     expect(rollback).toContain('await restoreModelRoutes(manifest.modelRouteSnapshot');
-    expect(rollback).toContain('assertInsideReleases');
+    expect(rollback).toContain('resolveInside');
+  });
+
+  it('locks release and rollback images to verified immutable identities', () => {
+    const release = read(stagingRoot, 'scripts', 'release.mjs');
+    const rollback = read(stagingRoot, 'scripts', 'rollback.mjs');
+    const lockImages = read(stagingRoot, 'scripts', 'lock-images.mjs');
+    const scanImages = read(stagingRoot, 'scripts', 'scan-image-lock.mjs');
+    const integrity = read(stagingRoot, 'scripts', 'image-integrity-lib.mjs');
+    const postgresDockerfile = read(stagingRoot, 'postgres', 'Dockerfile');
+    const backupDockerfile = read(stagingRoot, 'backup', 'Dockerfile');
+    const minioDockerfile = read(stagingRoot, 'minio', 'Dockerfile');
+    const prometheusDockerfile = read(stagingRoot, 'prometheus', 'Dockerfile');
+    const alertmanagerDockerfile = read(stagingRoot, 'alertmanager', 'Dockerfile');
+    const nodeExporterDockerfile = read(stagingRoot, 'node-exporter', 'Dockerfile');
+    const alloyDockerfile = read(stagingRoot, 'alloy', 'Dockerfile');
+    const tempoDockerfile = read(stagingRoot, 'tempo', 'Dockerfile');
+    const alloyConfig = read(stagingRoot, 'monitoring', 'alloy.alloy');
+    const compose = read(stagingRoot, 'compose.yaml');
+    const environmentExample = read(stagingRoot, '.env.example');
+    const workflow = read(repositoryRoot, '.github', 'workflows', 'ci.yml');
+    const packageJson = read(repositoryRoot, 'package.json');
+    expect(release.indexOf("'scripts/lock-images.mjs'")).toBeLessThan(
+      release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
+    );
+    expect(release.indexOf('expectedSchema: RELEASE_PLAN_SCHEMA')).toBeLessThan(
+      release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
+    );
+    expect(release).toContain("'--provenance=mode=max', '--sbom=true'");
+    expect(release).toContain("POSTGRES_IMAGE: `finance-agent/staging-postgres:${shortSha}`");
+    expect(release).toContain("MINIO_IMAGE: `finance-agent/staging-minio:${shortSha}`");
+    for (const service of ['minio', 'prometheus', 'alertmanager', 'node-exporter', 'alloy', 'tempo']) {
+      expect(release).toContain(`'${service}'`);
+    }
+    expect(release).toContain('assertMigrationCompatibility');
+    expect(release).toContain("run('node', ['scripts/verify-config.mjs'], runtimeEnv)");
+    expect(release).toContain('assertConfigurationImageReferences');
+    expect(release).toContain('verifyRunningImages');
+    expect(rollback).toContain('assertReleaseBundle');
+    expect(rollback).toContain('verifyImageLock(imageLock, { verifyRequestedReferences: true })');
+    expect(rollback).toContain("'--no-build', '--pull', 'never'");
+    expect(rollback).toContain("'--wait', '--wait-timeout', '1200'");
+    expect(rollback).toContain('verifyRunningImages(imageLock, environment)');
+    expect(rollback).toContain('assertMigrationCompatibility(manifest.migrations');
+    expect(rollback).toContain('assertReleasePlanMatchesManifest');
+    expect(rollback).toContain('assertCurrentConfiguration');
+    expect(rollback).toContain("tempo: 'TEMPO_IMAGE'");
+    expect(lockImages).toContain("'model-services'");
+    expect(lockImages).toContain("'backup', 'postgres'");
+    expect(lockImages).toContain('signed_registry');
+    expect(scanImages).toContain('const imageEntries = lock.entries');
+    expect(integrity).toContain('Mutable image tag drift detected');
+    expect(integrity).toContain('Database migration set is not exactly compatible');
+    expect(read(stagingRoot, 'scripts', 'verify-config.mjs')).toContain(
+      'must use an immutable sha256 image reference'
+    );
+    expect(read(stagingRoot, 'scripts', 'verify-config.mjs')).toContain(
+      'must use the repository-built'
+    );
+    expect(packageJson).toContain('staging:image-integrity:test');
+    expect(workflow).toContain('docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b');
+    expect(workflow).toContain('r5-image-identity-evidence');
+    expect(compose).toContain('image: ${POSTGRES_IMAGE:-finance-agent/staging-postgres:b8-09}');
+    expect(compose).toContain('image: ${MINIO_IMAGE:-finance-agent/staging-minio:b8-09}');
+    expect(compose).toContain('image: ${PROMETHEUS_IMAGE:-finance-agent/staging-prometheus:b8-09}');
+    expect(compose).toContain('image: ${ALERTMANAGER_IMAGE:-finance-agent/staging-alertmanager:b8-09}');
+    expect(compose).toContain('image: ${NODE_EXPORTER_IMAGE:-finance-agent/staging-node-exporter:b8-09}');
+    expect(compose).toContain('image: ${ALLOY_IMAGE:-finance-agent/staging-alloy:b8-09}');
+    expect(compose).toContain('image: ${TEMPO_IMAGE:-finance-agent/staging-tempo:b8-09}');
+    expect(compose).not.toContain('grafana/promtail');
+    for (const variable of [
+      'NODE_IMAGE',
+      'NGINX_IMAGE',
+      'REDIS_IMAGE',
+      'CLAMAV_IMAGE',
+      'GRAFANA_IMAGE',
+      'LOKI_IMAGE'
+    ]) {
+      expect(environmentExample).toMatch(new RegExp(`^${variable}=\\S+@sha256:[a-f0-9]{64}$`, 'm'));
+    }
+    expect(read(repositoryRoot, 'backend', 'Dockerfile')).toMatch(
+      /^ARG NODE_IMAGE=\S+@sha256:[a-f0-9]{64}$/m
+    );
+    expect(read(repositoryRoot, 'Dockerfile.frontend')).toMatch(
+      /^ARG NGINX_IMAGE=\S+@sha256:[a-f0-9]{64}$/m
+    );
+    expect(postgresDockerfile).toContain('FROM ${DEBIAN_IMAGE}');
+    expect(postgresDockerfile).not.toContain('FROM ${POSTGRES_SOURCE_IMAGE}');
+    expect(postgresDockerfile).toContain('POSTGRES_ENTRYPOINT_COMMIT=62a714f93cc32220de46fd12235c9d509e3b1ad6');
+    expect(postgresDockerfile).toContain('ADD --checksum=sha256:${POSTGRES_ENTRYPOINT_SHA256}');
+    expect(postgresDockerfile).toContain('exec runuser -u postgres --preserve-environment');
+    expect(postgresDockerfile).not.toContain('COPY --from=postgres-package-source /usr/local/bin/gosu');
+    expect(backupDockerfile).toContain('github.com/prometheus/prometheus@v0.311.3');
+    expect(backupDockerfile).toContain('golang.org/x/net@v0.55.0');
+    expect(minioDockerfile).toContain('MINIO_SOURCE_COMMIT=7aac2a2c5b7c882e68c1ce017d8256be2feea27f');
+    expect(minioDockerfile).toContain('google.golang.org/grpc@v1.79.3');
+    expect(minioDockerfile).toContain('production-approval="pending-h13"');
+    expect(prometheusDockerfile).toContain('PROMETHEUS_SOURCE_COMMIT=9f27dffc1f93ca23287972f632025879f2d1c658');
+    expect(prometheusDockerfile).toContain('builtinassets');
+    expect(alertmanagerDockerfile).toContain('ALERTMANAGER_SOURCE_COMMIT=8768aa6f65f1a888b5aa5fbf877cf20ad45d1f61');
+    expect(alertmanagerDockerfile).toContain('ALERTMANAGER_UI_SHA256=fca5b665281e603c055d812ac0359b027772c5e30c9a8cd0ca1367aac698cfa6');
+    expect(nodeExporterDockerfile).toContain('NODE_EXPORTER_SOURCE_COMMIT=0dd664dece3f8319f6bec5a221acd2c7ad13a23d');
+    expect(alloyDockerfile).toContain('ALLOY_SOURCE_COMMIT=89d82370454dcee7b07d719ba632810e207a6de9');
+    expect(alloyDockerfile).toContain('golang.org/x/crypto@v0.52.0');
+    expect(alloyDockerfile).toContain('golang.org/x/net@v0.55.0');
+    expect(alloyConfig).toContain('/var/lib/docker/containers/*/*-json.log');
+    expect(alloyConfig).toContain('stage.structured_metadata');
+    expect(tempoDockerfile).toContain('TEMPO_SOURCE_COMMIT=991ce39eb956e9ed771fcffe05eff42d33de27ba');
+    expect(compose).toContain('command: ["--config.file=/etc/tempo/tempo.yml"]');
+    for (const dockerfile of [
+      read(repositoryRoot, 'backend', 'Dockerfile'),
+      read(repositoryRoot, 'Dockerfile.frontend'),
+      backupDockerfile,
+      postgresDockerfile,
+      minioDockerfile,
+      prometheusDockerfile,
+      alertmanagerDockerfile,
+      nodeExporterDockerfile,
+      alloyDockerfile,
+      tempoDockerfile
+    ]) {
+      expect(dockerfile).toContain('org.opencontainers.image.revision=${BUILD_GIT_SHA}');
+    }
   });
 
   it('provides central metrics, logs, traces, and backup freshness alerts', () => {
     const compose = read(stagingRoot, 'compose.yaml');
     const alerts = read(stagingRoot, 'monitoring', 'alerts.yml');
     const prometheus = read(stagingRoot, 'monitoring', 'prometheus.yml');
-    for (const service of ['prometheus:', 'alertmanager:', 'loki:', 'promtail:', 'tempo:', 'grafana:']) {
+    for (const service of ['prometheus:', 'alertmanager:', 'loki:', 'alloy:', 'tempo:', 'grafana:']) {
       expect(compose).toContain(service);
     }
+    expect(compose).not.toContain('/var/run/docker.sock');
     expect(alerts).toContain('FinanceAgentWorkerHeartbeatMissing');
     expect(alerts).toContain('FinanceAgentTraceDrops');
     expect(alerts).toContain('FinanceAgentBackupStale');
