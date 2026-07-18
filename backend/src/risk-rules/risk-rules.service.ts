@@ -31,6 +31,17 @@ import {
   resolveDuplicateCandidatePolicy,
   utcCalendarDayOffset
 } from './duplicate-candidate-policy';
+import {
+  FINANCIAL_THRESHOLD_EXPECTED_FORMAT,
+  FINANCIAL_THRESHOLD_MAX,
+  FINANCIAL_THRESHOLD_MAX_INTEGER_DIGITS,
+  FINANCIAL_THRESHOLD_SCHEMA_VERSION,
+  FINANCIAL_THRESHOLD_SCALE,
+  FinancialThresholdValidationError,
+  FinancialThresholdWarning,
+  ParsedFinancialThreshold,
+  parseFinancialThreshold
+} from './financial-threshold';
 import { toAnomaly, toRiskRule } from './risk-rule.presenter';
 
 interface RuleEvaluation {
@@ -38,6 +49,11 @@ interface RuleEvaluation {
   reason: string;
   suggestion: string;
   evidence: Prisma.InputJsonObject;
+}
+
+interface PreparedRuleCondition {
+  conditionJson: Record<string, unknown>;
+  compatibilityWarnings: FinancialThresholdWarning[];
 }
 
 const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 };
@@ -62,20 +78,22 @@ export class RiskRulesService {
   }
 
   async create(dto: CreateRiskRuleDto, actor: CurrentUser, context: RequestContext) {
-    this.validateRuleCondition(dto.ruleType, dto.conditionJson);
-    const conditionJson = this.normalizeRuleCondition(dto.ruleType, dto.conditionJson);
+    const prepared = this.prepareRuleCondition(dto.ruleType, dto.conditionJson);
     return this.prisma.$transaction(async (tx) => {
       const rule = await tx.riskRule.create({
         data: {
           ...dto,
           targetType: dto.targetType ?? 'work_order',
-          conditionJson: conditionJson as Prisma.InputJsonValue,
+          conditionJson: prepared.conditionJson as Prisma.InputJsonValue,
           isActive: dto.isActive ?? true,
           createdBy: actor.id
         }
       });
-      await this.auditLogs.write(tx, actor, 'risk_rule.create', 'risk_rule', rule.id, { after: toRiskRule(rule) }, context);
-      return toRiskRule(rule);
+      await this.auditLogs.write(tx, actor, 'risk_rule.create', 'risk_rule', rule.id, {
+        after: toRiskRule(rule),
+        compatibilityWarnings: this.financialThresholdWarningsJson(prepared.compatibilityWarnings)
+      }, context);
+      return { ...toRiskRule(rule), compatibilityWarnings: prepared.compatibilityWarnings };
     });
   }
 
@@ -85,17 +103,20 @@ export class RiskRulesService {
       if (!before) throw new NotFoundException('资源不存在');
       const ruleType = dto.ruleType ?? before.ruleType;
       const requestedCondition = dto.conditionJson ?? this.asObject(before.conditionJson);
-      this.validateRuleCondition(ruleType, requestedCondition);
-      const conditionJson = this.normalizeRuleCondition(ruleType, requestedCondition);
+      const prepared = this.prepareRuleCondition(ruleType, requestedCondition);
       const rule = await tx.riskRule.update({
         where: { id },
         data: {
           ...dto,
-          conditionJson: conditionJson as Prisma.InputJsonValue
+          conditionJson: prepared.conditionJson as Prisma.InputJsonValue
         }
       });
-      await this.auditLogs.write(tx, actor, 'risk_rule.update', 'risk_rule', id, { before: toRiskRule(before), after: toRiskRule(rule) }, context);
-      return toRiskRule(rule);
+      await this.auditLogs.write(tx, actor, 'risk_rule.update', 'risk_rule', id, {
+        before: toRiskRule(before),
+        after: toRiskRule(rule),
+        compatibilityWarnings: this.financialThresholdWarningsJson(prepared.compatibilityWarnings)
+      }, context);
+      return { ...toRiskRule(rule), compatibilityWarnings: prepared.compatibilityWarnings };
     });
   }
 
@@ -306,7 +327,23 @@ export class RiskRulesService {
           matchedSignals: evaluation.evidence.matchedSignals ?? [],
           automaticAction: evaluation.evidence.automaticAction
         }));
-      const runEvidence = { runId, hitCount: hits.length, riskLevel, duplicateCandidateWindows };
+      const financialThresholds = evaluations
+        .filter(({ rule }) => ['amount_threshold', 'missing_attachment'].includes(rule.ruleType))
+        .map(({ rule, evaluation }) => ({
+          ruleId: rule.id,
+          ruleKey: rule.ruleKey,
+          threshold: evaluation.evidence.threshold,
+          thresholdSchemaVersion: evaluation.evidence.thresholdSchemaVersion,
+          thresholdInputMode: evaluation.evidence.thresholdInputMode,
+          compatibilityWarnings: evaluation.evidence.compatibilityWarnings ?? []
+        }));
+      const runEvidence = {
+        runId,
+        hitCount: hits.length,
+        riskLevel,
+        duplicateCandidateWindows,
+        financialThresholds
+      };
       await this.auditLogs.write(tx, actor, 'work_order.rules.run', 'work_order', id, runEvidence, context);
       await this.ledgerEvents.write(tx, actor, 'work_order_rules_completed', 'work_order', id, runEvidence);
       return {
@@ -335,27 +372,32 @@ export class RiskRulesService {
 
   private async evaluate(rule: RiskRule, workOrder: WorkOrderWithRelations): Promise<RuleEvaluation> {
     const condition = this.asObject(rule.conditionJson);
-    const threshold = this.number(condition.threshold, 0);
     if (rule.ruleType === 'amount_threshold') {
       const amount = workOrder.amount;
-      const thresholdAmount = new Prisma.Decimal(threshold);
+      const threshold = this.parseFinancialThresholdOrThrow(condition.threshold);
+      const thresholdAmount = threshold.decimal;
       return this.result(
         amount.gt(thresholdAmount),
         `${workOrder.orderNo}金额${amount.toFixed(2)}元超过阈值${thresholdAmount.toFixed(2)}元`,
         '请核对合同、凭证和付款依据。',
-        { amount: amount.toFixed(2), threshold: thresholdAmount.toFixed(2) }
+        { amount: amount.toFixed(2), ...this.financialThresholdEvidence(threshold) }
       );
     }
     if (rule.ruleType === 'missing_attachment') {
       const amount = workOrder.amount;
-      const thresholdAmount = new Prisma.Decimal(threshold);
+      const threshold = this.parseFinancialThresholdOrThrow(condition.threshold);
+      const thresholdAmount = threshold.decimal;
       const targetType = typeof condition.workOrderType === 'string' ? condition.workOrderType : 'expense';
       const hit = workOrder.type === targetType && amount.gt(thresholdAmount) && workOrder.attachments.length === 0;
       return this.result(
         hit,
         `报销金额${amount.toFixed(2)}元且缺少附件`,
         '请补充发票、付款凭证或业务回单。',
-        { amount: amount.toFixed(2), threshold: thresholdAmount.toFixed(2), attachmentCount: workOrder.attachments.length }
+        {
+          amount: amount.toFixed(2),
+          ...this.financialThresholdEvidence(threshold),
+          attachmentCount: workOrder.attachments.length
+        }
       );
     }
     if (rule.ruleType === 'duplicate_submission') {
@@ -517,15 +559,50 @@ export class RiskRulesService {
     };
   }
 
-  private normalizeRuleCondition(ruleType: string, condition: Record<string, unknown>) {
-    return ruleType === 'duplicate_submission'
-      ? normalizeDuplicateCandidateCondition(condition)
-      : condition;
+  private financialThresholdEvidence(threshold: ParsedFinancialThreshold): Prisma.InputJsonObject {
+    return {
+      threshold: threshold.canonical,
+      thresholdSchemaVersion: threshold.schemaVersion,
+      thresholdInputMode: threshold.inputMode,
+      compatibilityWarnings: threshold.compatibilityWarnings.map((warning) => ({ ...warning }))
+    };
   }
 
-  private validateRuleCondition(ruleType: string, condition: Record<string, unknown>) {
+  private financialThresholdWarningsJson(warnings: FinancialThresholdWarning[]): Prisma.InputJsonArray {
+    return warnings.map((warning) => ({
+      code: warning.code,
+      field: warning.field,
+      message: warning.message
+    }));
+  }
+
+  private parseFinancialThresholdOrThrow(value: unknown) {
+    try {
+      return parseFinancialThreshold(value);
+    } catch (error) {
+      if (!(error instanceof FinancialThresholdValidationError)) throw error;
+      throw new BadRequestException({
+        message: error.message,
+        data: {
+          reason: error.reason,
+          field: 'conditionJson.threshold',
+          schemaVersion: FINANCIAL_THRESHOLD_SCHEMA_VERSION,
+          expectedFormat: FINANCIAL_THRESHOLD_EXPECTED_FORMAT,
+          maximum: FINANCIAL_THRESHOLD_MAX,
+          maximumIntegerDigits: FINANCIAL_THRESHOLD_MAX_INTEGER_DIGITS,
+          scale: FINANCIAL_THRESHOLD_SCALE,
+          legacyNumericCompatibility: 'non-negative-safe-integers-only'
+        }
+      });
+    }
+  }
+
+  private prepareRuleCondition(ruleType: string, condition: Record<string, unknown>): PreparedRuleCondition {
     const allowed = new Set<string>();
+    const conditionJson = { ...condition };
+    const compatibilityWarnings: FinancialThresholdWarning[] = [];
     const requireFinite = (key: string, minimum: number, maximum: number, integer = false) => {
+      allowed.add(key);
       const value = condition[key];
       if (value === undefined) return;
       if (
@@ -537,11 +614,16 @@ export class RiskRulesService {
       ) {
         throw new BadRequestException(`风险规则参数 ${key} 不合法`);
       }
-      allowed.add(key);
     };
-    if (ruleType === 'amount_threshold') requireFinite('threshold', 0, 99999999999999.99);
+    const prepareFinancialThreshold = () => {
+      allowed.add('threshold');
+      const threshold = this.parseFinancialThresholdOrThrow(condition.threshold);
+      conditionJson.threshold = threshold.canonical;
+      compatibilityWarnings.push(...threshold.compatibilityWarnings);
+    };
+    if (ruleType === 'amount_threshold') prepareFinancialThreshold();
     if (ruleType === 'missing_attachment') {
-      requireFinite('threshold', 0, 99999999999999.99);
+      prepareFinancialThreshold();
       allowed.add('workOrderType');
       if (condition.workOrderType !== undefined && !['expense', 'transport', 'other'].includes(String(condition.workOrderType))) {
         throw new BadRequestException('风险规则参数 workOrderType 不合法');
@@ -549,6 +631,7 @@ export class RiskRulesService {
     }
     if (ruleType === 'duplicate_submission') {
       requireFinite('windowDays', 0, DUPLICATE_CANDIDATE_MAX_WINDOW_DAYS, true);
+      Object.assign(conditionJson, normalizeDuplicateCandidateCondition(condition));
     }
     if (ruleType === 'after_hours') {
       requireFinite('startHour', 0, 23, true);
@@ -564,5 +647,6 @@ export class RiskRulesService {
     }
     const unknown = Object.keys(condition).filter((key) => !allowed.has(key));
     if (unknown.length) throw new BadRequestException(`风险规则包含未知参数：${unknown.join(', ')}`);
+    return { conditionJson, compatibilityWarnings };
   }
 }

@@ -14,6 +14,70 @@ const actor = {
 };
 
 describe('RiskRulesService phase 6', () => {
+  it('persists financial thresholds from canonical decimal strings without a number round-trip', async () => {
+    const now = new Date('2026-07-18T00:00:00.000Z');
+    const create = jest.fn(async ({ data }) => ({
+      id: 'rule_decimal_string',
+      ...data,
+      createdAt: now,
+      updatedAt: now
+    }));
+    const prisma: any = {
+      riskRule: { create },
+      $transaction: jest.fn(async (callback) => callback(prisma))
+    };
+    const service = new RiskRulesService(
+      prisma,
+      { write: jest.fn(async () => undefined) } as any,
+      { write: jest.fn(async () => undefined) } as any
+    );
+
+    const result = await service.create({
+      ruleKey: 'decimal_string_threshold',
+      ruleName: '字符串金额阈值',
+      ruleType: 'amount_threshold',
+      severity: RiskLevel.medium,
+      conditionJson: { threshold: '0.1' }
+    }, actor, {});
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ conditionJson: { threshold: '0.10' } })
+    }));
+    expect(result).toMatchObject({
+      conditionJson: { threshold: '0.10' },
+      compatibilityWarnings: []
+    });
+  });
+
+  it('rejects a legacy numeric threshold that has already lost decimal precision', async () => {
+    const create = jest.fn();
+    const prisma: any = {
+      riskRule: { create },
+      $transaction: jest.fn(async (callback) => callback(prisma))
+    };
+    const service = new RiskRulesService(
+      prisma,
+      { write: jest.fn(async () => undefined) } as any,
+      { write: jest.fn(async () => undefined) } as any
+    );
+    const unsafeThreshold = JSON.parse('99999999999999.99') as number;
+    expect(unsafeThreshold.toString()).toBe('99999999999999.98');
+
+    await expect(service.create({
+      ruleKey: 'unsafe_numeric_threshold',
+      ruleName: '不安全数字阈值',
+      ruleType: 'amount_threshold',
+      severity: RiskLevel.medium,
+      conditionJson: { threshold: unsafeThreshold }
+    }, actor, {})).rejects.toMatchObject({
+      status: 400,
+      response: {
+        data: { reason: 'RISK_RULE_THRESHOLD_NUMERIC_UNSAFE' }
+      }
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('persists an explicit zero-day default and rejects windows beyond the supported boundary', async () => {
     const now = new Date('2026-07-18T00:00:00.000Z');
     const create = jest.fn(async ({ data }) => ({

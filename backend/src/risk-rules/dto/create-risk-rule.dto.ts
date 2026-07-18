@@ -34,7 +34,10 @@ export class CreateRiskRuleDto {
   @IsEnum(RiskLevel)
   severity!: RiskLevel;
 
-  @ApiProperty({ type: Object })
+  @ApiProperty({
+    type: Object,
+    description: '金额类 threshold 使用规范十进制字符串，例如 "20000.00"；旧 numeric 仅兼容安全整数。'
+  })
   @IsObject()
   conditionJson!: Record<string, unknown>;
 

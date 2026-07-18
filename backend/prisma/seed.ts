@@ -467,7 +467,7 @@ async function main() {
       ruleName: '金额超过20000元',
       ruleType: 'amount_threshold',
       severity: RiskLevel.high,
-      conditionJson: { threshold: 20000 },
+      conditionJson: { threshold: '20000.00' },
       description: '单笔工单金额超过20000元时标记为高风险。'
     },
     {
@@ -476,7 +476,7 @@ async function main() {
       ruleName: '金额超过8000元',
       ruleType: 'amount_threshold',
       severity: RiskLevel.medium,
-      conditionJson: { threshold: 8000 },
+      conditionJson: { threshold: '8000.00' },
       description: '单笔工单金额超过8000元时标记为中风险。'
     },
     {
@@ -485,7 +485,7 @@ async function main() {
       ruleName: '高额报销缺少附件',
       ruleType: 'missing_attachment',
       severity: RiskLevel.medium,
-      conditionJson: { threshold: 1000, workOrderType: 'expense' },
+      conditionJson: { threshold: '1000.00', workOrderType: 'expense' },
       description: '报销金额超过1000元且没有附件时提示补充凭证。'
     },
     {
@@ -594,14 +594,14 @@ async function main() {
       riskLevel: RiskLevel.high,
       reason: '工单金额26000元超过阈值20000元',
       suggestion: '请核对合同、凭证和付款依据。',
-      evidence: { amount: 26000, threshold: 20000 },
+      evidence: { amount: '26000.00', threshold: '20000.00' },
       status: 'open'
     },
     update: {
       riskLevel: RiskLevel.high,
       reason: '工单金额26000元超过阈值20000元',
       suggestion: '请核对合同、凭证和付款依据。',
-      evidence: { amount: 26000, threshold: 20000 },
+      evidence: { amount: '26000.00', threshold: '20000.00' },
       status: 'open',
       resolvedAt: null
     }
