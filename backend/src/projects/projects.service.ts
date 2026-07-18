@@ -18,6 +18,7 @@ import {
   toTemplate,
   toTemplateField
 } from '../data-center/data-center.presenter';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { toRawFile } from '../files/file.presenter';
@@ -148,7 +149,7 @@ export class ProjectsService {
 
   async update(id: string, dto: UpdateProjectDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 22))`;
+      await acquireProjectWriteLock(tx, id);
       const before = await this.findProjectOrThrow(id, tx);
       if (dto.status === ProjectStatus.archived && before.status !== ProjectStatus.archived) {
         await this.assertCanArchive(tx, id);
@@ -176,7 +177,7 @@ export class ProjectsService {
 
   async archive(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 22))`;
+      await acquireProjectWriteLock(tx, id);
       const before = await this.findProjectOrThrow(id, tx);
       await this.assertCanArchive(tx, id);
       const project = await tx.project.update({
@@ -344,6 +345,7 @@ export class ProjectsService {
 
   async enableTemplate(projectId: string, dto: CreateProjectTemplateDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      await acquireProjectWriteLock(tx, projectId);
       const project = await this.findProjectOrThrow(projectId, tx);
       this.ensureProjectWritable(project.status);
       const template = await this.findTemplateOrThrow(dto.templateId, tx);
@@ -403,6 +405,8 @@ export class ProjectsService {
 
   async updateProjectTemplate(id: string, dto: UpdateProjectTemplateDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      const identity = await this.findProjectTemplateIdentityOrThrow(id, tx);
+      await acquireProjectWriteLock(tx, identity.projectId);
       const before = await this.findProjectTemplateOrThrow(id, tx);
       const project = await this.findProjectOrThrow(before.projectId, tx);
       this.ensureProjectWritable(project.status);
@@ -429,6 +433,8 @@ export class ProjectsService {
 
   async disableProjectTemplate(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
+      const identity = await this.findProjectTemplateIdentityOrThrow(id, tx);
+      await acquireProjectWriteLock(tx, identity.projectId);
       const before = await this.findProjectTemplateOrThrow(id, tx);
       const project = await this.findProjectOrThrow(before.projectId, tx);
       this.ensureProjectWritable(project.status);
@@ -692,6 +698,19 @@ export class ProjectsService {
       where: {
         id
       }
+    });
+
+    if (!projectTemplate) {
+      throw new NotFoundException('资源不存在');
+    }
+
+    return projectTemplate;
+  }
+
+  private async findProjectTemplateIdentityOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
+    const projectTemplate = await prisma.projectTemplate.findUnique({
+      where: { id },
+      select: { projectId: true }
     });
 
     if (!projectTemplate) {

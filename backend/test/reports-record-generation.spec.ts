@@ -176,6 +176,7 @@ describe('phase 7 record generation and reports', () => {
           return record;
         })
       },
+      $queryRaw: jest.fn(async () => [{ value: '0' }]),
       $executeRaw: jest.fn(async () => 0),
       $transaction: jest.fn(async (callback) => callback(prisma))
     };

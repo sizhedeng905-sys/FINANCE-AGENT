@@ -25,6 +25,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { FilesService } from '../files/files.service';
@@ -293,7 +294,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     context: RequestContext,
     idempotencyKey?: string
   ) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
+    await acquireProjectWriteLock(tx, dto.projectId);
     const template = await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
     const { resolvedProvider, pageSelection, pages } = prepared;
     const provider = resolvedProvider.provider;
@@ -809,7 +810,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       const actualAttempt = task.attempts.find((attempt) => attempt.status === OcrAttemptStatus.succeeded);
       if (!actualAttempt) throw new ConflictException('OCR 结果缺少可追溯的成功 attempt');
 
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${task.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, task.projectId);
 
       const candidates = this.candidateArray(task.fieldCandidates);
       const unresolved = candidates.filter((candidate) => candidate.lowConfidence || candidate.missing || candidate.validationError);

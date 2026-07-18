@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
@@ -96,7 +97,7 @@ export class RecordsService {
     );
     return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       const status = dto.status ?? BusinessRecordStatus.pending_confirm;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, dto.projectId);
       const template = await this.recordPolicy.getWritableTemplate(
         tx,
         dto.projectId,
@@ -180,7 +181,7 @@ export class RecordsService {
   async update(id: string, dto: UpdateRecordDto, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findRecordOrThrow(id, tx);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${before.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, before.projectId);
       if (this.isTerminal(before.status)) throw new ConflictException('终态记录不能直接修改');
       if (Object.keys(dto).length === 0) throw new BadRequestException('至少提供一个可修改字段');
       const template = await this.recordPolicy.getWritableTemplate(
@@ -275,7 +276,7 @@ export class RecordsService {
   async void(id: string, actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.findRecordOrThrow(id, tx);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${before.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, before.projectId);
       if (before.status === BusinessRecordStatus.rejected) return { id, status: before.status };
       await this.ensureProjectWritable(before.projectId, tx);
       const now = new Date();
@@ -334,7 +335,7 @@ export class RecordsService {
     );
     return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       const before = await this.findRecordOrThrow(id, tx);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${before.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, before.projectId);
       if (before.status === BusinessRecordStatus.confirmed) return toBusinessRecord(before);
       if (before.status === BusinessRecordStatus.rejected) throw new ConflictException('已作废记录不能确认');
       const template = await this.recordPolicy.getWritableTemplate(

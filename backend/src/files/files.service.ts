@@ -17,6 +17,7 @@ import { chmod, readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -116,7 +117,7 @@ export class FilesService {
         if (dto.workOrderId) {
           await this.lockWorkOrder(tx, dto.workOrderId);
         }
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 22))`;
+        await acquireProjectWriteLock(tx, projectId);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${actor.id}, 20))`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 21))`;
         const currentProject = await tx.project.findUnique({ where: { id: projectId }, select: { status: true } });

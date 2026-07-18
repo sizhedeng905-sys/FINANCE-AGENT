@@ -1166,6 +1166,142 @@ describe('real PostgreSQL integration', () => {
     }
   });
 
+  it('serializes project-template lifecycle changes with the project write lock', async () => {
+    const financeLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const financeToken = financeLogin.body.data.accessToken as string;
+    const suffix = randomUUID();
+    const project = await prisma.project.create({
+      data: {
+        name: `${TEST_USER_PREFIX}template_lock_${suffix}`,
+        customerName: 'Template lock customer',
+        ownerName: 'Template lock owner',
+        createdBy: 'finance'
+      }
+    });
+    const template = await prisma.template.create({
+      data: {
+        name: `${TEST_USER_PREFIX}template_lock_${suffix}`,
+        recordType: DataRecordType.cost,
+        createdBy: 'finance'
+      }
+    });
+    const binding = await prisma.projectTemplate.create({
+      data: {
+        projectId: project.id,
+        templateId: template.id,
+        recordType: DataRecordType.cost,
+        customName: 'Template lock binding'
+      }
+    });
+    let releaseLock: (() => void) | undefined;
+    let announceLock: (() => void) | undefined;
+    const lockHeld = new Promise<void>((resolve) => { announceLock = resolve; });
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${project.id}, 22))`;
+      announceLock?.();
+      await new Promise<void>((resolve) => { releaseLock = resolve; });
+    }, { timeout: 10_000 });
+
+    try {
+      await lockHeld;
+      const disablePromise = request(app.getHttpServer())
+        .patch(`/api/project-templates/${binding.id}/disable`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .then((response) => response);
+      const state = await Promise.race([
+        disablePromise.then(() => 'settled' as const),
+        new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 200))
+      ]);
+      expect(state).toBe('waiting');
+      releaseLock?.();
+      await blocker;
+      const disabled = await disablePromise;
+      expect(disabled.status).toBe(200);
+      expect(disabled.body.data.isActive).toBe(false);
+    } finally {
+      releaseLock?.();
+      await blocker.catch(() => undefined);
+      await prisma.project.deleteMany({ where: { id: project.id } });
+      await prisma.template.deleteMany({ where: { id: template.id } });
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: [project.id, template.id, binding.id] } } });
+    }
+  });
+
+  it('fails a blocked project-template lifecycle write with a stable retryable conflict', async () => {
+    const financeLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: 'finance', password: '123456' })
+      .expect(200);
+    const financeToken = financeLogin.body.data.accessToken as string;
+    const suffix = randomUUID();
+    const project = await prisma.project.create({
+      data: {
+        name: `${TEST_USER_PREFIX}template_timeout_${suffix}`,
+        customerName: 'Template timeout customer',
+        ownerName: 'Template timeout owner',
+        createdBy: 'finance'
+      }
+    });
+    const template = await prisma.template.create({
+      data: {
+        name: `${TEST_USER_PREFIX}template_timeout_${suffix}`,
+        recordType: DataRecordType.cost,
+        createdBy: 'finance'
+      }
+    });
+    const binding = await prisma.projectTemplate.create({
+      data: {
+        projectId: project.id,
+        templateId: template.id,
+        recordType: DataRecordType.cost,
+        customName: 'Template timeout binding'
+      }
+    });
+    let releaseLock: (() => void) | undefined;
+    let announceLock: (() => void) | undefined;
+    const lockHeld = new Promise<void>((resolve) => { announceLock = resolve; });
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${project.id}, 22))`;
+      announceLock?.();
+      await new Promise<void>((resolve) => { releaseLock = resolve; });
+    }, { timeout: 10_000 });
+
+    try {
+      await lockHeld;
+      const startedAt = Date.now();
+      const response = await request(app.getHttpServer())
+        .patch(`/api/project-templates/${binding.id}/disable`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(409);
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(elapsedMs).toBeGreaterThanOrEqual(1_800);
+      expect(elapsedMs).toBeLessThan(4_500);
+      expect(response.body).toEqual({
+        code: 40901,
+        message: '项目正在被其他请求修改，请稍后重试',
+        data: {
+          reason: 'PROJECT_WRITE_LOCK_RETRY',
+          retryable: true
+        }
+      });
+      expect(await prisma.projectTemplate.findUniqueOrThrow({ where: { id: binding.id } }))
+        .toMatchObject({ isActive: true });
+      expect(await prisma.auditLog.count({
+        where: { resourceType: 'project_template', resourceId: binding.id, action: 'project_template.disable' }
+      })).toBe(0);
+    } finally {
+      releaseLock?.();
+      await blocker.catch(() => undefined);
+      await prisma.project.deleteMany({ where: { id: project.id } });
+      await prisma.template.deleteMany({ where: { id: template.id } });
+      await prisma.auditLog.deleteMany({ where: { resourceId: { in: [project.id, template.id, binding.id] } } });
+    }
+  });
+
   it('enforces business-record values, filters, lifecycle idempotency, and archived-project boundaries', async () => {
     const logins = await Promise.all(
       ['finance', 'boss', 'employee', 'reviewer'].map(async (username) => {

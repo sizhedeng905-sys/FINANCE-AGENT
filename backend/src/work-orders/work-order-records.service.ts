@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { IdempotencyService } from '../idempotency/idempotency.service';
@@ -94,7 +95,7 @@ export class WorkOrderRecordsService {
     if (!workOrder.occurredDate) throw new UnprocessableEntityException('工单缺少发生日期');
     if (workOrder.amount.lessThanOrEqualTo(0)) throw new UnprocessableEntityException('工单金额必须大于 0');
     const recordType = this.resolveRecordType(workOrder.type);
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${workOrder.projectId}, 22))`;
+    await acquireProjectWriteLock(tx, workOrder.projectId);
     const templateId = workOrder.templateId ?? (await this.resolveTemplateId(tx, workOrder.projectId, recordType));
     const template = await this.recordPolicy.getWritableTemplate(
       tx,

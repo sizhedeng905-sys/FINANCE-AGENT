@@ -74,6 +74,7 @@ describe('phase 5 files and notifications', () => {
       businessRecord: { findFirst: jest.fn(async () => null) },
       importTask: { findFirst: jest.fn(async () => null) },
       ocrTask: { findFirst: jest.fn(async () => null) },
+      $queryRaw: jest.fn(async () => [{ value: '0' }]),
       $executeRaw: jest.fn(async () => 1),
       $transaction: jest.fn(async (callback) => callback(prisma))
     };

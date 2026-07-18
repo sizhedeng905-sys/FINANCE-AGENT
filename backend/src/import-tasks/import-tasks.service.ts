@@ -30,6 +30,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { FilesService } from '../files/files.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
@@ -263,7 +264,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         const validatedWorkbook = sourceExtension === '.xls'
           ? await this.prepareWorkbook(await this.files.readForProcessing(rawFile.id, actor))
           : undefined;
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.projectId}, 22))`;
+        await acquireProjectWriteLock(tx, dto.projectId);
         await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId, dto.importType);
         const task = await tx.importTask.create({
           data: {
@@ -1229,7 +1230,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('仅待确认或确认失败的任务可以确认');
       }
 
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${current.projectId}, 22))`;
+      await acquireProjectWriteLock(tx, current.projectId);
       const template = await this.recordPolicy.getWritableTemplate(
         tx,
         current.projectId,
@@ -1468,11 +1469,26 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, job.taskId);
       await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
+      const identity = await tx.importTask.findUnique({
+        where: { id: job.taskId },
+        select: { projectId: true }
+      });
+      if (!identity) throw new NotFoundException('资源不存在');
+      await acquireProjectWriteLock(tx, identity.projectId);
       const task = await tx.importTask.findUnique({
         where: { id: job.taskId },
         include: previewTaskInclude
       });
       if (!task) throw new NotFoundException('资源不存在');
+      const activeTemplate = await this.recordPolicy.getWritableTemplate(
+        tx,
+        task.projectId,
+        task.templateId,
+        task.importType
+      );
+      if (activeTemplate.version !== task.templateVersion) {
+        throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
+      }
       const rows = await tx.importRow.findMany({
         where: { importTaskId: job.taskId, confirmationProcessedAt: null },
         orderBy: { rowNumber: 'asc' },
@@ -2472,7 +2488,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.lockTask(tx, suggestion.importTaskId);
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${suggestion.projectId}, 22))`;
+    await acquireProjectWriteLock(tx, suggestion.projectId);
     const task = await tx.importTask.findUnique({ where: { id: suggestion.importTaskId } });
     if (!task) throw new NotFoundException('导入任务不存在');
     this.assertTaskMutable(task.status);

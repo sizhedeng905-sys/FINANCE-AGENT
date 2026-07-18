@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，R6.1 已关闭 Excel 预览全量响应风险。仍有 4 个 P1/条件 P1、R6.2-R6.6、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，R6.1-R6.2 已关闭 Excel 预览全量响应和项目模板并发锁风险。仍有 3 个 P1/条件 P1、R6.3-R6.6、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R5、R6.1 已完成；50,000 行 Excel 预览改为受预算的服务端分页，R6.2 项目模板并发锁进入下一顺位 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R5、R6.1-R6.2 已完成；项目模板与四类正式写入共享 PostgreSQL 项目锁，R6.3 重复时间窗进入下一顺位 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -31,7 +31,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R6.1 重新审计进展
+### R0-R6.2 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -49,7 +49,9 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R5 固定第三方构建输入 digest，并以固定源码/包版本构建 PostgreSQL、MinIO、Prometheus、Alertmanager、node-exporter、Alloy 和 Tempo；Promtail 已迁移到不挂载 Docker socket 的 Alloy。22 镜像完整扫描通过“无可修复 Critical”门禁，但仍有 53 High、88 Medium、38 Low，目标 registry/签名仍受 H13 阻断。
 - R6.1 删除 `previewInclude.rows` 全量读取；预览只查询当前页，首次精确统计按 500 行批次扫描并绑定任务版本缓存，映射变化自动失效。JSON 响应硬上限 1 MiB，页面最多 100 行且前端不缓存全表。
 - R6.1 已验证默认/最小/最大/超限/深页/无权限、5,001 与 50,000 行预览、50,001 行拒绝和真实浏览器 20→5 行翻页；25 条 migration 空库及 24→25 升级通过。
-- 当前开放工程问题为项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 4 个 P1/条件 P1；R6 幂等与 H01/H02/H07 矩阵仍需继续完成。
+- R6.2 将项目、模板、手工记录、Excel、OCR、工单和项目文件写入统一到 PostgreSQL 事务级项目锁；2 秒锁超时返回稳定可重试 409，成功后恢复原 `lock_timeout`。
+- R6.2 的真实竞争矩阵证明启用后记录可写、停用后 OCR 不入账、终审先完成则历史记录保留；Excel 确认调度后若模板停用，后台批次会失败关闭且正式记录为 0。
+- 当前开放工程问题为重复窗口、Decimal 阈值和多实例闸门 3 个 P1/条件 P1；R6 幂等与 H01/H02/H07 矩阵仍需继续完成。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -120,13 +122,14 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R5 本地全量 31/31 suites，286/286 tests |
-| PostgreSQL 集成 | `passed` | R6.1 本地全量 2/2 suites，62/62 tests；含 50,000 行深页预览 |
+| 后端 Jest | `passed` | R6.2 本地全量 32/32 suites，292/292 tests |
+| PostgreSQL 集成 | `passed` | R6.2 本地全量 3/3 suites，68/68 tests；含 50,000 行深页预览与四类项目模板竞争矩阵 |
 | 浏览器 E2E | `passed` | Playwright 17/17；含真实 API 服务端翻页 20→5 行 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
 | Prisma | `passed` | 25/25 migrations；41 表、27 enums、173 indexes、77 foreign keys |
 | Migration 路径 | `passed` | 空 `_test` 库 25 条；上一基线 24 条再升级第 25 条 |
 | Excel 预览预算 | `passed` | 当前页查询；摘要批次 500；pageSize 1-100；响应上限 1 MiB；50,000 行深页和缓存回访通过 |
+| 项目模板并发 | `passed` | 统一 key 22 事务锁；启用/停用与记录、Excel Worker、OCR、工单终审两种顺序均有 PostgreSQL 断言；锁超时稳定 409 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
 | OCR 并发 | `passed` | 1/3/5 精确并发门禁；最新 GitHub 集成 60/60 |
 | Repository hygiene | `passed` | 真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |

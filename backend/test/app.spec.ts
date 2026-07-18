@@ -740,6 +740,10 @@ class InMemoryPrisma {
     return 0;
   }
 
+  async $queryRaw() {
+    return [{ value: '0' }];
+  }
+
   async $disconnect() {
     return undefined;
   }
