@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { CreateRecordDto } from './dto/create-record.dto';
 import { QueryRecordsDto } from './dto/query-records.dto';
 import { UpdateRecordDto } from './dto/update-record.dto';
@@ -16,7 +18,7 @@ import { RecordsService } from './records.service';
 @ApiTags('records')
 @ApiBearerAuth()
 @Controller('records')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 export class RecordsController {
   constructor(private readonly recordsService: RecordsService) {}
 
@@ -67,6 +69,7 @@ export class RecordsController {
 
   @Post(':id/confirm')
   @Roles(UserRole.finance)
+  @RequireStepUp({ action: 'record.confirm', resourceType: 'business_record', resourceParam: 'id' })
   confirm(
     @Param('id') id: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,

@@ -98,6 +98,14 @@ export default () => ({
     leaseMs: Number.parseInt(process.env.DATA_RETENTION_LEASE_MS ?? '60000', 10),
     maxAttempts: Number.parseInt(process.env.DATA_RETENTION_MAX_ATTEMPTS ?? '3', 10)
   },
+  stepUp: {
+    mode: process.env.STEP_UP_MODE || 'disabled',
+    ttlSeconds: Number.parseInt(process.env.STEP_UP_TTL_SECONDS ?? '300', 10),
+    enforcedActions: (process.env.STEP_UP_ENFORCED_ACTIONS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  },
   metrics: {
     token: process.env.METRICS_TOKEN || ''
   },

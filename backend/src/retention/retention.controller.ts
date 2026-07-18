@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { CreateRetentionLegalHoldDto } from './dto/create-retention-legal-hold.dto';
 import { CreateRetentionRunDto } from './dto/create-retention-run.dto';
 import { QueryRetentionLegalHoldsDto } from './dto/query-retention-legal-holds.dto';
@@ -17,7 +19,7 @@ import { RetentionService } from './retention.service';
 @ApiTags('retention')
 @ApiBearerAuth()
 @Controller('retention')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 @Roles(UserRole.admin, UserRole.auditor)
 export class RetentionController {
   constructor(private readonly retention: RetentionService) {}
@@ -54,6 +56,11 @@ export class RetentionController {
 
   @Post('legal-holds')
   @Roles(UserRole.admin)
+  @RequireStepUp({
+    action: 'retention.legal_hold.create',
+    resourceType: 'retention_resource',
+    resourceBodyFields: ['resourceType', 'resourceId']
+  })
   createLegalHold(
     @Body() dto: CreateRetentionLegalHoldDto,
     @CurrentUserDecorator() actor: CurrentUser,

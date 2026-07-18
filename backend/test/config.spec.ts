@@ -46,6 +46,12 @@ describe('environment validation', () => {
     [{ ...valid, DATA_RETENTION_BATCH_SIZE: '501' }, 'DATA_RETENTION_BATCH_SIZE'],
     [{ ...valid, DATA_RETENTION_LEASE_MS: '9999' }, 'DATA_RETENTION_LEASE_MS'],
     [{ ...valid, DATA_RETENTION_MAX_ATTEMPTS: '0' }, 'DATA_RETENTION_MAX_ATTEMPTS'],
+    [{ ...valid, STEP_UP_MODE: 'optional' }, 'STEP_UP_MODE'],
+    [{ ...valid, STEP_UP_TTL_SECONDS: '301' }, 'STEP_UP_TTL_SECONDS'],
+    [{ ...valid, STEP_UP_MODE: 'enforce' }, 'STEP_UP_ENFORCED_ACTIONS'],
+    [{ ...valid, STEP_UP_ENFORCED_ACTIONS: 'unknown.action' }, 'STEP_UP_ENFORCED_ACTIONS'],
+    [{ ...valid, STEP_UP_ENFORCED_ACTIONS: 'user.status.update,user.status.update' }, 'STEP_UP_ENFORCED_ACTIONS'],
+    [{ ...valid, STEP_UP_MODE: 'enforce', STEP_UP_ENFORCED_ACTIONS: 'model.route.update' }, 'unattached'],
     [{ ...valid, STORAGE_CAPACITY_MAX_STALENESS_SECONDS: '0' }, 'STORAGE_CAPACITY_MAX_STALENESS_SECONDS'],
     [{ ...valid, XLS_CONVERTER_TIMEOUT_MS: '999' }, 'XLS_CONVERTER_TIMEOUT_MS'],
     [{ ...valid, XLS_CONVERTER_MAX_OUTPUT_MB: '101' }, 'XLS_CONVERTER_MAX_OUTPUT_MB']
@@ -58,6 +64,16 @@ describe('environment validation', () => {
     expect(validateEnvironment({ ...valid, DATA_RETENTION_MODE: 'dry-run' })).toMatchObject({
       DATA_RETENTION_MODE: 'dry-run'
     });
+  });
+
+  it('keeps step-up enforcement disabled until registered actions are explicit', () => {
+    expect(validateEnvironment({ ...valid })).toMatchObject(valid);
+    expect(validateEnvironment({
+      ...valid,
+      STEP_UP_MODE: 'enforce',
+      STEP_UP_TTL_SECONDS: '60',
+      STEP_UP_ENFORCED_ACTIONS: 'user.status.update,user.password.reset'
+    })).toMatchObject({ STEP_UP_MODE: 'enforce' });
   });
 
   it.each([

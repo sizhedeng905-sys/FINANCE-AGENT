@@ -10,6 +10,7 @@ export interface CurrentUser {
   phone: string;
   status: UserStatus;
   tokenVersion: number;
+  sessionId?: string;
 }
 
 export interface AuthenticatedRequest extends Request {

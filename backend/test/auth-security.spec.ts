@@ -37,7 +37,9 @@ function guardHarness(options: {
     })
   } as unknown as ExecutionContext;
   const jwt = {
-    verifyAsync: jest.fn(async () => options.payload ?? { sub: 'boss_1', ver: 3, typ: 'access' })
+    verifyAsync: jest.fn(async () => options.payload ?? {
+      sub: 'boss_1', ver: 3, typ: 'access', sid: 'session-1'
+    })
   } as unknown as JwtService;
   const config = {
     get: jest.fn((key: string) => key === 'nodeEnv' ? options.nodeEnv ?? 'development' : undefined),
@@ -123,13 +125,22 @@ describe('authentication boundary hardening', () => {
       issuer: 'finance-agent',
       audience: 'finance-agent-api'
     }));
-    expect(harness.request.user).toMatchObject({ id: 'boss_1', role: UserRole.boss });
+    expect(harness.request.user).toMatchObject({
+      id: 'boss_1', role: UserRole.boss, sessionId: 'session-1'
+    });
 
     const stepUp = guardHarness({
       authorization: 'Bearer step-up-token',
       payload: { sub: 'boss_1', ver: 3, typ: 'step_up' }
     });
     await expect(stepUp.guard.canActivate(stepUp.context)).rejects.toBeInstanceOf(UnauthorizedException);
+
+    const legacyAccess = guardHarness({
+      authorization: 'Bearer legacy-access-token',
+      payload: { sub: 'boss_1', ver: 3, typ: 'access' }
+    });
+    await expect(legacyAccess.guard.canActivate(legacyAccess.context))
+      .rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('sets only __Host cookies in production and clears the development family', async () => {
@@ -137,7 +148,8 @@ describe('authentication boundary hardening', () => {
       login: jest.fn(async () => ({ accessToken: 'access-token', user: { id: 'boss_1' } }))
     };
     const config = { get: jest.fn(() => 'production') } as unknown as ConfigService;
-    const controller = new AuthController(authService as any, config);
+    const stepUp = { capabilities: jest.fn() };
+    const controller = new AuthController(authService as any, config, stepUp as any);
     const response = { cookie: jest.fn(), clearCookie: jest.fn() } as any;
     await controller.login(
       { username: 'boss', password: '123456' },

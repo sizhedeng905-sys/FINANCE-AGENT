@@ -221,6 +221,10 @@ class InMemoryPrisma {
     }
   };
 
+  stepUpGrant = {
+    updateMany: async () => ({ count: 0 })
+  };
+
   notification = {
     create: async ({ data }: { data: Record<string, unknown> }) => {
       const notification = { id: `notification_${this.notifications.length + 1}`, createdAt: new Date(), ...data };

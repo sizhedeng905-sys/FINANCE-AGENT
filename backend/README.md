@@ -84,14 +84,15 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-18, R7.1 engineering implementation):
+Current verification baseline (2026-07-18, R7.2 engineering implementation):
 
-- Backend build and Prisma validation pass with 26 applied migrations and no pending migration.
-- Jest: 37/37 suites and 335/335 tests.
-- Real PostgreSQL integration: 6/6 suites and 78/78 tests, including retention lease/legal-hold recovery, API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
+- Backend build and Prisma validation pass with 28 applied migrations and no pending migration.
+- Jest: 37/37 suites and 342/342 tests.
+- Real PostgreSQL integration: 7/7 suites and 84/84 tests, including step-up replay resistance, retention lease/legal-hold recovery, API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
 - Root Playwright acceptance: 17/17 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
+- R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
 - Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
 - B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
@@ -212,7 +213,17 @@ The production global request limiter uses Redis. Login throttling, upload admis
 
 Development accepts only `finance_agent_session` / `finance_agent_csrf`; production accepts only `__Host-finance_agent_session` / `__Host-finance_agent_csrf`. Mixed families, duplicate names (including malformed or empty first values), and environment-incompatible names are rejected and cleared. Cookie writes require exact double-submit CSRF matching. JWT verification is fixed to `HS256`, configured issuer/audience, and `typ=access`.
 
-The `admin` role manages privileged accounts. `finance` and `boss` can manage employee accounts only; `reviewer`, `employee`, and `auditor` cannot use user administration. Privileged role, password, and status changes are audited and notify the target user. The step-up endpoint issues a five-minute purpose-bound token after password verification; MFA remains explicitly reserved until H-10 is approved.
+The `admin` role manages privileged accounts. `finance` and `boss` can manage employee accounts only; `reviewer`, `employee`, and `auditor` cannot use user administration. Privileged role, password, and status changes are audited and notify the target user.
+
+Step-up is disabled by default. When H10 approves a concrete action policy, configure only actions reported as `attached` by `GET /api/auth/security-capabilities`:
+
+```env
+STEP_UP_MODE=disabled
+STEP_UP_TTL_SECONDS=300
+STEP_UP_ENFORCED_ACTIONS=
+```
+
+`POST /api/auth/step-up` requires the current password plus `action`, `resourceType`, and `resourceId`. The returned token is sent once in `X-Step-Up-Token`; it is bound to the current access-token session and is atomically consumed from PostgreSQL. Role, password, status, delete, and logout changes revoke active grants. Invalid modes, duplicate/unknown actions, and unattached candidates fail application startup. Access tokens issued before the R7.2 `sid` claim require a new login. MFA remains explicitly `reserved/enabled=false`, and self-approval, dual control, break-glass, and formal SoD remain pending H10. See `docs/R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md`.
 
 ## Retention Boundary
 

@@ -1,3 +1,5 @@
+import { STEP_UP_ACTIONS, StepUpAction, stepUpDefinition } from '../step-up/step-up-actions';
+
 const PLACEHOLDER_SECRETS = new Set([
   'development-secret-change-me',
   'replace-with-a-long-random-secret',
@@ -12,6 +14,7 @@ const PROCESS_ROLES = new Set(['api', 'worker', 'all']);
 const FILE_STORAGE_DRIVERS = new Set(['local', 's3']);
 const RATE_LIMIT_STORES = new Set(['memory', 'redis']);
 const DATA_RETENTION_MODES = new Set(['disabled', 'dry-run']);
+const STEP_UP_MODES = new Set(['disabled', 'enforce']);
 
 export function validateEnvironment(environment: Record<string, unknown>) {
   const databaseUrl = String(environment.DATABASE_URL ?? '');
@@ -99,6 +102,10 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const dataRetentionBatchSize = Number(String(environment.DATA_RETENTION_BATCH_SIZE ?? '100'));
   const dataRetentionLeaseMs = Number(String(environment.DATA_RETENTION_LEASE_MS ?? '60000'));
   const dataRetentionMaxAttempts = Number(String(environment.DATA_RETENTION_MAX_ATTEMPTS ?? '3'));
+  const stepUpMode = String(environment.STEP_UP_MODE ?? 'disabled');
+  const stepUpTtlSeconds = Number(String(environment.STEP_UP_TTL_SECONDS ?? '300'));
+  const stepUpActionsRaw = String(environment.STEP_UP_ENFORCED_ACTIONS ?? '').trim();
+  const stepUpActions = stepUpActionsRaw ? stepUpActionsRaw.split(',').map((item) => item.trim()) : [];
 
   if (!NODE_ENVIRONMENTS.has(nodeEnv)) {
     throw new Error(`NODE_ENV must be one of: ${Array.from(NODE_ENVIRONMENTS).join(', ')}.`);
@@ -307,6 +314,30 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(dataRetentionMaxAttempts) || dataRetentionMaxAttempts < 1 || dataRetentionMaxAttempts > 10) {
     throw new Error('DATA_RETENTION_MAX_ATTEMPTS must be an integer between 1 and 10.');
+  }
+  if (!STEP_UP_MODES.has(stepUpMode)) {
+    throw new Error('STEP_UP_MODE must be one of: disabled, enforce.');
+  }
+  if (!Number.isInteger(stepUpTtlSeconds) || stepUpTtlSeconds < 30 || stepUpTtlSeconds > 300) {
+    throw new Error('STEP_UP_TTL_SECONDS must be an integer between 30 and 300.');
+  }
+  if (
+    stepUpActions.some((action) => !action || !STEP_UP_ACTIONS.includes(action as never)) ||
+    new Set(stepUpActions).size !== stepUpActions.length
+  ) {
+    throw new Error(`STEP_UP_ENFORCED_ACTIONS must contain unique registered actions: ${STEP_UP_ACTIONS.join(', ')}.`);
+  }
+  if (stepUpMode === 'enforce' && stepUpActions.length === 0) {
+    throw new Error('STEP_UP_ENFORCED_ACTIONS must not be empty when STEP_UP_MODE=enforce.');
+  }
+  const unattachedStepUpActions = stepUpActions.filter((action) => (
+    STEP_UP_ACTIONS.includes(action as StepUpAction) &&
+    stepUpDefinition(action as StepUpAction).enforcement !== 'attached'
+  ));
+  if (stepUpMode === 'enforce' && unattachedStepUpActions.length > 0) {
+    throw new Error(
+      `STEP_UP_ENFORCED_ACTIONS cannot enforce unattached candidates: ${unattachedStepUpActions.join(', ')}.`
+    );
   }
   if (!Number.isInteger(modelHttpMaxRetries) || modelHttpMaxRetries < 0 || modelHttpMaxRetries > 5) {
     throw new Error('MODEL_HTTP_MAX_RETRIES must be an integer between 0 and 5.');

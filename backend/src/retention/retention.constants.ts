@@ -11,6 +11,7 @@ export const RETENTION_RESOURCE_TYPES = [
   'import_task',
   'notification',
   'idempotency_key',
+  'step_up_grant',
   'audit_log',
   'ledger_event'
 ] as const;

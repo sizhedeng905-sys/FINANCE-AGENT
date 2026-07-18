@@ -10,6 +10,7 @@ import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user'
 import { csrfCookieName, sessionCookieName } from '../common/utils/auth-cookies';
 import { getRequestContext } from '../common/utils/request-context';
 import { getRoleTitle } from '../common/utils/user-presenter';
+import { StepUpEnforcementService } from '../step-up/step-up-enforcement.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { StepUpDto } from './dto/step-up.dto';
@@ -19,7 +20,8 @@ import { StepUpDto } from './dto/step-up.dto';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly stepUpEnforcement: StepUpEnforcementService
   ) {}
 
   @Post('login')
@@ -54,9 +56,14 @@ export class AuthController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   securityCapabilities() {
+    const stepUp = this.stepUpEnforcement.capabilities();
     return {
-      mfa: { status: 'reserved', enabled: false },
-      stepUp: { status: 'available', endpoint: '/api/auth/step-up', expiresInSeconds: 300 }
+      mfa: stepUp.mfa,
+      stepUp: {
+        ...stepUp,
+        status: stepUp.mode === 'enforce' ? 'enforced_for_configured_actions' : 'available_disabled',
+        endpoint: '/api/auth/step-up'
+      }
     };
   }
 

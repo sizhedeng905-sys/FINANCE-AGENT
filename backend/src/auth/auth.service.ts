@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toAuthUser } from '../common/utils/user-presenter';
 import { PrismaService } from '../prisma/prisma.service';
+import { StepUpEnforcementService } from '../step-up/step-up-enforcement.service';
 import { LoginDto } from './dto/login.dto';
 import { StepUpDto } from './dto/step-up.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
@@ -21,7 +23,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly auditLogs: AuditLogsService,
-    private readonly loginRateLimit: LoginRateLimitService
+    private readonly loginRateLimit: LoginRateLimitService,
+    private readonly stepUpEnforcement: StepUpEnforcementService
   ) {}
 
   async login(dto: LoginDto, context: RequestContext) {
@@ -64,10 +67,10 @@ export class AuthService {
 
     this.loginRateLimit.success(reservation);
 
-    const accessToken = await this.signToken(
+    const accessToken = await this.signAccessToken(
       user.id,
       user.tokenVersion,
-      'access',
+      randomUUID(),
       (this.configService.get<string>('jwtExpiresIn') ?? '8h') as JwtSignOptions['expiresIn']
     );
 
@@ -86,6 +89,7 @@ export class AuthService {
   async logout(actor: CurrentUser, context: RequestContext) {
     return this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: actor.id }, data: { tokenVersion: { increment: 1 } } });
+      await this.stepUpEnforcement.revokeUserGrants(tx, actor.id);
       await this.auditLogs.write(tx, actor, 'auth.logout', 'auth_session', actor.id, { revokedVersion: actor.tokenVersion }, context);
       return { success: true };
     });
@@ -101,37 +105,29 @@ export class AuthService {
         'auth.step_up.failure',
         'auth_session',
         actor.id,
-        { success: false },
+        {
+          success: false,
+          action: dto.action,
+          requestedResourceType: dto.resourceType,
+          requestedResourceId: dto.resourceId,
+          reason: 'PASSWORD_REJECTED'
+        },
         context
       );
       throw new UnauthorizedException('Step-up authentication failed');
     }
 
-    const stepUpToken = await this.signToken(user.id, user.tokenVersion, 'step_up', '5m');
-    await this.auditLogs.write(
-      this.prisma,
-      actor,
-      'auth.step_up.success',
-      'auth_session',
-      actor.id,
-      { success: true, expiresInSeconds: 300 },
-      context
-    );
-    return {
-      stepUpToken,
-      expiresInSeconds: 300,
-      mfa: { status: 'reserved', verified: false }
-    };
+    return this.stepUpEnforcement.issue(dto, actor, context);
   }
 
-  private signToken(
+  private signAccessToken(
     userId: string,
     tokenVersion: number,
-    type: 'access' | 'step_up',
+    sessionId: string,
     expiresIn: JwtSignOptions['expiresIn']
   ) {
     return this.jwtService.signAsync(
-      { sub: userId, ver: tokenVersion, typ: type },
+      { sub: userId, ver: tokenVersion, typ: 'access', sid: sessionId },
       {
         secret: this.configService.getOrThrow<string>('jwtSecret'),
         expiresIn,

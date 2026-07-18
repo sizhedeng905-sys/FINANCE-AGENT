@@ -235,19 +235,37 @@ describe('real PostgreSQL integration', () => {
       .expect(200);
     expect(capabilities.body.data).toMatchObject({
       mfa: { status: 'reserved', enabled: false },
-      stepUp: { status: 'available', expiresInSeconds: 300 }
+      stepUp: {
+        status: 'available_disabled',
+        mode: 'disabled',
+        ttlSeconds: 300,
+        maxUses: 1,
+        tokenHeader: 'X-Step-Up-Token',
+        pendingDecisionRefs: ['H10']
+      }
     });
+    const binding = {
+      action: 'work_order.boss_approve',
+      resourceType: 'work_order',
+      resourceId: `synthetic-${randomUUID()}`
+    };
     await request(app.getHttpServer())
       .post('/api/auth/step-up')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ password: 'wrong-password' })
+      .send({ password: 'wrong-password', ...binding })
       .expect(401);
     const elevated = await request(app.getHttpServer())
       .post('/api/auth/step-up')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ password: '123456' })
+      .send({ password: '123456', ...binding })
       .expect(200);
-    expect(elevated.body.data).toMatchObject({ stepUpToken: expect.any(String), expiresInSeconds: 300 });
+    expect(elevated.body.data).toMatchObject({
+      stepUpToken: expect.any(String),
+      expiresInSeconds: 300,
+      maxUses: 1,
+      binding,
+      mfa: { status: 'reserved', verified: false }
+    });
     await request(app.getHttpServer())
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${elevated.body.data.stepUpToken}`)

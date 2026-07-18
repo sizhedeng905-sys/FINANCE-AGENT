@@ -6,6 +6,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { toPublicUser } from '../common/utils/user-presenter';
 import { PrismaService } from '../prisma/prisma.service';
+import { StepUpEnforcementService } from '../step-up/step-up-enforcement.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
@@ -24,7 +25,8 @@ const PROTECTED_ROLES = new Set<UserRole>([
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly auditLogs: AuditLogsService
+    private readonly auditLogs: AuditLogsService,
+    private readonly stepUpEnforcement: StepUpEnforcementService
   ) {}
 
   async findMany(query: QueryUsersDto) {
@@ -90,6 +92,7 @@ export class UsersService {
         where: { id },
         data: { ...dto, tokenVersion: roleChanged ? { increment: 1 } : undefined }
       });
+      if (roleChanged) await this.stepUpEnforcement.revokeUserGrants(tx, user.id);
       await this.auditLogs.write(
         tx,
         actor,
@@ -115,6 +118,7 @@ export class UsersService {
         where: { id },
         data: { passwordHash, tokenVersion: { increment: 1 } }
       });
+      await this.stepUpEnforcement.revokeUserGrants(tx, user.id);
       await this.auditLogs.write(
         tx,
         actor,
@@ -143,6 +147,7 @@ export class UsersService {
         where: { id },
         data: { status: dto.status, tokenVersion: { increment: 1 } }
       });
+      await this.stepUpEnforcement.revokeUserGrants(tx, user.id);
       await this.auditLogs.write(
         tx,
         actor,
@@ -168,6 +173,7 @@ export class UsersService {
         where: { id },
         data: { status: UserStatus.disabled, tokenVersion: { increment: 1 } }
       });
+      await this.stepUpEnforcement.revokeUserGrants(tx, user.id);
       await this.auditLogs.write(
         tx,
         actor,

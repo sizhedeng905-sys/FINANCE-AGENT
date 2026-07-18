@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { BossApproveDto, FinanceReviewDto, ReviewerReviewDto, UrgeWorkOrderDto } from './dto/review-work-order.dto';
@@ -18,7 +20,7 @@ import { WorkOrdersService } from './work-orders.service';
 @ApiTags('work-orders')
 @ApiBearerAuth()
 @Controller('work-orders')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 export class WorkOrdersController {
   constructor(private readonly workOrders: WorkOrdersService) {}
 
@@ -88,6 +90,7 @@ export class WorkOrdersController {
 
   @Post(':id/boss-approve')
   @Roles(UserRole.boss)
+  @RequireStepUp({ action: 'work_order.boss_approve', resourceType: 'work_order', resourceParam: 'id' })
   bossApprove(
     @Param('id') id: string,
     @Body() dto: BossApproveDto,

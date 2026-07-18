@@ -448,6 +448,8 @@ export class RetentionService {
         return this.prisma.notification.count({ where });
       case RetentionDataClass.idempotency_response:
         return this.prisma.idempotencyKey.count({ where });
+      case RetentionDataClass.auth_security_grant:
+        return this.prisma.stepUpGrant.count({ where });
       case RetentionDataClass.audit_event:
         return this.prisma.auditLog.count({ where });
       case RetentionDataClass.ledger_event:
@@ -520,6 +522,9 @@ export class RetentionService {
       case RetentionDataClass.idempotency_response:
         return (await this.prisma.idempotencyKey.findMany({ where, orderBy: { createdAt: 'asc' }, take, select: { id: true } }))
           .map((item) => this.candidate('idempotency_key', item.id));
+      case RetentionDataClass.auth_security_grant:
+        return (await this.prisma.stepUpGrant.findMany({ where, orderBy: { createdAt: 'asc' }, take, select: { id: true } }))
+          .map((item) => this.candidate('step_up_grant', item.id));
       case RetentionDataClass.audit_event:
         return (await this.prisma.auditLog.findMany({ where, orderBy: { createdAt: 'asc' }, take, select: { id: true } }))
           .map((item) => this.candidate('audit_log', item.id, true, 'IMMUTABLE_AUDIT_EVENT'));
@@ -559,6 +564,7 @@ export class RetentionService {
       case 'import_task': return Boolean(await this.prisma.importTask.findUnique({ where: { id }, select: { id: true } }));
       case 'notification': return Boolean(await this.prisma.notification.findUnique({ where: { id }, select: { id: true } }));
       case 'idempotency_key': return Boolean(await this.prisma.idempotencyKey.findUnique({ where: { id }, select: { id: true } }));
+      case 'step_up_grant': return Boolean(await this.prisma.stepUpGrant.findUnique({ where: { id }, select: { id: true } }));
       case 'audit_log': return Boolean(await this.prisma.auditLog.findUnique({ where: { id }, select: { id: true } }));
       case 'ledger_event': return Boolean(await this.prisma.ledgerEvent.findUnique({ where: { id }, select: { id: true } }));
     }

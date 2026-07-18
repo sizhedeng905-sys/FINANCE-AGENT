@@ -22,6 +22,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { UploadAdmissionInterceptor } from '../files/upload-admission.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
@@ -35,7 +37,7 @@ import { ImportTasksService } from './import-tasks.service';
 @ApiTags('import-tasks')
 @ApiBearerAuth()
 @Controller('import-tasks')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 @Roles(UserRole.finance)
 export class ImportTasksController {
   constructor(private readonly imports: ImportTasksService) {}
@@ -146,6 +148,7 @@ export class ImportTasksController {
   }
 
   @Post(':id/confirm')
+  @RequireStepUp({ action: 'import.confirm', resourceType: 'import_task', resourceParam: 'id' })
   confirm(
     @Param('id') id: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,

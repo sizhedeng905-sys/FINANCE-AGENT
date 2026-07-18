@@ -22,6 +22,7 @@ interface JwtPayload {
   sub?: string;
   ver?: number;
   typ?: 'access' | 'step_up';
+  sid?: string;
 }
 
 @Injectable()
@@ -55,7 +56,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid token');
     }
 
-    if (!payload.sub || !Number.isInteger(payload.ver) || payload.typ !== 'access') {
+    if (!payload.sub || !Number.isInteger(payload.ver) || payload.typ !== 'access' || !payload.sid) {
       throw new UnauthorizedException('Invalid token');
     }
 
@@ -72,7 +73,8 @@ export class JwtAuthGuard implements CanActivate {
       department: user.department ?? '',
       phone: user.phone ?? '',
       status: user.status,
-      tokenVersion: user.tokenVersion
+      tokenVersion: user.tokenVersion,
+      sessionId: payload.sid
     } satisfies CurrentUser;
     return true;
   }

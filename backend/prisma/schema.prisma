@@ -224,6 +224,7 @@ enum AiCallAttemptStatus {
 }
 
 enum RetentionDataClass {
+  auth_security_grant
   ai_conversation_content
   ai_provider_payload
   ai_task_payload
@@ -240,6 +241,12 @@ enum RetentionRunStatus {
   running
   completed
   failed
+}
+
+enum StepUpGrantStatus {
+  active
+  consumed
+  revoked
 }
 
 model User {
@@ -271,6 +278,7 @@ model User {
   notificationReceipts NotificationReceipt[]
   retentionRuns        RetentionRun[]        @relation("RetentionRunRequester")
   retentionLegalHolds  RetentionLegalHold[]  @relation("RetentionLegalHoldCreator")
+  stepUpGrants         StepUpGrant[]
 
   @@map("users")
 }
@@ -1384,4 +1392,30 @@ model RetentionLegalHold {
   @@unique([resourceType, resourceId])
   @@index([active, resourceType])
   @@map("retention_legal_holds")
+}
+
+model StepUpGrant {
+  id            String            @id @default(cuid())
+  tokenIdHash   String            @unique @map("token_id_hash") @db.VarChar(64)
+  userId        String            @map("user_id")
+  sessionIdHash String            @map("session_id_hash") @db.VarChar(64)
+  action        String            @db.VarChar(100)
+  resourceType  String            @map("resource_type") @db.VarChar(100)
+  resourceId    String            @map("resource_id") @db.VarChar(256)
+  roleSnapshot  UserRole          @map("role_snapshot")
+  tokenVersion  Int               @map("token_version")
+  status        StepUpGrantStatus @default(active)
+  maxUses       Int               @default(1) @map("max_uses")
+  useCount      Int               @default(0) @map("use_count")
+  expiresAt     DateTime          @map("expires_at")
+  consumedAt    DateTime?         @map("consumed_at")
+  revokedAt     DateTime?         @map("revoked_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, expiresAt])
+  @@index([action, resourceType, resourceId])
+  @@map("step_up_grants")
 }

@@ -22,6 +22,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { UploadAdmissionInterceptor } from '../files/upload-admission.interceptor';
 import { ConfirmOcrTaskDto } from './dto/confirm-ocr-task.dto';
@@ -34,7 +36,7 @@ import { OcrTasksService } from './ocr-tasks.service';
 @ApiTags('ocr-tasks')
 @ApiBearerAuth()
 @Controller(['ocr-tasks', 'ocr/tasks'])
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 export class OcrTasksController {
   constructor(private readonly tasks: OcrTasksService) {}
 
@@ -121,6 +123,7 @@ export class OcrTasksController {
 
   @Post(':id/confirm')
   @Roles(UserRole.finance)
+  @RequireStepUp({ action: 'ocr.confirm', resourceType: 'ocr_task', resourceParam: 'id' })
   confirm(
     @Param('id') id: string,
     @Body() dto: ConfirmOcrTaskDto,

@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { CreateUserDto } from './dto/create-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
@@ -18,7 +20,7 @@ import { UsersService } from './users.service';
 @ApiTags('users')
 @ApiBearerAuth()
 @Controller('users')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 @Roles(UserRole.finance, UserRole.boss, UserRole.admin)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -43,6 +45,7 @@ export class UsersController {
   }
 
   @Patch(':id/password')
+  @RequireStepUp({ action: 'user.password.reset', resourceType: 'user', resourceParam: 'id' })
   updatePassword(
     @Param('id') id: string,
     @Body() dto: UpdateUserPasswordDto,
@@ -53,6 +56,7 @@ export class UsersController {
   }
 
   @Patch(':id/status')
+  @RequireStepUp({ action: 'user.status.update', resourceType: 'user', resourceParam: 'id' })
   updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateUserStatusDto,
@@ -63,6 +67,12 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @RequireStepUp({
+    action: 'user.role.update',
+    resourceType: 'user',
+    resourceParam: 'id',
+    whenBodyFieldPresent: 'role'
+  })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
@@ -73,6 +83,7 @@ export class UsersController {
   }
 
   @Delete(':id')
+  @RequireStepUp({ action: 'user.disable', resourceType: 'user', resourceParam: 'id' })
   remove(
     @Param('id') id: string,
     @CurrentUserDecorator() user: CurrentUser,
