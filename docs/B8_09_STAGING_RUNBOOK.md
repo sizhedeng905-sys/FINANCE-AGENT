@@ -103,9 +103,13 @@ https://staging.finance-agent.local:8443/
 https://staging.finance-agent.local:8443/ops/grafana/
 ```
 
-请求日志不记录 query、Cookie、Token 或请求正文；日志包含 `requestId` 和 `traceId`。`traceparent` 经网关继续传递，API 将有限队列中的 span 批量导出到 Tempo。导出失败不阻断财务请求，但 dropped/error 指标触发告警。
+网关 access log 只记录 `method`、不含 query 的 `$uri`、状态、上游状态、响应字节、总/上游耗时、`requestId`、`traceId` 和当前客户端 IP；禁止 `$request`、`$request_uri`、`$args`、Authorization、Cookie 和请求正文。标准 Nginx request error 可能回显原始 request line，因此 HTTP server 的请求级 error log 被关闭，启动/配置错误仍写全局 stderr；排障使用安全 access log 的 `upstream_status` 和关联 ID。客户端 IP 的正式脱敏与保留期限等待 H09/H14。
+
+应用请求/500 日志同样只记录无 query path 和必要元数据，不记录 headers/body/异常消息；trace 只保存规范化 path。前端当前没有自动错误上报通道，只展示服务端安全消息与 requestId。不得在 Issue、截图或聊天中粘贴完整预签名 URL；确有业务 query 排障需求时只能新增经审查的 allowlist/哈希字段。
 
 2026-07-18 R1 本机隔离验收使用覆写主机端口启动全部 18 服务，Node smoke 与真实 Edge 浏览器 smoke 均通过；前端确认 `api + /api`，CSP 的内联脚本、外部连接和外部 frame 探针被阻断。验收后已删除该 Compose project 的容器与卷。该结果只证明本机工程链路，不替代 H13/H14 指定 Linux 环境中的 restore、RPO/RTO 或 rollback。
+
+2026-07-18 R2 使用独立 Compose project 生成带合成 X-Amz、普通 query、Authorization、Cookie 和编码换行的 API 200、对象 400、API 中断 503 请求。29 条网关 JSON 均可解析，15 个合成敏感标记泄露为 0，伪造日志行 0；API 恢复健康后删除全部测试容器与卷。
 
 必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、备份失败/过期和恢复演练过期。Alertmanager 外部接收人由 H-13/H-14 决定。
 

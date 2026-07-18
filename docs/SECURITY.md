@@ -1,6 +1,6 @@
 # 安全说明
 
-更新日期：2026-07-17
+更新日期：2026-07-18
 
 ## 已实现控制
 
@@ -46,6 +46,17 @@
 - 未处理异常对客户端只返回“服务端错误”，5xx 日志记录异常类型而非敏感堆栈或凭据。
 - `/api/health/ready` 检查数据库、对象存储、ClamAV、队列、模型、Redis 和 Worker heartbeat，但不公开连接串、密钥或账号。
 - `/api/metrics` 需要独立高熵 Bearer token；OTLP 使用有界队列，失败只输出不含业务内容的错误并增加 dropped 指标。
+
+| 日志边界 | 允许字段 | 明确禁止/处理 |
+| --- | --- | --- |
+| Gateway access | 时间、客户端 IP、method、`$uri`、status/upstream status、字节、耗时、requestId/traceId | 不使用 `$request`、`$request_uri`、`$args`；不记录 Authorization、Cookie、body 或 User-Agent |
+| Gateway request error | 启动和配置错误仍在全局 stderr | HTTP server 请求级 error log 关闭，避免 Nginx 回显带 query 的原始 request line；请求故障看安全 access log |
+| API request/error | method、无 query path、status、耗时、已认证 actor、异常类型 | 不记录 query、headers、body、异常消息或堆栈；JSON 转义阻断换行注入 |
+| Trace | 规范化 span path、method/status、requestId 和 trace IDs | 不记录 query、headers、body、Cookie 或 Token |
+| AI/OCR 调用 | Provider/model/route、版本、耗时、输入输出哈希、correlation | 不保存 Authorization header、Provider key 或完整原始凭据 |
+| Frontend | 向用户显示安全错误消息和 requestId | 当前无自动错误上报；不得把完整 URL、Cookie、Token 或预签名参数发送到日志服务 |
+
+R2 的静态与实际容器测试使用合成 X-Amz、普通业务 query、Authorization、Cookie 和编码换行，证明 200/400/503 日志仍为合法 JSON 且不包含测试敏感值。`remote_addr` 的生产脱敏、访问范围和保留期限由 H09/H14 决定。
 
 ## 环境与密钥
 

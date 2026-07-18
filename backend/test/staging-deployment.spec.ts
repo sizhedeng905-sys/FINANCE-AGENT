@@ -61,6 +61,18 @@ describe('B8-09 staging deployment', () => {
     expect(browserSmoke).toContain("response.url().includes('/api/')");
   });
 
+  it('keeps gateway access logs free of query strings and credentials', () => {
+    const gateway = read(stagingRoot, 'gateway', 'nginx.conf');
+    const accessFormat = gateway.match(/log_format\s+json_combined\s+escape=json\s+'\{'[\s\S]*?'\}';/)?.[0];
+    expect(accessFormat).toBeDefined();
+    expect(accessFormat).toContain('"method":"$request_method"');
+    expect(accessFormat).toContain('"path":"$uri"');
+    expect(accessFormat).toContain('"upstream_status":"$upstream_status"');
+    expect(accessFormat).not.toMatch(/\$(?:request|request_uri|args)\b/);
+    expect(accessFormat).not.toMatch(/\$(?:http_authorization|http_cookie)\b/);
+    expect(gateway.match(/error_log \/dev\/null;/g)).toHaveLength(2);
+  });
+
   it('makes audit and ledger mutation unavailable to the runtime database role', () => {
     const grants = read(repositoryRoot, 'backend', 'prisma', 'runtime-grants.sql');
     expect(grants).toContain('REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_logs FROM finance_runtime');

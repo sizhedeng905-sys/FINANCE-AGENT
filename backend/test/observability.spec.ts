@@ -1,6 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter } from 'node:events';
+import { lastValueFrom, of } from 'rxjs';
 
+import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
+import { RequestLoggingInterceptor } from '../src/common/interceptors/request-logging.interceptor';
 import { RequestIdMiddleware } from '../src/common/middleware/request-id.middleware';
 import { redisReconnectStrategy } from '../src/infrastructure/redis/redis.service';
 import { MetricsService } from '../src/observability/metrics.service';
@@ -8,6 +11,14 @@ import { TraceExporterService } from '../src/observability/trace-exporter.servic
 import { TracingMiddleware } from '../src/observability/tracing.middleware';
 
 describe('observability', () => {
+  const fakeSecrets = {
+    authorization: 'Bearer FAKE-AUTHORIZATION-TOKEN',
+    cookie: 'finance_agent_session=FAKE-COOKIE-TOKEN',
+    credential: 'FAKE-X-AMZ-CREDENTIAL',
+    signature: 'FAKE-X-AMZ-SIGNATURE',
+    token: 'FAKE-QUERY-TOKEN'
+  };
+
   it('bounds initial Redis retries and keeps reconnecting after a healthy connection', () => {
     expect(redisReconnectStrategy(0, false)).toBe(100);
     expect(redisReconnectStrategy(1, false)).toBe(200);
@@ -139,6 +150,7 @@ describe('observability', () => {
       parentSpanId: '3'.repeat(16),
       requestId: 'request-observe'
     }));
+    expect(JSON.stringify(exporter.enqueue.mock.calls)).not.toContain('token=secret');
 
     const metrics = new MetricsService();
     metrics.recordHttp('GET', 200, 12);
@@ -149,5 +161,71 @@ describe('observability', () => {
       modelRuntimeHealthy: true,
       trace: { queued: 0, exported: 1, dropped: 0, errors: 0 }
     })).toContain('finance_agent_http_requests_total{method="GET",status="200"} 1');
+  });
+
+  it('logs request metadata without query strings, headers, bodies, or log injection', async () => {
+    const interceptor = new RequestLoggingInterceptor();
+    const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    (interceptor as unknown as { logger: typeof logger }).logger = logger;
+    const request = {
+      method: 'GET',
+      originalUrl: `/api/files/file-id?X-Amz-Credential=${fakeSecrets.credential}&X-Amz-Signature=${fakeSecrets.signature}&token=${fakeSecrets.token}`,
+      requestId: 'request-safe\nforged-log-line',
+      traceId: '1'.repeat(32),
+      headers: {
+        authorization: fakeSecrets.authorization,
+        cookie: fakeSecrets.cookie
+      },
+      body: { token: fakeSecrets.token },
+      user: { id: 'user-id', role: 'finance' }
+    };
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => request,
+        getResponse: () => ({ statusCode: 200 })
+      })
+    } as any;
+
+    await lastValueFrom(interceptor.intercept(context, { handle: () => of({ ok: true }) } as any));
+
+    const line = String(logger.log.mock.calls[0][0]);
+    expect(() => JSON.parse(line)).not.toThrow();
+    expect(line.split('\n')).toHaveLength(1);
+    expect(JSON.parse(line)).toMatchObject({ method: 'GET', path: '/api/files/file-id', statusCode: 200 });
+    for (const secret of Object.values(fakeSecrets)) expect(line).not.toContain(secret);
+  });
+
+  it('keeps exception logs and responses free of request queries and exception details', () => {
+    const filter = new HttpExceptionFilter();
+    const logger = { error: jest.fn() };
+    (filter as unknown as { logger: typeof logger }).logger = logger;
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn()
+    };
+    const request = {
+      method: 'GET',
+      originalUrl: `/api/files/file-id?X-Amz-Signature=${fakeSecrets.signature}&token=${fakeSecrets.token}`,
+      requestId: 'request-exception',
+      traceId: '2'.repeat(32),
+      headers: {
+        authorization: fakeSecrets.authorization,
+        cookie: fakeSecrets.cookie
+      }
+    };
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => response,
+        getRequest: () => request
+      })
+    } as any;
+
+    filter.catch(new Error(`provider failed with ${fakeSecrets.credential}`), host);
+
+    const line = String(logger.error.mock.calls[0][0]);
+    expect(() => JSON.parse(line)).not.toThrow();
+    expect(JSON.parse(line)).toMatchObject({ path: '/api/files/file-id', statusCode: 500, exception: 'Error' });
+    for (const secret of Object.values(fakeSecrets)) expect(line).not.toContain(secret);
+    expect(response.json).toHaveBeenCalledWith({ code: 50001, message: '服务端错误', data: {} });
   });
 });

@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1 已用真实浏览器和本机隔离 18 服务栈关闭该 P0，仍有 9 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1 已关闭该 P0，R2 已关闭网关日志泄露 P1，仍有 8 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0 基线与 R1 前端真实性 P0 已完成；R2 日志泄露边界正在进入复现，其余按风险顺序排队 |
+| R0-R11 修复与再验收 | `in_progress` | R0、R1 前端真实性和 R2 日志泄露边界已完成；R3 容量真实性进入复现，其余按风险顺序排队 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -39,7 +39,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - 指定人工文件 `FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 不存在，空白 `人工复核.md` 不构成批准；H01-H16 全部保持未决。
 - R1 红灯证明了相对 `/api` 解析、隐式 Mock、镜像模式和浏览器 smoke 缺口；现已强制显式 `api` 构建、产物清单核验、同源 URL 约束、CSP 和真实浏览器写读清理。
 - 本机隔离的 18 服务栈已真实启动并通过 TLS、readiness、四角色登录、错误登录、Metrics 和浏览器 CSP/API smoke；合成项目经 API 软归档，测试容器和卷已删除。该证据不替代 H13/H14 指定的目标环境与恢复演练。
-- 当前开放工程问题为日志泄露、S3 容量、恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 9 个 P1/条件 P1。
+- R2 已将网关日志从完整 `$request` 改为 `$request_method + $uri`，保留状态/上游状态/耗时/requestId/traceId；应用日志与 trace 的伪签名、Token、Cookie 和换行注入回归通过。
+- 当前开放工程问题为 S3 容量、恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 8 个 P1/条件 P1。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -110,7 +111,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | 29/29 suites，264/264 tests |
+| 后端 Jest | `passed` | 29/29 suites，267/267 tests |
 | PostgreSQL 集成 | `passed` | 2/2 suites，60/60 tests |
 | 浏览器 E2E | `passed` | Playwright 16/16 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
@@ -124,6 +125,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |
 | Staging 静态门禁 | `passed` | 18 services、17 secrets、TLS、固定 tag、私网和只读应用容器 |
 | 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
+| 日志泄露门禁 | `passed` | 实际 18 服务生成 200/400/503 日志；29 条网关 JSON 可解析，15 个合成敏感标记泄露 0，容器和卷残留 0 |
 | Shell/Compose | `passed` | 10/10 shell、1/1 PowerShell syntax、两份 Compose config |
 | 最新 GitHub Build | `passed` | 完整 build、263 单测、60 集成、16 E2E，run `29634353327` |
 | 最新 GitHub CodeQL | `passed` | JavaScript/TypeScript 分析成功，无开放 review thread |

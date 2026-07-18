@@ -38,7 +38,7 @@
 | 门禁 | 结果 |
 | --- | --- |
 | 后端 production build | 通过 |
-| 后端 Jest | 29/29 suites，264/264 tests |
+| 后端 Jest | 29/29 suites，267/267 tests |
 | PostgreSQL integration | 2/2 suites，60/60 tests；正常 API→Worker 交接不增加 attempt，过期租约恢复仍增加 attempt |
 | 大批量回归 | 30,196 行 17.707 秒、49,999 行 32.253 秒；RSS 增量分别 152.21/295.71 MiB，连接峰值均 10 |
 | 前端 production build | 通过；显式 `api + /api`；3144 modules；产物清单通过 |
@@ -50,6 +50,7 @@
 | Shell 语法 | 10/10 scripts 通过 Git Bash `bash -n` |
 | 容器构建 | 通过；Node `sha256:6f7b...1452d`；frontend `83f5...933`、backend `877e...845`、backup `8c11...c5f` |
 | 本机隔离 18 服务 | 通过；Node smoke 与真实浏览器 API/CSP smoke 通过，合成项目软归档；容器和卷残留 0 |
+| R2 日志泄露 | 通过；200/400/503 探针、29 条可解析网关 JSON、15 个合成敏感标记泄露 0、注入伪造行 0 |
 | 目标 restore/RPO/RTO | `blocked_external`；H13/H14 目标环境和政策未提供，未运行，未填写虚假结果 |
 
 测试没有读取、修改或提交真实业务原件和模型权重；`backend/.env` 仅由本地 Prisma/Nest 工具按既有配置消费，内容未输出、未修改、未暂存。
