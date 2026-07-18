@@ -3,7 +3,7 @@
 更新日期：2026-07-18
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R7.2 已关闭当前工程 P0/P1 主链，retention 只允许 dry-run，step-up 默认关闭且正式职责分离仍待 H10；下一步 R8 CI/治理收口；AI 映射补充任务 M0-M8 已纳入同一主线
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R7.2 与 R8.1 已完成，retention 只允许 dry-run，step-up 默认关闭且正式职责分离仍待 H10；下一步 R8.2 完整 Staging 条件门禁；AI 映射补充任务 M0-M8 已纳入同一主线
 
 ## 完成口径
 
@@ -22,7 +22,7 @@
 | R3 对象存储容量真实性 | 完成 | S3 物理容量明确 unknown；逻辑配额使用 PostgreSQL 用量和全局事务锁；MinIO 独立物理指标、告警/dashboard 与跨项目并发证据齐全 |
 | R4 备份/恢复完整性 | 完成 | 版本化强哈希清单、DB/对象引用、隔离库/桶恢复、故障注入和一次性 H13/H14 正式恢复门禁已实现；目标环境恢复仍为外部门禁 |
 | R5 镜像身份与供应链 | 完成 | 22 镜像不可变锁、配置/扫描/migration/release 自校验证据链、17/17 篡改测试完成；目标 registry、签名和回退受 H13 阻断 |
-| R6-R8 后端边界、治理、CI | R6、R7.1、R7.2 完成 / R8 下一步 | R7.2 的 session/action/resource 单次 grant、并发防重放、身份变化撤销和统一守卫通过；默认关闭，H10 未批准 MFA/正式职责分离 |
+| R6-R8 后端边界、治理、CI | R6、R7.1、R7.2、R8.1 完成 / R8.2 进行中 | 每次 CI 真实构建并扫描前后端镜像，Node 24.18.0 与部署一致；下一块接入 scheduled/manual Compose release、恢复、回滚和 Python 适配器运行路径 |
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
@@ -66,6 +66,7 @@ B8-09 已完成的工程证据：
 - R6.6 自动化结果：指定决策文件不存在是起始红灯，且旧错误文案把软作废错误描述成冲销。现建立唯一 Pending 签字模板和 `financial-policy-baseline/1.0`，H01/H02/H07 的自动业务动作全部关闭；新模板/确认快照冻结 pending 状态，零/负数引用 H02，软作废保留金额、动态值、来源、模板快照和附件。后端 36/36 suites、329/329 tests，PostgreSQL 5/5 suites、75/75 tests，Playwright 17/17，前端 runtime 4/4、前后端 build、Prisma 双迁移路径、603 文件卫生和两套 0 vulnerability 审计均通过。30,196/49,999 行分别约 20.3/37.1 秒，最大 RSS 增量 317.07 MiB，连接峰值 10。正式粒度、冲销、关账和证据主从仍为 `pending_human_decision`。
 - R7.1 红灯证明新增 `AiCallLog` 虽在读取时脱敏，数据库仍保存完整问题、工具上下文和 Provider 原始响应。修复后新增日志使用 `ai-call-audit/1.0` 元数据；9 类 retention 仅支持 dry-run，数据库强制 `dry_run=true/deleted_count=0`，并具备 legal hold、批量上限、lease、重试、耗尽恢复、匿名前后计数和 queue metric。后端 37/37 suites、335/335 tests，PostgreSQL 6/6 suites、78/78 tests，Playwright 17/17，前端 runtime 4/4、前后端 build、Prisma 空库 26 条和 25→26、615 文件卫生及两套 0 vulnerability 审计均通过。真实天数、删除、hold 释放和备份/Provider 传播继续 `pending_human_decision(H12,H14)`；详见 `docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`。
 - R7.2 红灯确认旧 step-up 只有 `sub/ver/typ` 且没有消费者。修复后 access token 带随机 session ID，step-up grant 绑定用户/会话/角色版本/动作/资源并在 PostgreSQL 原子单次消费；角色、密码、状态、删除和登出撤销 active grant，高风险接口统一接入守卫。后端 37/37 suites、342/342 tests，PostgreSQL 7/7 suites、84/84 tests，Playwright 17/17，前端 runtime 4/4、前后端 build、Prisma 空库 28 条并验证 26→27/27→28、624 文件卫生及两套 0 vulnerability 审计均通过。全局默认关闭，MFA、自审批、跨账号同人、双人复核和 break-glass 继续 `pending_human_decision(H10)`；详见 `docs/R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md`。
+- R8.1 红灯确认 CI 只做 Node build、使用 Node 22，而部署镜像使用 Node 24；新增契约后每次 CI 都实际构建后端和 API 前端镜像，核对 `10001:10001`/`101:101` 运行用户与 commit revision，并为两者生成 SBOM、执行固定 Grype 数据库的可修复 Critical 门禁。首次本机构建暴露根上下文 10.23GB，原因是 `deploy/staging/.evidence` 未排除；修复后上下文 24.09KB，缓存构建 7.74 秒。两镜像扫描、38/38 suites、345/345 tests、前后端 build、628 文件卫生和两套 0 vulnerability 审计通过，当前 GitHub commit run 待 push 后验证；详见 `docs/R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md`。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。

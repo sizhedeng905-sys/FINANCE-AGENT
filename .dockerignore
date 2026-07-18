@@ -5,6 +5,11 @@
 .env.*
 backend
 deploy/model-services
+deploy/staging/.env
+deploy/staging/.evidence
+deploy/staging/.release
+deploy/staging/.runtime
+deploy/staging/.secrets
 docs
 models
 model

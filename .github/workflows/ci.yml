@@ -10,6 +10,91 @@ permissions:
   contents: read
 
 jobs:
+  container-images:
+    name: Application container build and supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      APPLICATION_EVIDENCE_DIR: deploy/staging/.evidence/r8-application-images
+      BACKEND_CI_IMAGE: finance-agent/backend:ci-${{ github.sha }}
+      FRONTEND_CI_IMAGE: finance-agent/frontend:ci-${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup deployed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+
+      - name: Build real backend and frontend images
+        run: |
+          docker build --file backend/Dockerfile --build-arg BUILD_GIT_SHA=${GITHUB_SHA} --tag "$BACKEND_CI_IMAGE" backend
+          docker build --file Dockerfile.frontend --build-arg BUILD_GIT_SHA=${GITHUB_SHA} --build-arg VITE_APP_DATA_MODE=api --build-arg VITE_API_BASE_URL=/api --build-arg VITE_API_TIMEOUT_MS=15000 --tag "$FRONTEND_CI_IMAGE" .
+
+      - name: Verify application image identity and runtime users
+        run: |
+          mkdir -p "$APPLICATION_EVIDENCE_DIR"
+          backend_user="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{.Config.User}}')"
+          frontend_user="$(docker image inspect "$FRONTEND_CI_IMAGE" --format '{{.Config.User}}')"
+          backend_revision="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          frontend_revision="$(docker image inspect "$FRONTEND_CI_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          test "$backend_user" = '10001:10001'
+          test "$frontend_user" = '101:101'
+          test "$backend_revision" = "$GITHUB_SHA"
+          test "$frontend_revision" = "$GITHUB_SHA"
+          docker image inspect "$BACKEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/backend.identity.json"
+          docker image inspect "$FRONTEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/frontend.identity.json"
+
+      - name: Generate backend image SBOM
+        env:
+          DOCKER_SCOUT_CACHE_DIR: ${{ runner.temp }}/finance-agent-app-scout
+          DOCKER_SCOUT_NO_CACHE: "true"
+          DOCKER_SCOUT_OFFLINE: "true"
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
+        with:
+          command: sbom
+          image: local://${{ env.BACKEND_CI_IMAGE }}
+          format: spdx
+          output: ${{ env.APPLICATION_EVIDENCE_DIR }}/backend.spdx.json
+          summary: false
+          write-comment: false
+
+      - name: Generate frontend image SBOM
+        env:
+          DOCKER_SCOUT_CACHE_DIR: ${{ runner.temp }}/finance-agent-app-scout
+          DOCKER_SCOUT_NO_CACHE: "true"
+          DOCKER_SCOUT_OFFLINE: "true"
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
+        with:
+          command: sbom
+          image: local://${{ env.FRONTEND_CI_IMAGE }}
+          format: spdx
+          output: ${{ env.APPLICATION_EVIDENCE_DIR }}/frontend.spdx.json
+          summary: false
+          write-comment: false
+
+      - name: Gate fixable critical application image CVEs
+        env:
+          GRYPE_ALLOW_NETWORK_UPDATE: "true"
+          GRYPE_DB_VOLUME: finance-agent-r8-application-grype-db
+        run: |
+          node deploy/staging/scripts/grype-sbom.mjs --sbom "$APPLICATION_EVIDENCE_DIR/backend.spdx.json" --output "$APPLICATION_EVIDENCE_DIR/backend.grype.sarif.json" --gate-output "$APPLICATION_EVIDENCE_DIR/backend.critical-fixed.txt"
+          node deploy/staging/scripts/grype-sbom.mjs --sbom "$APPLICATION_EVIDENCE_DIR/frontend.spdx.json" --output "$APPLICATION_EVIDENCE_DIR/frontend.grype.sarif.json" --gate-output "$APPLICATION_EVIDENCE_DIR/frontend.critical-fixed.txt"
+
+      - name: Upload application container evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: application-container-evidence
+          path: deploy/staging/.evidence/r8-application-images/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean application images
+        if: always()
+        run: docker image rm "$BACKEND_CI_IMAGE" "$FRONTEND_CI_IMAGE" || true
+
   postgres-e2e:
     name: PostgreSQL integration and E2E
     runs-on: ubuntu-latest
@@ -74,7 +159,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: npm
           cache-dependency-path: |
             package-lock.json

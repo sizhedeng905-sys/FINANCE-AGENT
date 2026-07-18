@@ -5,7 +5,7 @@
   "description": "FINANCE-AGENT phase 0-10 backend.",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.18.0 <25"
   },
   "scripts": {
     "dev": "node --watch --require ts-node/register/transpile-only src/main.ts",
