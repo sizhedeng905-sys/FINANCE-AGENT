@@ -132,7 +132,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | R1-FRONTEND-001 | P0 | Staging frontend runtime/build/CSP | 工程执行者 | 红灯：相对 `/api` 抛出 URL 异常；缺失模式回退 Mock；镜像没有模式证明；仅 HTTP smoke | 本提交（R1） | runtime 4/4；静态部署 8/8；显式 API build；本机 18 服务 Node/browser smoke；Playwright 16/16 | verified | 无 |
 | R2-LOG-001 | P1 | Gateway/application access log | 工程执行者 | 红灯证明 `$request` 会记录完整 request line/query，且缺少安全 method/path/upstream 字段 | 本提交（R2） | 静态/应用日志 16/16；全量 unit 267/267；实际 29 条网关 JSON、15 个伪敏感标记泄露 0、200/400/503 与注入探针通过 | verified | H09/H14 仍约束 IP 保留 |
-| R3-STORAGE-001 | P1 | S3 capacity/readiness | 工程执行者 | 容量可能以固定配置冒充可信物理可用空间；R3 先验证实际返回语义 | - | 待容量来源与降级矩阵 | open | H13/H14 约束正式告警阈值 |
+| R3-STORAGE-001 | P1 | S3 capacity/readiness | 工程执行者 | 红灯证明 `HeadBucket` 后固定返回 1 TiB，无法区分物理容量未知 | 本提交（R3） | 结构化来源/新鲜度；79/79 定向；跨账号/项目 PostgreSQL 并发单赢家；写满零 DB 写入；MinIO v3/Prometheus/Nginx 实测 | verified | H13/H14 约束正式逻辑配额、保留水位、告警阈值/接收人；当前 `pending_human_decision` |
 | R4-RECOVERY-001 | P1 | Database/object backup restore | 工程执行者 | 现有恢复可能只比较对象数量，且数据库与对象恢复缺少一致性边界 | - | 待 manifest 内容校验、失败注入和恢复演练 | open | H14 决定正式 RPO/RTO/保留 |
 | R5-IMAGE-001 | P1 | Release/rollback image identity | 工程执行者 | 回退流程可能接受可漂移 tag，未强制证明 digest/本地 image ID | - | 待 digest lock 与篡改拒绝测试 | open | H13 决定目标 registry |
 | R6-PREVIEW-001 | P1 | Excel preview API/browser | 工程执行者 | 预览可能一次返回接近 50,000 行，存在浏览器和 API 资源风险 | - | 待分页/上限 API、集成和浏览器测试 | open | 无 |

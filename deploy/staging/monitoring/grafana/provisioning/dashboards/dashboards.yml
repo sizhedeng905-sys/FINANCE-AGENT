@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Finance Agent staging
+    orgId: 1
+    folder: Finance Agent
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

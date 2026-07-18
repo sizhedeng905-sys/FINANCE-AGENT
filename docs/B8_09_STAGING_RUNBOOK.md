@@ -111,7 +111,9 @@ https://staging.finance-agent.local:8443/ops/grafana/
 
 2026-07-18 R2 使用独立 Compose project 生成带合成 X-Amz、普通 query、Authorization、Cookie 和编码换行的 API 200、对象 400、API 中断 503 请求。29 条网关 JSON 均可解析，15 个合成敏感标记泄露为 0，伪造日志行 0；API 恢复健康后删除全部测试容器与卷。
 
-必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、备份失败/过期和恢复演练过期。Alertmanager 外部接收人由 H-13/H-14 决定。
+2026-07-18 R3 删除了固定 `S3_CAPACITY_BYTES` 物理容量伪装。应用容量指标标注 `logical_quota`/`volume_metric`/`provider_metric`/`estimated_usage`/`unknown`，S3 连通只表示 `probeOk`。Prometheus 另从私网 `/minio/metrics/v3/cluster/health` 采集物理 usable free/total；对象网关对外阻断 metrics 路径。Grafana dashboard 为 `Finance Agent Storage Capacity`。
+
+必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、MinIO 物理容量/指标缺失、备份失败/过期和恢复演练过期。当前逻辑使用率 80% 与物理可用 30% 是 H13/H14 签字前的保守 Staging 默认；正式阈值和 Alertmanager 接收人由 H-13/H-14 决定。
 
 ## 7. 文件与对象存储
 
@@ -122,7 +124,12 @@ https://staging.finance-agent.local:8443/ops/grafana/
 - 未完成 multipart 上传在 7 天后清理；业务对象不设置自动过期，等待 H-14；
 - `GET /api/files/:id/signed-download` 先做 JWT 资源授权，再签发默认 60 秒 attachment URL，并写 audit/ledger；
 - 原有后端流式 preview/download 继续可用；
-- ClamAV 不可用、S3 不可用或可用容量低于门槛时，上传失败关闭。
+- 使用 S3 时必须显式配置 `S3_LOGICAL_QUOTA_BYTES`；旧 `S3_CAPACITY_BYTES` 会启动失败，因为它不能代表物理容量；
+- readiness 返回 backend、probe、capacity source、可信 total/used/available、新鲜度、限制和 upload admission reason；
+- 逻辑已用量来自未作废 `raw_files.file_size`，最终上传事务获取全局 advisory lock 后重新计算；不使用进程内容量计数，也不逐次扫描全桶；
+- 逻辑用量不包含尚未提交或待处置孤儿对象，必须同时观察 MinIO 物理指标并运行对象完整性/恢复门禁；
+- ClamAV/S3 不可用，容量未知/过期/矛盾，单文件超过可用量或会侵占保留水位时，上传失败关闭；
+- `50301` 表示容量无法可信验证，`50701` 表示文件或保留水位超限，具体稳定原因在 `data.reason`。
 
 ## 8. 备份与恢复
 

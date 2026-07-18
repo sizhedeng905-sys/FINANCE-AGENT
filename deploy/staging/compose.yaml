@@ -16,7 +16,9 @@ x-backend-environment: &backend-environment
   S3_REGION: us-east-1
   S3_BUCKET: finance-agent-raw
   S3_FORCE_PATH_STYLE: "true"
-  S3_CAPACITY_BYTES: "1099511627776"
+  # Safety default pending H13/H14 approval; this is not physical MinIO capacity.
+  S3_LOGICAL_QUOTA_BYTES: "1099511627776"
+  STORAGE_CAPACITY_MAX_STALENESS_SECONDS: "60"
   S3_PRESIGNED_URL_TTL_SECONDS: "60"
   FILE_SCAN_MODE: clamav
   CLAMAV_HOST: clamav
@@ -155,6 +157,8 @@ services:
       MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
       MINIO_BROWSER_REDIRECT_URL: https://objects.finance-agent.local:${STAGING_OBJECT_PORT:-9443}/console/
+      # Metrics remain anonymous only on the private app network; the gateway blocks these paths.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     secrets:
       - minio_root_user
       - minio_root_password

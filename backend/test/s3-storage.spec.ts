@@ -11,7 +11,7 @@ describe('S3 file storage boundary', () => {
       'storage.s3.accessKeyId': 'runtime-user',
       'storage.s3.secretAccessKey': 'runtime-secret-with-enough-length',
       'storage.s3.forcePathStyle': true,
-      'storage.s3.capacityBytes': '1099511627776'
+      'storage.s3.logicalQuotaBytes': '1099511627776'
     } as Record<string, unknown>)[key]
   } as ConfigService;
 
@@ -41,5 +41,41 @@ describe('S3 file storage boundary', () => {
     expect(disposition).toContain('attachment');
     expect(disposition).toContain("filename*=UTF-8''");
     expect(disposition).not.toContain('2026/07');
+  });
+
+  it('reports successful S3 probing without inventing physical capacity', async () => {
+    const storage = new S3FileStorageService(config) as any;
+    storage.client.send = jest.fn(async () => ({}));
+
+    const snapshot = await storage.capacity();
+
+    expect(snapshot).toMatchObject({
+      backend: 's3',
+      probeOk: true,
+      capacitySource: 'unknown',
+      stalenessSeconds: 0,
+      isEstimated: false,
+      limitations: expect.arrayContaining(['s3_physical_capacity_unavailable'])
+    });
+    expect(snapshot).not.toHaveProperty('totalBytes');
+    expect(snapshot).not.toHaveProperty('usedBytes');
+    expect(snapshot).not.toHaveProperty('availableBytes');
+  });
+
+  it('reports an unreachable S3 provider without leaking the provider error', async () => {
+    const storage = new S3FileStorageService(config) as any;
+    storage.client.send = jest.fn(async () => {
+      throw new Error('http://minio:9000/private-provider-detail');
+    });
+
+    const snapshot = await storage.capacity();
+
+    expect(snapshot).toMatchObject({
+      backend: 's3',
+      probeOk: false,
+      capacitySource: 'unknown',
+      limitations: ['storage_probe_failed']
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('private-provider-detail');
   });
 });

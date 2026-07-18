@@ -19,7 +19,6 @@ import { assertStorageKey, createStorageKey } from './storage-key';
 export class S3FileStorageService implements FileStorage {
   private readonly client: S3Client;
   private readonly bucket: string;
-  private readonly capacityBytes: bigint;
 
   constructor(config: ConfigService) {
     const endpoint = config.get<string>('storage.s3.endpoint') ?? '';
@@ -27,7 +26,6 @@ export class S3FileStorageService implements FileStorage {
     const accessKeyId = config.get<string>('storage.s3.accessKeyId') ?? '';
     const secretAccessKey = config.get<string>('storage.s3.secretAccessKey') ?? '';
     this.bucket = config.get<string>('storage.s3.bucket') ?? '';
-    this.capacityBytes = BigInt(config.get<string>('storage.s3.capacityBytes') ?? '1099511627776');
     this.client = new S3Client({
       endpoint: endpoint || undefined,
       region,
@@ -71,9 +69,33 @@ export class S3FileStorageService implements FileStorage {
     return Readable.fromWeb(response.Body.transformToWebStream() as never);
   }
 
-  async availableBytes() {
-    await this.healthCheck();
-    return this.capacityBytes;
+  async capacity() {
+    const observedAt = new Date().toISOString();
+    try {
+      await this.healthCheck();
+      return {
+        backend: 's3' as const,
+        probeOk: true,
+        capacitySource: 'unknown' as const,
+        observedAt,
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: [
+          's3_physical_capacity_unavailable',
+          'physical_capacity_requires_independent_monitoring'
+        ]
+      };
+    } catch {
+      return {
+        backend: 's3' as const,
+        probeOk: false,
+        capacitySource: 'unknown' as const,
+        observedAt,
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: ['storage_probe_failed']
+      };
+    }
   }
 
   async healthCheck() {

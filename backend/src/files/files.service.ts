@@ -26,6 +26,7 @@ import { FileSecurityService } from './file-security.service';
 import { resolveQuarantinedUploadPath, resolveUploadQuarantineRoot } from './secure-upload-options';
 import { toRawFile } from './file.presenter';
 import { FILE_STORAGE, FileStorage } from './file-storage';
+import { StorageCapacityService } from './storage-capacity.service';
 import { VoidFileDto } from './dto/void-file.dto';
 
 const ALLOWED_MIME_TYPES: Record<string, string[]> = {
@@ -51,7 +52,6 @@ export class FilesService {
   private readonly maxFileSize: number;
   private readonly userQuotaBytes: bigint;
   private readonly projectQuotaBytes: bigint;
-  private readonly minimumFreeBytes: bigint;
   private readonly quarantineRoot: string;
   private readonly signedUrlTtlSeconds: number;
 
@@ -62,13 +62,13 @@ export class FilesService {
     @Inject(AuditLogsService) private readonly auditLogs: AuditLogsService,
     @Inject(LedgerEventsService) private readonly ledgerEvents: LedgerEventsService,
     @Inject(FileSecurityService) private readonly fileSecurity: FileSecurityService,
+    @Inject(StorageCapacityService) private readonly storageCapacity: StorageCapacityService,
     @Inject(ConfigService) config: ConfigService
   ) {
     const configuredMb = config.get<number>('maxFileSizeMb') ?? 20;
     this.maxFileSize = Math.max(1, configuredMb) * 1024 * 1024;
     this.userQuotaBytes = BigInt(config.get<number>('fileQuotas.userMb') ?? 500) * 1024n * 1024n;
     this.projectQuotaBytes = BigInt(config.get<number>('fileQuotas.projectMb') ?? 5000) * 1024n * 1024n;
-    this.minimumFreeBytes = BigInt(config.get<number>('fileQuotas.minimumFreeMb') ?? 1024) * 1024n * 1024n;
     this.quarantineRoot = resolveUploadQuarantineRoot(config);
     this.signedUrlTtlSeconds = config.get<number>('storage.s3.presignedUrlTtlSeconds') ?? 60;
   }
@@ -108,10 +108,7 @@ export class FilesService {
     if (!project || project.status !== 'active') throw new BadRequestException('项目不存在或未启用');
     const originalFileName = await this.validateFile(file);
 
-    const availableBytes = await this.storage.availableBytes();
-    if (availableBytes - BigInt(file.size) < this.minimumFreeBytes) {
-      throw new HttpException('服务器可用存储空间不足，暂时停止上传', HttpStatus.INSUFFICIENT_STORAGE);
-    }
+    await this.storageCapacity.assertUploadAllowed(BigInt(file.size));
 
     const storagePath = await this.storage.save(file);
     try {
@@ -126,6 +123,7 @@ export class FilesService {
         if (!currentProject || currentProject.status !== 'active') {
           throw new ConflictException('项目状态已经变化，不能上传文件');
         }
+        await this.storageCapacity.assertWithinTransaction(tx, BigInt(file.size));
         await this.assertStorageQuotas(tx, actor.id, projectId, file.size);
         if (dto.workOrderId) {
           const current = await tx.workOrder.findUnique({ where: { id: dto.workOrderId } });
@@ -197,7 +195,12 @@ export class FilesService {
         return toRawFile(rawFile);
       });
     } catch (error) {
-      await this.storage.remove(storagePath);
+      await this.storage.remove(storagePath).catch((cleanupError: unknown) => {
+        this.logger.error(JSON.stringify({
+          event: 'failed_upload_cleanup_deferred',
+          cleanupError: cleanupError instanceof Error ? cleanupError.name : 'UnknownError'
+        }));
+      });
       throw error;
     }
   }

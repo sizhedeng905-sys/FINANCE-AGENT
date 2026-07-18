@@ -1,10 +1,10 @@
-import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { AiTaskStatus, ImportTaskStatus, OcrTaskStatus } from '@prisma/client';
 
 import { FileSecurityService } from '../files/file-security.service';
-import { FILE_STORAGE, FileStorage } from '../files/file-storage';
+import { StorageCapacityService } from '../files/storage-capacity.service';
 import { RedisService } from '../infrastructure/redis/redis.service';
 import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
@@ -18,19 +18,17 @@ interface ReadinessCheck {
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
-  private readonly minimumFreeBytes: bigint;
   private readonly processRole: string;
 
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(FILE_STORAGE) private readonly storage: FileStorage,
+    private readonly storageCapacity: StorageCapacityService,
     private readonly fileSecurity: FileSecurityService,
     private readonly modelRuntime: ModelRuntimeService,
     private readonly executionGate: ModelExecutionGateService,
     private readonly redis: RedisService,
     config: ConfigService
   ) {
-    this.minimumFreeBytes = BigInt(config.get<number>('fileQuotas.minimumFreeMb') ?? 1024) * 1024n * 1024n;
     this.processRole = config.get<string>('processRole') ?? 'all';
   }
 
@@ -80,19 +78,27 @@ export class HealthController {
   }
 
   private async storageReadiness(): Promise<ReadinessCheck> {
-    await this.storage.healthCheck?.();
-    const availableBytes = await this.storage.availableBytes();
-    if (availableBytes < this.minimumFreeBytes) {
-      return {
-        status: 'insufficient_space',
-        availableBytes: availableBytes.toString(),
-        minimumFreeBytes: this.minimumFreeBytes.toString()
-      };
-    }
+    const capacity = await this.storageCapacity.read();
+    const admission = this.storageCapacity.admission(capacity);
     return {
-      status: 'ok',
-      availableBytes: availableBytes.toString(),
-      minimumFreeBytes: this.minimumFreeBytes.toString()
+      status: admission.allowed ? 'ok' : admission.reason,
+      backend: capacity.backend,
+      probeOk: capacity.probeOk,
+      capacitySource: capacity.capacitySource,
+      ...(capacity.totalBytes === undefined ? {} : { totalBytes: capacity.totalBytes.toString() }),
+      ...(capacity.usedBytes === undefined ? {} : { usedBytes: capacity.usedBytes.toString() }),
+      ...(capacity.availableBytes === undefined ? {} : { availableBytes: capacity.availableBytes.toString() }),
+      observedAt: capacity.observedAt,
+      stalenessSeconds: capacity.stalenessSeconds,
+      isEstimated: capacity.isEstimated,
+      limitations: capacity.limitations,
+      uploadAdmission: {
+        allowed: admission.allowed,
+        reason: admission.reason,
+        incomingBytes: admission.incomingBytes.toString(),
+        reserveBytes: admission.reserveBytes.toString(),
+        ...(admission.remainingBytes === undefined ? {} : { remainingBytes: admission.remainingBytes.toString() })
+      }
     };
   }
 

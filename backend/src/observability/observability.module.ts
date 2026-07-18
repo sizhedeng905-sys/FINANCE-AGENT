@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 
+import { FilesModule } from '../files/files.module';
 import { ModelRuntimeModule } from '../model-runtime/model-runtime.module';
 import { MetricsController } from './metrics.controller';
 import { MetricsMiddleware } from './metrics.middleware';
@@ -9,7 +10,7 @@ import { TracingMiddleware } from './tracing.middleware';
 
 @Global()
 @Module({
-  imports: [ModelRuntimeModule],
+  imports: [FilesModule, ModelRuntimeModule],
   controllers: [MetricsController],
   providers: [MetricsService, MetricsMiddleware, TraceExporterService, TracingMiddleware],
   exports: [MetricsService, MetricsMiddleware, TraceExporterService, TracingMiddleware]

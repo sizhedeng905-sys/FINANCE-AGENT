@@ -1,0 +1,124 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.3 },
+              { "color": "green", "value": 0.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "expr": "minio_cluster_health_capacity_usable_free_bytes / minio_cluster_health_capacity_usable_total_bytes",
+          "refId": "A"
+        }
+      ],
+      "title": "MinIO Physical Free Ratio",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "expr": "finance_agent_storage_capacity_bytes{source=\"logical_quota\",kind=\"used\"} / finance_agent_storage_capacity_bytes{source=\"logical_quota\",kind=\"total\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Logical Quota Utilization",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": { "color": "red", "text": "Probe failed" },
+                "1": { "color": "green", "text": "Probe healthy" }
+              },
+              "type": "value"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        { "expr": "finance_agent_storage_probe_healthy", "refId": "A" }
+      ],
+      "title": "Application Storage Probe",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "finance_agent_storage_capacity_bytes",
+          "legendFormat": "{{backend}} {{source}} {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "minio_cluster_health_capacity_usable_free_bytes",
+          "legendFormat": "MinIO physical available",
+          "refId": "B"
+        }
+      ],
+      "title": "Capacity Evidence",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["finance-agent", "staging", "storage"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Finance Agent Storage Capacity",
+  "uid": "finance-agent-storage-capacity",
+  "version": 1
+}

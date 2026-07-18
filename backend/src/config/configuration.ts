@@ -26,6 +26,7 @@ export default () => ({
   },
   storage: {
     driver: process.env.FILE_STORAGE_DRIVER || 'local',
+    capacityMaxStalenessSeconds: Number.parseInt(process.env.STORAGE_CAPACITY_MAX_STALENESS_SECONDS ?? '60', 10),
     s3: {
       endpoint: process.env.S3_ENDPOINT || '',
       region: process.env.S3_REGION || 'us-east-1',
@@ -35,7 +36,7 @@ export default () => ({
       forcePathStyle: process.env.S3_FORCE_PATH_STYLE === undefined
         ? true
         : process.env.S3_FORCE_PATH_STYLE === 'true',
-      capacityBytes: process.env.S3_CAPACITY_BYTES || '1099511627776',
+      logicalQuotaBytes: process.env.S3_LOGICAL_QUOTA_BYTES || '',
       presignedUrlTtlSeconds: Number.parseInt(process.env.S3_PRESIGNED_URL_TTL_SECONDS ?? '60', 10)
     }
   },

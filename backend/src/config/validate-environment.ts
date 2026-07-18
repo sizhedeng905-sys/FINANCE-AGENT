@@ -67,7 +67,9 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const s3AccessKeyId = String(environment.S3_ACCESS_KEY_ID ?? '');
   const s3SecretAccessKey = String(environment.S3_SECRET_ACCESS_KEY ?? '');
   const s3ForcePathStyle = environment.S3_FORCE_PATH_STYLE ?? 'true';
-  const s3CapacityBytes = String(environment.S3_CAPACITY_BYTES ?? '1099511627776');
+  const s3LogicalQuotaBytes = String(environment.S3_LOGICAL_QUOTA_BYTES ?? '');
+  const legacyS3CapacityBytes = String(environment.S3_CAPACITY_BYTES ?? '');
+  const storageCapacityMaxStalenessSeconds = Number(String(environment.STORAGE_CAPACITY_MAX_STALENESS_SECONDS ?? '60'));
   const s3PresignedUrlTtlSeconds = Number(String(environment.S3_PRESIGNED_URL_TTL_SECONDS ?? '60'));
   const corsOrigins = String(environment.CORS_ORIGINS ?? '');
   const swaggerEnabled = environment.SWAGGER_ENABLED;
@@ -166,10 +168,20 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   if (!FILE_STORAGE_DRIVERS.has(fileStorageDriver)) {
     throw new Error(`FILE_STORAGE_DRIVER must be one of: ${Array.from(FILE_STORAGE_DRIVERS).join(', ')}.`);
   }
+  if (
+    !Number.isInteger(storageCapacityMaxStalenessSeconds) ||
+    storageCapacityMaxStalenessSeconds < 1 ||
+    storageCapacityMaxStalenessSeconds > 3600
+  ) {
+    throw new Error('STORAGE_CAPACITY_MAX_STALENESS_SECONDS must be an integer between 1 and 3600.');
+  }
   if (nodeEnv === 'production' && fileStorageDriver !== 's3') {
     throw new Error('FILE_STORAGE_DRIVER must be s3 in production.');
   }
   if (fileStorageDriver === 's3') {
+    if (legacyS3CapacityBytes) {
+      throw new Error('S3_CAPACITY_BYTES is not physical capacity; replace it with S3_LOGICAL_QUOTA_BYTES.');
+    }
     let parsedEndpoint: URL;
     try {
       parsedEndpoint = new URL(s3Endpoint);
@@ -191,14 +203,14 @@ export function validateEnvironment(environment: Record<string, unknown>) {
     if (!['true', 'false', true, false].includes(s3ForcePathStyle as never)) {
       throw new Error('S3_FORCE_PATH_STYLE must be true or false.');
     }
-    let capacityBytes: bigint;
+    let logicalQuotaBytes: bigint;
     try {
-      capacityBytes = BigInt(s3CapacityBytes);
+      logicalQuotaBytes = BigInt(s3LogicalQuotaBytes);
     } catch {
-      throw new Error('S3_CAPACITY_BYTES must be a positive integer.');
+      throw new Error('S3_LOGICAL_QUOTA_BYTES must be a positive integer.');
     }
-    if (capacityBytes < BigInt(fileMinimumFreeMb + maxFileSizeMb) * 1024n * 1024n) {
-      throw new Error('S3_CAPACITY_BYTES must exceed the configured minimum free space and upload size.');
+    if (logicalQuotaBytes < BigInt(fileMinimumFreeMb + maxFileSizeMb) * 1024n * 1024n) {
+      throw new Error('S3_LOGICAL_QUOTA_BYTES must exceed the configured minimum reserve and upload size.');
     }
     if (!Number.isInteger(s3PresignedUrlTtlSeconds) || s3PresignedUrlTtlSeconds < 30 || s3PresignedUrlTtlSeconds > 300) {
       throw new Error('S3_PRESIGNED_URL_TTL_SECONDS must be an integer between 30 and 300.');

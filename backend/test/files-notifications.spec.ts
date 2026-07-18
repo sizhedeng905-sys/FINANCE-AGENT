@@ -16,6 +16,7 @@ import { PDFDocument } from 'pdf-lib';
 import { FileSecurityService } from '../src/files/file-security.service';
 import { FilesService } from '../src/files/files.service';
 import { LocalFileStorageService } from '../src/files/local-file-storage.service';
+import { StorageCapacityService } from '../src/files/storage-capacity.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
 
 function actor(role: UserRole, id: string = role) {
@@ -82,13 +83,16 @@ describe('phase 5 files and notifications', () => {
     const auditLogs = { write: jest.fn(async () => undefined) };
     const ledgerEvents = { write: jest.fn(async () => undefined) };
     const workOrders = { findOne: jest.fn() };
+    const storage = new LocalFileStorageService(config);
+    const storageCapacity = new StorageCapacityService(prisma, storage, config);
     const service = new FilesService(
       prisma,
-      new LocalFileStorageService(config),
+      storage,
       workOrders as any,
       auditLogs as any,
       ledgerEvents as any,
       new FileSecurityService(config),
+      storageCapacity,
       config
     );
     const pdf = await PDFDocument.create();
@@ -202,7 +206,18 @@ describe('phase 5 files and notifications', () => {
       $transaction: jest.fn()
     };
     const storage: any = {
-      availableBytes: jest.fn(async () => 0n),
+      capacity: jest.fn(async () => ({
+        backend: 'local',
+        probeOk: true,
+        capacitySource: 'volume_metric',
+        totalBytes: 1n,
+        usedBytes: 1n,
+        availableBytes: 0n,
+        observedAt: new Date().toISOString(),
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: []
+      })),
       save: jest.fn(),
       read: jest.fn(),
       openReadStream: jest.fn(),
@@ -233,6 +248,7 @@ describe('phase 5 files and notifications', () => {
       { write: jest.fn() } as any,
       { write: jest.fn() } as any,
       new FileSecurityService(config),
+      new StorageCapacityService(prisma, storage, config),
       config
     );
 
@@ -245,6 +261,70 @@ describe('phase 5 files and notifications', () => {
     expect(storage.save).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.rawFile.create).not.toHaveBeenCalled();
+  });
+
+  it('never starts database persistence when the object write fails', async () => {
+    const prisma: any = {
+      project: { findUnique: jest.fn(async () => ({ id: 'project_1', status: 'active' })) },
+      workOrder: { findUnique: jest.fn(async () => null) },
+      rawFile: { create: jest.fn() },
+      $transaction: jest.fn()
+    };
+    const storage: any = {
+      capacity: jest.fn(async () => ({
+        backend: 'local',
+        probeOk: true,
+        capacitySource: 'volume_metric',
+        totalBytes: 2n * 1024n * 1024n * 1024n,
+        usedBytes: 0n,
+        availableBytes: 2n * 1024n * 1024n * 1024n,
+        observedAt: new Date().toISOString(),
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: []
+      })),
+      save: jest.fn(async () => {
+        throw new Error('ENOSPC');
+      }),
+      read: jest.fn(),
+      openReadStream: jest.fn(),
+      remove: jest.fn()
+    };
+    const config: any = {
+      get: jest.fn((key: string) => ({
+        maxFileSizeMb: 1,
+        'fileQuotas.userMb': 1,
+        'fileQuotas.projectMb': 1,
+        'fileQuotas.minimumFreeMb': 100,
+        'fileScan.mode': 'basic',
+        'storage.driver': 'local'
+      })[key])
+    };
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 200]);
+    const buffer = Buffer.from(await pdf.save());
+    const service = new FilesService(
+      prisma,
+      storage,
+      {} as any,
+      { write: jest.fn() } as any,
+      { write: jest.fn() } as any,
+      new FileSecurityService(config),
+      new StorageCapacityService(prisma, storage, config),
+      config
+    );
+
+    await expect(service.upload({
+      originalname: 'full-volume.pdf',
+      mimetype: 'application/pdf',
+      size: buffer.length,
+      buffer
+    } as Express.Multer.File, { relatedProjectId: 'project_1' }, actor(UserRole.finance), {}))
+      .rejects.toThrow('ENOSPC');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.rawFile.create).not.toHaveBeenCalled();
+    expect(storage.remove).not.toHaveBeenCalled();
   });
 
   it('scopes notifications from the token user and reduces unread count', async () => {

@@ -12,6 +12,7 @@ import { AiTaskStatus, ImportTaskStatus, OcrTaskStatus } from '@prisma/client';
 import { timingSafeEqual } from 'node:crypto';
 import { Request, Response } from 'express';
 
+import { StorageCapacityService } from '../files/storage-capacity.service';
 import { RedisService } from '../infrastructure/redis/redis.service';
 import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,6 +29,7 @@ export class MetricsController {
     private readonly metrics: MetricsService,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly storageCapacity: StorageCapacityService,
     private readonly modelGate: ModelExecutionGateService,
     private readonly traceExporter: TraceExporterService,
     config: ConfigService
@@ -39,12 +41,13 @@ export class MetricsController {
   @Get()
   async read(@Req() request: Request, @Res() response: Response) {
     this.assertAuthorized(request.headers.authorization);
-    const [importParse, importConfirm, ocr, ai, storedFiles, heartbeat] = await Promise.all([
+    const [importParse, importConfirm, ocr, ai, storedFiles, storageCapacity, heartbeat] = await Promise.all([
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.parsing, executionMode: 'background' } }),
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.confirming } }),
       this.prisma.ocrTask.count({ where: { status: { in: [OcrTaskStatus.queued, OcrTaskStatus.processing] } } }),
       this.prisma.aiTask.count({ where: { status: { in: [AiTaskStatus.queued, AiTaskStatus.running] } } }),
       this.prisma.rawFile.aggregate({ where: { isVoided: false }, _sum: { fileSize: true } }),
+      this.storageCapacity.read(),
       this.redis.readWorkerHeartbeat()
     ]);
     const heartbeatAgeSeconds = heartbeat
@@ -58,6 +61,7 @@ export class MetricsController {
         ai
       },
       storedFileBytes: storedFiles._sum.fileSize ?? 0n,
+      storageCapacity,
       workerHeartbeatAgeSeconds: heartbeatAgeSeconds,
       workerHeartbeatHealthy: this.processRole === 'all' || Boolean(heartbeat),
       modelRuntimeHealthy: this.modelGate.readiness().status === 'ok',

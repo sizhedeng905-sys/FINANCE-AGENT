@@ -50,12 +50,29 @@ groups:
           summary: API resident memory exceeds 2 GiB
 
       - alert: FinanceAgentLogicalStorageHigh
-        expr: finance_agent_stored_file_bytes > 879609302220
+        expr: finance_agent_storage_capacity_bytes{source="logical_quota",kind="used"} / finance_agent_storage_capacity_bytes{source="logical_quota",kind="total"} > 0.80
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: Referenced raw files exceed 80 percent of the declared staging capacity
+          summary: Referenced raw files exceed 80 percent of the provisional logical quota
+
+      - alert: FinanceAgentMinioCapacityMetricsMissing
+        expr: absent(minio_cluster_health_capacity_usable_free_bytes) or absent(minio_cluster_health_capacity_usable_total_bytes)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Independent MinIO physical capacity metrics are unavailable
+
+      # Provisional staging threshold pending H13/H14 approval.
+      - alert: FinanceAgentMinioPhysicalStorageLow
+        expr: minio_cluster_health_capacity_usable_free_bytes / minio_cluster_health_capacity_usable_total_bytes < 0.30
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: MinIO usable physical free capacity is below 30 percent
 
       - alert: FinanceAgentBackupFailed
         expr: finance_agent_backup_success == 0

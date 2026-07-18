@@ -11,7 +11,28 @@ function createController(overrides: Record<string, any> = {}) {
     ocrTask: { count: jest.fn(async () => 2) },
     aiTask: { count: jest.fn(async () => 3) }
   };
-  const storage: any = overrides.storage ?? { availableBytes: jest.fn(async () => 2n * 1024n * 1024n * 1024n) };
+  const capacitySnapshot = {
+    backend: 'local',
+    probeOk: true,
+    capacitySource: 'volume_metric',
+    totalBytes: 4n * 1024n * 1024n * 1024n,
+    usedBytes: 1n * 1024n * 1024n * 1024n,
+    availableBytes: 3n * 1024n * 1024n * 1024n,
+    observedAt: '2026-07-18T00:00:00.000Z',
+    stalenessSeconds: 0,
+    isEstimated: false,
+    limitations: []
+  };
+  const storageCapacity: any = overrides.storageCapacity ?? {
+    read: jest.fn(async () => capacitySnapshot),
+    admission: jest.fn(() => ({
+      allowed: true,
+      reason: 'capacity_available',
+      incomingBytes: 0n,
+      reserveBytes: 1024n * 1024n * 1024n,
+      remainingBytes: capacitySnapshot.availableBytes
+    }))
+  };
   const fileSecurity: any = overrides.fileSecurity ?? { readiness: jest.fn(async () => ({ status: 'not_required', mode: 'basic' })) };
   const modelRuntime: any = overrides.modelRuntime ?? {
     health: jest.fn(async () => ({
@@ -30,7 +51,7 @@ function createController(overrides: Record<string, any> = {}) {
   const config = {
     get: jest.fn((key: string) => key === 'fileQuotas.minimumFreeMb' ? 1024 : key === 'processRole' ? 'all' : undefined)
   } as unknown as ConfigService;
-  return new HealthController(prisma, storage, fileSecurity, modelRuntime, gate, redis, config);
+  return new HealthController(prisma, storageCapacity, fileSecurity, modelRuntime, gate, redis, config);
 }
 
 describe('health readiness', () => {
@@ -42,7 +63,13 @@ describe('health readiness', () => {
       database: 'ok',
       checks: {
         database: { status: 'ok' },
-        storage: { status: 'ok' },
+        storage: {
+          status: 'ok',
+          backend: 'local',
+          probeOk: true,
+          capacitySource: 'volume_metric',
+          uploadAdmission: { allowed: true, reason: 'capacity_available' }
+        },
         antivirus: { status: 'not_required' },
         queues: { status: 'ok', pending: { imports: 1, ocr: 2, ai: 3 } },
         models: { status: 'ok', enabled: [expect.objectContaining({ key: 'mock', healthy: true })] },
@@ -53,7 +80,7 @@ describe('health readiness', () => {
 
   it('returns not-ready details without exposing dependency exception messages', async () => {
     const controller = createController({
-      storage: { availableBytes: jest.fn(async () => { throw new Error('C:\\sensitive\\upload-root'); }) },
+      storageCapacity: { read: jest.fn(async () => { throw new Error('C:\\sensitive\\upload-root'); }) },
       modelRuntime: { health: jest.fn(async () => ({ status: 'degraded', deployments: [] })) },
       gate: { readiness: jest.fn(() => ({ status: 'saturated', maxQueue: 1, queues: { model: { active: 1, queued: 1 } } })) }
     });
@@ -75,6 +102,50 @@ describe('health readiness', () => {
         }
       });
       expect(JSON.stringify((error as ServiceUnavailableException).getResponse())).not.toContain('sensitive');
+    }
+  });
+
+  it('fails readiness with an explicit reason when S3 physical capacity is unknown and no quota is usable', async () => {
+    const capacity = {
+      backend: 's3',
+      probeOk: true,
+      capacitySource: 'unknown',
+      observedAt: '2026-07-18T00:00:00.000Z',
+      stalenessSeconds: 0,
+      isEstimated: false,
+      limitations: ['s3_physical_capacity_unavailable', 'logical_quota_not_configured']
+    };
+    const controller = createController({
+      storageCapacity: {
+        read: jest.fn(async () => capacity),
+        admission: jest.fn(() => ({
+          allowed: false,
+          reason: 'capacity_unknown',
+          incomingBytes: 0n,
+          reserveBytes: 1024n * 1024n * 1024n
+        }))
+      }
+    });
+
+    try {
+      await controller.ready();
+      throw new Error('Expected readiness to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+        data: {
+          checks: {
+            storage: {
+              status: 'capacity_unknown',
+              backend: 's3',
+              probeOk: true,
+              capacitySource: 'unknown',
+              limitations: expect.arrayContaining(['s3_physical_capacity_unavailable']),
+              uploadAdmission: { allowed: false, reason: 'capacity_unknown' }
+            }
+          }
+        }
+      });
     }
   });
 

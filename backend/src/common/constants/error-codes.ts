@@ -7,7 +7,9 @@ export const ERROR_CODES: Record<number, number> = {
   413: 41301,
   422: 42201,
   429: 42901,
-  500: 50001
+  500: 50001,
+  503: 50301,
+  507: 50701
 };
 
 export function getErrorCode(status: number): number {

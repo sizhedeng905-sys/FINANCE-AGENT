@@ -39,6 +39,7 @@ import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { ResponseInterceptor } from '../../src/common/interceptors/response.interceptor';
 import { LocalFileStorageService } from '../../src/files/local-file-storage.service';
+import { StorageCapacityService } from '../../src/files/storage-capacity.service';
 import { UploadAdmissionService } from '../../src/files/upload-admission.service';
 import { ExcelParserService } from '../../src/import-tasks/excel-parser.service';
 import { ImportTasksService } from '../../src/import-tasks/import-tasks.service';
@@ -2538,6 +2539,86 @@ describe('real PostgreSQL integration', () => {
         await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
       }
       for (const storagePath of new Set([...storagePaths, ...persistedStoragePaths])) {
+        await fileStorage.remove(storagePath);
+      }
+    }
+  });
+
+  it('serializes cross-user and cross-project uploads at the global S3 logical quota', async () => {
+    const capacity = app.get(StorageCapacityService) as any;
+    const originalDriver = capacity.driver;
+    const originalLogicalQuota = capacity.logicalQuotaBytes;
+    const suffix = Date.now().toString(36);
+    const projectIds: string[] = [];
+    const pathsBefore = new Set(await fileStorage.listPaths());
+    const pdf = await PDFDocument.create();
+    pdf.addPage([200, 200]);
+    const contents = Buffer.from(await pdf.save());
+
+    try {
+      const [englishLogin, chineseLogin] = await Promise.all([
+        request(app.getHttpServer()).post('/api/auth/login').send({ username: 'finance', password: '123456' }),
+        request(app.getHttpServer()).post('/api/auth/login').send({ username: '财务', password: '123456' })
+      ]);
+      expect(englishLogin.status).toBe(200);
+      expect(chineseLogin.status).toBe(200);
+      const projects = await Promise.all(['a', 'b'].map((part) => prisma.project.create({
+        data: {
+          name: `${TEST_USER_PREFIX}storage_quota_${suffix}_${part}`,
+          customerName: 'Capacity test',
+          ownerName: 'Capacity test',
+          createdBy: 'finance'
+        }
+      })));
+      projectIds.push(...projects.map((project) => project.id));
+      const usage = await prisma.rawFile.aggregate({
+        where: { isVoided: false },
+        _sum: { fileSize: true }
+      });
+      capacity.driver = 's3';
+      capacity.logicalQuotaBytes =
+        (usage._sum.fileSize ?? 0n) + capacity.minimumReserveBytes + BigInt(contents.length);
+
+      const upload = (token: string, projectId: string, name: string) => request(app.getHttpServer())
+        .post('/api/files/upload')
+        .set('Authorization', `Bearer ${token}`)
+        .field('relatedProjectId', projectId)
+        .attach('file', contents, { filename: name, contentType: 'application/pdf' });
+      const responses = await Promise.all([
+        upload(englishLogin.body.data.accessToken, projects[0].id, 'quota-a.pdf'),
+        upload(chineseLogin.body.data.accessToken, projects[1].id, 'quota-b.pdf')
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 507]);
+      const rejected = responses.find((response) => response.status === 507)!;
+      expect(rejected.body).toMatchObject({
+        code: 50701,
+        data: { reason: 'capacity_reserve_breached' }
+      });
+      const persisted = await prisma.rawFile.findMany({
+        where: { relatedProjectId: { in: projectIds }, isVoided: false }
+      });
+      expect(persisted).toHaveLength(1);
+      const pathsAfter = (await fileStorage.listPaths()).filter((path) => !pathsBefore.has(path));
+      expect(pathsAfter).toEqual([persisted[0].storagePath]);
+    } finally {
+      capacity.driver = originalDriver;
+      capacity.logicalQuotaBytes = originalLogicalQuota;
+      const stored = projectIds.length
+        ? await prisma.rawFile.findMany({
+            where: { relatedProjectId: { in: projectIds } },
+            select: { id: true, storagePath: true }
+          })
+        : [];
+      const storedIds = stored.map((file) => file.id);
+      if (storedIds.length) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: storedIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: storedIds } } });
+        await prisma.rawFile.deleteMany({ where: { id: { in: storedIds } } });
+      }
+      if (projectIds.length) await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
+      const newPaths = (await fileStorage.listPaths()).filter((path) => !pathsBefore.has(path));
+      for (const storagePath of new Set([...stored.map((file) => file.storagePath), ...newPaths])) {
         await fileStorage.remove(storagePath);
       }
     }

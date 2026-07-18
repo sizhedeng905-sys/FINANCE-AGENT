@@ -3,7 +3,7 @@
 更新日期：2026-07-18
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1 已关闭唯一工程 P0，R2 已关闭日志泄露 P1，剩余 8 个 P1/条件 P1 继续按风险顺序处理；AI 映射补充任务 M0-M8 已纳入同一主线
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1 已关闭唯一工程 P0，R2 已关闭日志泄露 P1，R3 已关闭固定对象容量伪装 P1，剩余 7 个 P1/条件 P1 继续按风险顺序处理；AI 映射补充任务 M0-M8 已纳入同一主线
 
 ## 完成口径
 
@@ -19,7 +19,8 @@
 | R0 基线、资产保护、问题台账 | 完成 | HEAD/分支/工作树/忽略项/PR/checks/review threads 已实查；开放问题已编号；未跟踪资产未触碰 |
 | R1 Staging frontend 真实 API | 完成 | P0 已关闭；显式 API build、同源 URL、产物清单、CSP、本机 18 服务和真实浏览器 smoke 均有证据 |
 | R2 日志预签名参数泄露 | 完成 | 网关仅记录 method/无 query path/status/upstream/耗时/关联 ID；应用/trace 攻击回归与实际容器日志通过 |
-| R3-R8 容量、恢复、镜像、后端边界、治理、CI | R3 进入复现 | 每项执行红灯、最小修复、定向回归、README、提交与推送 |
+| R3 对象存储容量真实性 | 完成 | S3 物理容量明确 unknown；逻辑配额使用 PostgreSQL 用量和全局事务锁；MinIO 独立物理指标、告警/dashboard 与跨项目并发证据齐全 |
+| R4-R8 恢复、镜像、后端边界、治理、CI | R4 排队 | 每项执行红灯、最小修复、定向回归、README、提交与推送 |
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
@@ -52,6 +53,7 @@ B8-09 已完成的工程证据：
 - runtime 对 `audit_logs/ledger_events` 只保留 INSERT/SELECT；关联数据库/对象备份、WAL/base backup、临时恢复演练、校验和与应用/数据/模型回退脚本完成。
 - 本机随机 secret/CA 初始化及 Compose JSON 门禁通过：18 services、证书链、固定版本 tag、私网端口和 Git secret 检查均通过；10/10 shell 脚本语法通过。
 - R2 自动化结果：前端显式 API build（3,144 modules）及产物检查；后端 build；runtime 4/4；29/29 Jest suites、267/267 tests；2/2 PostgreSQL suites、60/60 tests；16/16 Playwright。实际隔离 18 服务生成 200/400/503 日志，29 条网关 JSON 可解析、15 个合成敏感标记泄露为 0，测试 project 容器/卷残留为 0。
+- R3 自动化结果：后端 31/31 suites、284/284 tests；PostgreSQL 2/2 suites、61/61 tests；前端 runtime 4/4、Playwright 16/16、前后端 build、Prisma 24 条空库和 23→24 升级均通过。跨账号、跨项目容量并发只提交一份对象和记录；对象写满时数据库零写入；Compose、Prometheus 13 条规则、Nginx 和固定 MinIO v3 物理容量 endpoint 均实测通过，测试资源残留为 0。正式配额、30%/80% 暂定阈值和通知接收人等待 H13/H14。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。

@@ -29,6 +29,7 @@
 - 关键操作写 `audit_logs`；经营记录、原件和审批结果写 `ledger_events` 或任务尝试日志。
 - 上传校验扩展名、MIME、文件签名、内容、大小、数量、文件名和资源归属；存储 key 使用不可预测标识，不使用原文件名。
 - 生产强制私有 S3-compatible bucket 和 ClamAV；签名 URL 只有 30-300 秒，签发前重新授权并写 audit/ledger。S3、ClamAV 或容量检查失败时上传关闭。
+- S3 连通性不再被解释为物理容量。应用只把 `statfs`、Provider 指标或 PostgreSQL 可信用量加显式逻辑配额标为容量来源；未知、过期、估算或矛盾状态均失败关闭。逻辑配额在最终事务内用全局 advisory lock 复核，MinIO 物理容量由私网 Prometheus 独立监控。
 - PostgreSQL Staging 使用 TLS 和 migrator/runtime/backup 三账号；runtime 在数据库层不能 UPDATE/DELETE/TRUNCATE audit/ledger。
 - 记录引用的原件禁止普通删除。上传目录、E2E 文件、`.env` 和模型目录由 Git 卫生检查阻止提交。
 

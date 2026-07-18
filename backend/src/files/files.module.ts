@@ -15,6 +15,7 @@ import { FILE_STORAGE } from './file-storage';
 import { FilesService } from './files.service';
 import { LocalFileStorageService } from './local-file-storage.service';
 import { S3FileStorageService } from './s3-file-storage.service';
+import { StorageCapacityService } from './storage-capacity.service';
 import { createSecureUploadOptions } from './secure-upload-options';
 import { TempUploadCleanupInterceptor } from './temp-upload-cleanup.interceptor';
 import { UploadAdmissionInterceptor } from './upload-admission.interceptor';
@@ -39,6 +40,7 @@ import { UploadAdmissionService } from './upload-admission.service';
     TempUploadCleanupInterceptor,
     UploadAdmissionInterceptor,
     UploadAdmissionService,
+    StorageCapacityService,
     LocalFileStorageService,
     S3FileStorageService,
     {
@@ -59,6 +61,7 @@ import { UploadAdmissionService } from './upload-admission.service';
     FILE_STORAGE,
     UploadAdmissionInterceptor,
     UploadAdmissionService,
+    StorageCapacityService,
     MulterModule
   ]
 })

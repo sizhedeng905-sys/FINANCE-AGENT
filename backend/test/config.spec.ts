@@ -15,6 +15,7 @@ describe('environment validation', () => {
     S3_BUCKET: 'finance-agent-private',
     S3_ACCESS_KEY_ID: 'finance-runtime',
     S3_SECRET_ACCESS_KEY: 's3-secret-with-enough-entropy-12345',
+    S3_LOGICAL_QUOTA_BYTES: '1099511627776',
     REQUEST_RATE_LIMIT_STORE: 'redis',
     REDIS_URL: 'rediss://runtime:redis-secret-12345@redis.example.com:6379',
     METRICS_TOKEN: 'metrics-secret-1234567890-ABCDEFGHIJ-klmnop',
@@ -41,6 +42,7 @@ describe('environment validation', () => {
     [{ ...valid, FILE_PDF_MAX_OBJECTS: '99' }, 'FILE_PDF_MAX_OBJECTS'],
     [{ ...valid, FILE_PARSE_TIMEOUT_MS: '99' }, 'FILE_PARSE_TIMEOUT_MS'],
     [{ ...valid, AI_AUDIT_RETENTION_DAYS: '0' }, 'AI_AUDIT_RETENTION_DAYS'],
+    [{ ...valid, STORAGE_CAPACITY_MAX_STALENESS_SECONDS: '0' }, 'STORAGE_CAPACITY_MAX_STALENESS_SECONDS'],
     [{ ...valid, XLS_CONVERTER_TIMEOUT_MS: '999' }, 'XLS_CONVERTER_TIMEOUT_MS'],
     [{ ...valid, XLS_CONVERTER_MAX_OUTPUT_MB: '101' }, 'XLS_CONVERTER_MAX_OUTPUT_MB']
   ])('rejects an invalid required setting', (environment, expectedMessage) => {
@@ -121,6 +123,12 @@ describe('environment validation', () => {
     };
     expect(() => validateEnvironment({ ...production, PROCESS_ROLE: 'all' })).toThrow('PROCESS_ROLE');
     expect(() => validateEnvironment({ ...production, FILE_STORAGE_DRIVER: 'local' })).toThrow('FILE_STORAGE_DRIVER');
+    expect(() => validateEnvironment({ ...production, S3_LOGICAL_QUOTA_BYTES: '' })).toThrow('S3_LOGICAL_QUOTA_BYTES');
+    expect(() => validateEnvironment({
+      ...production,
+      S3_LOGICAL_QUOTA_BYTES: '',
+      S3_CAPACITY_BYTES: '1099511627776'
+    })).toThrow('not physical capacity');
     expect(() => validateEnvironment({ ...production, REQUEST_RATE_LIMIT_STORE: 'memory' })).toThrow('REQUEST_RATE_LIMIT_STORE');
     expect(() => validateEnvironment({ ...production, METRICS_TOKEN: '' })).toThrow('METRICS_TOKEN');
   });

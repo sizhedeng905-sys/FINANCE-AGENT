@@ -10,6 +10,8 @@ describe('B8-09 staging deployment', () => {
     const compose = read(stagingRoot, 'compose.yaml');
     const gateway = read(stagingRoot, 'gateway', 'nginx.conf');
     expect(compose).toContain('FILE_STORAGE_DRIVER: s3');
+    expect(compose).toContain('S3_LOGICAL_QUOTA_BYTES: "1099511627776"');
+    expect(compose).not.toContain('S3_CAPACITY_BYTES:');
     expect(compose).toContain('S3_ENDPOINT: https://objects.finance-agent.local:9443');
     expect(compose).not.toContain('S3_ENDPOINT: https://objects.finance-agent.local:${STAGING_OBJECT_PORT');
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
@@ -71,6 +73,8 @@ describe('B8-09 staging deployment', () => {
     expect(accessFormat).not.toMatch(/\$(?:request|request_uri|args)\b/);
     expect(accessFormat).not.toMatch(/\$(?:http_authorization|http_cookie)\b/);
     expect(gateway.match(/error_log \/dev\/null;/g)).toHaveLength(2);
+    expect(gateway).toContain('location ^~ /minio/metrics/');
+    expect(gateway).toContain('location ^~ /minio/v2/metrics/');
   });
 
   it('makes audit and ledger mutation unavailable to the runtime database role', () => {
@@ -116,6 +120,7 @@ describe('B8-09 staging deployment', () => {
   it('provides central metrics, logs, traces, and backup freshness alerts', () => {
     const compose = read(stagingRoot, 'compose.yaml');
     const alerts = read(stagingRoot, 'monitoring', 'alerts.yml');
+    const prometheus = read(stagingRoot, 'monitoring', 'prometheus.yml');
     for (const service of ['prometheus:', 'alertmanager:', 'loki:', 'promtail:', 'tempo:', 'grafana:']) {
       expect(compose).toContain(service);
     }
@@ -124,6 +129,27 @@ describe('B8-09 staging deployment', () => {
     expect(alerts).toContain('FinanceAgentBackupStale');
     expect(alerts).toContain('FinanceAgentRestoreDrillStale');
     expect(alerts).toContain('FinanceAgentTlsCertificateExpiring');
+    expect(alerts).toContain('FinanceAgentLogicalStorageHigh');
+    expect(alerts).toContain('FinanceAgentMinioCapacityMetricsMissing');
+    expect(alerts).toContain('FinanceAgentMinioPhysicalStorageLow');
+    expect(prometheus).toContain('/minio/metrics/v3/cluster/health');
     expect(alerts).toContain('absent(finance_agent_backup_last_success_timestamp_seconds)');
+  });
+
+  it('provisions an evidence-based storage capacity dashboard', () => {
+    const dashboard = JSON.parse(read(
+      stagingRoot,
+      'monitoring',
+      'grafana',
+      'provisioning',
+      'dashboards',
+      'json',
+      'storage-capacity.json'
+    ));
+    const serialized = JSON.stringify(dashboard);
+    expect(dashboard.uid).toBe('finance-agent-storage-capacity');
+    expect(serialized).toContain('finance_agent_storage_capacity_bytes');
+    expect(serialized).toContain('minio_cluster_health_capacity_usable_free_bytes');
+    expect(serialized).toContain('finance_agent_storage_probe_healthy');
   });
 });

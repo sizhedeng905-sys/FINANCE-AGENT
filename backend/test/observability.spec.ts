@@ -154,13 +154,27 @@ describe('observability', () => {
 
     const metrics = new MetricsService();
     metrics.recordHttp('GET', 200, 12);
-    expect(metrics.render({
+    const rendered = metrics.render({
       queueDepths: { ocr: 0 },
       storedFileBytes: 10n,
+      storageCapacity: {
+        backend: 's3',
+        probeOk: true,
+        capacitySource: 'logical_quota',
+        totalBytes: 100n,
+        usedBytes: 10n,
+        availableBytes: 90n,
+        observedAt: '2026-07-18T00:00:00.000Z',
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: ['s3_physical_capacity_unavailable']
+      },
       workerHeartbeatHealthy: true,
       modelRuntimeHealthy: true,
       trace: { queued: 0, exported: 1, dropped: 0, errors: 0 }
-    })).toContain('finance_agent_http_requests_total{method="GET",status="200"} 1');
+    });
+    expect(rendered).toContain('finance_agent_http_requests_total{method="GET",status="200"} 1');
+    expect(rendered).toContain('finance_agent_storage_capacity_bytes{backend="s3",source="logical_quota",kind="available"} 90');
   });
 
   it('logs request metadata without query strings, headers, bodies, or log injection', async () => {

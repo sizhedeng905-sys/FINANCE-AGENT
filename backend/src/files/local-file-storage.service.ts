@@ -61,10 +61,34 @@ export class LocalFileStorageService implements FileStorage {
     return handle.createReadStream({ autoClose: true });
   }
 
-  async availableBytes() {
-    const root = await this.ensureRoot();
-    const stats = await statfs(root, { bigint: true });
-    return stats.bavail * stats.bsize;
+  async capacity() {
+    const observedAt = new Date().toISOString();
+    try {
+      const root = await this.ensureRoot();
+      const stats = await statfs(root, { bigint: true });
+      return {
+        backend: 'local' as const,
+        probeOk: true,
+        capacitySource: 'volume_metric' as const,
+        totalBytes: stats.blocks * stats.bsize,
+        usedBytes: (stats.blocks - stats.bfree) * stats.bsize,
+        availableBytes: stats.bavail * stats.bsize,
+        observedAt,
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: ['filesystem_available_bytes_may_exclude_reserved_blocks']
+      };
+    } catch {
+      return {
+        backend: 'local' as const,
+        probeOk: false,
+        capacitySource: 'unknown' as const,
+        observedAt,
+        stalenessSeconds: 0,
+        isEstimated: false,
+        limitations: ['storage_probe_failed']
+      };
+    }
   }
 
   async remove(storagePath: string) {
