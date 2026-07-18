@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 正在收口 Prisma/OpenSSL 镜像契约。M0-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。M0-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R8.6 本机工程门禁完成；retention 仅 dry-run、step-up 默认关闭；下一步验证 R8.7 OpenSSL 镜像后收口 R8 并进入 M0-M8 |
+| R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -76,7 +76,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - 同次失败栈的日志门禁检出一个 exact secret，但旧证据只含类别，无法在清理后可靠归因。现新增只报告 secret 文件名、服务和次数的安全定位证据；策略单测 4/4，证据不保留值或原日志。失败栈已 `down -v --remove-orphans`，容器、网络和卷残留均为 0；完整 release/restore/rollback 仍待本修复提交后重跑。
 - R8.6 对 R8.5 commit 的 1001.3 秒完整发布已动态证明：18 镜像构建/锁定/扫描、PostgreSQL 远程 TLS、28 条 migration、全部服务健康、API smoke 与浏览器 smoke 均通过；随后因备份进程的 `mc` 默认配置目录不可写，首轮备份失败，restore drill 正确拒绝在没有完整备份时运行。
 - R8.6 干净提交的完整 release 已在 1010.9 秒内通过，sealed manifest 的 config/image identity/SBOM/CVE/migration/smoke/restore drill 七项 gate 全绿；运行日志 718,592 bytes/3,393 行、19 个 secret 为 0 finding。同 manifest rollback 55.6 秒通过保护性备份、四角色登录、readiness/worker、metrics 和二次 smoke，未恢复 live 数据；由于没有更早的合法 manifest，这不冒充跨版本回退。详见 [`docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md`](docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md)。
-- rollback 暴露后端镜像缺少 OpenSSL CLI，Prisma 会猜测旧 binary target。R8.7 新增 build/runtime OpenSSL 3 依赖及 CI 最终镜像探针；本机构建确认 Prisma 6.19.3 选择 `debian-openssl-3.0.x` 且无告警，完整 release 仍待 R8.7 提交后重测。详见 [`docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md`](docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md)。
+- rollback 暴露后端镜像缺少 OpenSSL CLI，Prisma 会猜测旧 binary target。R8.7 新增 build/runtime OpenSSL 3 依赖及 CI 最终镜像探针；本机构建确认 Prisma 6.19.3 选择 `debian-openssl-3.0.x` 且无告警。完整 release 两次均在 node-exporter 获取 Debian security 索引时遇到 502，按规则停止重试并标记 `blocked_external`；未把 migration/rollback 重验写成通过。Compose 清场后本项目容器、网络和卷均为 0。详见 [`docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md`](docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md)。
 - H10 的 MFA、自审批、跨账号同人、双人复核、break-glass 和正式动作矩阵仍未签字；这些人工门禁不由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
@@ -171,7 +171,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | Staging 静态门禁 | `passed` | 18 services、19 secrets、TLS、仓库自建服务、第三方 digest、私网和只读应用容器 |
 | R5 镜像身份与供应链 | `engineering_passed` | 17/17 篡改/漂移测试；22 个锁定镜像、66 份证据、无可修复 Critical；53 High/88 Medium/38 Low 仍在风险台账，签名与目标 registry 待 H13 |
 | R8.1 应用镜像 CI | `engineering_passed_locally` | Node 24.18.0 与部署镜像统一；真实前后端镜像构建、非 root/revision 核验、两份 SBOM 和固定 Grype 门禁通过；当前 commit 的 GitHub run 待 push 后验证 |
-| R8.2-R8.7 条件验收自动化 | `engineering_passed_locally / final_image_retest_pending` | R8.6 完整 release、7 项 sealed gate、0 日志泄露和同 manifest rollback 已通过；R8.7 OpenSSL/Prisma 最终镜像探针通过，尚待完整发布重测；GPU L0 workflow 未运行 |
+| R8.2-R8.7 条件验收自动化 | `engineering_passed_locally / blocked_external` | R8.6 完整 release、7 项 sealed gate、0 日志泄露和同 manifest rollback 已通过；R8.7 OpenSSL/Prisma 最终镜像探针通过，完整发布重测连续两次受 Debian 502 阻断；GPU L0 workflow 未运行 |
 | 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
 | 日志泄露门禁 | `passed` | 实际 18 服务生成 200/400/503 日志；29 条网关 JSON 可解析，15 个合成敏感标记泄露 0，容器和卷残留 0 |
 | 存储容量真实性 | `engineering_passed` | S3 不再伪报固定容量；79/79 定向测试与 PostgreSQL 跨账号/项目并发通过；MinIO v3 物理指标实测存在；H13/H14 仍待签字 |
