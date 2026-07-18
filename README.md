@@ -70,6 +70,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R8.1 本机镜像与扫描通过，但当前 commit 的 GitHub workflow 尚未运行；完整 Compose release、浏览器 Staging smoke、隔离恢复和 rollback 将在 R8.2 的 scheduled/manual 条件门禁接入。详细证据见 [`docs/R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md`](docs/R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md)。
 - R8.2 新增 scheduled/manual Staging release workflow，串联资源预检、完整 release、运行日志泄露检查、同 manifest rollback、API/浏览器 smoke、资源清理和受限证据上传；真实模型另设仅手工触发的 GPU L0 workflow，结束时恢复文本与 OCR 常驻。
 - R8.2 在 Python 3.10.19 隔离容器中完成 OCR 适配器全依赖安装、`pip check` 与 8/8 契约测试；这不代表真实 Paddle 推理或准确率通过。旧 Staging `.env` 的 19 个仓库管理项已安全升级，第二次初始化更新 0 项且不改 secret。完整本地 release 将在干净提交后执行；详见 [`docs/R8_2_CONDITIONAL_ACCEPTANCE_AUTOMATION_REPORT_2026-07-18.md`](docs/R8_2_CONDITIONAL_ACCEPTANCE_AUTOMATION_REPORT_2026-07-18.md)。
+- R8.2 首次完整 release 在构建前暴露 Compose 共享镜像误拉取：`minio-init` 复用本地 backup 镜像却被当作 registry 镜像。现已改为只拉取 5 个固定第三方运行服务，且失败现场无容器/数据写入；修复后的完整重跑尚未开始。
 - H10 的 MFA、自审批、跨账号同人、双人复核、break-glass 和正式动作矩阵仍未签字；这些人工门禁不由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。

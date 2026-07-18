@@ -45,6 +45,7 @@ const runtimeEnv = {
   TEMPO_IMAGE: `finance-agent/staging-tempo:${shortSha}`
 };
 const composePrefix = ['compose', '--env-file', '.env', '-f', 'compose.yaml'];
+const runtimePullServices = ['redis', 'clamav', 'gateway', 'grafana', 'loki'];
 
 run('node', ['scripts/verify-config.mjs'], runtimeEnv);
 await mkdir(releaseEvidenceRoot, { recursive: true, mode: 0o700 });
@@ -60,7 +61,7 @@ if (runningServices(runtimeEnv).includes('backup')) {
   run('docker', [...composePrefix, 'exec', '-T', 'backup', '/opt/staging/run-backup.sh'], runtimeEnv);
 }
 
-run('docker', [...composePrefix, 'pull', '--ignore-buildable', '--policy', 'missing'], runtimeEnv);
+run('docker', [...composePrefix, 'pull', '--policy', 'missing', ...runtimePullServices], runtimeEnv);
 run('docker', [
   ...composePrefix, 'build', '--provenance=mode=max', '--sbom=true',
   'backend-api', 'frontend', 'postgres', 'backup', 'minio', 'prometheus',

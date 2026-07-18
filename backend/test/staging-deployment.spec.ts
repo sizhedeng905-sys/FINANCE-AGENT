@@ -178,6 +178,9 @@ describe('B8-09 staging deployment', () => {
       release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
     );
     expect(release).toContain("'--scope', 'staging'");
+    expect(release).toContain("const runtimePullServices = ['redis', 'clamav', 'gateway', 'grafana', 'loki']");
+    expect(release).toContain("'pull', '--policy', 'missing', ...runtimePullServices");
+    expect(release).not.toContain("'pull', '--ignore-buildable'");
     expect(lockImages).toContain("new Set(['staging', 'all'])");
     expect(release.indexOf('expectedSchema: RELEASE_PLAN_SCHEMA')).toBeLessThan(
       release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
