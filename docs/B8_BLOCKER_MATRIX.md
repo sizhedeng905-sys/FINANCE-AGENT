@@ -104,8 +104,8 @@
 | 观测 | Prometheus、Alertmanager、Loki、Promtail、Tempo、Grafana；W3C trace 与 OTLP bounded exporter；错误/容量/备份告警 |
 | 备份/回退 | logical/base/WAL、对象快照、SHA-256 manifest、临时 restore drill、应用/数据/模型回退脚本完成 |
 | 配置门禁 | 18 services；证书链、固定版本 tag、仅 TLS gateway 发布端口、只读应用容器、secret 未跟踪断言通过 |
-| 完整回归 | backend build；263/263 unit；60/60 PostgreSQL；16/16 Playwright；frontend build；10/10 shell syntax |
-| 容器/恢复 | `blocked_external`；基础服务镜像已拉取且 backup image 已构建，Node build metadata 请求 TLS timeout；未执行 Compose `up`、smoke 或实测 RPO/RTO |
+| 完整回归 | backend build；264/264 unit；60/60 PostgreSQL；16/16 Playwright；frontend build；runtime 4/4 |
+| 容器/恢复 | 本机隔离 18 服务 `up`、Node/browser smoke 及清理通过；目标 Linux Staging、restore、rollback 和实测 RPO/RTO 为 `blocked_external` |
 | 真实业务数据 | 未读取、未修改；Staging seed 仅使用随机密码合成账号 |
 
 ## 问题矩阵
@@ -130,7 +130,7 @@
 
 | 编号 | 严重性 | 边界 | 负责人 | R0 复现/风险证据 | 修复提交 | 验收证据 | 状态 | 人工门禁 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| R1-FRONTEND-001 | P0 | Staging frontend runtime/build/CSP | 工程执行者 | 审计指出镜像未显式 `api`，且 `/api` 可能触发单参数 `new URL` 异常；R1 先补红灯 | - | 待 runtime、镜像及浏览器 smoke | open | 无 |
+| R1-FRONTEND-001 | P0 | Staging frontend runtime/build/CSP | 工程执行者 | 红灯：相对 `/api` 抛出 URL 异常；缺失模式回退 Mock；镜像没有模式证明；仅 HTTP smoke | 本提交（R1） | runtime 4/4；静态部署 8/8；显式 API build；本机 18 服务 Node/browser smoke；Playwright 16/16 | verified | 无 |
 | R2-LOG-001 | P1 | Gateway/application access log | 工程执行者 | 日志模板可能记录完整 request URI/query，存在预签名参数泄露面；R2 先生成假签名红灯 | - | 待 JSON 日志泄露回归 | open | H09/H14 约束 IP 保留 |
 | R3-STORAGE-001 | P1 | S3 capacity/readiness | 工程执行者 | 容量可能以固定配置冒充可信物理可用空间；R3 先验证实际返回语义 | - | 待容量来源与降级矩阵 | open | H13/H14 约束正式告警阈值 |
 | R4-RECOVERY-001 | P1 | Database/object backup restore | 工程执行者 | 现有恢复可能只比较对象数量，且数据库与对象恢复缺少一致性边界 | - | 待 manifest 内容校验、失败注入和恢复演练 | open | H14 决定正式 RPO/RTO/保留 |
@@ -160,7 +160,7 @@
 | B8-MODEL-001 | P1 | B8-07 | 模型控制面/GPU/代理 | 路由配置快照、鉴权 ready、跨进程 GPU 锁和代理边界待收口 | 同一 resolved deployment、互斥锁、固定容器和代理错误契约 | 路由/GPU/代理测试 | verified | H-13 属于 B8-09 目标部署选择，不阻断本地工程门禁 |
 | B8-UAT-001 | P0 | B8-08/09 | 财务 UAT 与 Staging | 匿名 UAT 工具和自动对账已完成；财务/OCR/重复/冲销、部署和恢复仍无人工签字 | 授权人员完成八场景结论，目标环境完成恢复/回退演练 | UAT 签字、RPO/RTO、回退记录 | blocked_external | H-01 至 H-16 |
 | B8-STAGING-001 | P1 | B8-09 | API/Worker、Redis、S3、TLS、观测 | 单进程、本地磁盘、内存限流和缺少集中观测不满足 Staging | 拆分运行角色，私有依赖、TLS、指标/日志/trace、不可变权限和回退脚本 | 单测、Compose JSON、安全配置、shell syntax、全量回归 | verified | 无 |
-| B8-STAGING-002 | P0 | B8-09 | 镜像、真实备份恢复与回退 | 数据服务基础镜像已拉取；Node build metadata 请求发生 registry TLS handshake timeout，release 在 `up` 前停止 | 在 H-13 指定服务器/registry 锁定 digest，运行 release、smoke、backup/restore 和 rollback | 镜像 lock、TLS smoke、RPO/RTO、对象/DB 恢复和回退证据 | blocked_external | H-13/H-14 |
+| B8-STAGING-002 | P0 发布门禁 | B8-09 | 目标镜像、真实备份恢复与回退 | 本机固定镜像、18 服务启动和 smoke 已通过；尚无 H-13 指定服务器/registry，未执行目标 restore/RPO/RTO/rollback | 在 H-13 指定服务器/registry 锁定 digest，运行 release、smoke、backup/restore 和 rollback | 目标镜像 lock、TLS smoke、RPO/RTO、对象/DB 恢复和回退证据 | blocked_external | H-13/H-14 |
 | B8-PILOT-001 | P0 | B8-09 | 小范围试运行与最终批准 | 尚无目标用户/项目清单、外部 AI 政策、独立 Review 和最终 UAT 签字 | 使用日检表和正式 Issue 完成受控试运行，关闭 P0/P1 后签字 | H-12 至 H-16 文档、每日证据、Issue 关闭记录 | blocked_external | H-12/H-13/H-14/H-15/H-16 |
 | B8-STAGING-003 | P1 | B8-09/RC | 多实例登录、上传与模型闸门 | 全局请求限流已共享，但登录、上传准入和模型并发仍为进程内状态 | Staging 保持单 API/单 Worker；横向扩容前迁移到共享原子控制并验证故障恢复 | 拓扑断言、多实例并发和 Redis 故障测试 | open | H-13 若要求横向扩容则阻断 |
 | RC-MIGRATION-001 | P1 | RC-03 | 空库与升级 migration | 原门禁只验证已有测试库，无法单独证明空库和上一版本升级 | 创建随机 `_test` 临时库并分别验证 24 条空库和 23→24 升级，最后强制清理 | `npm run db:migration-paths --prefix backend` | verified | 无 |

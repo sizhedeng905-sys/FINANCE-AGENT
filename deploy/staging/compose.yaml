@@ -12,7 +12,7 @@ x-backend-environment: &backend-environment
   TRUSTED_PROXIES: 172.31.90.10
   SWAGGER_ENABLED: "false"
   FILE_STORAGE_DRIVER: s3
-  S3_ENDPOINT: https://objects.finance-agent.local:${STAGING_OBJECT_PORT:-9443}
+  S3_ENDPOINT: https://objects.finance-agent.local:9443
   S3_REGION: us-east-1
   S3_BUCKET: finance-agent-raw
   S3_FORCE_PATH_STYLE: "true"
@@ -114,6 +114,7 @@ services:
   redis:
     image: ${REDIS_IMAGE:-redis:8.2.3-alpine}
     restart: unless-stopped
+    user: "999:1000"
     entrypoint: ["/bin/sh", "/opt/staging/redis-entrypoint.sh"]
     secrets:
       - redis_password
@@ -196,7 +197,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24.18.0-bookworm-slim}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.0-alpine}
+        VITE_APP_DATA_MODE: api
         VITE_API_BASE_URL: /api
+        VITE_API_TIMEOUT_MS: "15000"
     restart: unless-stopped
     entrypoint: ["nginx", "-g", "daemon off;"]
     read_only: true
@@ -217,6 +220,7 @@ services:
   gateway:
     image: ${NGINX_IMAGE:-nginx:1.28.0-alpine}
     restart: unless-stopped
+    user: "101:101"
     entrypoint: ["nginx", "-g", "daemon off;"]
     read_only: true
     ports:
@@ -395,10 +399,12 @@ services:
   node-exporter:
     image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.9.1}
     restart: unless-stopped
-    command: ["--collector.textfile.directory=/metrics"]
+    command:
+      - --collector.textfile.directory=/backup-metrics
+      - --collector.textfile.directory=/tls-metrics
     volumes:
-      - backup_metrics:/metrics:ro
-      - ./.runtime/metrics/finance_agent_tls.prom:/metrics/finance_agent_tls.prom:ro
+      - backup_metrics:/backup-metrics:ro
+      - ./.runtime/metrics:/tls-metrics:ro
     networks:
       - observability
 

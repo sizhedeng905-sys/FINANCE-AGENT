@@ -1,12 +1,12 @@
 # 阶段结果：B8-09
 
-更新日期：2026-07-17
+更新日期：2026-07-18
 
 ## 1. 阶段状态
 
-`engineering_complete / blocked_external`
+`engineering_verified_locally / blocked_external`
 
-工程实现、配置渲染、证书链、静态恢复门禁和现有全量回归已完成。基础服务镜像已经拉取，backup 镜像也完成本地构建；目标 Staging 的真实容器启动、关联备份恢复 RPO/RTO 和发布回退仍未通过，原因是 Node 基础镜像 metadata 请求发生 registry TLS handshake timeout。H-12 至 H-16 也未由授权人员完成。因此本阶段不声明 Staging 验收通过或生产就绪。
+工程实现、配置渲染、证书链、静态恢复门禁和现有全量回归已完成。2026-07-18 已成功拉取固定 Node 镜像并在本机隔离 Compose project 中真实启动全部 18 服务，完成 TLS/API/Worker/四角色/Metrics smoke 与真实浏览器 API/CSP/合成写读软归档。目标 Linux Staging、关联备份恢复 RPO/RTO 和发布回退仍未通过，H-12 至 H-16 也未由授权人员完成。因此本阶段不声明目标 Staging 验收通过或生产就绪。
 
 ## 2. 已完成工作
 
@@ -21,6 +21,8 @@
 - 增加应用 Git SHA 镜像、迁移前检查、smoke、release manifest、应用/数据/模型路由回退脚本；发布成功后另存实际模型路由快照，回退恢复目标 release 的完整启停状态。
 - 网关使用内建 request id 并贯穿 API/错误日志；客户端请求体上限为 52 MiB，使恰好 50 MiB 文件加 multipart 边界可到达后端统一校验。
 - 增加合成 Staging 四角色账号初始化；随机密码只存在 Docker secret，不使用仓库内 `123456` 演示密码。
+- 前端构建强制显式 `api` 模式并生成可核验的 `runtime-config.json`；支持同源 `/api`，拒绝协议相对、凭据、反斜线、查询和片段等危险 base URL。
+- 前端 Nginx 增加 CSP；真实浏览器 smoke 断言 API 网络响应、后端不可用错误、Mock 控件缺失、CSP 探针和合成项目清理。
 - CI 新增 Staging secret/TLS 初始化、Compose JSON 安全断言和所有 shell 脚本语法检查。
 
 ## 3. 主要文件
@@ -36,17 +38,19 @@
 | 门禁 | 结果 |
 | --- | --- |
 | 后端 production build | 通过 |
-| 后端 Jest | 29/29 suites，263/263 tests |
+| 后端 Jest | 29/29 suites，264/264 tests |
 | PostgreSQL integration | 2/2 suites，60/60 tests；正常 API→Worker 交接不增加 attempt，过期租约恢复仍增加 attempt |
 | 大批量回归 | 30,196 行 17.707 秒、49,999 行 32.253 秒；RSS 增量分别 152.21/295.71 MiB，连接峰值均 10 |
-| 前端 production build | 通过；3143 modules；保留既有 Ant Design chunk |
+| 前端 production build | 通过；显式 `api + /api`；3144 modules；产物清单通过 |
 | Playwright | 16/16 tests；teardown 文件残留 0 |
+| 前端运行时 | 4/4 tests；相对 `/api`、缺失模式、危险 URL 和路径边界均覆盖 |
 | Migration 双路径 | 空库 24/24；上一基线 23→24；最终 41 表、27 enum、173 index、77 foreign key |
 | Staging 初始化 | 随机 secret 与本地 CA 生成通过；生成目录被 Git 忽略 |
 | Compose 配置 | 18 services；证书链、固定版本标签、仅 TLS gateway 发布端口、PostgreSQL TLS、只读应用容器和 secret 未跟踪断言通过 |
 | Shell 语法 | 10/10 scripts 通过 Git Bash `bash -n` |
-| 容器构建 | `blocked_external`；基础服务镜像已拉取、backup 已构建；Node build metadata 请求 TLS timeout，未执行 Compose `up` |
-| 真实 restore/RPO/RTO | `blocked_external`；基础镜像不可拉取，未运行，未填写虚假结果 |
+| 容器构建 | 通过；Node `sha256:6f7b...1452d`；frontend `83f5...933`、backend `877e...845`、backup `8c11...c5f` |
+| 本机隔离 18 服务 | 通过；Node smoke 与真实浏览器 API/CSP smoke 通过，合成项目软归档；容器和卷残留 0 |
+| 目标 restore/RPO/RTO | `blocked_external`；H13/H14 目标环境和政策未提供，未运行，未填写虚假结果 |
 
 测试没有读取、修改或提交真实业务原件和模型权重；`backend/.env` 仅由本地 Prisma/Nest 工具按既有配置消费，内容未输出、未修改、未暂存。
 
@@ -82,7 +86,7 @@
 
 ## 8. 下一步
 
-1. 修复目标主机到受控 registry 的连接，先取得固定 Node 基础镜像，再完成全部镜像 digest 锁定。
-2. 在 H-13 指定的 Linux Staging 执行 `staging:release`、smoke、真实 backup/restore 和应用/模型回退。
+1. 由 H-13 提供目标 Linux 服务器、域名、受控 registry、正式 secret 和监控接收人，并完成全部镜像 digest 锁定。
+2. 在该目标 Staging 执行 `staging:release`、smoke、真实 backup/restore 和应用/模型回退。
 3. 将实测 RPO/RTO、日志/指标/trace 截图和告警送达记录附到本报告。
 4. 完成 H-12/H-14/H-15/H-16；仅在问题全部关闭后把 B8-09 改为通过。

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "test:runtime": "node --test frontend-tests/runtime-config.test.mjs",
     "test:e2e:prepare": "node backend/scripts/prepare-e2e.mjs",
     "test:e2e": "npm run test:e2e:prepare && playwright test",
     "test:e2e:ocr-real": "npm run test:e2e:prepare && playwright test --config playwright.ocr-real.config.ts",
@@ -35,7 +36,8 @@
     "staging:init": "node deploy/staging/scripts/init-staging.mjs",
     "staging:check": "node deploy/staging/scripts/verify-config.mjs",
     "staging:lock-images": "node deploy/staging/scripts/lock-images.mjs",
-    "staging:smoke": "node deploy/staging/scripts/smoke-test.mjs",
+    "staging:smoke": "node deploy/staging/scripts/smoke-test.mjs && node deploy/staging/scripts/browser-smoke.mjs",
+    "staging:frontend:check": "node deploy/staging/scripts/verify-frontend-build.mjs",
     "staging:release": "node deploy/staging/scripts/release.mjs",
     "staging:rollback": "node deploy/staging/scripts/rollback.mjs"
   },

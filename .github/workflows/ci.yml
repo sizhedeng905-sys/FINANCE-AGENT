@@ -112,8 +112,14 @@ jobs:
           npm run db:migration-paths
 
       - name: Build frontend and backend
+        env:
+          VITE_APP_DATA_MODE: api
+          VITE_API_BASE_URL: /api
+          VITE_API_TIMEOUT_MS: "15000"
         run: |
+          npm run test:runtime
           npm run build
+          npm run staging:frontend:check
           npm run build --prefix backend
 
       - name: Run backend unit tests

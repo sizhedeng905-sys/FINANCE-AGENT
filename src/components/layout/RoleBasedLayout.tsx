@@ -107,7 +107,6 @@ export default function RoleBasedLayout() {
                   message.warning(error instanceof Error ? error.message : '退出请求失败，本地会话已清理');
                 } finally {
                   setLoggingOut(false);
-                  window.location.replace('/login');
                 }
               }}
             >

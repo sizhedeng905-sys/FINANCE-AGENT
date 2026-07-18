@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = parseEnv(await readFile(join(stagingRoot, '.env'), 'utf8'));
-const port = Number(env.STAGING_WEB_PORT ?? '8443');
+const port = Number(process.env.STAGING_WEB_PORT ?? env.STAGING_WEB_PORT ?? '8443');
 const ca = await readFile(join(stagingRoot, '.runtime', 'tls', 'ca.crt'));
 const password = (await readFile(join(stagingRoot, '.secrets', 'staging_seed_password'), 'utf8')).trim();
 const checks = [];
@@ -32,7 +32,7 @@ for (const [username, role] of [
 ]) {
   const login = await request('/api/auth/login', 'POST', { username, password });
   const body = JSON.parse(login.body);
-  assert(login.status === 201 && body.data?.user?.role === role && body.data?.accessToken, `login:${role}`);
+  assert(login.status === 200 && body.data?.user?.role === role && body.data?.accessToken, `login:${role}`);
   checks.push({ name: `login:${role}`, status: login.status });
 }
 

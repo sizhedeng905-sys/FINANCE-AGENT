@@ -1,4 +1,5 @@
 import { runtimeConfig } from '@/config/runtime';
+import { buildApiUrl } from '@/config/runtime-config';
 import { clearAccessToken, createRequestId, getAccessToken, getCsrfToken, notifySessionExpired } from './authSession';
 
 export interface ApiEnvelope<T> {
@@ -88,7 +89,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (options.body !== undefined && !isFormData) headers.set('Content-Type', 'application/json');
 
   try {
-    const response = await fetch(`${runtimeConfig.apiBaseUrl}${path}`, {
+    const response = await fetch(buildApiUrl(runtimeConfig.apiBaseUrl, path), {
       ...options,
       body: options.body === undefined
         ? undefined
@@ -178,7 +179,7 @@ async function requestBinary(path: string, options: Omit<RequestOptions, 'body'>
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
   try {
-    const response = await fetch(`${runtimeConfig.apiBaseUrl}${path}`, {
+    const response = await fetch(buildApiUrl(runtimeConfig.apiBaseUrl, path), {
       ...options,
       method: options.method ?? 'GET',
       headers,

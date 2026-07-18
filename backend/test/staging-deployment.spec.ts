@@ -10,13 +10,20 @@ describe('B8-09 staging deployment', () => {
     const compose = read(stagingRoot, 'compose.yaml');
     const gateway = read(stagingRoot, 'gateway', 'nginx.conf');
     expect(compose).toContain('FILE_STORAGE_DRIVER: s3');
+    expect(compose).toContain('S3_ENDPOINT: https://objects.finance-agent.local:9443');
+    expect(compose).not.toContain('S3_ENDPOINT: https://objects.finance-agent.local:${STAGING_OBJECT_PORT');
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('FILE_SCAN_MODE: clamav');
     expect(compose).toContain('ssl=on');
     expect(compose).toContain('internal: true');
     expect(compose).toContain('http://127.0.0.1:9000/minio/health/live');
     expect(compose).not.toContain('["CMD", "mc", "ready", "local"]');
+    expect(compose).toContain('user: "999:1000"');
+    expect(compose).toContain('--collector.textfile.directory=/backup-metrics');
+    expect(compose).toContain('--collector.textfile.directory=/tls-metrics');
+    expect(compose).not.toContain(':/metrics/finance_agent_tls.prom:ro');
     expect(compose).toContain('127.0.0.1:${STAGING_WEB_PORT:-8443}:8443');
+    expect(compose).toMatch(/gateway:\s[\s\S]*?user: "101:101"[\s\S]*?cap_drop: \[ALL\]/);
     expect(gateway).toContain('client_max_body_size 52m');
     for (const port of ['5432:5432', '6379:6379', '9000:9000', '3310:3310']) {
       expect(compose).not.toContain(port);
@@ -34,6 +41,24 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('read_only: true');
     expect(dockerfile).toContain('USER 10001:10001');
     expect(dockerfile).not.toMatch(/(?:JWT_SECRET|DATABASE_URL)=/);
+  });
+
+  it('builds the staging frontend in explicit API mode with CSP and browser smoke', () => {
+    const compose = read(stagingRoot, 'compose.yaml');
+    const dockerfile = read(repositoryRoot, 'Dockerfile.frontend');
+    const frontendNginx = read(stagingRoot, 'frontend-nginx.conf');
+    const browserSmoke = read(stagingRoot, 'scripts', 'browser-smoke.mjs');
+    expect(compose).toContain('VITE_APP_DATA_MODE: api');
+    expect(dockerfile).toContain('ARG VITE_APP_DATA_MODE');
+    expect(dockerfile).toContain('test "$VITE_APP_DATA_MODE" = "api"');
+    expect(dockerfile).toContain('npm ci --ignore-scripts');
+    expect(frontendNginx).toContain('Content-Security-Policy');
+    for (const directive of ['default-src', 'script-src', 'connect-src', 'img-src', 'object-src', 'base-uri', 'frame-ancestors']) {
+      expect(frontendNginx).toContain(directive);
+    }
+    expect(browserSmoke).toContain("dataMode === 'api'");
+    expect(browserSmoke).toContain("page.on('pageerror'");
+    expect(browserSmoke).toContain("response.url().includes('/api/')");
   });
 
   it('makes audit and ledger mutation unavailable to the runtime database role', () => {

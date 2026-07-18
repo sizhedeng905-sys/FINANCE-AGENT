@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。B8-09 与 RC-04 的历史自动化证据仍然有效，但 2026-07-18 的 R 系列重新审计又登记了 1 个 P0 和 9 个 P1/条件 P1；这些问题、真实 Staging、财务/OCR/AI 真值和人工签字都尚未关闭，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1 已用真实浏览器和本机隔离 18 服务栈关闭该 P0，仍有 9 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -15,9 +15,10 @@
 | B0-B7 真实数据工程 | `engineering_complete` | 大文件、四来源记录、模型、并发与故障恢复已有自动化证据 |
 | B8-01 至 B8-07 | `historically_verified / reopened` | 历史门禁通过；R 系列又发现前端真实性、日志、容量、恢复、并发和精度边界 |
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
-| B8-09 Staging | `blocked_p0_p1_and_external` | R1 P0 未关闭；18 服务尚未真实 `up`、smoke、restore 或 rollback |
+| B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0 基线与问题台账完成，R1 P0 正在处理，其余按风险顺序排队 |
+| R0-R11 修复与再验收 | `in_progress` | R0 基线与 R1 前端真实性 P0 已完成；R2 日志泄露边界正在进入复现，其余按风险顺序排队 |
+| AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -30,15 +31,17 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0 重新审计进展
+### R0-R1 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
 - PR #4 仍为 open Draft，`main <- agent/b8-stable-hardening`，69 commits，mergeable；未执行 merge、Ready、rebase、force push 或关闭旧 PR。
 - 指定人工文件 `FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 不存在，空白 `人工复核.md` 不构成批准；H01-H16 全部保持未决。
-- 开放问题包括 Staging 前端真实性 P0，以及日志泄露、S3 容量、恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 P1。
+- R1 红灯证明了相对 `/api` 解析、隐式 Mock、镜像模式和浏览器 smoke 缺口；现已强制显式 `api` 构建、产物清单核验、同源 URL 约束、CSP 和真实浏览器写读清理。
+- 本机隔离的 18 服务栈已真实启动并通过 TLS、readiness、四角色登录、错误登录、Metrics 和浏览器 CSP/API smoke；合成项目经 API 软归档，测试容器和卷已删除。该证据不替代 H13/H14 指定的目标环境与恢复演练。
+- 当前开放工程问题为日志泄露、S3 容量、恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 9 个 P1/条件 P1。
 
-逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 P0 未关闭前，不声明 Staging 可用，也不进入真实用户试运行。
+逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
 ## 已实现闭环
 
@@ -105,11 +108,12 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 | 门禁 | 结果 | 证据摘要 |
 | --- | --- | --- |
-| 前端 production build | `passed` | Vite 构建 3,143 modules |
+| 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | 29/29 suites，263/263 tests |
+| 后端 Jest | `passed` | 29/29 suites，264/264 tests |
 | PostgreSQL 集成 | `passed` | 2/2 suites，60/60 tests |
 | 浏览器 E2E | `passed` | Playwright 16/16 |
+| 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
 | Prisma | `passed` | 24/24 migrations；41 表、27 enums、173 indexes、77 foreign keys |
 | Migration 路径 | `passed` | 空 `_test` 库 24 条；上一基线 23 条再升级第 24 条 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
@@ -119,10 +123,11 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | Paddle adapter | `passed` | 运行镜像内 8/8；合成 PDF 实际 OCR 接受测试通过 |
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |
 | Staging 静态门禁 | `passed` | 18 services、17 secrets、TLS、固定 tag、私网和只读应用容器 |
+| 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
 | Shell/Compose | `passed` | 10/10 shell、1/1 PowerShell syntax、两份 Compose config |
 | 最新 GitHub Build | `passed` | 完整 build、263 单测、60 集成、16 E2E，run `29634353327` |
 | 最新 GitHub CodeQL | `passed` | JavaScript/TypeScript 分析成功，无开放 review thread |
-| 真实 Staging release | `blocked_external` | Node 基础镜像 metadata TLS timeout；没有执行 `up`、smoke 或 restore drill |
+| 目标 Staging release | `blocked_external` | 本机隔离启动不等于 H13 目标环境；尚未执行目标 Linux release、真实 restore/RPO/RTO 或 rollback drill |
 
 测试数量下降必须解释，不得通过删除测试、放宽安全断言或静默回退 Mock 制造绿色结果。
 
@@ -309,12 +314,16 @@ npm run build
 npm run build --prefix backend
 ```
 
+前端构建必须显式设置 `VITE_APP_DATA_MODE` 和 `VITE_API_BASE_URL`。本地可复制 `.env.example` 为 `.env.local`；Staging/CI 固定使用 `api` 与 `/api`，缺失或非法值会让构建失败。
+
 核心自动化：
 
 ```bash
 npm test --prefix backend
+npm run test:runtime
 npm run test:integration --prefix backend
 npm run test:e2e
+npm run staging:frontend:check
 npm run check:hygiene
 npm run db:migration-paths --prefix backend
 ```
@@ -366,21 +375,17 @@ npm run staging:release
 - API/Worker 分离、Redis、MinIO、ClamAV、PostgreSQL TLS 和三套可观测性服务。
 - migrator/runtime/backup 数据库账号分离；runtime 不能更新或删除 audit/ledger。
 - 应用回退、数据恢复和模型回退脚本及人工确认边界。
-- 基础服务镜像拉取和 backup 镜像构建。
+- 固定 Node 镜像已拉取，本机前端、后端和 backup 镜像已按本地 image ID 构建。
+- 本机隔离 18 服务真实 `up`，Node smoke、浏览器 API/CSP smoke 和合成项目写读软归档通过；测试容器与卷已全部删除。
+- 前端镜像只接受显式 `api`，构建后校验 `runtime-config.json`；Nginx CSP 阻断内联脚本、外部连接和外部 frame。
 
 当前未完成：
 
-- Node 基础镜像 metadata 拉取成功后的完整 `docker compose up`。
-- 真实 TLS、Redis、MinIO/S3、ClamAV、PostgreSQL 和 Worker smoke。
-- 真实备份恢复、对象恢复、RPO/RTO 和 rollback 演练。
+- H13 指定的 Linux 服务器、域名、受控 registry、正式 secret 和监控接收人。
+- 目标环境的 Promtail、WAL archive、对象生命周期、告警送达和完整 release smoke。
+- 真实备份/对象恢复、RPO/RTO、应用/数据/模型 rollback 和独立签字。
 
-Registry 恢复后的第一条安全命令：
-
-```bash
-docker pull node:24.18.0-bookworm-slim
-```
-
-拉取成功后按 [`docs/B8_09_STAGING_RUNBOOK.md`](docs/B8_09_STAGING_RUNBOOK.md) 重新运行 `npm run staging:release`，不得跳过 smoke 或 restore drill。
+按 [`docs/B8_09_STAGING_RUNBOOK.md`](docs/B8_09_STAGING_RUNBOOK.md) 在获批目标环境重新运行 `npm run staging:release`，不得用本机隔离 smoke 替代 restore 或 rollback drill。
 
 ## 目录结构
 

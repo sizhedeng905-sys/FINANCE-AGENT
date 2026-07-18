@@ -3,7 +3,7 @@
 更新日期：2026-07-18
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；历史 B8/RC 证据保留，但新发现的 1 个 P0 和 9 个 P1/条件 P1 在复现、修复和回归前保持开放
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1 已关闭唯一工程 P0，9 个 P1/条件 P1 继续按风险顺序处理；AI 映射补充任务 M0-M8 已纳入同一主线
 
 ## 完成口径
 
@@ -17,11 +17,12 @@
 | 阶段 | 状态 | 当前证据/下一门禁 |
 | --- | --- | --- |
 | R0 基线、资产保护、问题台账 | 完成 | HEAD/分支/工作树/忽略项/PR/checks/review threads 已实查；开放问题已编号；未跟踪资产未触碰 |
-| R1 Staging frontend 真实 API | 进行中 | P0；先复现相对 `/api`、隐式 Mock、镜像和浏览器 smoke 缺口 |
-| R2-R8 日志、容量、恢复、镜像、后端边界、治理、CI | 排队 | 每项执行红灯、最小修复、定向回归、README、提交与推送 |
+| R1 Staging frontend 真实 API | 完成 | P0 已关闭；显式 API build、同源 URL、产物清单、CSP、本机 18 服务和真实浏览器 smoke 均有证据 |
+| R2-R8 日志、容量、恢复、镜像、后端边界、治理、CI | R2 进入复现 | 每项执行红灯、最小修复、定向回归、README、提交与推送 |
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
+| M0-M8 AI 分类/映射/审批/快照补充 | 排队 | 主任务 P0/P1 优先；随后先做复用矩阵，扩展阶段 9/10、现有 AI/审批/报告能力，不另造平行模块 |
 
 指定人工决策文件 `FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 当前不存在；空白或非指定文件不构成批准，H01-H16 保持未决。
 
@@ -38,7 +39,7 @@
 | B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
 | B8-07 模型控制面、GPU 与反向代理 | 工程完成 | 不可变部署快照、认证身份探针、跨进程 GPU 状态机、容器/SBOM/CVE 和 50 MiB 代理边界通过 |
 | B8-08 人工财务 UAT | 工具完成 / 外部阻断 | 八场景匿名 manifest、逐分对账、问题/签字模板和 `_test` 数据库门禁完成；H-01 至 H-12、H-16 待授权人员完成 |
-| B8-09 Staging 与试运行 | 工程完成 / 外部阻断 | API/Worker、Redis、私有对象存储、TLS、观测、备份恢复和三类回退已交付；registry Node metadata、目标拓扑、真实恢复和 H-12 至 H-16 待完成 |
+| B8-09 Staging 与试运行 | 本机工程验收 / 外部阻断 | API/Worker、Redis、私有对象存储、TLS、观测、备份恢复和三类回退已交付，本机 18 服务与浏览器 smoke 通过；目标拓扑、真实恢复和 H-12 至 H-16 待完成 |
 | RC-00 至 RC-04 | 机器工作完成 / 外部阻断 | 攻击性审计、确定性修复、迁移双路径、全量门禁、PR reviewer guide 和交接包完成；发布仍受真实 Staging 与人工签字阻断 |
 
 B8-09 已完成的工程证据：
@@ -49,9 +50,9 @@ B8-09 已完成的工程证据：
 - 18 服务 Compose 只发布 TLS gateway；应用容器非 root、只读根、drop all capabilities；PostgreSQL TLS 且 migrator/runtime/backup 三账号分离。
 - runtime 对 `audit_logs/ledger_events` 只保留 INSERT/SELECT；关联数据库/对象备份、WAL/base backup、临时恢复演练、校验和与应用/数据/模型回退脚本完成。
 - 本机随机 secret/CA 初始化及 Compose JSON 门禁通过：18 services、证书链、固定版本 tag、私网端口和 Git secret 检查均通过；10/10 shell 脚本语法通过。
-- 自动化结果：后端 build；29/29 Jest suites、263/263 tests；2/2 PostgreSQL suites、60/60 tests；16/16 Playwright；前端 build 通过。正常 API→Worker 交接不增加 attempt，真实租约中断恢复仍增加 attempt。
+- R1 自动化结果：前端显式 API build（3,144 modules）及产物检查；后端 build；runtime 4/4；29/29 Jest suites、264/264 tests；2/2 PostgreSQL suites、60/60 tests；16/16 Playwright。正常 API→Worker 交接不增加 attempt，真实租约中断恢复仍增加 attempt。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
-- 基础服务镜像拉取已成功，backup 镜像也完成本地 build；随后 Node 基础镜像 metadata 请求发生 registry TLS handshake timeout，未执行 Compose `up`，因此未伪造 smoke、RPO/RTO 或 restore 通过结论。
+- 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。
 - 真实 GPU 再验收覆盖文本重启、VL 按需切换和文本恢复，期间 OCR 432 次 readiness 采样 0 失败；最终文本/OCR常驻，VL/Embedding离线。
 - 详细步骤与证据见 `docs/B8_09_STAGING_RUNBOOK.md`、`docs/B8_09_STAGING_REPORT.md` 和 `docs/RELEASE_CANDIDATE_AUDIT.md`。H-12 至 H-16 及此前未签字项继续为外部门禁。

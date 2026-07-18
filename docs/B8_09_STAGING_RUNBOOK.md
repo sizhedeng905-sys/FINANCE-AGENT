@@ -1,6 +1,6 @@
 # B8-09 Staging 与试运行运行手册
 
-更新日期：2026-07-17
+更新日期：2026-07-18
 
 ## 1. 使用边界
 
@@ -26,6 +26,8 @@
 | 可靠性 | backup | PostgreSQL logical/base/WAL 与对象快照关联；恢复脚本带校验和与显式确认门 |
 
 持久化任务事实仍在 PostgreSQL。Redis 用于全局请求共享限流、Worker 心跳和运行协调，不作为唯一任务事实源。登录、上传准入和模型并发闸门仍为进程内控制，因此本版本只允许单 API、单 Worker；横向扩容前必须完成共享化和多实例故障测试。
+
+前端镜像必须以 `VITE_APP_DATA_MODE=api`、`VITE_API_BASE_URL=/api` 构建。缺失/非法模式、危险 URL 或非 API Staging 构建均失败；构建后 `runtime-config.json` 必须再次通过 `npm run staging:frontend:check`。浏览器 smoke 会验证实际 API 请求、后端不可用错误、CSP、合成项目写读和软归档，不以首页 HTTP 200 代替可用性证明。中断后脚本会尽力软归档已创建项目；失败时输出项目 ID，要求人工处理。
 
 ## 3. 首次初始化
 
@@ -80,8 +82,9 @@ npm run staging:release
 6. 只在 `finance_agent_staging` 创建四个随机密码合成 UAT 账号；
 7. 启动 API、Worker、存储、安全和观测服务；
 8. 运行 TLS、readiness、四角色登录、错误登录和 Metrics smoke；
-9. 运行真实 logical restore drill；
-10. 写入不含 secret 的 release manifest。
+9. 运行真实浏览器 API/CSP smoke，并清理合成写入；
+10. 运行真实 logical restore drill；
+11. 写入不含 secret 的 release manifest。
 
 `migrate` 使用 `finance_migrator`；API/Worker 使用 `finance_runtime`；备份使用只读且具备 replication 权限的 `finance_backup`。三者不得复用密码。
 
@@ -101,6 +104,8 @@ https://staging.finance-agent.local:8443/ops/grafana/
 ```
 
 请求日志不记录 query、Cookie、Token 或请求正文；日志包含 `requestId` 和 `traceId`。`traceparent` 经网关继续传递，API 将有限队列中的 span 批量导出到 Tempo。导出失败不阻断财务请求，但 dropped/error 指标触发告警。
+
+2026-07-18 R1 本机隔离验收使用覆写主机端口启动全部 18 服务，Node smoke 与真实 Edge 浏览器 smoke 均通过；前端确认 `api + /api`，CSP 的内联脚本、外部连接和外部 frame 探针被阻断。验收后已删除该 Compose project 的容器与卷。该结果只证明本机工程链路，不替代 H13/H14 指定 Linux 环境中的 restore、RPO/RTO 或 rollback。
 
 必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、备份失败/过期和恢复演练过期。Alertmanager 外部接收人由 H-13/H-14 决定。
 

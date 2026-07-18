@@ -55,6 +55,9 @@ for (const name of ['backend-api', 'worker']) {
 for (const name of ['postgres', 'redis', 'clamav', 'minio']) {
   if (services[name]?.ports?.length) throw new Error(`${name} must remain private`);
 }
+if (services.frontend?.build?.args?.VITE_APP_DATA_MODE !== 'api' || services.frontend?.build?.args?.VITE_API_BASE_URL !== '/api') {
+  throw new Error('Staging frontend build must explicitly use API mode and the same-origin /api base');
+}
 if (!String(services.postgres?.command ?? '').includes('ssl=on')) {
   throw new Error('PostgreSQL TLS is not enabled in the rendered Compose config');
 }
@@ -78,6 +81,7 @@ const evidence = {
     onlyTlsGatewayPublished: true,
     databaseTlsEnabled: true,
     hardenedApplicationContainers: true,
+    frontendApiModeExplicit: true,
     generatedMaterialUntracked: true
   }
 };

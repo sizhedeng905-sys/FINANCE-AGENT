@@ -43,7 +43,7 @@
 | 前端关键路径 | `passed` | API 不回退 Mock、Decimal、任务轮询、错误 requestId、真实 actor 和服务端首页统计通过 |
 | 跨来源业务重复 | `pending_human_decision` | 用户明确暂缓；第一版保留人工复核，未自行定义业务指纹 |
 | OCR/AI 业务真值 | `awaiting_human_signoff` | 工程安全门禁通过；准确率、盲测和标准答案不能由 Codex签字 |
-| 目标 Staging/恢复 | `blocked_external` | registry TLS 阻断本机构建；目标服务器、凭据和真实恢复尚未提供 |
+| 目标 Staging/恢复 | `blocked_external` | 本机固定镜像和 18 服务 smoke 已通过；目标服务器、受控 registry、凭据和真实恢复尚未提供 |
 
 ## 4. RC 问题台账
 
@@ -65,9 +65,9 @@
 | RC-P2-04 | P2 | 401 主动跳转使 Playwright reload 竞态失败 | `769e962` | Playwright 16/16 | `passed` |
 | RC-P2-05 | P2 | 模型监控仍调用废弃匿名 OCR health | `1213ee8` | 真实切换、432 次 OCR 探针 | `passed` |
 | RC-H13-01 | P1 条件风险 | 登录、上传准入和模型闸门是进程内状态，不支持未经验证的横向扩容 | 当前 Compose 锁定单 API/单 Worker | 拓扑静态断言；扩容前需多实例故障测试 | `pending_human_decision` |
-| RC-EXT-01 | P0 发布门禁 | Node 基础镜像 metadata TLS timeout | 无代码规避 | 目标 registry release/smoke/restore | `blocked_external` |
+| RC-EXT-01 | P0 发布门禁 | 本机固定 Node 镜像及 18 服务 smoke 已通过；H13 目标 registry/server 未提供 | 无代码规避 | 目标 registry release/smoke/restore | `blocked_external` |
 
-本段 RC 结论只描述 `4d597721` 当时已经检查的范围，已被 2026-07-18 R 系列重新审计取代。当前至少有 R1 的 1 个 P0、R2-R6 与 R9 的 9 个 P1/条件 P1 尚未完成复现、修复和回归；在这些条目关闭前，不得再引用“没有开放代码 P0/P1”。实时状态以 `docs/B8_BLOCKER_MATRIX.md` 为准。
+本段 RC 结论只描述 `4d597721` 当时已经检查的范围，已被 2026-07-18 R 系列重新审计取代。R1 已用红灯、最小修复、本机隔离 18 服务与浏览器回归关闭唯一 P0；R2-R6 与 R9 的 9 个 P1/条件 P1 仍未完成。在这些条目关闭前，不得再引用“没有开放代码 P0/P1”。实时状态以 `docs/B8_BLOCKER_MATRIX.md` 为准。
 
 ## 5. 安全与仓库卫生
 

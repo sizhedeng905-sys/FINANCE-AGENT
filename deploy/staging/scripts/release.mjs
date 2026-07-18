@@ -37,6 +37,7 @@ run('docker', [...composePrefix, 'build', 'backend-api', 'frontend', 'backup'], 
 run('docker', [...composePrefix, 'up', '-d', '--wait', '--wait-timeout', '1200'], runtimeEnv);
 run('node', ['scripts/lock-images.mjs'], runtimeEnv);
 run('node', ['scripts/smoke-test.mjs'], runtimeEnv);
+run('node', ['scripts/browser-smoke.mjs'], runtimeEnv);
 run('docker', [...composePrefix, 'exec', '-T', 'backup', '/opt/staging/restore-drill.sh'], runtimeEnv);
 const modelRouteSnapshot = join(releasesRoot, `${releaseId}.model-routes.json`);
 await writeFile(modelRouteSnapshot, exportModelRoutes(runtimeEnv));
