@@ -183,7 +183,25 @@ describe('phase 8 boss AI assistant', () => {
       resolveSecret: jest.fn(() => undefined)
     };
     const grounding = new AiAnswerGroundingService();
-    const service = new AiService(prisma, tools, provider, auditLogs as any, config, modelRuntime, grounding);
+    const promptRegistry: any = {
+      resolveActive: jest.fn(async () => ({
+        promptVersion: { id: 'prompt_v2', promptKey: 'boss_chat', versionNo: 2 },
+        instructions: 'Return strict grounded claim JSON.',
+        timeoutPolicy: { timeoutMs: 5000, maxAttempts: 1, onFailure: 'MANUAL_REVIEW' },
+        versionVector: { schemaVersion: 'ai-prompt-bundle/1.0', prompt: { id: 'prompt_v2' }, components: [] },
+        bundleSha256: 'a'.repeat(64)
+      }))
+    };
+    const service = new AiService(
+      prisma,
+      tools,
+      provider,
+      auditLogs as any,
+      config,
+      modelRuntime,
+      grounding,
+      promptRegistry
+    );
 
     const result = await service.chat({ message: '今天经营情况', history: [] }, boss, {});
     expect(result.reply).toContain('收入1000元');
@@ -227,7 +245,8 @@ describe('phase 8 boss AI assistant', () => {
       auditLogs as any,
       config,
       modelRuntime,
-      grounding
+      grounding,
+      promptRegistry
     );
     const failed = await failingService.chat({ message: '再查一次今日经营' }, boss, {});
     expect(failed.fallback).toBe(true);
@@ -246,7 +265,8 @@ describe('phase 8 boss AI assistant', () => {
       auditLogs as any,
       config,
       modelRuntime,
-      grounding
+      grounding,
+      promptRegistry
     );
     await historyService.chat(
       { message: '那上个月呢？', conversationId: result.conversationId },

@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { AiPromptRegistryService } from './ai-prompt-registry.service';
 import { ModelExecutionGateService } from './model-execution-gate.service';
 import { ModelRuntimeController } from './model-runtime.controller';
 import { ModelRuntimeService } from './model-runtime.service';
@@ -18,9 +19,16 @@ import { StructuredOutputValidatorService } from './structured-output-validator.
     ModelExecutionGateService,
     ResilientHttpClientService,
     StructuredOutputValidatorService,
+    AiPromptRegistryService,
     JwtAuthGuard,
     RolesGuard
   ],
-  exports: [ModelRuntimeService, ModelExecutionGateService, ResilientHttpClientService, StructuredOutputValidatorService]
+  exports: [
+    ModelRuntimeService,
+    ModelExecutionGateService,
+    ResilientHttpClientService,
+    StructuredOutputValidatorService,
+    AiPromptRegistryService
+  ]
 })
 export class ModelRuntimeModule {}

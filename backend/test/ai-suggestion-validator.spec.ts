@@ -149,4 +149,64 @@ describe('AI suggestion output contracts', () => {
     expect(service.reportNarrative(narrative, new Set(['snapshot-1']))).toMatchObject({ snapshotId: 'snapshot-1' });
     expect(() => service.reportNarrative(narrative, new Set(['snapshot-2']))).toThrow('unauthorized snapshot');
   });
+
+  it('keeps template drafts and unmapped suggestions inside existing field allowlists', () => {
+    const draft = JSON.stringify({
+      schemaVersion: 'template-draft/1.0',
+      proposedName: 'Transport expense draft',
+      recordType: 'transport',
+      existingFieldKeys: ['amount', 'recordDate'],
+      warnings: [],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    });
+    expect(service.templateDraft(draft, fieldKeys)).toMatchObject({ recordType: 'transport' });
+    expect(() => service.templateDraft(draft, new Set(['amount']))).toThrow('unauthorized existing field');
+
+    const unmapped = JSON.stringify({
+      schemaVersion: 'unmapped-field-suggestion/1.0',
+      suggestions: [{
+        sourceRef: 'sheet0:C',
+        candidateExistingFieldKeys: ['amount'],
+        reasonCode: 'HEADER_ALIAS_MATCH'
+      }],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    });
+    expect(service.unmappedFields(unmapped, evidenceRefs, fieldKeys)).toMatchObject({
+      suggestions: [{ sourceRef: 'sheet0:C' }]
+    });
+    expect(() => service.unmappedFields(unmapped, evidenceRefs, new Set(['recordDate'])))
+      .toThrow('unauthorized existing field');
+  });
+
+  it('validates anomaly evidence and report fact-check references against server facts', () => {
+    const anomaly = JSON.stringify({
+      schemaVersion: 'mapping-anomaly-review/1.0',
+      issues: [{
+        code: 'AMBIGUOUS_AMOUNT',
+        severity: 'BLOCKING',
+        evidenceRefs: ['p1-t34'],
+        explanation: 'Multiple amount candidates require finance review.'
+      }],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    });
+    expect(service.anomalyReview(anomaly, evidenceRefs)).toMatchObject({ issues: [{ severity: 'BLOCKING' }] });
+    expect(() => service.anomalyReview(anomaly, new Set(['p1-b12']))).toThrow('unauthorized evidence');
+
+    const factCheck = JSON.stringify({
+      schemaVersion: 'report-fact-check/1.0',
+      snapshotId: 'snapshot-1',
+      narrativeHash: 'a'.repeat(64),
+      issues: [{ claimId: 'claim-1', code: 'VALUE_MISMATCH', sourcePath: '/metrics/income' }],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    });
+    const allowlist = {
+      snapshotIds: new Set(['snapshot-1']),
+      narrativeHashes: new Set(['a'.repeat(64)]),
+      claimIds: new Set(['claim-1']),
+      sourcePaths: new Set(['/metrics/income'])
+    };
+    expect(service.reportFactCheck(factCheck, allowlist)).toMatchObject({ snapshotId: 'snapshot-1' });
+    expect(() => service.reportFactCheck(factCheck, { ...allowlist, claimIds: new Set(['claim-2']) }))
+      .toThrow('unauthorized claim');
+  });
 });

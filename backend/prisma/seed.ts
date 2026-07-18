@@ -13,6 +13,8 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
+import { AI_PROMPT_DEFINITIONS } from '../src/model-runtime/ai-prompt-registry';
+
 const prisma = new PrismaClient();
 
 function assertSafeSeedEnvironment() {
@@ -628,27 +630,43 @@ async function main() {
     }
   });
 
-  await prisma.aiPromptVersion.upsert({
-    where: { promptKey_versionNo: { promptKey: 'boss_chat', versionNo: 1 } },
-    create: {
-      id: 'ai-prompt-boss-chat-v1',
-      promptKey: 'boss_chat',
-      versionNo: 1,
-      title: '老板经营问答 V1',
-      systemPrompt:
-        '你是物流企业老板的财务运营助手。只能依据工具返回的结构化上下文回答，不得编造金额、项目、工单或人员。工具没有提供答案时回答“需要人工确认”。',
-      userPromptTemplate: '用户问题：{{question}}\n工具上下文：{{tool_context}}',
-      isActive: true,
-      createdBy: 'system'
-    },
-    update: {
-      title: '老板经营问答 V1',
-      systemPrompt:
-        '你是物流企业老板的财务运营助手。只能依据工具返回的结构化上下文回答，不得编造金额、项目、工单或人员。工具没有提供答案时回答“需要人工确认”。',
-      userPromptTemplate: '用户问题：{{question}}\n工具上下文：{{tool_context}}',
-      isActive: true
+  for (const prompt of AI_PROMPT_DEFINITIONS) {
+    const where = { promptKey_versionNo: { promptKey: prompt.promptKey, versionNo: prompt.versionNo } };
+    const existing = await prisma.aiPromptVersion.findUnique({ where });
+    if (existing?.contentSha256 && existing.contentSha256 !== prompt.contentSha256) {
+      throw new Error(
+        `Prompt registry drift for ${prompt.promptKey}:v${prompt.versionNo}; create a new immutable version instead.`
+      );
     }
-  });
+    if (existing?.retiredAt) continue;
+    await prisma.aiPromptVersion.updateMany({
+      where: { promptKey: prompt.promptKey, isActive: true, versionNo: { not: prompt.versionNo } },
+      data: { isActive: false }
+    });
+    if (existing) continue;
+    await prisma.aiPromptVersion.create({
+      data: {
+        id: `ai-prompt-${prompt.promptKey.replaceAll('_', '-')}-v${prompt.versionNo}`,
+        promptKey: prompt.promptKey,
+        versionNo: prompt.versionNo,
+        title: prompt.title,
+        purpose: prompt.purpose,
+        systemPrompt: prompt.systemTemplate,
+        userPromptTemplate: prompt.userPromptTemplate,
+        inputSchemaVersion: prompt.inputSchemaVersion,
+        outputSchemaVersion: prompt.outputSchemaVersion,
+        outputSchemaJson: prompt.outputSchema as Prisma.InputJsonValue,
+        allowedProviderClasses: prompt.allowedProviderClasses as Prisma.InputJsonValue,
+        maxInputBudget: prompt.maxInputBudget,
+        timeoutPolicy: prompt.timeoutPolicy as Prisma.InputJsonValue,
+        redactionPolicyVersion: prompt.redactionPolicyVersion,
+        requiredComponents: prompt.requiredComponents as unknown as Prisma.InputJsonValue,
+        contentSha256: prompt.contentSha256,
+        isActive: true,
+        createdBy: 'system'
+      }
+    });
+  }
 
   const modelDeployments = [
     {

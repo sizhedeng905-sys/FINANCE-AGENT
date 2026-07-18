@@ -30,7 +30,7 @@ export interface AiGroundingResult {
   answer?: string;
 }
 
-const CLAIM_ENVELOPE_SCHEMA = {
+export const CLAIM_ENVELOPE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['claims'],

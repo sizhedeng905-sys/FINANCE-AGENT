@@ -1252,16 +1252,26 @@ model AiCallAttempt {
 }
 
 model AiPromptVersion {
-  id                 String   @id @default(cuid())
-  promptKey          String   @map("prompt_key")
-  versionNo          Int      @map("version_no")
-  title              String?
-  systemPrompt       String   @map("system_prompt")
-  userPromptTemplate String?  @map("user_prompt_template")
-  outputSchemaJson   Json?    @map("output_schema_json")
-  isActive           Boolean  @default(false) @map("is_active")
-  createdBy          String?  @map("created_by")
-  createdAt          DateTime @default(now()) @map("created_at")
+  id                     String    @id @default(cuid())
+  promptKey              String    @map("prompt_key")
+  versionNo              Int       @map("version_no")
+  title                  String?
+  purpose                String?
+  systemPrompt           String    @map("system_prompt")
+  userPromptTemplate     String?   @map("user_prompt_template")
+  inputSchemaVersion     String?   @map("input_schema_version")
+  outputSchemaVersion    String?   @map("output_schema_version")
+  outputSchemaJson       Json?     @map("output_schema_json")
+  allowedProviderClasses Json      @default("[]") @map("allowed_provider_classes")
+  maxInputBudget         Int?      @map("max_input_budget")
+  timeoutPolicy          Json?     @map("timeout_policy")
+  redactionPolicyVersion String?   @map("redaction_policy_version")
+  requiredComponents     Json      @default("[]") @map("required_components")
+  contentSha256          String?   @map("content_sha256") @db.VarChar(64)
+  isActive               Boolean   @default(false) @map("is_active")
+  retiredAt              DateTime? @map("retired_at")
+  createdBy              String?   @map("created_by")
+  createdAt              DateTime  @default(now()) @map("created_at")
 
   callLogs     AiCallLog[]
   taskAttempts AiCallAttempt[]

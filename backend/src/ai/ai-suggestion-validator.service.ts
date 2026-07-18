@@ -4,11 +4,19 @@ import { StructuredOutputValidatorService } from '../model-runtime/structured-ou
 import {
   CLASSIFICATION_SUGGESTION_SCHEMA,
   ClassificationSuggestionOutput,
+  MAPPING_ANOMALY_REVIEW_SCHEMA,
+  MappingAnomalyReviewOutput,
   MAPPING_SUGGESTION_SCHEMA,
   MappingSuggestionOutput,
+  REPORT_FACT_CHECK_SCHEMA,
+  ReportFactCheckOutput,
   REPORT_NARRATIVE_SCHEMA,
   ReportNarrativeOutput,
-  TRANSFORM_KEYS
+  TEMPLATE_DRAFT_SCHEMA,
+  TemplateDraftOutput,
+  TRANSFORM_KEYS,
+  UNMAPPED_FIELD_SUGGESTION_SCHEMA,
+  UnmappedFieldSuggestionOutput
 } from './ai-suggestion.schemas';
 
 export interface ClassificationAllowlist {
@@ -76,6 +84,55 @@ export class AiSuggestionValidatorService {
     for (const claim of output.claims) {
       if (claimIds.has(claim.claimId)) throw this.invalid(`duplicate claim id: ${claim.claimId}`);
       claimIds.add(claim.claimId);
+    }
+    return output;
+  }
+
+  templateDraft(text: string, allowedFieldKeys: ReadonlySet<string>): TemplateDraftOutput {
+    const output = this.structuredOutput.parseAndValidate(TEMPLATE_DRAFT_SCHEMA, text);
+    this.assertAllowedMany(output.existingFieldKeys, allowedFieldKeys, 'existing field');
+    return output;
+  }
+
+  anomalyReview(text: string, allowedEvidenceRefs: ReadonlySet<string>): MappingAnomalyReviewOutput {
+    const output = this.structuredOutput.parseAndValidate(MAPPING_ANOMALY_REVIEW_SCHEMA, text);
+    for (const issue of output.issues) {
+      this.assertAllowedMany(issue.evidenceRefs, allowedEvidenceRefs, 'evidence reference');
+    }
+    return output;
+  }
+
+  unmappedFields(
+    text: string,
+    allowedEvidenceRefs: ReadonlySet<string>,
+    allowedFieldKeys: ReadonlySet<string>
+  ): UnmappedFieldSuggestionOutput {
+    const output = this.structuredOutput.parseAndValidate(UNMAPPED_FIELD_SUGGESTION_SCHEMA, text);
+    const sourceRefs = new Set<string>();
+    for (const suggestion of output.suggestions) {
+      this.assertAllowed(suggestion.sourceRef, allowedEvidenceRefs, 'source reference');
+      this.assertAllowedMany(suggestion.candidateExistingFieldKeys, allowedFieldKeys, 'existing field');
+      if (sourceRefs.has(suggestion.sourceRef)) throw this.invalid(`duplicate source reference: ${suggestion.sourceRef}`);
+      sourceRefs.add(suggestion.sourceRef);
+    }
+    return output;
+  }
+
+  reportFactCheck(
+    text: string,
+    allowlist: {
+      snapshotIds: ReadonlySet<string>;
+      narrativeHashes: ReadonlySet<string>;
+      claimIds: ReadonlySet<string>;
+      sourcePaths: ReadonlySet<string>;
+    }
+  ): ReportFactCheckOutput {
+    const output = this.structuredOutput.parseAndValidate(REPORT_FACT_CHECK_SCHEMA, text);
+    this.assertAllowed(output.snapshotId, allowlist.snapshotIds, 'snapshot');
+    this.assertAllowed(output.narrativeHash, allowlist.narrativeHashes, 'narrative hash');
+    for (const issue of output.issues) {
+      this.assertAllowed(issue.claimId, allowlist.claimIds, 'claim');
+      this.assertAllowed(issue.sourcePath, allowlist.sourcePaths, 'source path');
     }
     return output;
   }

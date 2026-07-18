@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M1 已完成复用审计及 Excel/OCR 规范 IR，M2.1-M2.2 已建立严格输出、白名单、模式、kill switch 和 Provider 失败关闭防线；M2 Prompt Registry 与 M3-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M1 已完成复用审计及 Excel/OCR 规范 IR，M2.1-M2.3 已建立严格输出、白名单、模式、kill switch、Provider 失败关闭和版本化 Prompt Registry；M2 完整调用版本向量与 M3-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
-| AI 映射补充 M0-M8 | `M0-M1_passed / M2_in_progress` | M2.1-M2.2 严格输出、白名单、默认关闭模式、全局 kill switch、外部 Provider H12 门禁和无静默 Mock 已通过 100 项定向断言；Prompt Catalog 当前为空并诚实阻塞目录核对 |
+| AI 映射补充 M0-M8 | `M0-M1_passed / M2_in_progress` | M2.1-M2.3 已完成严格输出/白名单/失败关闭及 9 Prompt + core guard Registry；30 条 migration 空库/升级、106 项单测、3 项 Registry PostgreSQL 和老板 AI 调用链通过；Prompt Catalog 空文件仍阻塞逐字目录核对 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -88,6 +88,8 @@ M1 已在现有解析链上补齐 `excel-ir/1.0` 与 `ocr-ir/1.0`：Excel 保存
 M2.1 已禁止从 Markdown code fence 宽松提取 JSON，并拒绝重复键、原型污染键、指数数字、超预算结构、控制字符、零宽字符和双向控制字符。分类、字段映射和报告叙述只能返回严格版本化 Schema 与 `NEEDS_FINANCE_REVIEW`；服务端再次核对本次请求的模板版本、字段、evidence ref、转换键和 Snapshot 白名单。定向 TypeScript 检查及 3/3 suites、34/34 tests 已通过；模式、kill switch、Prompt Registry 和 Provider 失败关闭仍在 M2 后续小块中推进。
 
 M2.2 新增服务端 `AI_INGESTION_MODE`、`AI_REPORT_MODE`、`AI_GLOBAL_KILL_SWITCH`、`AI_EXTERNAL_PROVIDER_MODE` 和 Provider class 校验。缺失模式默认 `disabled`，非法值拒绝启动，组织/项目/模板策略取最保守值，kill switch 优先阻断所有新调用；H12 未批准时外部 Provider 默认关闭，即使显式设为 `synthetic-only` 也拒绝真实或未知数据。grounding 失败只会明确转人工并记录原 Provider 失败，不再静默调用 Mock。定向 TypeScript 检查及 6/6 suites、100/100 tests 已通过。
+
+M2.3 基于现有 `AiPromptVersion` 落地固定 9 项 manifest、`finance_core_guard` 和兼容老板助手 V2；每个不可变版本保存用途、输入/输出 Schema、Provider class、输入预算、超时、脱敏版本、组件引用和内容 SHA-256。运行时同时核对代码定义、数据库内容和核心 guard 哈希，退役版本可历史读取但不能发起新调用；seed 遇到同版本漂移会失败并要求新增版本。第 30 条 migration 的空库及 29→30 升级、7/7 suites 106/106 tests、Registry PostgreSQL 3/3 及真实老板 AI PostgreSQL 链路 1/1 已通过。受保护的 Prompt Catalog 文件仍为空，因此仅声明固定 manifest 来自任务书，不声明完成目录逐字核对。
 
 ## 已实现闭环
 

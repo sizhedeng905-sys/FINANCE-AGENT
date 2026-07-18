@@ -58,6 +58,48 @@ export interface ReportNarrativeOutput {
   decision: typeof AI_REVIEW_DECISION;
 }
 
+export interface TemplateDraftOutput {
+  schemaVersion: 'template-draft/1.0';
+  proposedName: string;
+  recordType: 'cost' | 'revenue' | 'reimbursement' | 'transport' | 'labor' | 'other';
+  existingFieldKeys: string[];
+  warnings: string[];
+  decision: typeof AI_REVIEW_DECISION;
+}
+
+export interface MappingAnomalyReviewOutput {
+  schemaVersion: 'mapping-anomaly-review/1.0';
+  issues: Array<{
+    code: string;
+    severity: 'BLOCKING' | 'WARNING';
+    evidenceRefs: string[];
+    explanation: string;
+  }>;
+  decision: typeof AI_REVIEW_DECISION;
+}
+
+export interface UnmappedFieldSuggestionOutput {
+  schemaVersion: 'unmapped-field-suggestion/1.0';
+  suggestions: Array<{
+    sourceRef: string;
+    candidateExistingFieldKeys: string[];
+    reasonCode: string;
+  }>;
+  decision: typeof AI_REVIEW_DECISION;
+}
+
+export interface ReportFactCheckOutput {
+  schemaVersion: 'report-fact-check/1.0';
+  snapshotId: string;
+  narrativeHash: string;
+  issues: Array<{
+    claimId: string;
+    code: 'VALUE_MISMATCH' | 'SOURCE_MISMATCH' | 'UNGROUNDED_FACT' | 'MISSING_WARNING';
+    sourcePath: string;
+  }>;
+  decision: typeof AI_REVIEW_DECISION;
+}
+
 const boundedText = (maxLength: number) => ({
   type: 'string',
   minLength: 1,
@@ -233,3 +275,114 @@ export const REPORT_NARRATIVE_SCHEMA = {
     decision: { type: 'string', const: AI_REVIEW_DECISION }
   }
 } as unknown as JSONSchemaType<ReportNarrativeOutput>;
+
+const fieldKey = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 128,
+  pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+} as const;
+
+export const TEMPLATE_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['schemaVersion', 'proposedName', 'recordType', 'existingFieldKeys', 'warnings', 'decision'],
+  properties: {
+    schemaVersion: { type: 'string', const: 'template-draft/1.0' },
+    proposedName: boundedText(120),
+    recordType: {
+      type: 'string',
+      enum: ['cost', 'revenue', 'reimbursement', 'transport', 'labor', 'other']
+    },
+    existingFieldKeys: {
+      type: 'array',
+      maxItems: 128,
+      uniqueItems: true,
+      items: fieldKey
+    },
+    warnings: { type: 'array', maxItems: 100, items: boundedText(500) },
+    decision: { type: 'string', const: AI_REVIEW_DECISION }
+  }
+} as unknown as JSONSchemaType<TemplateDraftOutput>;
+
+export const MAPPING_ANOMALY_REVIEW_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['schemaVersion', 'issues', 'decision'],
+  properties: {
+    schemaVersion: { type: 'string', const: 'mapping-anomaly-review/1.0' },
+    issues: {
+      type: 'array',
+      maxItems: 100,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'severity', 'evidenceRefs', 'explanation'],
+        properties: {
+          code: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Z][A-Z0-9_]*$' },
+          severity: { type: 'string', enum: ['BLOCKING', 'WARNING'] },
+          evidenceRefs: {
+            type: 'array', minItems: 1, maxItems: 32, uniqueItems: true, items: stableReference
+          },
+          explanation: boundedText(1_000)
+        }
+      }
+    },
+    decision: { type: 'string', const: AI_REVIEW_DECISION }
+  }
+} as unknown as JSONSchemaType<MappingAnomalyReviewOutput>;
+
+export const UNMAPPED_FIELD_SUGGESTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['schemaVersion', 'suggestions', 'decision'],
+  properties: {
+    schemaVersion: { type: 'string', const: 'unmapped-field-suggestion/1.0' },
+    suggestions: {
+      type: 'array',
+      maxItems: 128,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['sourceRef', 'candidateExistingFieldKeys', 'reasonCode'],
+        properties: {
+          sourceRef: stableReference,
+          candidateExistingFieldKeys: {
+            type: 'array', maxItems: 16, uniqueItems: true, items: fieldKey
+          },
+          reasonCode: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Z][A-Z0-9_]*$' }
+        }
+      }
+    },
+    decision: { type: 'string', const: AI_REVIEW_DECISION }
+  }
+} as unknown as JSONSchemaType<UnmappedFieldSuggestionOutput>;
+
+export const REPORT_FACT_CHECK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['schemaVersion', 'snapshotId', 'narrativeHash', 'issues', 'decision'],
+  properties: {
+    schemaVersion: { type: 'string', const: 'report-fact-check/1.0' },
+    snapshotId: stableReference,
+    narrativeHash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    issues: {
+      type: 'array',
+      maxItems: 100,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['claimId', 'code', 'sourcePath'],
+        properties: {
+          claimId: stableReference,
+          code: {
+            type: 'string',
+            enum: ['VALUE_MISMATCH', 'SOURCE_MISMATCH', 'UNGROUNDED_FACT', 'MISSING_WARNING']
+          },
+          sourcePath: jsonPointer
+        }
+      }
+    },
+    decision: { type: 'string', const: AI_REVIEW_DECISION }
+  }
+} as unknown as JSONSchemaType<ReportFactCheckOutput>;
