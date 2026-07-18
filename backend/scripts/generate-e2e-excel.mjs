@@ -30,6 +30,16 @@ sheet.addRow([validDate, 8765.43, '粤A12345', '王师傅', 300]);
 await workbook.xlsx.writeFile(fixturePath);
 console.log(`Generated E2E Excel fixture: ${fixturePath}`);
 
+const paginationFixturePath = resolve(fixtureDirectory, 'E2E 预览分页费用导入.xlsx');
+const paginationWorkbook = new ExcelJS.Workbook();
+const paginationSheet = paginationWorkbook.addWorksheet('费用明细');
+paginationSheet.addRow(['发生日期', '费用金额']);
+for (let index = 1; index <= 25; index += 1) {
+  paginationSheet.addRow([validDate, `${index}.01`]);
+}
+await paginationWorkbook.xlsx.writeFile(paginationFixturePath);
+console.log(`Generated E2E pagination Excel fixture: ${paginationFixturePath}`);
+
 const formulaFixturePath = resolve(fixtureDirectory, 'E2E 公式缓存费用导入.xlsx');
 const formulaWorkbook = new ExcelJS.Workbook();
 const formulaSheet = formulaWorkbook.addWorksheet('费用明细');

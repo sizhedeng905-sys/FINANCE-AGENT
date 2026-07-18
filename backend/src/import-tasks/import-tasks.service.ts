@@ -7,6 +7,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  PayloadTooLargeException,
   UnprocessableEntityException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -38,6 +39,7 @@ import { RecordPolicyService } from '../record-policy/record-policy.service';
 import { ApproveFieldSuggestionDto, MapFieldSuggestionDto, QueryFieldSuggestionsDto } from './dto/field-suggestion.dto';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
+import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { MappingInputDto, SaveMappingsDto } from './dto/save-mappings.dto';
@@ -79,11 +81,6 @@ const previewTaskInclude = {
   }
 } satisfies Prisma.ImportTaskInclude;
 
-const previewInclude = {
-  ...previewTaskInclude,
-  rows: { orderBy: { rowNumber: 'asc' as const } }
-} satisfies Prisma.ImportTaskInclude;
-
 type PreviewTask = Prisma.ImportTaskGetPayload<{ include: typeof previewTaskInclude }>;
 type PreviewImportRow = Prisma.ImportRowGetPayload<Record<string, never>>;
 type PreviewField = FieldDefinition;
@@ -116,6 +113,14 @@ interface PreviewResult {
   summary: { total: number; valid: number; errors: number; duplicates: number; ignored: number };
 }
 
+export interface PreviewSummary {
+  total: number;
+  valid: number;
+  errors: number;
+  duplicates: number;
+  ignored: number;
+}
+
 const AUTOMATIC_MAPPING_TYPES: MappingDecisionType[] = [
   MappingDecisionType.profile,
   MappingDecisionType.field_key,
@@ -128,6 +133,8 @@ const IMPORT_PARSE_LEASE_MS = 10 * 60 * 1000;
 const IMPORT_PARSE_REAPER_MS = 60 * 1000;
 const IMPORT_BACKGROUND_THRESHOLD_ROWS = 5_000;
 const IMPORT_BACKGROUND_MAX_ROWS = 50_000;
+const IMPORT_PREVIEW_SUMMARY_BATCH_SIZE = 500;
+const IMPORT_PREVIEW_MAX_RESPONSE_BYTES = 1024 * 1024;
 const IMPORT_ROW_BATCH_SIZE = 500;
 const IMPORT_MAX_PARSE_ATTEMPTS = 3;
 const WORKER_HANDOFF_LEASE_PREFIX = 'worker-handoff:';
@@ -1149,15 +1156,44 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return { count, suggestions: task.columns.flatMap((column) => column.suggestion ? [toFieldSuggestion(column.suggestion)] : []) };
   }
 
-  async preview(id: string) {
-    const preview = await this.buildPreview(this.prisma, id);
-    return {
-      task: toImportTask(await this.findDetailOrThrow(id)),
+  async preview(id: string, query: QueryImportPreviewDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const task = await this.prisma.importTask.findUnique({ where: { id }, include: previewTaskInclude });
+    if (!task) throw new NotFoundException('资源不存在');
+    this.assertPreviewAvailable(task.status);
+
+    const importRows = await this.prisma.importRow.findMany({
+      where: { importTaskId: id },
+      orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize
+    });
+    const preview = this.buildPreviewRows(task, importRows);
+    const summary = await this.getPreviewSummary(task);
+    const currentTask = await this.findDetailOrThrow(id);
+    if (currentTask.version !== task.version) {
+      throw new ConflictException('导入任务已发生变化，请刷新后重试');
+    }
+
+    const result = {
+      task: toImportTask(currentTask),
       unresolvedColumns: preview.unresolvedColumns,
       rows: preview.rows.map((row) => this.presentPreviewRow(row)),
-      summary: preview.summary,
+      summary,
+      pagination: {
+        page,
+        pageSize,
+        total: summary.total,
+        totalPages: Math.ceil(summary.total / pageSize),
+        hasNext: page * pageSize < summary.total
+      },
       strategy: 'valid_rows_only'
     };
+    if (Buffer.byteLength(JSON.stringify(result), 'utf8') > IMPORT_PREVIEW_MAX_RESPONSE_BYTES) {
+      throw new PayloadTooLargeException('预览响应超过安全预算，请缩小 pageSize');
+    }
+    return result;
   }
 
   async confirm(
@@ -2088,17 +2124,74 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async buildPreview(prisma: PrismaWriter, id: string): Promise<PreviewResult> {
-    const task = await prisma.importTask.findUnique({ where: { id }, include: previewInclude });
-    if (!task) throw new NotFoundException('资源不存在');
-    return this.buildPreviewRows(task, task.rows);
+  private assertPreviewAvailable(status: ImportTaskStatus) {
+    const unavailableStatuses: ImportTaskStatus[] = [ImportTaskStatus.uploaded, ImportTaskStatus.failed];
+    if (unavailableStatuses.includes(status)) {
+      throw new ConflictException('导入任务尚未成功解析');
+    }
+  }
+
+  private async getPreviewSummary(task: PreviewTask): Promise<PreviewSummary> {
+    if (task.status === ImportTaskStatus.confirmed || task.previewSummaryVersion === task.version) {
+      return {
+        total: task.totalRows,
+        valid: task.validRows,
+        errors: task.errorRows,
+        duplicates: task.duplicateRows,
+        ignored: task.ignoredRows
+      };
+    }
+
+    const summary: PreviewSummary = { total: 0, valid: 0, errors: 0, duplicates: 0, ignored: 0 };
+    let lastRowNumber: number | undefined;
+    let lastId: string | undefined;
+    while (true) {
+      const rows = await this.prisma.importRow.findMany({
+        where: {
+          importTaskId: task.id,
+          ...(lastRowNumber === undefined || lastId === undefined
+            ? {}
+            : {
+                OR: [
+                  { rowNumber: { gt: lastRowNumber } },
+                  { rowNumber: lastRowNumber, id: { gt: lastId } }
+                ]
+              })
+        },
+        orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }],
+        take: IMPORT_PREVIEW_SUMMARY_BATCH_SIZE
+      });
+      if (rows.length === 0) break;
+      const batch = this.buildPreviewRows(task, rows).summary;
+      summary.total += batch.total;
+      summary.valid += batch.valid;
+      summary.errors += batch.errors;
+      summary.duplicates += batch.duplicates;
+      summary.ignored += batch.ignored;
+      const last = rows[rows.length - 1];
+      lastRowNumber = last.rowNumber;
+      lastId = last.id;
+    }
+
+    const updated = await this.prisma.importTask.updateMany({
+      where: { id: task.id, version: task.version },
+      data: {
+        totalRows: summary.total,
+        validRows: summary.valid,
+        errorRows: summary.errors,
+        duplicateRows: summary.duplicates,
+        ignoredRows: summary.ignored,
+        previewSummaryVersion: task.version
+      }
+    });
+    if (updated.count !== 1) {
+      throw new ConflictException('导入任务已发生变化，请刷新后重试');
+    }
+    return summary;
   }
 
   private buildPreviewRows(task: PreviewTask, importRows: PreviewImportRow[]): PreviewResult {
-    const unavailableStatuses: ImportTaskStatus[] = [ImportTaskStatus.uploaded, ImportTaskStatus.failed];
-    if (unavailableStatuses.includes(task.status)) {
-      throw new ConflictException('导入任务尚未成功解析');
-    }
+    this.assertPreviewAvailable(task.status);
     const unresolvedColumns = task.columns
       .filter((column) => !column.decision)
       .map((column) => ({ id: column.id, sourceName: column.sourceName, sourceKey: column.sourceKey }));
@@ -2544,7 +2637,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     ]);
     await tx.importTask.update({
       where: { id },
-      data: { status: columns > 0 && columns === decisions ? ImportTaskStatus.pending_confirm : ImportTaskStatus.mapping }
+      data: {
+        status: columns > 0 && columns === decisions ? ImportTaskStatus.pending_confirm : ImportTaskStatus.mapping,
+        version: { increment: 1 }
+      }
     });
   }
 

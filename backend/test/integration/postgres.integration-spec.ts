@@ -28,7 +28,7 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import ExcelJS from 'exceljs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
@@ -454,6 +454,7 @@ describe('real PostgreSQL integration', () => {
       })
     );
     const tokens = Object.fromEntries(logins) as Record<string, string>;
+    const projectKeyword = `${TEST_USER_PREFIX}project_${randomUUID()}`;
     let projectId: string | undefined;
 
     try {
@@ -461,7 +462,7 @@ describe('real PostgreSQL integration', () => {
         .post('/api/projects')
         .set('Authorization', `Bearer ${tokens.finance}`)
         .send({
-          name: `${TEST_USER_PREFIX}forged_project`,
+          name: `${projectKeyword}_forged`,
           customerName: '测试客户',
           ownerName: '测试负责人',
           createdBy: 'forged-user-id'
@@ -473,7 +474,7 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-project-create')
         .send({
-          name: `  ${TEST_USER_PREFIX}project  `,
+          name: `  ${projectKeyword}  `,
           customerName: '  集成测试客户  ',
           ownerName: '  集成负责人  ',
           description: '  项目真实权限测试  '
@@ -481,14 +482,14 @@ describe('real PostgreSQL integration', () => {
         .expect(201);
       projectId = createResponse.body.data.id as string;
       expect(createResponse.body.data).toMatchObject({
-        name: `${TEST_USER_PREFIX}project`,
+        name: projectKeyword,
         customerName: '集成测试客户',
         ownerName: '集成负责人',
         status: ProjectStatus.active
       });
 
       const pageResponse = await request(app.getHttpServer())
-        .get(`/api/projects?keyword=${TEST_USER_PREFIX}&page=1&pageSize=1`)
+        .get(`/api/projects?keyword=${encodeURIComponent(projectKeyword)}&page=1&pageSize=1`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(200);
       expect(pageResponse.body.data).toMatchObject({ page: 1, pageSize: 1, total: 1 });
@@ -513,7 +514,7 @@ describe('real PostgreSQL integration', () => {
         .expect(403);
 
       const employeeActiveList = await request(app.getHttpServer())
-        .get(`/api/projects?keyword=${TEST_USER_PREFIX}&status=archived`)
+        .get(`/api/projects?keyword=${encodeURIComponent(projectKeyword)}&status=archived`)
         .set('Authorization', `Bearer ${tokens.employee}`)
         .expect(200);
       expect(employeeActiveList.body.data.items).toHaveLength(1);
@@ -539,7 +540,7 @@ describe('real PostgreSQL integration', () => {
         .expect(({ body }) => expect(body.data.status).toBe(ProjectStatus.archived));
 
       const employeeAfterArchive = await request(app.getHttpServer())
-        .get(`/api/projects?keyword=${TEST_USER_PREFIX}`)
+        .get(`/api/projects?keyword=${encodeURIComponent(projectKeyword)}`)
         .set('Authorization', `Bearer ${tokens.employee}`)
         .expect(200);
       expect(employeeAfterArchive.body.data.items).toHaveLength(0);
@@ -569,6 +570,7 @@ describe('real PostgreSQL integration', () => {
       })
     );
     const tokens = Object.fromEntries(logins) as Record<string, string>;
+    const templateKeyword = `${TEST_USER_PREFIX}template_${randomUUID()}`;
     const templateIds: string[] = [];
     let projectTemplateId: string | undefined;
 
@@ -584,7 +586,7 @@ describe('real PostgreSQL integration', () => {
         .post('/api/templates')
         .set('Authorization', `Bearer ${tokens.finance}`)
         .send({
-          name: `${TEST_USER_PREFIX}forged_system_template`,
+          name: `${templateKeyword}_forged_system`,
           recordType: 'cost',
           isSystem: true
         })
@@ -595,7 +597,7 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-template-create')
         .send({
-          name: `  ${TEST_USER_PREFIX}template  `,
+          name: `  ${templateKeyword}  `,
           recordType: 'cost',
           dataLayer: RecordDataLayer.reconciliation,
           description: '  集成模板测试  '
@@ -604,14 +606,14 @@ describe('real PostgreSQL integration', () => {
       const customTemplateId = createResponse.body.data.id as string;
       templateIds.push(customTemplateId);
       expect(createResponse.body.data).toMatchObject({
-        name: `${TEST_USER_PREFIX}template`,
+        name: templateKeyword,
         description: '集成模板测试',
         dataLayer: RecordDataLayer.reconciliation,
         isSystem: false
       });
 
       const listResponse = await request(app.getHttpServer())
-        .get(`/api/templates?keyword=${TEST_USER_PREFIX}&recordType=cost&page=1&pageSize=1`)
+        .get(`/api/templates?keyword=${encodeURIComponent(templateKeyword)}&recordType=cost&page=1&pageSize=1`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .expect(200);
       expect(listResponse.body.data).toMatchObject({ page: 1, pageSize: 1, total: 1 });
@@ -621,10 +623,10 @@ describe('real PostgreSQL integration', () => {
         .patch(`/api/templates/${customTemplateId}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-template-update')
-        .send({ name: `  ${TEST_USER_PREFIX}template_updated  `, dataLayer: RecordDataLayer.budget })
+        .send({ name: `  ${templateKeyword}_updated  `, dataLayer: RecordDataLayer.budget })
         .expect(200)
         .expect(({ body }) => expect(body.data).toMatchObject({
-          name: `${TEST_USER_PREFIX}template_updated`,
+          name: `${templateKeyword}_updated`,
           dataLayer: RecordDataLayer.budget
         }));
 
@@ -4934,6 +4936,13 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${financeToken}`)
         .expect(200);
       expect(preview.body.data.summary).toEqual({ total: 5, valid: 1, errors: 4, duplicates: 0, ignored: 0 });
+      expect(preview.body.data.pagination).toEqual({
+        page: 1,
+        pageSize: 20,
+        total: 5,
+        totalPages: 1,
+        hasNext: false
+      });
       expect(preview.body.data.rows[0]).toMatchObject({
         status: ImportRowStatus.mapped,
         amount: '8765.43',
@@ -4946,6 +4955,92 @@ describe('real PostgreSQL integration', () => {
         expect(row.status).toBe(ImportRowStatus.error);
         expect(row.errors.length).toBeGreaterThan(0);
       }
+
+      const firstPage = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=2`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(firstPage.body.data.rows).toHaveLength(2);
+      expect(firstPage.body.data.pagination).toEqual({
+        page: 1,
+        pageSize: 2,
+        total: 5,
+        totalPages: 3,
+        hasNext: true
+      });
+      expect(Buffer.byteLength(JSON.stringify(firstPage.body), 'utf8')).toBeLessThan(256 * 1024);
+
+      const repeatedFirstPage = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=2`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(repeatedFirstPage.body.data.rows.map((row: { id: string }) => row.id))
+        .toEqual(firstPage.body.data.rows.map((row: { id: string }) => row.id));
+
+      const lastPage = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=3&pageSize=2`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(lastPage.body.data.rows.map((row: { rowNumber: number }) => row.rowNumber)).toEqual([6]);
+      expect(lastPage.body.data.pagination).toMatchObject({ page: 3, pageSize: 2, total: 5, hasNext: false });
+
+      const deepPage = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=999&pageSize=1`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(deepPage.body.data.rows).toEqual([]);
+      expect(deepPage.body.data.pagination).toMatchObject({ page: 999, pageSize: 1, total: 5, hasNext: false });
+
+      const maximumPage = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=100`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(maximumPage.body.data.rows).toHaveLength(5);
+
+      await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=0`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?pageSize=101`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=50001`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?status=error`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview`)
+        .expect(401);
+
+      const cached = await prisma.importTask.findUniqueOrThrow({
+        where: { id: taskId },
+        select: { version: true, previewSummaryVersion: true }
+      });
+      expect(cached.previewSummaryVersion).toBe(cached.version);
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/auto-match`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(201);
+      const invalidated = await prisma.importTask.findUniqueOrThrow({
+        where: { id: taskId },
+        select: { version: true, previewSummaryVersion: true }
+      });
+      expect(invalidated.previewSummaryVersion).not.toBe(invalidated.version);
+      const refreshed = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=2`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(refreshed.body.data.summary).toEqual(preview.body.data.summary);
 
       const confirmed = await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/confirm`)
@@ -5232,7 +5327,7 @@ describe('real PostgreSQL integration', () => {
       await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
       await prisma.project.deleteMany({ where: { id: projectId } });
       await prisma.template.deleteMany({ where: { id: templateId } });
-    });
+    }, 120_000);
 
     const createTask = async (rowCount: number, recordDate = '2026-07-15') => {
       const rawFile = await prisma.rawFile.create({
@@ -5370,6 +5465,26 @@ describe('real PostgreSQL integration', () => {
     it('confirms 5,001 rows through a fast asynchronous API and a complete business-data closure', async () => {
       const rowCount = 5_001;
       const taskId = await createTask(rowCount);
+      const preview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=20`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(preview.body.data.rows).toHaveLength(20);
+      expect(preview.body.data.pagination).toEqual({
+        page: 1,
+        pageSize: 20,
+        total: rowCount,
+        totalPages: 251,
+        hasNext: true
+      });
+      expect(Buffer.byteLength(JSON.stringify(preview.body), 'utf8')).toBeLessThan(256 * 1024);
+      const deepPreview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=${rowCount}&pageSize=1`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(deepPreview.body.data.rows).toHaveLength(1);
+      expect(deepPreview.body.data.rows[0].rowNumber).toBe(rowCount + 1);
+
       const key = `b8-confirm-${suffix}-${rowCount}`;
       const startedAt = Date.now();
       const queued = await request(app.getHttpServer())
@@ -5422,6 +5537,41 @@ describe('real PostgreSQL integration', () => {
       expect(replay.body).toEqual(queued.body);
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
     });
+
+    it('keeps a 50,000-row deep preview within response, latency, and memory budgets', async () => {
+      const rowCount = 50_000;
+      const taskId = await createTask(rowCount);
+      const rssBefore = process.memoryUsage().rss;
+      const startedAt = Date.now();
+      const preview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=500&pageSize=100`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      const elapsedMs = Date.now() - startedAt;
+      const rssDelta = Math.max(0, process.memoryUsage().rss - rssBefore);
+
+      expect(preview.body.data.rows).toHaveLength(100);
+      expect(preview.body.data.rows[0].rowNumber).toBe(49_902);
+      expect(preview.body.data.rows[99].rowNumber).toBe(50_001);
+      expect(preview.body.data.pagination).toEqual({
+        page: 500,
+        pageSize: 100,
+        total: rowCount,
+        totalPages: 500,
+        hasNext: false
+      });
+      expect(Buffer.byteLength(JSON.stringify(preview.body), 'utf8')).toBeLessThan(1024 * 1024);
+      expect(elapsedMs).toBeLessThan(20_000);
+      expect(rssDelta).toBeLessThan(256 * 1024 * 1024);
+
+      const cachedStartedAt = Date.now();
+      const cached = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview?page=1&pageSize=1`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(cached.body.data.rows).toHaveLength(1);
+      expect(Date.now() - cachedStartedAt).toBeLessThan(2_000);
+    }, 120_000);
 
     it.each([
       [30_196, '2026-07-16'],

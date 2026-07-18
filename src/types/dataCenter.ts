@@ -480,6 +480,11 @@ export interface ImportRowsQuery {
   status?: ImportRow['status'];
 }
 
+export interface ImportPreviewQuery {
+  page?: number;
+  pageSize?: number;
+}
+
 export interface PaginatedImportRows {
   items: ImportRow[];
   page: number;
@@ -512,6 +517,13 @@ export interface ImportPreview {
   unresolvedColumns: Array<{ id: string; sourceName: string; sourceKey: string }>;
   rows: ImportPreviewRow[];
   summary: { total: number; valid: number; errors: number; duplicates: number; ignored: number };
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+  };
   strategy: 'valid_rows_only';
 }
 

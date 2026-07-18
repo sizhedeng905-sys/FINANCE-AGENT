@@ -23,6 +23,7 @@ import type {
   FieldSuggestionListQuery,
   ImportConfirmResult,
   ImportPreview,
+  ImportPreviewQuery,
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
@@ -55,7 +56,7 @@ interface ImportState {
   saveMappings: (id: string, payload: SaveImportMappingsPayload) => Promise<ImportTask>;
   autoMatch: (id: string) => Promise<ImportTask>;
   generateSuggestions: (id: string) => Promise<FieldSuggestion[]>;
-  fetchPreview: (id: string) => Promise<ImportPreview>;
+  fetchPreview: (id: string, query?: ImportPreviewQuery) => Promise<ImportPreview>;
   confirmTask: (id: string) => Promise<ImportConfirmResult>;
   cancelTask: (id: string) => Promise<ImportTask>;
   fetchSuggestions: (query?: FieldSuggestionListQuery) => Promise<void>;
@@ -175,10 +176,10 @@ export const useImportStore = create<ImportState>((set, get) => {
         throw error;
       }
     },
-    fetchPreview: async (id) => {
+    fetchPreview: async (id, query = {}) => {
       set({ loading: true, error: null });
       try {
-        const result = await getImportPreview(id);
+        const result = await getImportPreview(id, query);
         set({ preview: result, currentTask: result.task, loading: false });
         return result;
       } catch (error) {

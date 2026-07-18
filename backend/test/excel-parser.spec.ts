@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
 
-import { ExcelParserService } from '../src/import-tasks/excel-parser.service';
+import { assertExcelDataRowLimit, ExcelParserService } from '../src/import-tasks/excel-parser.service';
 
 describe('ExcelParserService phase 9', () => {
   const parser = new ExcelParserService();
@@ -83,6 +83,10 @@ describe('ExcelParserService phase 9', () => {
   });
 
   it('enforces the documented column and row limits', async () => {
+    expect(() => assertExcelDataRowLimit(49_999, 50_000)).not.toThrow();
+    expect(() => assertExcelDataRowLimit(50_000, 50_000)).not.toThrow();
+    expect(() => assertExcelDataRowLimit(50_001, 50_000)).toThrow('Excel 数据行不能超过 50000');
+
     const wide = new ExcelJS.Workbook();
     wide.addWorksheet('超宽').addRow(Array.from({ length: 201 }, (_, index) => `字段${index + 1}`));
     await expect(parser.parse(Buffer.from(await wide.xlsx.writeBuffer()))).rejects.toThrow('Excel 列数不能超过 200');

@@ -3,7 +3,7 @@
 更新日期：2026-07-18
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1 已关闭唯一工程 P0，R2-R5 已关闭日志泄露、固定对象容量伪装、恢复完整性和镜像身份 P1，剩余 5 个 P1/条件 P1 继续按风险顺序处理；AI 映射补充任务 M0-M8 已纳入同一主线
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1 已关闭唯一工程 P0，R2-R5 已关闭日志泄露、固定对象容量伪装、恢复完整性和镜像身份 P1，R6.1 已关闭 Excel 预览全量响应风险，剩余 4 个 P1/条件 P1 继续按风险顺序处理；AI 映射补充任务 M0-M8 已纳入同一主线
 
 ## 完成口径
 
@@ -22,7 +22,7 @@
 | R3 对象存储容量真实性 | 完成 | S3 物理容量明确 unknown；逻辑配额使用 PostgreSQL 用量和全局事务锁；MinIO 独立物理指标、告警/dashboard 与跨项目并发证据齐全 |
 | R4 备份/恢复完整性 | 完成 | 版本化强哈希清单、DB/对象引用、隔离库/桶恢复、故障注入和一次性 H13/H14 正式恢复门禁已实现；目标环境恢复仍为外部门禁 |
 | R5 镜像身份与供应链 | 完成 | 22 镜像不可变锁、配置/扫描/migration/release 自校验证据链、17/17 篡改测试完成；目标 registry、签名和回退受 H13 阻断 |
-| R6-R8 后端边界、治理、CI | R6 执行中 | 下一步关闭 Excel 预览、模板锁、重复窗口和 Decimal 精度，再处理多实例闸门与治理证据 |
+| R6-R8 后端边界、治理、CI | R6 执行中 | R6.1 Excel 预览已关闭；下一步处理项目模板锁、重复窗口、Decimal 精度、幂等/H 矩阵，再处理多实例闸门与治理证据 |
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
@@ -58,6 +58,7 @@ B8-09 已完成的工程证据：
 - R3 自动化结果：后端 31/31 suites、284/284 tests；PostgreSQL 2/2 suites、61/61 tests；前端 runtime 4/4、Playwright 16/16、前后端 build、Prisma 24 条空库和 23→24 升级均通过。跨账号、跨项目容量并发只提交一份对象和记录；对象写满时数据库零写入；Compose、Prometheus 13 条规则、Nginx 和固定 MinIO v3 物理容量 endpoint 均实测通过，测试资源残留为 0。正式配额、30%/80% 暂定阈值和通知接收人等待 H13/H14。
 - R4 自动化结果：后端 31/31 suites、285/285 tests，PostgreSQL 2/2 suites、61/61 tests，前端 runtime 4/4、production API build 3,144 modules、Playwright 16/16，Prisma 空库 24 条与 23→24 升级、两套生产依赖审计均通过。备份完整性容器自测 9/9；有对象恢复（42 表、1 DB 引用、1 对象/19 bytes）和空对象恢复均在隔离 PostgreSQL/MinIO 通过；5 类对象故障、migration 篡改、DB 悬空引用全部被拒绝。`finance_restore` 幂等供应和最小权限实测通过；RTO 3 秒、RPO 363/15 秒仅表示本机合成测量，H14 未判定达标；正式 live restore 未获 H13/H14 授权且未执行，隔离容器、卷和网络残留均为 0。
 - R5 自动化结果：镜像身份攻击 17/17、Staging 静态 11/11、后端 31/31 suites 与 286/286 tests、PostgreSQL 61/61、Playwright 16/16、前后端 build、Prisma 双迁移路径和两套生产依赖审计通过。完整本机锁覆盖 22 个镜像并生成 66 份 SBOM/扫描产物；无可修复 Critical，仍有 53 High、88 Medium、38 Low。release/rollback 会冻结并复核配置、镜像、migration 和运行容器身份；目标 registry 签名、正式 Linux 回退和风险接受等待 H13/H14。
+- R6.1 自动化结果：红测证明分页参数曾被忽略；修复后后端 31/31 suites、286/286 tests，PostgreSQL 2/2 suites、62/62 tests，Playwright 17/17，前后端 build 和 Prisma 25 条空库/24→25 升级均通过。50,000 行深页只返回 100 行，响应低于 1 MiB、RSS 增量低于 256 MiB、首次处理低于 20 秒；50,001 行由解析硬门禁拒绝。首次摘要按 500 行批次计算并按任务版本缓存，映射修改会使缓存失效。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。

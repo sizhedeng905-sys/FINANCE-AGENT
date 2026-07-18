@@ -26,6 +26,7 @@ import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.inter
 import { UploadAdmissionInterceptor } from '../files/upload-admission.interceptor';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
+import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { SaveMappingsDto } from './dto/save-mappings.dto';
@@ -135,13 +136,13 @@ export class ImportTasksController {
   }
 
   @Get(':id/preview')
-  preview(@Param('id') id: string) {
-    return this.imports.preview(id);
+  preview(@Param('id') id: string, @Query() query: QueryImportPreviewDto) {
+    return this.imports.preview(id, query);
   }
 
   @Get(':id/confirm-preview')
-  confirmPreview(@Param('id') id: string) {
-    return this.imports.preview(id);
+  confirmPreview(@Param('id') id: string, @Query() query: QueryImportPreviewDto) {
+    return this.imports.preview(id, query);
   }
 
   @Post(':id/confirm')

@@ -5,6 +5,7 @@ import type {
   FieldSuggestionListQuery,
   ImportConfirmResult,
   ImportPreview,
+  ImportPreviewQuery,
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
@@ -110,10 +111,10 @@ export function generateImportSuggestions(id: string): Promise<{ count: number; 
     : mockGenerateImportSuggestions(id);
 }
 
-export function getImportPreview(id: string): Promise<ImportPreview> {
+export function getImportPreview(id: string, query: ImportPreviewQuery = {}): Promise<ImportPreview> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.get<ImportPreview>(`/import-tasks/${encodeURIComponent(id)}/preview`)
-    : mockGetImportPreview(id);
+    ? httpClient.get<ImportPreview>(`/import-tasks/${encodeURIComponent(id)}/preview${queryString(query)}`)
+    : mockGetImportPreview(id, query);
 }
 
 export function confirmImportTask(id: string): Promise<ImportConfirmResult> {

@@ -22,6 +22,15 @@ const MAX_BACKGROUND_ROWS = 50_000;
 const DEFAULT_ROW_BATCH_SIZE = 500;
 const MAX_ROW_BATCH_SIZE = 1_000;
 
+export function assertExcelDataRowLimit(dataRows: number, maxRows: number) {
+  if (!Number.isInteger(dataRows) || dataRows < 0) {
+    throw new BadRequestException('Excel 数据行数无效');
+  }
+  if (dataRows > maxRows) {
+    throw new BadRequestException(`Excel 数据行不能超过 ${maxRows}`);
+  }
+}
+
 export type ParsedCellValue = string | number | boolean | null | Record<string, unknown>;
 export type WorkbookSheetState = 'visible' | 'hidden' | 'veryHidden';
 
@@ -266,9 +275,7 @@ export class ExcelParserService {
       options.allowCachedFormulaResults ?? false
     );
 
-    if (rowCount - headerRowIndex > MAX_ROWS) {
-      throw new BadRequestException(`Excel 数据行不能超过 ${MAX_ROWS}`);
-    }
+    assertExcelDataRowLimit(rowCount - headerRowIndex, MAX_ROWS);
 
     const ranges = this.mergeRanges(worksheet);
     const columns = this.parseHeaders(worksheet, headerStartRowIndex, headerRowIndex, columnCount, ranges);
@@ -500,9 +507,7 @@ export class ExcelParserService {
     const candidateForEnd = selected.headerCandidates.find((candidate) => candidate.endRowIndex === headerRowIndex);
     const headerStartRowIndex = options.headerStartRowIndex ?? candidateForEnd?.startRowIndex ?? headerRowIndex;
     this.validateHeaderRangeValues(headerStartRowIndex, headerRowIndex, selected.rowCount);
-    if (selected.rowCount - headerRowIndex > controls.maxRows) {
-      throw new BadRequestException(`Excel 数据行不能超过 ${controls.maxRows}`);
-    }
+    assertExcelDataRowLimit(selected.rowCount - headerRowIndex, controls.maxRows);
 
     let parsed: ParsedWorkbook | undefined;
     try {

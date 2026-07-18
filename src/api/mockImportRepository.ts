@@ -16,6 +16,8 @@ import type {
   ImportColumn,
   ImportConfirmResult,
   ImportPreview,
+  ImportPreviewQuery,
+  ImportPreviewRow,
   ImportRowsQuery,
   ImportTask,
   ImportTaskListQuery,
@@ -282,13 +284,9 @@ export async function mockGenerateImportSuggestions(id: string) {
   return { count: values.length, suggestions: values };
 }
 
-export async function mockGetImportPreview(id: string): Promise<ImportPreview> {
-  await assertFinance();
-  await delay();
-  const task = findTask(id);
-  const unresolvedColumns = task.columns.filter((column) => !column.decision).map((column) => ({ id: column.id, sourceName: column.sourceName, sourceKey: column.sourceKey }));
-  const taskRows = rows.filter((row) => row.importTaskId === id);
-  const previewRows = taskRows.map((row) => {
+function buildMockPreviewRows(task: ImportTask): ImportPreviewRow[] {
+  const taskRows = rows.filter((row) => row.importTaskId === task.id);
+  return taskRows.map((row) => {
     const amount = Number(row.rawData['金额']);
     const errors = Number.isFinite(amount) ? [] : ['金额：数字格式错误'];
     return {
@@ -305,11 +303,32 @@ export async function mockGetImportPreview(id: string): Promise<ImportPreview> {
       warnings: [],
     };
   });
+}
+
+export async function mockGetImportPreview(id: string, query: ImportPreviewQuery = {}): Promise<ImportPreview> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  if (!Number.isInteger(page) || page < 1 || page > 50_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error('分页参数无效');
+  }
+  const unresolvedColumns = task.columns.filter((column) => !column.decision).map((column) => ({ id: column.id, sourceName: column.sourceName, sourceKey: column.sourceKey }));
+  const previewRows = buildMockPreviewRows(task);
+  const pageRows = previewRows.slice((page - 1) * pageSize, page * pageSize);
   return {
     task: cloneTask(task),
     unresolvedColumns,
-    rows: previewRows,
+    rows: pageRows,
     summary: { total: previewRows.length, valid: previewRows.filter((row) => !row.errors.length).length, errors: previewRows.filter((row) => row.errors.length).length, duplicates: 0, ignored: 0 },
+    pagination: {
+      page,
+      pageSize,
+      total: previewRows.length,
+      totalPages: Math.ceil(previewRows.length / pageSize),
+      hasNext: page * pageSize < previewRows.length,
+    },
     strategy: 'valid_rows_only',
   };
 }
@@ -330,8 +349,9 @@ export async function mockConfirmImportTask(id: string): Promise<ImportConfirmRe
     };
   }
   const preview = await mockGetImportPreview(id);
+  const previewRows = buildMockPreviewRows(task);
   if (preview.unresolvedColumns.length) throw new Error('所有未知列必须先映射或明确忽略');
-  const valid = preview.rows.filter((row) => !row.errors.length);
+  const valid = previewRows.filter((row) => !row.errors.length);
   task.status = 'confirmed';
   task.confirmedAt = new Date().toISOString();
   task.counts = { ...task.counts, valid: valid.length, errors: preview.summary.errors, imported: valid.length };

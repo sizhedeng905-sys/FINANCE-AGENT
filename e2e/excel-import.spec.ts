@@ -73,8 +73,23 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
     'PUT',
     `/api/import-tasks/${created.data.id}/mappings`
   ));
+  const previewResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/preview`
+  ));
   await page.getByRole('button', { name: '下一步确认' }).click();
   const mapped = await readEnvelope<ImportTaskDto>(await mappingResponse);
+  const previewHttpResponse = await previewResponse;
+  const previewUrl = new URL(previewHttpResponse.url());
+  expect(previewUrl.searchParams.get('page')).toBe('1');
+  expect(previewUrl.searchParams.get('pageSize')).toBe('20');
+  const previewPayload = await readEnvelope<{
+    rows: unknown[];
+    pagination: { page: number; pageSize: number; total: number };
+  }>(previewHttpResponse);
+  expect(previewPayload.data.rows.length).toBeLessThanOrEqual(20);
+  expect(previewPayload.data.pagination).toMatchObject({ page: 1, pageSize: 20, total: 5 });
   expect(mapped.data.status).toBe('pending_confirm');
   await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/confirm$`));
 
@@ -123,6 +138,52 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
   const report = await readEnvelope<{ totalExpense: string; confirmedRecords: number }>(await reportResponse);
   expect(moneyToCents(report.data.totalExpense) >= moneyToCents('8765.43')).toBeTruthy();
   expect(report.data.confirmedRecords).toBeGreaterThanOrEqual(1);
+});
+
+test('API mode: finance preview fetches only the selected server page', async ({ page }) => {
+  test.setTimeout(120_000);
+  const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E 预览分页费用导入.xlsx');
+
+  await login(page, 'finance', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/import`);
+  await selectOption(page, '项目', '太和中转项目');
+  await selectOption(page, '模板', '运输费用模板');
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+
+  const createdResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/import-tasks'));
+  await page.getByRole('button', { name: '上传并解析' }).click();
+  const created = await readEnvelope<ImportTaskDto>(await createdResponse);
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/mapping$`));
+
+  const firstPreviewResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/preview`
+  ));
+  await page.getByRole('button', { name: '下一步确认' }).click();
+  const firstPreview = await readEnvelope<{
+    rows: unknown[];
+    pagination: { page: number; pageSize: number; total: number; hasNext: boolean };
+  }>(await firstPreviewResponse);
+  expect(firstPreview.data.rows).toHaveLength(20);
+  expect(firstPreview.data.pagination).toEqual({ page: 1, pageSize: 20, total: 25, totalPages: 2, hasNext: true });
+  await expect(page.locator('.ant-table-tbody > tr.ant-table-row')).toHaveCount(20);
+
+  const secondPreviewResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET'
+      && url.pathname === `/api/import-tasks/${created.data.id}/preview`
+      && url.searchParams.get('page') === '2'
+      && url.searchParams.get('pageSize') === '20';
+  });
+  await page.locator('.ant-pagination-next button').click();
+  const secondPreview = await readEnvelope<{
+    rows: unknown[];
+    pagination: { page: number; pageSize: number; total: number; hasNext: boolean };
+  }>(await secondPreviewResponse);
+  expect(secondPreview.data.rows).toHaveLength(5);
+  expect(secondPreview.data.pagination).toMatchObject({ page: 2, pageSize: 20, total: 25, hasNext: false });
+  await expect(page.locator('.ant-table-tbody > tr.ant-table-row')).toHaveCount(5);
 });
 
 test('API mode: finance explicitly accepts cached formula results before parsing', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, App, Button, Card, Col, Empty, Progress, Row, Space, Spin, Statistic, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -20,10 +20,12 @@ export default function DataImportConfirmPage() {
   const confirmTask = useImportStore((state) => state.confirmTask);
   const task = currentTask ?? preview?.task;
   const followConfirmation = useRef(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
-    if (id) void fetchPreview(id).catch(() => undefined);
-  }, [fetchPreview, id]);
+    if (id) void fetchPreview(id, { page, pageSize }).catch(() => undefined);
+  }, [fetchPreview, id, page, pageSize]);
 
   useEffect(() => {
     if (!id || task?.status !== 'confirming') return;
@@ -143,7 +145,25 @@ export default function DataImportConfirmPage() {
               <Col xs={12} md={4}><Card><Statistic title="空/忽略行" value={preview.summary.ignored} /></Card></Col>
             </Row>
             <Card>
-              <Table rowKey="id" columns={columns} dataSource={preview.rows} pagination={{ pageSize: 20 }} scroll={{ x: 1100 }} />
+              <Table
+                rowKey="id"
+                columns={columns}
+                dataSource={preview.rows}
+                loading={loading}
+                pagination={{
+                  current: preview.pagination.page,
+                  pageSize: preview.pagination.pageSize,
+                  total: preview.pagination.total,
+                  showSizeChanger: true,
+                  pageSizeOptions: [10, 20, 50, 100],
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
+                onChange={(pagination) => {
+                  setPage(pagination.current ?? 1);
+                  setPageSize(pagination.pageSize ?? 20);
+                }}
+                scroll={{ x: 1100 }}
+              />
               <Space className="form-actions" wrap>
                 <Button
                   disabled={task?.status === 'confirming' || task?.status === 'confirmed' || task?.status === 'confirmation_failed'}
