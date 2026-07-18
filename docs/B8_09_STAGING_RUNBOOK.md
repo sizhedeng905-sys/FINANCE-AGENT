@@ -113,7 +113,7 @@ https://staging.finance-agent.local:8443/ops/grafana/
 
 2026-07-18 R3 删除了固定 `S3_CAPACITY_BYTES` 物理容量伪装。应用容量指标标注 `logical_quota`/`volume_metric`/`provider_metric`/`estimated_usage`/`unknown`，S3 连通只表示 `probeOk`。Prometheus 另从私网 `/minio/metrics/v3/cluster/health` 采集物理 usable free/total；对象网关对外阻断 metrics 路径。Grafana dashboard 为 `Finance Agent Storage Capacity`。
 
-必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、MinIO 物理容量/指标缺失、备份失败/过期和恢复演练过期。当前逻辑使用率 80% 与物理可用 30% 是 H13/H14 签字前的保守 Staging 默认；正式阈值和 Alertmanager 接收人由 H-13/H-14 决定。
+必须处理的默认告警：API 不可用、Worker 心跳缺失、5xx、队列积压、trace 丢弃、进程内存、逻辑存储容量、MinIO 物理容量/指标缺失、备份失败/过期、对象强哈希覆盖缺失、对象元数据摘要不一致和恢复演练过期。当前逻辑使用率 80% 与物理可用 30% 是 H13/H14 签字前的保守 Staging 默认；正式阈值和 Alertmanager 接收人由 H-13/H-14 决定。
 
 ## 7. 文件与对象存储
 
@@ -139,7 +139,9 @@ https://staging.finance-agent.local:8443/ops/grafana/
 docker compose --env-file .env -f deploy/staging/compose.yaml exec -T backup /opt/staging/run-backup.sh
 ```
 
-每次备份包含 PostgreSQL custom dump、迁移时间、对象 inventory、对象桶快照和带 SHA-256 的 manifest；空 dump 或无法通过 `pg_restore --list` 的 dump 会失败关闭。每天至少生成一次 `pg_basebackup`，PostgreSQL 同时归档 WAL。业务对象自动删除期限和静态加密仍由 H-14 决定。
+每次备份生成 `backup-manifest/1.0`，包含 PostgreSQL custom dump、规范化 schema、完整 migration ledger、活动 `raw_files` 引用、源对象清单、备份对象清单和 manifest 自身 SHA-256 sidecar。对象清单以 Base64 保存 key，并记录 size、ETag、version ID、metadata、encryption/retention 状态和流式计算的内容 SHA-256；ETag 明确不作为强哈希。数据库引用在 dump 前后和对象快照后必须保持一致，任一活动引用缺失、size/hash 不符或对象在复制期间变化都会使本次备份失败并进入 `failed/` 隔离目录。旧版只有对象数量的清单会报告未验证对象数并拒绝恢复，不会伪造强哈希覆盖。
+
+每天至少生成一次 `pg_basebackup`，PostgreSQL 同时归档 WAL。正式 SSE/KMS、不可变异地副本、保留和删除期限仍由 H13/H14 决定；private bucket、versioning 和本机 backup volume 不能替代这些审批。
 
 非破坏性恢复演练：
 
@@ -147,7 +149,13 @@ docker compose --env-file .env -f deploy/staging/compose.yaml exec -T backup /op
 docker compose --env-file .env -f deploy/staging/compose.yaml exec -T backup /opt/staging/restore-drill.sh
 ```
 
-演练在临时数据库恢复并核对表数、audit、ledger、RawFile、dump 哈希和对象快照数量，随后删除临时数据库。证据保存在 backup volume 的 `drills/`，Prometheus 记录实测 RPO/RTO。没有真实输出时不得填写“通过”。
+演练为每次执行创建唯一 `_test` 临时数据库和唯一临时桶，恢复后核对 dump、schema、migration、对象 key/size/流式 SHA-256、活动 `raw_files` 引用和应用读取，再删除临时资源。演练同时断言同数量错 key、同 key 错大小、同大小错内容、缺失、额外对象、migration 篡改和数据库悬空引用均被拒绝。证据保存在 backup volume 的 `drills/`，Prometheus 记录实测 RPO/RTO 和强哈希覆盖；本机合成 RPO/RTO 只作测量，H14 未批准前不得写成正式达标。
+
+备份镜像的无外部依赖故障注入可单独执行：
+
+```bash
+npm run staging:backup-integrity:test
+```
 
 ## 9. 回退
 
@@ -159,13 +167,22 @@ npm run staging:rollback -- deploy/staging/.release/releases/<release>.json
 
 该操作先备份，再按旧 manifest 恢复前端、API、Worker 镜像和模型路由状态；数据库采用向前兼容迁移，不执行 down migration。
 
-只有数据损坏或错误迁移且已完成事件审批时，才允许数据恢复：
+只有数据损坏或错误迁移，且 H13/H14 对本次目标、backupId、变更单和时间窗给出一次性批准时，才允许数据恢复。先从模板创建 Git 忽略目录中的授权 JSON，保持仓库内示例的 `h13Approved/h14Approved=false`，获得真实审批后再由授权人填写：
+
+```text
+deploy/staging/backup/restore-authorization.example.json
+```
+
+执行时显式提供该文件：
 
 ```bash
+export RESTORE_AUTHORIZATION_FILE=/secure/path/restore-authorization.json
 npm run staging:rollback -- deploy/staging/.release/releases/<release>.json --restore-data <backupId>
 ```
 
-数据恢复会停止 API/Worker，要求精确的 `finance_agent_staging/<backupId>` 确认值，校验 dump SHA-256，恢复数据库与对象快照，再重跑 migrate/grants 和 smoke。禁止对生产库或未核对 backupId 使用该命令。
+数据恢复会停止 API/Worker，先在临时数据库和临时桶完成与演练相同的全量校验，再对当前 live 数据建立数据库与对象补偿快照。授权文件必须绑定 `finance-agent-staging`、`finance_agent_staging`、`finance-agent-raw`、backupId、24 小时内到期时间、唯一 nonce 和 H13/H14 审批号；同一文件只能使用一次。通过后才按“对象切换 → 数据库单事务恢复 → 全量复核 → audit/ledger”执行；中途失败自动尝试恢复补偿快照并保留证据。
+
+PostgreSQL 与 S3 不支持跨系统原子事务，因此这只是应用停写条件下的分阶段切换与补偿，不得描述为原子恢复。补偿副本、正式备份、加密、异地和删除策略等待 H14；未取得授权时脚本失败关闭，禁止通过修改确认逻辑绕过。
 
 模型回退使用不含 endpoint/secret 的 route snapshot，恢复时必须同时提供快照 SHA-256；配置哈希变化会拒绝恢复。GPU 按需模型仍可使用：
 

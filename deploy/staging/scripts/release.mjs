@@ -35,6 +35,7 @@ if (runningServices(runtimeEnv).includes('backup')) {
 
 run('docker', [...composePrefix, 'build', 'backend-api', 'frontend', 'backup'], runtimeEnv);
 run('docker', [...composePrefix, 'up', '-d', '--wait', '--wait-timeout', '1200'], runtimeEnv);
+run('docker', [...composePrefix, 'exec', '-T', 'postgres', '/bin/bash', '/opt/staging/provision-restore-role.sh'], runtimeEnv);
 run('node', ['scripts/lock-images.mjs'], runtimeEnv);
 run('node', ['scripts/smoke-test.mjs'], runtimeEnv);
 run('node', ['scripts/browser-smoke.mjs'], runtimeEnv);

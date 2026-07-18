@@ -22,6 +22,7 @@ const secrets = {
   migration_password: hex(),
   runtime_password: hex(),
   backup_password: hex(),
+  restore_password: hex(),
   jwt_secret: hex(64),
   redis_password: hex(),
   minio_root_user: `staging-root-${hex(6)}`,
@@ -42,6 +43,7 @@ const readSecret = async (name) => (await readFile(join(secretsRoot, name), 'utf
 const migrationPassword = await readSecret('migration_password');
 const runtimePassword = await readSecret('runtime_password');
 const backupPassword = await readSecret('backup_password');
+const restorePassword = await readSecret('restore_password');
 const redisPassword = await readSecret('redis_password');
 const query = 'sslmode=verify-full&sslrootcert=%2Frun%2Ftls%2Fca.crt';
 await writeIfMissing(
@@ -56,6 +58,10 @@ await writeIfMissing(
   join(secretsRoot, 'backup_database_url'),
   `postgresql://finance_backup:${backupPassword}@postgres:5432/finance_agent_staging?${query}\n`
 );
+await writeIfMissing(
+  join(secretsRoot, 'restore_database_url'),
+  `postgresql://finance_restore:${restorePassword}@postgres:5432/postgres?${query}\n`
+);
 await writeIfMissing(join(secretsRoot, 'redis_url'), `redis://:${redisPassword}@redis:6379/0\n`);
 
 ensureCertificates();
@@ -68,6 +74,7 @@ await writeFile(join(stagingRoot, '.runtime', 'initialization.json'), JSON.strin
     '.secrets/migration_database_url',
     '.secrets/runtime_database_url',
     '.secrets/backup_database_url',
+    '.secrets/restore_database_url',
     '.secrets/redis_url',
     '.runtime/tls/ca.crt',
     '.runtime/tls/gateway.crt',

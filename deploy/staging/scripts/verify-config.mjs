@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const requiredSecrets = [
-  'postgres_superuser_password', 'migration_password', 'runtime_password', 'backup_password',
-  'migration_database_url', 'runtime_database_url', 'backup_database_url', 'jwt_secret',
+  'postgres_superuser_password', 'migration_password', 'runtime_password', 'backup_password', 'restore_password',
+  'migration_database_url', 'runtime_database_url', 'backup_database_url', 'restore_database_url', 'jwt_secret',
   'redis_password', 'redis_url', 'minio_root_user', 'minio_root_password',
   's3_access_key_id', 's3_secret_access_key', 'metrics_token', 'grafana_admin_password',
   'staging_seed_password'

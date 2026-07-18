@@ -90,6 +90,22 @@ groups:
         annotations:
           summary: No successful staging backup has completed for seven hours
 
+      - alert: FinanceAgentBackupStrongHashCoverageMissing
+        expr: absent(finance_agent_backup_object_strong_hash_unverified_count) or finance_agent_backup_object_strong_hash_unverified_count > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Backup object content is not fully covered by strong hashes
+
+      - alert: FinanceAgentBackupObjectMetadataDigestMismatch
+        expr: finance_agent_backup_object_metadata_digest_mismatch_count > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Stored object SHA-256 metadata disagrees with streamed backup content
+
       - alert: FinanceAgentRestoreDrillStale
         expr: absent(finance_agent_restore_drill_last_success_timestamp_seconds) or (time() - finance_agent_restore_drill_last_success_timestamp_seconds > 2592000)
         for: 1h
@@ -97,6 +113,14 @@ groups:
           severity: warning
         annotations:
           summary: No successful restore drill has been recorded for 30 days
+
+      - alert: FinanceAgentRestoreDrillStrongHashCoverageMissing
+        expr: absent(finance_agent_restore_drill_unverified_object_count) or finance_agent_restore_drill_unverified_object_count > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Restore drill did not strongly verify every restored object
 
       - alert: FinanceAgentTlsCertificateExpiring
         expr: absent(finance_agent_tls_certificate_not_after_timestamp_seconds) or (finance_agent_tls_certificate_not_after_timestamp_seconds - time() < 1209600)

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -27,12 +28,23 @@ const compose = ['compose', '--env-file', '.env', '-f', 'compose.yaml'];
 run('docker', [...compose, 'exec', '-T', 'backup', '/opt/staging/run-backup.sh'], environment);
 if (option === '--restore-data') {
   if (!/^[0-9]{8}T[0-9]{6}Z$/.test(backupId ?? '')) throw new Error('A valid backupId is required');
+  const authorizationPath = process.env.RESTORE_AUTHORIZATION_FILE
+    ? resolve(process.env.RESTORE_AUTHORIZATION_FILE)
+    : '';
+  if (!authorizationPath || !existsSync(authorizationPath)) {
+    throw new Error('RESTORE_AUTHORIZATION_FILE must reference the target-specific H13/H14 authorization JSON');
+  }
   run('docker', [...compose, 'stop', 'backend-api', 'worker'], environment);
+  run('docker', [...compose, 'exec', '-T', 'postgres', '/bin/bash', '/opt/staging/provision-restore-role.sh'], environment);
   run('docker', [
-    ...compose, 'exec', '-T',
+    ...compose, 'run', '--rm', '--no-deps',
     '-e', `CONFIRM_DATABASE_RESTORE=finance_agent_staging/${backupId}`,
+    '-e', `CONFIRM_APPLICATION_QUIESCED=finance_agent_staging/${backupId}`,
     '-e', 'ALLOW_STAGING_RESTORE=true',
-    'backup', '/opt/staging/restore-backup.sh', backupId
+    '-e', 'RESTORE_AUTHORIZATION_FILE=/run/restore-authorization.json',
+    '-v', `${authorizationPath}:/run/restore-authorization.json:ro`,
+    '--entrypoint', '/usr/local/bin/gosu',
+    'backup', 'postgres', '/opt/staging/restore-backup.sh', backupId
   ], environment);
   run('docker', [...compose, 'run', '--rm', 'migrate'], environment);
 }

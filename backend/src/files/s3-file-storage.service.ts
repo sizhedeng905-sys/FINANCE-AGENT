@@ -10,6 +10,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import { FileStorage } from './file-storage';
@@ -45,7 +46,10 @@ export class S3FileStorageService implements FileStorage {
       Body: file.buffer,
       ContentLength: file.size,
       ContentType: 'application/octet-stream',
-      Metadata: { source: 'finance-agent' }
+      Metadata: {
+        source: 'finance-agent',
+        sha256: createHash('sha256').update(file.buffer).digest('hex')
+      }
     }));
     return key;
   }

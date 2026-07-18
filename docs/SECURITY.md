@@ -30,7 +30,9 @@
 - 上传校验扩展名、MIME、文件签名、内容、大小、数量、文件名和资源归属；存储 key 使用不可预测标识，不使用原文件名。
 - 生产强制私有 S3-compatible bucket 和 ClamAV；签名 URL 只有 30-300 秒，签发前重新授权并写 audit/ledger。S3、ClamAV 或容量检查失败时上传关闭。
 - S3 连通性不再被解释为物理容量。应用只把 `statfs`、Provider 指标或 PostgreSQL 可信用量加显式逻辑配额标为容量来源；未知、过期、估算或矛盾状态均失败关闭。逻辑配额在最终事务内用全局 advisory lock 复核，MinIO 物理容量由私网 Prometheus 独立监控。
-- PostgreSQL Staging 使用 TLS 和 migrator/runtime/backup 三账号；runtime 在数据库层不能 UPDATE/DELETE/TRUNCATE audit/ledger。
+- PostgreSQL Staging 使用 TLS 和 migrator/runtime/backup/restore 四账号；runtime 在数据库层不能 UPDATE/DELETE/TRUNCATE audit/ledger。`finance_restore` 只有 `CREATEDB`，不获得业务库连接或读写权限，只用于隔离恢复库生命周期。
+- 新备份对数据库 dump/schema/migration、活动 `raw_files` 引用和每个对象的 key/size/version/metadata/流式 SHA-256 建立版本化清单与清单自身 SHA-256；multipart ETag 不作为内容哈希。旧数量清单明确按未验证数量拒绝恢复。
+- 恢复演练只写唯一临时数据库和临时桶；正式恢复要求绑定 target/backupId/到期时间/H13/H14 审批号的一次性授权，并在 live 写入前生成可验证补偿快照。PostgreSQL 与对象存储之间没有跨系统原子事务，当前采用应用停写下的分阶段切换与失败补偿。
 - 记录引用的原件禁止普通删除。上传目录、E2E 文件、`.env` 和模型目录由 Git 卫生检查阻止提交。
 
 ### AI/OCR

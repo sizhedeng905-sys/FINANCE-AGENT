@@ -85,24 +85,62 @@ describe('B8-09 staging deployment', () => {
     expect(grants).toContain('GRANT SELECT, INSERT ON TABLE ledger_events TO finance_runtime');
   });
 
-  it('requires explicit confirmation before destructive data restore', () => {
+  it('requires isolated verification and one-time H13/H14 authorization before data restore', () => {
     const restore = read(stagingRoot, 'backup', 'restore-backup.sh');
+    const rollback = read(stagingRoot, 'scripts', 'rollback.mjs');
     expect(restore).toContain('CONFIRM_DATABASE_RESTORE');
     expect(restore).toContain('ALLOW_STAGING_RESTORE');
-    expect(restore).toContain('Backup checksum verification failed');
+    expect(restore).toContain('RESTORE_AUTHORIZATION_FILE');
+    expect(restore).toContain('h13Approved');
+    expect(restore).toContain('h14Approved');
+    expect(restore).toContain('CONFIRM_APPLICATION_QUIESCED');
+    expect(restore).toContain('assert_authorization_unused');
+    expect(restore).toContain('verify_backup_bundle');
+    expect(restore).toContain('restore_stage_database');
+    expect(restore).toContain('restore_stage_bucket');
+    expect(restore).toContain('create_compensation_snapshot');
     expect(restore).toContain('--single-transaction');
     expect(restore).toContain('--exit-on-error');
     expect(restore).toContain('mc mirror --overwrite --remove');
-    expect(restore.indexOf('CONFIRM_DATABASE_RESTORE')).toBeLessThan(restore.indexOf('pg_restore'));
+    expect(restore.lastIndexOf('verify_backup_bundle "$backup_dir" "staging/$stage_bucket"')).toBeLessThan(
+      restore.lastIndexOf('\nrestore_live_database\n')
+    );
+    expect(rollback).toContain('RESTORE_AUTHORIZATION_FILE');
   });
 
-  it('rejects empty backups and keeps destructive restore drills in a test database', () => {
+  it('uses a versioned strong-hash manifest and isolated database/object restore drill', () => {
     const backup = read(stagingRoot, 'backup', 'run-backup.sh');
     const drill = read(stagingRoot, 'backup', 'restore-drill.sh');
+    const integrity = read(stagingRoot, 'backup', 'integrity-lib.sh');
+    const dockerfile = read(stagingRoot, 'backup', 'Dockerfile');
+    const roleProvisioning = read(stagingRoot, 'postgres', 'provision-restore-role.sh');
+    const authorizationExample = JSON.parse(read(stagingRoot, 'backup', 'restore-authorization.example.json'));
     expect(backup).toContain('[[ ! -s "$logical_dir/database.dump" ]]');
     expect(backup).toContain('pg_restore --list');
-    expect(drill).toContain('finance_agent_restore_drill_test');
-    expect(drill).not.toMatch(/\bfinance_agent_restore_drill\b(?!_test)/);
+    expect(integrity).toContain('backup-manifest/1.0');
+    expect(backup).toContain('object-manifest.jsonl');
+    expect(backup).toContain('database-object-refs.jsonl');
+    expect(backup).toContain('manifest.sha256');
+    expect(backup).not.toContain('mc find');
+    expect(integrity).toContain('generate_object_manifest');
+    expect(integrity).toContain('mc cat');
+    expect(integrity).toContain('verify_object_manifest');
+    expect(integrity).toContain('verify_database_object_refs');
+    expect(integrity).toContain('legacy_manifest_unverified_content');
+    expect(dockerfile).toContain('jq');
+    expect(roleProvisioning).toContain('finance_restore');
+    expect(roleProvisioning).toContain('NOSUPERUSER CREATEDB NOCREATEROLE NOINHERIT');
+    expect(roleProvisioning).not.toMatch(/\sSUPERUSER\s/);
+    expect(authorizationExample).toMatchObject({
+      schemaVersion: 'restore-authorization/1.0',
+      h13Approved: false,
+      h14Approved: false
+    });
+    expect(read(repositoryRoot, 'package.json')).toContain('staging:backup-integrity:test');
+    expect(drill).toContain('finance_agent_restore_drill_');
+    expect(drill).toContain('finance-agent-restore-drill-');
+    expect(drill).toContain('verify_backup_bundle');
+    expect(drill).toContain('applicationReadSmoke');
     expect(drill).toContain('finance_agent_restore.prom');
   });
 
@@ -132,6 +170,8 @@ describe('B8-09 staging deployment', () => {
     expect(alerts).toContain('FinanceAgentLogicalStorageHigh');
     expect(alerts).toContain('FinanceAgentMinioCapacityMetricsMissing');
     expect(alerts).toContain('FinanceAgentMinioPhysicalStorageLow');
+    expect(alerts).toContain('FinanceAgentBackupStrongHashCoverageMissing');
+    expect(alerts).toContain('FinanceAgentRestoreDrillStrongHashCoverageMissing');
     expect(prometheus).toContain('/minio/metrics/v3/cluster/health');
     expect(alerts).toContain('absent(finance_agent_backup_last_success_timestamp_seconds)');
   });

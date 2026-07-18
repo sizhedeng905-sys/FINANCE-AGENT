@@ -95,7 +95,7 @@ Current verification baseline (2026-07-17, B8-09 engineering implementation):
 - Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
 - B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
 - B8-09 adds split API/Worker roles, Redis limiting/heartbeat, S3 storage and signed downloads, W3C/OTLP tracing, an 18-service TLS Staging topology, immutable runtime DB grants, linked backups, restore drills, and application/data/model rollback scripts.
-- Staging secret/CA initialization, certificate validation, rendered Compose security assertions, and 10 shell syntax checks pass. Docker image build and real restore remain `blocked_external` because this host cannot reach the Docker Hub auth endpoint.
+- R4 upgrades linked backups to `backup-manifest/1.0`, streamed per-object SHA-256, database/object reference checks, isolated database/bucket restore, fault injection, and one-time H13/H14 live-restore authorization. Local synthetic object and empty restore paths pass; target Linux restore, formal RPO/RTO, encryption/offsite retention, and live cutover remain `blocked_external`.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -200,7 +200,7 @@ S3 mode requires `S3_LOGICAL_QUOTA_BYTES`; the removed `S3_CAPACITY_BYTES` name 
 
 ## Staging
 
-The repository root exposes `staging:init`, `staging:check`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` for secret generation, database grants, backup/restore, observability, pilot checks, and rollback safety gates.
+The repository root exposes `staging:init`, `staging:check`, `staging:backup-integrity:test`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` and `docs/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md` for secret generation, least-privilege restore roles, strong-hash manifests, observability, pilot checks, and rollback safety gates.
 
 `FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with the selected storage adapter. Development can use `LocalFileStorageService`; production requires the private S3-compatible adapter. Real ClamAV, object-storage backup, encryption/retention policy, and restore evidence remain deployment responsibilities.
 

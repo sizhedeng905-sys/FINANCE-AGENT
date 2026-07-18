@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1 已关闭该 P0，R2 已关闭网关日志泄露 P1，R3 已移除对象存储固定容量伪装，仍有 7 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R4 已依次关闭前端真实性、日志泄露、容量伪装和备份恢复完整性工程问题，仍有 6 个 P1/条件 P1、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0、R1 前端真实性、R2 日志泄露和 R3 容量真实性已完成；R4 恢复完整性进入下一顺位 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R4 已完成；R4 的强哈希关联恢复在本机隔离 PostgreSQL/MinIO 通过，R5 镜像身份进入下一顺位 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -31,7 +31,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R3 重新审计进展
+### R0-R4 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -42,7 +42,10 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R2 已将网关日志从完整 `$request` 改为 `$request_method + $uri`，保留状态/上游状态/耗时/requestId/traceId；应用日志与 trace 的伪签名、Token、Cookie 和换行注入回归通过。
 - R3 已删除“`HeadBucket` 成功等于固定 1 TiB 可用”的错误语义；S3 物理容量明确为未知，上传使用 PostgreSQL 可信用量、显式逻辑配额、保留水位和事务级全局锁，MinIO 物理容量由私网 Prometheus 独立采集。
 - R3 的跨账号/跨项目 PostgreSQL 并发测试证明配额只允许一个赢家，失败对象被清理；Provider、陈旧/未知/估算/矛盾容量和写满故障均失败关闭。H13/H14 仍决定正式配额、阈值、接收人和保留政策。
-- 当前开放工程问题为恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 7 个 P1/条件 P1。
+- R4 将备份清单升级为 `backup-manifest/1.0`：数据库 dump/schema/migration、`raw_files` 引用、对象 key/size/version/metadata 与逐对象流式 SHA-256 均进入自校验清单；ETag 明确不作为强哈希，旧数量清单按未验证对象数拒绝恢复。
+- R4 的恢复演练先恢复到唯一临时数据库和临时桶，再核对 schema、migration、对象强哈希与数据库引用；有对象和空对象两条本机隔离路径均通过。5 类对象篡改、migration 篡改、悬空引用和清单篡改均有自动拒绝断言。
+- 正式数据恢复仍需 H13/H14 目标绑定的一次性授权、应用停写和补偿快照。PostgreSQL 与 S3 不存在跨系统原子事务，当前只声明“应用级分阶段切换并补偿”，没有执行或宣称生产恢复通过。
+- 当前开放工程问题为镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 6 个 P1/条件 P1。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -113,8 +116,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R3 本地全量 31/31 suites，284/284 tests |
-| PostgreSQL 集成 | `passed` | R3 本地全量 2/2 suites，61/61 tests |
+| 后端 Jest | `passed` | R4 本地全量 31/31 suites，285/285 tests |
+| PostgreSQL 集成 | `passed` | R4 本地全量 2/2 suites，61/61 tests |
 | 浏览器 E2E | `passed` | Playwright 16/16 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
 | Prisma | `passed` | 24/24 migrations；41 表、27 enums、173 indexes、77 foreign keys |
@@ -424,6 +427,7 @@ npm run staging:release
 | [`docs/PR4_REVIEW_GUIDE.md`](docs/PR4_REVIEW_GUIDE.md) | 独立 reviewer 检查顺序 |
 | [`docs/B8_08_FINANCE_UAT_RUNBOOK.md`](docs/B8_08_FINANCE_UAT_RUNBOOK.md) | 财务八场景 UAT |
 | [`docs/B8_09_STAGING_RUNBOOK.md`](docs/B8_09_STAGING_RUNBOOK.md) | Staging 发布、恢复和回退 |
+| [`docs/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md`](docs/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md) | R4 强哈希备份、隔离恢复与故障注入证据 |
 | [`docs/B8_09_PILOT_DAILY_CHECKLIST.md`](docs/B8_09_PILOT_DAILY_CHECKLIST.md) | 有限试运行每日检查 |
 | [`docs/MODEL_DEPLOYMENT.md`](docs/MODEL_DEPLOYMENT.md) | 本地模型部署和常驻/按需策略 |
 | [`docs/E2E_ACCEPTANCE.md`](docs/E2E_ACCEPTANCE.md) | 浏览器验收范围和失败诊断 |

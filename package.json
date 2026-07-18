@@ -35,6 +35,7 @@
     "model:stop": "node backend/scripts/model-services.mjs stop-all",
     "staging:init": "node deploy/staging/scripts/init-staging.mjs",
     "staging:check": "node deploy/staging/scripts/verify-config.mjs",
+    "staging:backup-integrity:test": "node deploy/staging/scripts/test-backup-integrity.mjs",
     "staging:lock-images": "node deploy/staging/scripts/lock-images.mjs",
     "staging:smoke": "node deploy/staging/scripts/smoke-test.mjs && node deploy/staging/scripts/browser-smoke.mjs",
     "staging:frontend:check": "node deploy/staging/scripts/verify-frontend-build.mjs",

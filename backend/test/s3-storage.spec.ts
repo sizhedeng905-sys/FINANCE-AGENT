@@ -78,4 +78,22 @@ describe('S3 file storage boundary', () => {
     });
     expect(JSON.stringify(snapshot)).not.toContain('private-provider-detail');
   });
+
+  it('stores a strong content digest as object metadata', async () => {
+    const storage = new S3FileStorageService(config) as any;
+    storage.client.send = jest.fn(async () => ({}));
+    const buffer = Buffer.from('backup-integrity');
+
+    await storage.save({
+      buffer,
+      size: buffer.length,
+      originalname: 'evidence.pdf'
+    } as Express.Multer.File);
+
+    const command = storage.client.send.mock.calls[0][0];
+    expect(command.input.Metadata).toMatchObject({
+      source: 'finance-agent',
+      sha256: '9af37706942626fb349c3d221f442bb218e7e7f41dfaaedda2707524ef35cb1d'
+    });
+  });
 });

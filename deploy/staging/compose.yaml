@@ -97,6 +97,7 @@ services:
       - migration_password
       - runtime_password
       - backup_password
+      - restore_password
       - postgres_tls_cert
       - postgres_tls_key
       - staging_ca_cert
@@ -105,6 +106,7 @@ services:
       - backup_data:/backups
       - ./postgres/postgres-entrypoint.sh:/opt/staging/postgres-entrypoint.sh:ro
       - ./postgres/01-init-roles.sh:/docker-entrypoint-initdb.d/01-init-roles.sh:ro
+      - ./postgres/provision-restore-role.sh:/opt/staging/provision-restore-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -351,11 +353,14 @@ services:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-21600}
       BACKUP_DATABASE_URL_FILE: /run/secrets/backup_database_url
       MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+      RESTORE_DATABASE_URL_FILE: /run/secrets/restore_database_url
       MINIO_ENDPOINT: http://minio:9000
+      BACKUP_SOURCE_ENVIRONMENT_ID: ${BACKUP_SOURCE_ENVIRONMENT_ID:-finance-agent-staging-local}
       BACKUP_METRICS_FILE: /metrics/finance_agent_backup.prom
     secrets:
       - backup_database_url
       - migration_database_url
+      - restore_database_url
       - minio_root_user
       - minio_root_password
     volumes:
@@ -498,12 +503,16 @@ secrets:
     file: ./.secrets/runtime_password
   backup_password:
     file: ./.secrets/backup_password
+  restore_password:
+    file: ./.secrets/restore_password
   migration_database_url:
     file: ./.secrets/migration_database_url
   runtime_database_url:
     file: ./.secrets/runtime_database_url
   backup_database_url:
     file: ./.secrets/backup_database_url
+  restore_database_url:
+    file: ./.secrets/restore_database_url
   jwt_secret:
     file: ./.secrets/jwt_secret
   redis_password:
