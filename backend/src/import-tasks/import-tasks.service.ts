@@ -166,6 +166,8 @@ interface BackgroundConfirmationJob {
 interface PreparedWorkbook {
   buffer: Buffer;
   sourceFormat: 'xls' | 'xlsx';
+  sourceSha256: string;
+  parserInputSha256: string;
   conversion?: XlsConversionMetadata;
 }
 
@@ -521,7 +523,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     });
     let parsed;
     try {
-      parsed = await this.excelParser.parse(workbook.buffer, dto);
+      parsed = await this.excelParser.parse(workbook.buffer, dto, workbook.sourceSha256);
     } catch (error) {
       await this.failOwnedParse(id, prepared.task.rawFileId, prepared.leaseToken, prepared.attempt, actor, context, error, dto);
       throw error;
@@ -537,7 +539,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
       await tx.importSheet.deleteMany({ where: { importTaskId: id } });
       const sheet = await tx.importSheet.create({
-        data: { importTaskId: id, ...parsed.sheet }
+        data: this.importSheetData(id, parsed.sheet)
       });
       const columns = [];
       for (const column of parsed.columns) {
@@ -546,12 +548,16 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             importTaskId: id,
             sheetId: sheet.id,
             columnIndex: column.columnIndex,
+            sourceColumnId: column.sourceColumnId,
+            columnLetter: column.columnLetter,
             sourceKey: column.sourceKey,
             sourceName: column.sourceName,
+            headerParts: column.headerParts,
             normalizedName: column.normalizedName,
             sampleValues: column.sampleValues,
             inferredType: column.inferredType,
-            duplicateName: column.duplicateName
+            duplicateName: column.duplicateName,
+            statistics: column.statistics as unknown as Prisma.InputJsonObject
           }
         }));
       }
@@ -565,7 +571,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             rowHash: row.rowHash,
             status: row.status as ImportRowStatus,
             errors: row.errors,
-            warnings: row.warnings
+            warnings: row.warnings,
+            cellEvidence: row.cellEvidence as unknown as Prisma.InputJsonArray,
+            evidenceHash: row.evidenceHash
           }
         });
       }
@@ -581,6 +589,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           leaseUntil: null,
           executionMode: 'synchronous',
           processingMode: parsed.processingMode,
+          sourceSha256: parsed.ir.sourceSha256,
+          parserInputSha256: parsed.ir.parserInputSha256,
+          irSchemaVersion: parsed.ir.schemaVersion,
+          parserVersion: parsed.ir.parserVersion,
+          irHash: parsed.ir.hash,
+          rowEvidenceDigest: parsed.ir.rowEvidenceDigest,
           processedRows: parsed.rows.length,
           version: { increment: 1 },
           parsedAt: new Date(),
@@ -604,6 +618,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         columns: columns.length,
         rows: parsed.rows.length,
         ...this.workbookProvenance(workbook),
+        irSchemaVersion: parsed.ir.schemaVersion,
+        parserVersion: parsed.ir.parserVersion,
+        irHash: parsed.ir.hash,
         ...counts
       }, context);
       await this.ledgerEvents.write(tx, actor, 'import_task_parsed', 'import_task', id, {
@@ -614,7 +631,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         allowCachedFormulaResults: dto.allowCachedFormulaResults ?? false,
         rowCount: parsed.rows.length,
         columnCount: columns.length,
-        ...this.workbookProvenance(workbook)
+        ...this.workbookProvenance(workbook),
+        irSchemaVersion: parsed.ir.schemaVersion,
+        parserVersion: parsed.ir.parserVersion,
+        irHash: parsed.ir.hash
       }, `import_task:${id}:parse_attempt:${prepared.attempt}:parsed`);
     });
 
@@ -832,6 +852,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         {
           maxRows: IMPORT_BACKGROUND_MAX_ROWS,
           batchSize: IMPORT_ROW_BATCH_SIZE,
+          sourceSha256: workbook.sourceSha256,
           onStart: async (metadata) => {
             if (this.stopping) throw new ImportParseWorkerStoppingError();
             sheetId = await this.prisma.$transaction(async (tx) => {
@@ -839,7 +860,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
               await this.assertOwnedParse(tx, job.taskId, job.leaseToken);
               await tx.importSheet.deleteMany({ where: { importTaskId: job.taskId } });
               const sheet = await tx.importSheet.create({
-                data: { importTaskId: job.taskId, ...metadata.sheet }
+                data: this.importSheetData(job.taskId, metadata.sheet)
               });
               if (metadata.columns.length > 0) {
                 await tx.importColumn.createMany({
@@ -850,6 +871,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
                 where: { id: job.taskId },
                 data: {
                   processingMode: metadata.processingMode,
+                  sourceSha256: workbook.sourceSha256,
+                  parserInputSha256: workbook.parserInputSha256,
                   totalRows: metadata.sheet.rowCount,
                   processedRows: 0,
                   leaseUntil: new Date(Date.now() + IMPORT_PARSE_LEASE_MS)
@@ -900,7 +923,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const current = await this.assertOwnedParse(tx, job.taskId, job.leaseToken);
       await tx.importSheet.update({
         where: { id: sheetId },
-        data: parsed.sheet
+        data: this.importSheetUpdateData(parsed.sheet)
       });
       const columns = await tx.importColumn.findMany({
         where: { importTaskId: job.taskId },
@@ -915,7 +938,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           data: {
             sampleValues: parsedColumn.sampleValues,
             inferredType: parsedColumn.inferredType,
-            duplicateName: parsedColumn.duplicateName
+            duplicateName: parsedColumn.duplicateName,
+            statistics: parsedColumn.statistics as unknown as Prisma.InputJsonObject
           }
         });
       }
@@ -933,6 +957,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           leaseUntil: null,
           executionMode: 'background',
           processingMode: parsed.processingMode,
+          sourceSha256: parsed.ir.sourceSha256,
+          parserInputSha256: parsed.ir.parserInputSha256,
+          irSchemaVersion: parsed.ir.schemaVersion,
+          parserVersion: parsed.ir.parserVersion,
+          irHash: parsed.ir.hash,
+          rowEvidenceDigest: parsed.ir.rowEvidenceDigest,
           processedRows: parsed.sheet.rowCount,
           totalRows: parsed.sheet.rowCount,
           validRows: counts.valid,
@@ -957,6 +987,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         rows: parsed.sheet.rowCount,
         batchSize: IMPORT_ROW_BATCH_SIZE,
         ...this.workbookProvenance(workbook),
+        irSchemaVersion: parsed.ir.schemaVersion,
+        parserVersion: parsed.ir.parserVersion,
+        irHash: parsed.ir.hash,
         ...counts
       }, job.context);
       await this.ledgerEvents.write(
@@ -973,7 +1006,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           allowCachedFormulaResults: job.options.allowCachedFormulaResults ?? false,
           rowCount: parsed.sheet.rowCount,
           columnCount: refreshedColumns.length,
-          ...this.workbookProvenance(workbook)
+          ...this.workbookProvenance(workbook),
+          irSchemaVersion: parsed.ir.schemaVersion,
+          parserVersion: parsed.ir.parserVersion,
+          irHash: parsed.ir.hash
         },
         `import_task:${job.taskId}:parse_attempt:${job.attempt}:parsed`
       );
@@ -2781,12 +2817,52 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       importTaskId,
       sheetId,
       columnIndex: column.columnIndex,
+      sourceColumnId: column.sourceColumnId,
+      columnLetter: column.columnLetter,
       sourceKey: column.sourceKey,
       sourceName: column.sourceName,
+      headerParts: column.headerParts,
       normalizedName: column.normalizedName,
       sampleValues: column.sampleValues,
       inferredType: column.inferredType,
-      duplicateName: column.duplicateName
+      duplicateName: column.duplicateName,
+      statistics: column.statistics as unknown as Prisma.InputJsonObject
+    };
+  }
+
+  private importSheetData(
+    importTaskId: string,
+    sheet: ParsedWorkbookMetadata['sheet']
+  ): Prisma.ImportSheetUncheckedCreateInput {
+    return {
+      importTaskId,
+      stableId: sheet.stableId,
+      sheetName: sheet.sheetName,
+      sheetIndex: sheet.sheetIndex,
+      visibility: sheet.visibility,
+      headerStartRowIndex: sheet.headerStartRowIndex,
+      headerRowIndex: sheet.headerRowIndex,
+      selectedHeaderRows: sheet.selectedHeaderRows,
+      mergedRanges: sheet.mergedRanges,
+      dateSystem: sheet.dateSystem,
+      timezone: sheet.timezone,
+      rowCount: sheet.rowCount
+    };
+  }
+
+  private importSheetUpdateData(sheet: ParsedWorkbookMetadata['sheet']): Prisma.ImportSheetUpdateInput {
+    return {
+      stableId: sheet.stableId,
+      sheetName: sheet.sheetName,
+      sheetIndex: sheet.sheetIndex,
+      visibility: sheet.visibility,
+      headerStartRowIndex: sheet.headerStartRowIndex,
+      headerRowIndex: sheet.headerRowIndex,
+      selectedHeaderRows: sheet.selectedHeaderRows,
+      mergedRanges: sheet.mergedRanges,
+      dateSystem: sheet.dateSystem,
+      timezone: sheet.timezone,
+      rowCount: sheet.rowCount
     };
   }
 
@@ -2803,7 +2879,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       rowHash: row.rowHash,
       status: row.status as ImportRowStatus,
       errors: row.errors,
-      warnings: row.warnings
+      warnings: row.warnings,
+      cellEvidence: row.cellEvidence as unknown as Prisma.InputJsonArray,
+      evidenceHash: row.evidenceHash
     };
   }
 
@@ -2859,10 +2937,23 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     file: Awaited<ReturnType<FilesService['readForProcessing']>>
   ): Promise<PreparedWorkbook> {
     const extension = extname(file.fileName).toLowerCase();
-    if (extension === '.xlsx') return { buffer: file.buffer, sourceFormat: 'xlsx' };
+    if (extension === '.xlsx') {
+      return {
+        buffer: file.buffer,
+        sourceFormat: 'xlsx',
+        sourceSha256: file.sha256,
+        parserInputSha256: file.sha256
+      };
+    }
     if (extension === '.xls') {
       const converted = await this.xlsConverter.convert(file.buffer);
-      return { buffer: converted.buffer, sourceFormat: 'xls', conversion: converted.metadata };
+      return {
+        buffer: converted.buffer,
+        sourceFormat: 'xls',
+        sourceSha256: file.sha256,
+        parserInputSha256: createHash('sha256').update(converted.buffer).digest('hex'),
+        conversion: converted.metadata
+      };
     }
     throw new BadRequestException('导入源文件必须是 .xls 或 .xlsx');
   }
@@ -2870,6 +2961,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private workbookProvenance(workbook: PreparedWorkbook) {
     return {
       sourceFormat: workbook.sourceFormat,
+      sourceSha256: workbook.sourceSha256,
+      parserInputSha256: workbook.parserInputSha256,
       ...(workbook.conversion ? { conversion: workbook.conversion } : {})
     };
   }

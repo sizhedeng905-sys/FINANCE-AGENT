@@ -2,7 +2,9 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PDFDocument } from 'pdf-lib';
 
+import { jpegDimensions, pngDimensions, webpDimensions } from '../files/image-dimensions';
 import { OcrDocumentPage } from './ocr-provider';
+import { OCR_PREPROCESSING_VERSION } from './ocr-ir';
 
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -32,13 +34,24 @@ export class DocumentPreprocessorService {
     if (mimeType === 'application/pdf') return (await this.inspectPdf(buffer, selection)).pages;
     if (IMAGE_MIME_TYPES.has(mimeType)) {
       this.assertNoImagePageSelection(selection);
+      const dimensions = mimeType === 'image/png'
+        ? pngDimensions(buffer)
+        : mimeType === 'image/jpeg'
+          ? jpegDimensions(buffer)
+          : webpDimensions(buffer);
+      if (!dimensions) throw new BadRequestException('OCR 图片尺寸无法识别');
       return [{
         page: 1,
+        width: dimensions.width,
+        height: dimensions.height,
         preprocessing: {
           rotationReserved: true,
           compressionReserved: true,
           scalingReserved: true,
-          renderingReserved: false
+          renderingReserved: false,
+          version: OCR_PREPROCESSING_VERSION,
+          operations: [],
+          rotationApplied: 0
         }
       }];
     }
@@ -60,7 +73,16 @@ export class DocumentPreprocessorService {
     const selected = await PDFDocument.create();
     const copied = await selected.copyPages(inspected.document, inspected.indices);
     for (const page of copied) selected.addPage(page);
-    return { buffer: Buffer.from(await selected.save()), pages: inspected.pages };
+    return {
+      buffer: Buffer.from(await selected.save()),
+      pages: inspected.pages.map((page) => ({
+        ...page,
+        preprocessing: {
+          ...page.preprocessing,
+          operations: [...(page.preprocessing.operations ?? []), 'PDF_PAGE_SLICE']
+        }
+      }))
+    };
   }
 
   private async inspectPdf(buffer: Buffer, selection: OcrPageSelection) {
@@ -92,7 +114,10 @@ export class DocumentPreprocessorService {
           rotationReserved: true as const,
           compressionReserved: true as const,
           scalingReserved: true as const,
-          renderingReserved: true
+          renderingReserved: true,
+          version: OCR_PREPROCESSING_VERSION,
+          operations: [],
+          rotationApplied: 0
         }
       }))
     };

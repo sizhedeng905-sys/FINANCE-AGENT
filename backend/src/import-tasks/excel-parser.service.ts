@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import ExcelJS from 'exceljs';
 
+import { canonicalJson, canonicalJsonSha256 } from '../common/utils/canonical-json';
 import {
   readXlsxArchiveSummary,
   readXlsxPackageMetadata,
@@ -21,6 +22,12 @@ const STREAMING_HEADER_SNAPSHOT_ROWS = MAX_HEADER_SCAN_ROWS + 3;
 const MAX_BACKGROUND_ROWS = 50_000;
 const DEFAULT_ROW_BATCH_SIZE = 500;
 const MAX_ROW_BATCH_SIZE = 1_000;
+const MAX_EVIDENCE_LEXICAL_LENGTH = 2_000;
+const DISTINCT_STAT_SAMPLE_LIMIT = 1_024;
+
+export const EXCEL_IR_SCHEMA_VERSION = 'excel-ir/1.0';
+export const EXCEL_PARSER_VERSION = 'exceljs-evidence-v1';
+export const EXCEL_IR_TIMEZONE = 'UTC';
 
 export function assertExcelDataRowLimit(dataRows: number, maxRows: number) {
   if (!Number.isInteger(dataRows) || dataRows < 0) {
@@ -33,15 +40,55 @@ export function assertExcelDataRowLimit(dataRows: number, maxRows: number) {
 
 export type ParsedCellValue = string | number | boolean | null | Record<string, unknown>;
 export type WorkbookSheetState = 'visible' | 'hidden' | 'veryHidden';
+export type ExcelDateSystem = '1900' | '1904';
+
+export interface ParsedCellEvidence {
+  sourceRef: string;
+  address: string;
+  row: number;
+  column: number;
+  columnLetter: string;
+  lexicalValue: string | null;
+  lexicalSha256: string | null;
+  canonicalValue: string | boolean | null;
+  displayValue: string | null;
+  parsedType: 'empty' | 'text' | 'number' | 'boolean' | 'date' | 'formula' | 'error';
+  formula: string | null;
+  cachedValuePresent: boolean;
+  cachedValue: string | boolean | null;
+  mergeAnchorAddress: string | null;
+  warnings: string[];
+  truncated: boolean;
+}
+
+export interface ParsedColumnStatistics {
+  nonEmpty: number;
+  empty: number;
+  distinctApprox: number;
+  distinctCapped: boolean;
+}
+
+export interface ParsedExcelIrMetadata {
+  schemaVersion: typeof EXCEL_IR_SCHEMA_VERSION;
+  parserVersion: typeof EXCEL_PARSER_VERSION;
+  sourceSha256: string;
+  parserInputSha256: string;
+  rowEvidenceDigest: string;
+  hash: string;
+}
 
 export interface ParsedImportColumn {
   columnIndex: number;
+  sourceColumnId: string;
+  columnLetter: string;
   sourceKey: string;
   sourceName: string;
+  headerParts: string[];
   normalizedName: string;
   sampleValues: Array<string | number | boolean>;
   inferredType: 'date' | 'number' | 'text';
   duplicateName: boolean;
+  statistics: ParsedColumnStatistics;
 }
 
 export interface ParsedImportRow {
@@ -51,14 +98,24 @@ export interface ParsedImportRow {
   status: 'pending' | 'error' | 'duplicate' | 'ignored';
   errors: string[];
   warnings: string[];
+  cellEvidence: ParsedCellEvidence[];
+  evidenceHash: string;
 }
 
 export interface ParsedWorkbook {
   processingMode: 'document' | 'streaming';
+  ir: ParsedExcelIrMetadata;
   sheet: {
+    stableId: string;
     sheetName: string;
     sheetIndex: number;
+    visibility: WorkbookSheetState;
+    headerStartRowIndex: number;
     headerRowIndex: number;
+    selectedHeaderRows: number[];
+    mergedRanges: string[];
+    dateSystem: ExcelDateSystem;
+    timezone: typeof EXCEL_IR_TIMEZONE;
     rowCount: number;
   };
   columns: ParsedImportColumn[];
@@ -81,6 +138,7 @@ export interface ParsedRowBatchProgress {
 export interface BatchedParseSettings {
   maxRows?: number;
   batchSize?: number;
+  sourceSha256?: string;
   onStart?: (metadata: ParsedWorkbookStartMetadata) => Promise<void>;
 }
 
@@ -131,7 +189,14 @@ interface NormalizedCell {
   displayValue: string | number | boolean | null;
   formula: boolean;
   formulaResultAvailable?: boolean;
+  formulaText?: string;
+  cachedValue?: string | number | boolean | null;
   error?: string;
+}
+
+interface ColumnStatsTracker {
+  distinct: Set<string>;
+  capped: boolean;
 }
 
 interface CellRange {
@@ -212,13 +277,17 @@ export class ExcelParserService {
     };
   }
 
-  async parse(buffer: Buffer, options: ParseWorkbookOptions = {}): Promise<ParsedWorkbook> {
+  async parse(
+    buffer: Buffer,
+    options: ParseWorkbookOptions = {},
+    sourceSha256 = this.sha256(buffer)
+  ): Promise<ParsedWorkbook> {
     const archive = await readXlsxArchiveSummary(buffer);
     if (this.shouldStream(buffer, archive)) {
       const metadata = await readXlsxPackageMetadata(buffer);
-      return this.parseStreaming(buffer, metadata, options);
+      return this.parseStreaming(buffer, metadata, options, undefined, sourceSha256);
     }
-    return this.parseDocument(buffer, options);
+    return this.parseDocument(buffer, options, sourceSha256);
   }
 
   async parseInBatches(
@@ -241,12 +310,16 @@ export class ExcelParserService {
       batchSize,
       onStart: settings.onStart,
       onRows
-    });
+    }, settings.sourceSha256 ?? this.sha256(buffer));
     const { rows: _rows, ...result } = parsed;
     return result;
   }
 
-  private async parseDocument(buffer: Buffer, options: ParseWorkbookOptions): Promise<ParsedWorkbook> {
+  private async parseDocument(
+    buffer: Buffer,
+    options: ParseWorkbookOptions,
+    sourceSha256: string
+  ): Promise<ParsedWorkbook> {
     const workbook = await this.loadWorkbook(buffer);
     const inspectedSheets = workbook.worksheets.map((worksheet, sheetIndex) => this.inspectSheet(worksheet, sheetIndex));
     const nonEmptySheets = inspectedSheets.filter((sheet) => sheet.nonEmpty);
@@ -278,9 +351,18 @@ export class ExcelParserService {
     assertExcelDataRowLimit(rowCount - headerRowIndex, MAX_ROWS);
 
     const ranges = this.mergeRanges(worksheet);
-    const columns = this.parseHeaders(worksheet, headerStartRowIndex, headerRowIndex, columnCount, ranges);
+    const sheetStableId = this.sheetStableId(selected.sheetIndex);
+    const columns = this.parseHeaders(
+      worksheet,
+      headerStartRowIndex,
+      headerRowIndex,
+      columnCount,
+      ranges,
+      sheetStableId
+    );
     const rows: ParsedImportRow[] = [];
     const seenHashes = new Set<string>();
+    const columnStats = this.columnStats(columns);
     const dataMergesByRow = this.indexDataMerges(ranges, headerRowIndex + 1, rowCount);
 
     for (let rowNumber = headerRowIndex + 1; rowNumber <= rowCount; rowNumber += 1) {
@@ -290,23 +372,33 @@ export class ExcelParserService {
         columns,
         dataMergesByRow,
         options,
-        seenHashes
+        seenHashes,
+        sheetStableId,
+        columnStats
       ));
     }
 
     for (const column of columns) column.inferredType = this.inferType(column.sampleValues);
+    this.finalizeColumnStats(columns, columnStats);
 
-    return {
+    return this.finalizeExcelIr({
       processingMode: 'document',
       sheet: {
+        stableId: sheetStableId,
         sheetName: worksheet.name,
         sheetIndex: selected.sheetIndex,
+        visibility: worksheet.state as WorkbookSheetState,
+        headerStartRowIndex,
         headerRowIndex,
+        selectedHeaderRows: this.integerRange(headerStartRowIndex, headerRowIndex),
+        mergedRanges: ranges.map((range) => this.rangeAddress(range)),
+        dateSystem: this.workbookDateSystem(workbook),
+        timezone: EXCEL_IR_TIMEZONE,
         rowCount: rows.length
       },
       columns,
       rows
-    };
+    }, sourceSha256, this.sha256(buffer));
   }
 
   normalizeHeader(value: string) {
@@ -324,9 +416,12 @@ export class ExcelParserService {
     dataMergesByRow: Map<number, CellRange[]>,
     options: ParseWorkbookOptions,
     seenHashes: Set<string>,
+    sheetStableId: string,
+    columnStats: Map<number, ColumnStatsTracker>,
     formulaOverrides?: ReadonlyMap<string, string>
   ): ParsedImportRow {
     const rawData: Record<string, ParsedCellValue> = {};
+    const cellEvidence: ParsedCellEvidence[] = [];
     const errors: string[] = [];
     const warnings: string[] = [];
     let hasRejectedFormula = false;
@@ -339,13 +434,24 @@ export class ExcelParserService {
         column.columnIndex >= range.left && column.columnIndex <= range.right
       ));
       const isMergeMaster = !merge || (rowNumber === merge.top && column.columnIndex === merge.left);
+      const cell = row?.getCell(column.columnIndex);
       const normalized: NormalizedCell = !row || (merge && !isMergeMaster)
         ? { value: null, displayValue: null, formula: false }
         : this.normalizeCell(
-          row.getCell(column.columnIndex),
-          formulaOverrides?.get(row.getCell(column.columnIndex).address)
+          cell!,
+          formulaOverrides?.get(cell!.address)
         );
       rawData[column.sourceKey] = normalized.value;
+      cellEvidence.push(this.cellEvidence(
+        sheetStableId,
+        rowNumber,
+        column,
+        cell,
+        normalized,
+        merge,
+        isMergeMaster
+      ));
+      this.recordColumnStats(column, normalized, columnStats);
       if (normalized.displayValue !== null && normalized.displayValue !== '') {
         hasValue = true;
         if (column.sampleValues.length < 5) column.sampleValues.push(normalized.displayValue);
@@ -381,7 +487,16 @@ export class ExcelParserService {
     }
 
     if (hasValue) seenHashes.add(rowHash);
-    return { rowNumber, rawData, rowHash, status, errors: [...new Set(errors)], warnings };
+    return {
+      rowNumber,
+      rawData,
+      rowHash,
+      status,
+      errors: [...new Set(errors)],
+      warnings,
+      cellEvidence,
+      evidenceHash: canonicalJsonSha256({ rowNumber, cells: cellEvidence })
+    };
   }
 
   private async loadWorkbook(buffer: Buffer) {
@@ -488,7 +603,8 @@ export class ExcelParserService {
     controls: StreamingParseControls = {
       maxRows: MAX_ROWS,
       batchSize: DEFAULT_ROW_BATCH_SIZE
-    }
+    },
+    sourceSha256 = this.sha256(buffer)
   ): Promise<ParsedWorkbook> {
     const state = await this.inspectStreaming(buffer, metadata);
     const selected = this.selectStreamingSheet(state.inspection.sheets, options);
@@ -521,7 +637,10 @@ export class ExcelParserService {
             headerStartRowIndex,
             headerRowIndex,
             options,
-            controls
+            controls,
+            metadata.dateSystem,
+            sourceSha256,
+            this.sha256(buffer)
           );
         } else {
           for await (const _row of streamingWorksheet) {
@@ -544,14 +663,20 @@ export class ExcelParserService {
     headerStartRowIndex: number,
     headerRowIndex: number,
     options: ParseWorkbookOptions,
-    controls: StreamingParseControls
+    controls: StreamingParseControls,
+    dateSystem: ExcelDateSystem,
+    sourceSha256: string,
+    parserInputSha256: string
   ): Promise<ParsedWorkbook> {
     const headerWorkbook = new ExcelJS.Workbook();
     const headerSheet = headerWorkbook.addWorksheet(observation.metadata.sheetName);
     const rows: ParsedImportRow[] = [];
     let pendingRows: ParsedImportRow[] = [];
     let processedRows = 0;
+    const rowEvidenceHasher = createHash('sha256');
     const seenHashes = new Set<string>();
+    const sheetStableId = this.sheetStableId(observation.metadata.sheetIndex);
+    let columnStats = new Map<number, ColumnStatsTracker>();
     const dataMergesByRow = this.indexDataMerges(
       observation.metadata.mergeRanges,
       headerRowIndex + 1,
@@ -573,6 +698,7 @@ export class ExcelParserService {
     };
     const appendRow = async (row: ParsedImportRow) => {
       processedRows += 1;
+      rowEvidenceHasher.update(`${row.rowNumber}:${row.evidenceHash}\n`, 'utf8');
       if (!controls.onRows) {
         rows.push(row);
         return;
@@ -600,8 +726,10 @@ export class ExcelParserService {
         headerStartRowIndex,
         headerRowIndex,
         observation.columnCount,
-        observation.metadata.mergeRanges
+        observation.metadata.mergeRanges,
+        sheetStableId
       );
+      columnStats = this.columnStats(columns);
       return columns;
     };
     const ensureStarted = async () => {
@@ -612,9 +740,16 @@ export class ExcelParserService {
           await controls.onStart({
             processingMode: 'streaming',
             sheet: {
+              stableId: sheetStableId,
               sheetName: observation.metadata.sheetName,
               sheetIndex: observation.metadata.sheetIndex,
+              visibility: observation.metadata.state,
+              headerStartRowIndex,
               headerRowIndex,
+              selectedHeaderRows: this.integerRange(headerStartRowIndex, headerRowIndex),
+              mergedRanges: observation.metadata.mergeRanges.map((range) => this.rangeAddress(range)),
+              dateSystem,
+              timezone: EXCEL_IR_TIMEZONE,
               rowCount: totalRows
             },
             columns: parsedColumns
@@ -641,6 +776,8 @@ export class ExcelParserService {
           dataMergesByRow,
           options,
           seenHashes,
+          sheetStableId,
+          columnStats,
           observation.metadata.formulaOverrides
         ));
         nextDataRow += 1;
@@ -652,6 +789,8 @@ export class ExcelParserService {
         dataMergesByRow,
         options,
         seenHashes,
+        sheetStableId,
+        columnStats,
         observation.metadata.formulaOverrides
       ));
       nextDataRow = row.number + 1;
@@ -665,23 +804,33 @@ export class ExcelParserService {
         dataMergesByRow,
         options,
         seenHashes,
+        sheetStableId,
+        columnStats,
         observation.metadata.formulaOverrides
       ));
       nextDataRow += 1;
     }
     await flushRows();
     for (const column of parsedColumns) column.inferredType = this.inferType(column.sampleValues);
-    return {
+    this.finalizeColumnStats(parsedColumns, columnStats);
+    return this.finalizeExcelIr({
       processingMode: 'streaming',
       sheet: {
+        stableId: sheetStableId,
         sheetName: observation.metadata.sheetName,
         sheetIndex: observation.metadata.sheetIndex,
+        visibility: observation.metadata.state,
+        headerStartRowIndex,
         headerRowIndex,
+        selectedHeaderRows: this.integerRange(headerStartRowIndex, headerRowIndex),
+        mergedRanges: observation.metadata.mergeRanges.map((range) => this.rangeAddress(range)),
+        dateSystem,
+        timezone: EXCEL_IR_TIMEZONE,
         rowCount: processedRows
       },
       columns: parsedColumns,
       rows
-    };
+    }, sourceSha256, parserInputSha256, rowEvidenceHasher.digest('hex'));
   }
 
   private streamingWorkbookReader(buffer: Buffer, metadata: XlsxPackageMetadata) {
@@ -943,7 +1092,8 @@ export class ExcelParserService {
     startRowIndex: number,
     endRowIndex: number,
     columnCount: number,
-    ranges: CellRange[]
+    ranges: CellRange[],
+    sheetStableId: string
   ): ParsedImportColumn[] {
     const sourceNames = this.headerLabels(worksheet, startRowIndex, endRowIndex, columnCount, ranges, true);
     const occurrences = new Map<string, number>();
@@ -955,14 +1105,19 @@ export class ExcelParserService {
       const normalizedName = this.normalizeHeader(sourceName);
       const occurrence = (occurrences.get(normalizedName) ?? 0) + 1;
       occurrences.set(normalizedName, occurrence);
+      const columnLetter = this.columnLetter(columnIndex);
       columns.push({
         columnIndex,
+        sourceColumnId: `${sheetStableId}:${columnLetter}`,
+        columnLetter,
         sourceKey: occurrence === 1 ? sourceName : `${sourceName}__${occurrence}`,
         sourceName,
+        headerParts: sourceName.split(' / ').filter(Boolean),
         normalizedName,
         sampleValues: [],
         inferredType: 'text',
-        duplicateName: false
+        duplicateName: false,
+        statistics: { nonEmpty: 0, empty: 0, distinctApprox: 0, distinctCapped: false }
       });
     });
 
@@ -1040,6 +1195,207 @@ export class ExcelParserService {
     return normalized.displayValue === null ? '' : String(normalized.displayValue).trim();
   }
 
+  private finalizeExcelIr(
+    parsed: Omit<ParsedWorkbook, 'ir'>,
+    sourceSha256: string,
+    parserInputSha256: string,
+    rowEvidenceDigest?: string
+  ): ParsedWorkbook {
+    const digest = rowEvidenceDigest ?? this.rowEvidenceDigest(parsed.rows);
+    const hashInput = {
+      schemaVersion: EXCEL_IR_SCHEMA_VERSION,
+      parserVersion: EXCEL_PARSER_VERSION,
+      sourceSha256,
+      parserInputSha256,
+      sheet: parsed.sheet,
+      columns: parsed.columns.map((column) => ({
+        columnIndex: column.columnIndex,
+        sourceColumnId: column.sourceColumnId,
+        columnLetter: column.columnLetter,
+        sourceKey: column.sourceKey,
+        sourceName: column.sourceName,
+        headerParts: column.headerParts,
+        normalizedName: column.normalizedName,
+        inferredType: column.inferredType,
+        duplicateName: column.duplicateName,
+        statistics: column.statistics
+      })),
+      rowEvidenceDigest: digest
+    };
+    return {
+      ...parsed,
+      ir: {
+        schemaVersion: EXCEL_IR_SCHEMA_VERSION,
+        parserVersion: EXCEL_PARSER_VERSION,
+        sourceSha256,
+        parserInputSha256,
+        rowEvidenceDigest: digest,
+        hash: canonicalJsonSha256(hashInput)
+      }
+    };
+  }
+
+  private rowEvidenceDigest(rows: ParsedImportRow[]) {
+    const hash = createHash('sha256');
+    for (const row of rows) hash.update(`${row.rowNumber}:${row.evidenceHash}\n`, 'utf8');
+    return hash.digest('hex');
+  }
+
+  private cellEvidence(
+    sheetStableId: string,
+    rowNumber: number,
+    column: ParsedImportColumn,
+    cell: ExcelJS.Cell | undefined,
+    normalized: NormalizedCell,
+    merge: CellRange | undefined,
+    isMergeMaster: boolean
+  ): ParsedCellEvidence {
+    const address = `${column.columnLetter}${rowNumber}`;
+    const fullLexical = this.cellLexicalValue(cell, normalized, merge, isMergeMaster);
+    const lexicalValue = fullLexical === null
+      ? null
+      : fullLexical.slice(0, MAX_EVIDENCE_LEXICAL_LENGTH);
+    const display = normalized.displayValue === null ? null : String(normalized.displayValue);
+    const displayValue = display?.slice(0, MAX_EVIDENCE_LEXICAL_LENGTH) ?? null;
+    const formula = normalized.formula ? normalized.formulaText ?? null : null;
+    const warnings = [
+      ...(normalized.error ? [normalized.error] : []),
+      ...(merge ? ['MERGED_CELL'] : []),
+      ...(merge && !isMergeMaster ? ['MERGED_NON_MASTER_EMPTY'] : [])
+    ];
+    return {
+      sourceRef: `${sheetStableId}!${address}`,
+      address,
+      row: rowNumber,
+      column: column.columnIndex,
+      columnLetter: column.columnLetter,
+      lexicalValue,
+      lexicalSha256: fullLexical === null ? null : this.sha256(Buffer.from(fullLexical, 'utf8')),
+      canonicalValue: this.canonicalCellValue(cell, normalized, merge, isMergeMaster),
+      displayValue,
+      parsedType: this.parsedCellType(cell, normalized, merge, isMergeMaster),
+      formula,
+      cachedValuePresent: normalized.formulaResultAvailable === true,
+      cachedValue: this.canonicalPrimitive(normalized.cachedValue),
+      mergeAnchorAddress: merge ? `${this.columnLetter(merge.left)}${merge.top}` : null,
+      warnings,
+      truncated: fullLexical !== lexicalValue || display !== displayValue
+    };
+  }
+
+  private cellLexicalValue(
+    cell: ExcelJS.Cell | undefined,
+    normalized: NormalizedCell,
+    merge: CellRange | undefined,
+    isMergeMaster: boolean
+  ): string | null {
+    if (!cell || (merge && !isMergeMaster) || cell.value === null || cell.value === undefined) return null;
+    if (normalized.formula) return normalized.cachedValue === null || normalized.cachedValue === undefined
+      ? null
+      : String(normalized.cachedValue);
+    if (cell.value instanceof Date) return cell.value.toISOString();
+    if (typeof cell.value === 'string' || typeof cell.value === 'number' || typeof cell.value === 'boolean') {
+      return String(cell.value);
+    }
+    return cell.text || (normalized.displayValue === null ? null : String(normalized.displayValue));
+  }
+
+  private canonicalCellValue(
+    cell: ExcelJS.Cell | undefined,
+    normalized: NormalizedCell,
+    merge: CellRange | undefined,
+    isMergeMaster: boolean
+  ): string | boolean | null {
+    if (!cell || (merge && !isMergeMaster) || normalized.displayValue === null) return null;
+    if (normalized.formula) return this.canonicalPrimitive(normalized.cachedValue);
+    if (cell.value instanceof Date) return this.formatDate(cell.value);
+    if (typeof normalized.value === 'number') return String(normalized.value);
+    if (typeof normalized.value === 'string' || typeof normalized.value === 'boolean') return normalized.value;
+    return null;
+  }
+
+  private canonicalPrimitive(value: unknown): string | boolean | null {
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null;
+    if (typeof value === 'string' || typeof value === 'boolean') return value;
+    return null;
+  }
+
+  private parsedCellType(
+    cell: ExcelJS.Cell | undefined,
+    normalized: NormalizedCell,
+    merge: CellRange | undefined,
+    isMergeMaster: boolean
+  ): ParsedCellEvidence['parsedType'] {
+    if (!cell || (merge && !isMergeMaster) || normalized.value === null) return 'empty';
+    if (normalized.formula) return 'formula';
+    if (normalized.error) return 'error';
+    if (cell.value instanceof Date) return 'date';
+    if (typeof normalized.value === 'number') return 'number';
+    if (typeof normalized.value === 'boolean') return 'boolean';
+    return 'text';
+  }
+
+  private columnStats(columns: ParsedImportColumn[]) {
+    return new Map(columns.map((column) => [column.columnIndex, { distinct: new Set<string>(), capped: false }]));
+  }
+
+  private recordColumnStats(
+    column: ParsedImportColumn,
+    normalized: NormalizedCell,
+    trackers: Map<number, ColumnStatsTracker>
+  ) {
+    if (normalized.displayValue === null || normalized.displayValue === '') {
+      column.statistics.empty += 1;
+      return;
+    }
+    column.statistics.nonEmpty += 1;
+    const tracker = trackers.get(column.columnIndex);
+    if (!tracker || tracker.capped) return;
+    tracker.distinct.add(canonicalJson(normalized.value));
+    if (tracker.distinct.size >= DISTINCT_STAT_SAMPLE_LIMIT) tracker.capped = true;
+  }
+
+  private finalizeColumnStats(columns: ParsedImportColumn[], trackers: Map<number, ColumnStatsTracker>) {
+    for (const column of columns) {
+      const tracker = trackers.get(column.columnIndex);
+      column.statistics.distinctApprox = tracker?.distinct.size ?? 0;
+      column.statistics.distinctCapped = tracker?.capped ?? false;
+    }
+  }
+
+  private sheetStableId(sheetIndex: number) {
+    return `sheet${sheetIndex}`;
+  }
+
+  private columnLetter(column: number) {
+    let value = column;
+    let result = '';
+    while (value > 0) {
+      value -= 1;
+      result = String.fromCharCode(65 + (value % 26)) + result;
+      value = Math.floor(value / 26);
+    }
+    return result;
+  }
+
+  private rangeAddress(range: CellRange) {
+    const start = `${this.columnLetter(range.left)}${range.top}`;
+    const end = `${this.columnLetter(range.right)}${range.bottom}`;
+    return start === end ? start : `${start}:${end}`;
+  }
+
+  private integerRange(start: number, end: number) {
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }
+
+  private workbookDateSystem(workbook: ExcelJS.Workbook): ExcelDateSystem {
+    return (workbook.properties as { date1904?: boolean }).date1904 ? '1904' : '1900';
+  }
+
+  private sha256(value: Buffer) {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
   private normalizeCell(cell: ExcelJS.Cell, formulaOverride?: string): NormalizedCell {
     const value = cell.value;
     if (value === null || value === undefined) return { value: null, displayValue: null, formula: false };
@@ -1064,6 +1420,8 @@ export class ExcelParserService {
         displayValue: result === null ? `[公式] ${formulaText}` : String(result),
         formula: true,
         formulaResultAvailable: result !== null,
+        formulaText,
+        cachedValue: result,
         error: !formulaText.trim()
           ? '公式来源不可用'
           : invalidResult

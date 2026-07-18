@@ -16,6 +16,7 @@ export interface CanonicalOcrFieldCandidate {
   boundingBox?: OcrBoundingBox;
   confidence: number;
   evidence: string;
+  evidenceRefs: string[];
   missing: boolean;
   lowConfidence: boolean;
   corrected: boolean;

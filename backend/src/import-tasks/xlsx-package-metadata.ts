@@ -35,6 +35,7 @@ export interface XlsxPackageSheet {
 
 export interface XlsxPackageMetadata extends XlsxArchiveSummary {
   sheets: XlsxPackageSheet[];
+  dateSystem: '1900' | '1904';
 }
 
 interface WorkbookSheetReference {
@@ -87,6 +88,7 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
       let expandedBytes = 0;
       let mediaCount = 0;
       let mediaExpandedBytes = 0;
+      let dateSystem: XlsxPackageMetadata['dateSystem'] = '1900';
       let workbookSheets: WorkbookSheetReference[] = [];
       const relationships = new Map<string, string>();
       const worksheetMetadata = new Map<string, WorksheetXmlMetadata>();
@@ -138,7 +140,7 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
           reject(new BadRequestException('Excel 工作表关系元数据冲突'));
           return;
         }
-        resolve({ ...summary, sheets });
+        resolve({ ...summary, sheets, dateSystem });
       };
 
       zip.on('error', finish);
@@ -173,6 +175,11 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
             parser.on('error', (error) => { parserError = error; });
             parser.on('opentag', (tag) => {
               const node = tag as unknown as XmlTag;
+              if (entry.fileName === 'xl/workbook.xml' && node.name === 'workbookPr') {
+                const date1904 = attribute(node, 'date1904');
+                dateSystem = date1904 === '1' || date1904?.toLowerCase() === 'true' ? '1904' : '1900';
+                return;
+              }
               if (entry.fileName === 'xl/workbook.xml' && node.name === 'sheet') {
                 const name = attribute(node, 'name');
                 const relationshipId = attribute(node, 'r:id');

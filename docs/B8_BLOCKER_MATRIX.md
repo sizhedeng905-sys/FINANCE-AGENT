@@ -185,8 +185,8 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | 编号 | 严重性 | 边界 | 状态 | 关闭阶段 |
 | --- | --- | --- | --- | --- |
 | M0-INPUT-001 | P1 | Prompt Catalog 当前为 0 字节 | blocked_external | M2/M8 |
-| M1-EXCEL-EVIDENCE-001 | P0 | Excel IR/单元格证据/hash | open | M1 |
-| M1-OCR-EVIDENCE-001 | P0 | OCR token/block/bbox IR/hash | open | M1 |
+| M1-EXCEL-EVIDENCE-001 | P0 | Excel IR/单元格证据/hash | verified | M1 |
+| M1-OCR-EVIDENCE-001 | P0 | OCR token/block/bbox IR/hash | verified | M1 |
 | M2-PROMPT-REGISTRY-001 | P1 | Prompt registry/version vector | open | M2 |
 | M2-STRICT-SCHEMA-001 | P0 | 严格 JSON/白名单/恶意结构 | open | M2 |
 | M2-AI-MODE-001 | P0 | ingestion/report mode 与 kill switch | open | M2 |

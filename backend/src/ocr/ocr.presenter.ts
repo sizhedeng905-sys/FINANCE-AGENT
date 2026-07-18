@@ -39,6 +39,13 @@ export function toOcrTask(task: OcrTaskDetail) {
     modelName: task.modelName,
     modelVersion: task.modelVersion ?? undefined,
     endpointSnapshot: task.endpointSnapshot ?? undefined,
+    evidence: {
+      schemaVersion: task.irSchemaVersion ?? undefined,
+      sourceSha256: task.sourceSha256 ?? undefined,
+      irHash: task.irHash ?? undefined,
+      coordinateVersion: task.coordinateVersion ?? undefined,
+      preprocessingVersion: task.preprocessingVersion ?? undefined
+    },
     extractedText: task.extractedText ?? '',
     extractedFields: objectValue(task.extractedFields),
     fieldConfidence: numberObject(task.fieldConfidence),

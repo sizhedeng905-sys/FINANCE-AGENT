@@ -12,6 +12,9 @@ export interface OcrDocumentPage {
     compressionReserved: true;
     scalingReserved: true;
     renderingReserved: boolean;
+    version?: string;
+    operations?: string[];
+    rotationApplied?: number;
   };
 }
 

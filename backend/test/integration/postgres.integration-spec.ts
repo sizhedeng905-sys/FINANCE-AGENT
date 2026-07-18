@@ -4316,7 +4316,26 @@ describe('real PostgreSQL integration', () => {
         .expect(201);
       expect(selectedParse.body.data).toMatchObject({
         status: ImportTaskStatus.mapping,
-        sheets: [{ index: 1, headerRowIndex: 2, rowCount: 1 }]
+        evidence: {
+          schemaVersion: 'excel-ir/1.0',
+          parserVersion: 'exceljs-evidence-v1',
+          sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          parserInputSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          irHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          rowEvidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+        },
+        sheets: [{
+          stableId: 'sheet1',
+          index: 1,
+          visibility: 'visible',
+          headerStartRowIndex: 1,
+          headerRowIndex: 2,
+          selectedHeaderRows: [1, 2],
+          mergedRanges: expect.arrayContaining(['A1:A2', 'B1:C1', 'D1:D2', 'E1:E2']),
+          dateSystem: '1900',
+          timezone: 'UTC',
+          rowCount: 1
+        }]
       });
       expect(selectedParse.body.data.columns.map((column: { sourceName: string }) => column.sourceName)).toEqual([
         '发生日期',
@@ -4326,7 +4345,17 @@ describe('real PostgreSQL integration', () => {
         '司机'
       ]);
       const cachedFormulaRow = await prisma.importRow.findFirstOrThrow({ where: { importTaskId: multiTaskId } });
-      expect(cachedFormulaRow).toMatchObject({ status: ImportRowStatus.pending });
+      expect(cachedFormulaRow).toMatchObject({
+        status: ImportRowStatus.pending,
+        evidenceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        cellEvidence: expect.arrayContaining([expect.objectContaining({
+          sourceRef: 'sheet1!B3',
+          parsedType: 'formula',
+          formula: 'SUM(120,80)',
+          cachedValue: '200',
+          canonicalValue: '200'
+        })])
+      });
       expect(cachedFormulaRow.rawData).toMatchObject({
         '费用 / 金额': { formula: 'SUM(120,80)', result: 200 }
       });
@@ -4337,7 +4366,9 @@ describe('real PostgreSQL integration', () => {
       });
       expect(cachedFormulaAudit.metadata).toMatchObject({
         allowCachedFormulaResults: true,
-        processingMode: 'streaming'
+        processingMode: 'streaming',
+        irSchemaVersion: 'excel-ir/1.0',
+        irHash: expect.stringMatching(/^[a-f0-9]{64}$/)
       });
       const cachedFormulaLedger = await prisma.ledgerEvent.findFirstOrThrow({
         where: { eventType: 'import_task_parsed', aggregateId: multiTaskId },
@@ -4345,7 +4376,9 @@ describe('real PostgreSQL integration', () => {
       });
       expect(cachedFormulaLedger.payload).toMatchObject({
         allowCachedFormulaResults: true,
-        processingMode: 'streaming'
+        processingMode: 'streaming',
+        irSchemaVersion: 'excel-ir/1.0',
+        irHash: expect.stringMatching(/^[a-f0-9]{64}$/)
       });
       const multiColumns = selectedParse.body.data.columns as Array<{ id: string; sourceName: string }>;
       const multiDateColumn = multiColumns.find((column) => column.sourceName === '发生日期')!;
@@ -6782,6 +6815,14 @@ describe('real PostgreSQL integration', () => {
       expect(recognized.body.data).toMatchObject({
         status: OcrTaskStatus.pending_confirm,
         extractedText: expect.stringContaining('金额'),
+        evidence: {
+          schemaVersion: 'ocr-ir/1.0',
+          sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          irHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          coordinateVersion: 'page-native-top-left-v1',
+          preprocessingVersion: 'ocr-preprocess-v1'
+        },
+        textBlocks: [expect.objectContaining({ blockId: 'p1-b1', confidence: '0.94' })],
         attemptCount: 1,
         attempts: [expect.objectContaining({ status: OcrAttemptStatus.succeeded, attemptNo: 1 })]
       });
@@ -6791,11 +6832,26 @@ describe('real PostgreSQL integration', () => {
         normalizedValue: unknown;
         confidence: number;
         lowConfidence: boolean;
+        evidenceRefs: string[];
       }>;
       const lowField = candidates.find((candidate) => candidate.lowConfidence);
       const amountField = candidates.find((candidate) => candidate.fieldName === '金额');
       expect(lowField).toMatchObject({ confidence: 0.55, lowConfidence: true });
       expect(amountField).toBeTruthy();
+      expect(candidates.every((candidate) => candidate.evidenceRefs.length > 0)).toBe(true);
+      const storedOcrIr = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      expect(storedOcrIr).toMatchObject({
+        sourceSha256: storedFile.sha256,
+        irSchemaVersion: 'ocr-ir/1.0',
+        irHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        coordinateVersion: 'page-native-top-left-v1',
+        preprocessingVersion: 'ocr-preprocess-v1',
+        normalizedIr: expect.objectContaining({
+          schemaVersion: 'ocr-ir/1.0',
+          sourceId: taskId,
+          hash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        })
+      });
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(0);
 
       await request(app.getHttpServer())

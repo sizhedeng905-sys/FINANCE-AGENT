@@ -36,6 +36,14 @@ export function toImportTask(task: ImportTaskDetail) {
     confirmedAt: task.confirmedAt?.toISOString(),
     confirmedBy: task.confirmer?.name,
     errorMessage: task.errorMessage ?? undefined,
+    evidence: {
+      schemaVersion: task.irSchemaVersion ?? undefined,
+      parserVersion: task.parserVersion ?? undefined,
+      sourceSha256: task.sourceSha256 ?? undefined,
+      parserInputSha256: task.parserInputSha256 ?? undefined,
+      irHash: task.irHash ?? undefined,
+      rowEvidenceDigest: task.rowEvidenceDigest ?? undefined
+    },
     progress: {
       executionMode: task.executionMode ?? undefined,
       processingMode: task.processingMode ?? undefined,
@@ -73,20 +81,31 @@ export function toImportTask(task: ImportTaskDetail) {
     },
     sheets: task.sheets.map((sheet) => ({
       id: sheet.id,
+      stableId: sheet.stableId ?? undefined,
       name: sheet.sheetName,
       index: sheet.sheetIndex,
+      visibility: sheet.visibility ?? undefined,
+      headerStartRowIndex: sheet.headerStartRowIndex ?? undefined,
       headerRowIndex: sheet.headerRowIndex,
+      selectedHeaderRows: numberArray(sheet.selectedHeaderRows),
+      mergedRanges: stringArray(sheet.mergedRanges),
+      dateSystem: sheet.dateSystem ?? undefined,
+      timezone: sheet.timezone ?? undefined,
       rowCount: sheet.rowCount
     })),
     columns: task.columns.map((column) => ({
       id: column.id,
       columnIndex: column.columnIndex,
+      sourceColumnId: column.sourceColumnId ?? undefined,
+      columnLetter: column.columnLetter ?? undefined,
       sourceKey: column.sourceKey,
       sourceName: column.sourceName,
+      headerParts: stringArray(column.headerParts),
       normalizedName: column.normalizedName,
       sampleValues: stringArray(column.sampleValues),
       inferredType: column.inferredType,
       duplicateName: column.duplicateName,
+      statistics: objectValue(column.statistics),
       decision: column.decision ? {
         id: column.decision.id,
         targetFieldId: column.decision.targetFieldId ?? undefined,
@@ -170,4 +189,15 @@ function stringArray(value: Prisma.JsonValue): string[] {
   return value
     .filter((item) => ['string', 'number', 'boolean'].includes(typeof item))
     .map((item) => String(item));
+}
+
+function numberArray(value: Prisma.JsonValue): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is number => typeof item === 'number' && Number.isInteger(item));
+}
+
+function objectValue(value: Prisma.JsonValue): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }

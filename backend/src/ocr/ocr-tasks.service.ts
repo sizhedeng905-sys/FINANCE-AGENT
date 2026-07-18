@@ -40,6 +40,12 @@ import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
 import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
+import {
+  normalizeOcrIr,
+  OCR_IR_COORDINATE_VERSION,
+  OCR_IR_SCHEMA_VERSION,
+  OCR_PREPROCESSING_VERSION
+} from './ocr-ir';
 import { OcrProviderRegistry, ResolvedOcrProvider } from './ocr-provider.registry';
 import {
   MockOcrScenario,
@@ -324,6 +330,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         providerConfig: this.json(executionSnapshot),
         providerConfigHash: snapshot.configHash,
         providerOptions: providerOptions ? this.json(providerOptions) : undefined,
+        sourceSha256: rawFile.sha256,
         pages: this.json(pages),
         pageCount: pages.length,
         uploadedBy: actor.id,
@@ -569,10 +576,24 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       }, executionConfig);
       if (result.documentId !== id) throw new BadGatewayException('OCR Provider 返回了错误的 documentId');
       this.assertProviderResultLimits(result);
+      const normalizedIr = normalizeOcrIr({
+        sourceId: id,
+        sourceSha256: file.sha256,
+        providerVersion: [
+          executionConfig.provider,
+          executionConfig.modelName,
+          executionConfig.modelVersion ?? 'unknown',
+          executionConfig.configHash ?? 'unversioned'
+        ].join('/'),
+        pages,
+        textBlocks: result.textBlocks,
+        fieldCandidates: result.fieldCandidates
+      });
       const candidates = this.canonicalizeCandidates(
         result.fieldCandidates,
         prepared.task.template.templateFields,
-        prepared.task.rawFileId
+        prepared.task.rawFileId,
+        normalizedIr.candidateEvidenceRefs
       );
       const latencyMs = Date.now() - startedAt;
       const extractedFields = this.extractedFields(candidates);
@@ -610,9 +631,15 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             extractedFields: this.json(extractedFields),
             fieldConfidence: this.json(fieldConfidence),
             pages: this.json(pages),
-            textBlocks: this.json(result.textBlocks),
+            textBlocks: this.json(normalizedIr.normalizedTextBlocks),
             tables: this.json(result.tables),
             fieldCandidates: this.json(candidates),
+            sourceSha256: file.sha256,
+            irSchemaVersion: OCR_IR_SCHEMA_VERSION,
+            irHash: normalizedIr.ir.hash,
+            coordinateVersion: OCR_IR_COORDINATE_VERSION,
+            preprocessingVersion: OCR_PREPROCESSING_VERSION,
+            normalizedIr: this.json(normalizedIr.ir),
             rawResult: this.json(result.rawResult),
             rawResultRef: result.rawResultRef,
             pageCount: pages.length,
@@ -628,6 +655,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           attemptNo: prepared.attempt.attemptNo,
           latencyMs,
           pageCount: pages.length,
+          irSchemaVersion: OCR_IR_SCHEMA_VERSION,
+          irHash: normalizedIr.ir.hash,
           lowConfidenceFields: candidates.filter((candidate) => candidate.lowConfidence).map((candidate) => candidate.fieldId)
         }, context);
         await this.ledgerEvents.write(
@@ -640,7 +669,9 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             attemptNo: prepared.attempt.attemptNo,
             latencyMs,
             pageCount: pages.length,
-            avgConfidence
+            avgConfidence,
+            irSchemaVersion: OCR_IR_SCHEMA_VERSION,
+            irHash: normalizedIr.ir.hash
           },
           `ocr_task:${id}:attempt:${prepared.attempt.attemptNo}:recognized`
         );
@@ -1055,19 +1086,23 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   private canonicalizeCandidates(
     providerCandidates: OcrFieldCandidate[],
     templateFields: TemplateFieldWithField[],
-    rawFileId: string
+    rawFileId: string,
+    candidateEvidenceRefs: string[][] = []
   ): CanonicalOcrFieldCandidate[] {
     const activeFields = templateFields.filter((item) => item.isVisible && item.field.isActive);
-    const matched = new Map<string, OcrFieldCandidate>();
-    for (const candidate of providerCandidates) {
+    const matched = new Map<string, { candidate: OcrFieldCandidate; index: number }>();
+    for (const [index, candidate] of providerCandidates.entries()) {
       const templateField = this.matchCandidate(candidate, activeFields);
       if (!templateField) throw new BadGatewayException(`OCR Provider 返回未映射字段：${candidate.sourceLabel || '未命名字段'}`);
       const existing = matched.get(templateField.fieldId);
-      if (!existing || Number(candidate.confidence) > Number(existing.confidence)) matched.set(templateField.fieldId, candidate);
+      if (!existing || Number(candidate.confidence) > Number(existing.candidate.confidence)) {
+        matched.set(templateField.fieldId, { candidate, index });
+      }
     }
 
     return activeFields.map((templateField) => {
-      const candidate = matched.get(templateField.fieldId);
+      const match = matched.get(templateField.fieldId);
+      const candidate = match?.candidate;
       if (!candidate && templateField.field.fieldType === FieldType.file) {
         return {
           fieldId: templateField.fieldId,
@@ -1082,6 +1117,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           page: 1,
           confidence: 1,
           evidence: '系统绑定当前 OCR 原始文件；人工确认前不会入账',
+          evidenceRefs: [`raw-file:${rawFileId}`],
           missing: false,
           lowConfidence: false,
           corrected: false
@@ -1101,6 +1137,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           page: 1,
           confidence: 0,
           evidence: 'OCR 未识别该模板字段',
+          evidenceRefs: [],
           missing: true,
           lowConfidence: true,
           corrected: false,
@@ -1131,6 +1168,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         boundingBox: candidate.boundingBox,
         confidence,
         evidence: String(candidate.evidence || '').slice(0, 1000),
+        evidenceRefs: match ? candidateEvidenceRefs[match.index] ?? [] : [],
         missing,
         lowConfidence: missing || confidence < this.lowConfidenceThreshold || Boolean(validationError),
         corrected: false,

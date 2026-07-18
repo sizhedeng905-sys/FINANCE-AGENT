@@ -341,5 +341,75 @@ describe('ExcelParserService phase 9', () => {
       rawData: { 'Cost / Amount': { formula: 'LEN(B4)', result: 13 } },
       warnings: ['Cost / Amount：使用公式缓存结果，确认前必须复核']
     });
+    expect(parsed).toMatchObject({
+      ir: {
+        schemaVersion: 'excel-ir/1.0',
+        parserVersion: 'exceljs-evidence-v1',
+        sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        parserInputSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        rowEvidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        hash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      },
+      sheet: {
+        stableId: 'sheet0',
+        visibility: 'visible',
+        headerStartRowIndex: 1,
+        selectedHeaderRows: [1, 2],
+        mergedRanges: ['A1:B1', 'C1:C2'],
+        dateSystem: '1900',
+        timezone: 'UTC'
+      }
+    });
+    expect(parsed.columns[0]).toMatchObject({
+      sourceColumnId: 'sheet0:A',
+      columnLetter: 'A',
+      headerParts: ['Cost', 'Amount'],
+      statistics: { nonEmpty: 2, empty: 0, distinctApprox: 2, distinctCapped: false }
+    });
+    expect(parsed.rows[0].cellEvidence[0]).toMatchObject({
+      sourceRef: 'sheet0!A3',
+      address: 'A3',
+      parsedType: 'formula',
+      formula: 'LEN(B3)',
+      cachedValuePresent: true,
+      cachedValue: '13',
+      canonicalValue: '13',
+      lexicalValue: '13',
+      mergeAnchorAddress: null
+    });
+  });
+
+  it('produces stable evidence hashes, decimal-string cells, and explicit 1904 date provenance', async () => {
+    const workbook = new ExcelJS.Workbook();
+    (workbook.properties as { date1904?: boolean }).date1904 = true;
+    const sheet = workbook.addWorksheet('Evidence');
+    sheet.addRow(['Date', 'Amount', 'Long note']);
+    const row = sheet.addRow([new Date(Date.UTC(2026, 6, 18)), 125.6, 'x'.repeat(2_100)]);
+    row.getCell(2).numFmt = '0.00';
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const first = await parser.parse(buffer);
+    const second = await parser.parse(buffer);
+
+    expect(first.ir).toEqual(second.ir);
+    expect(first.sheet).toMatchObject({ dateSystem: '1904', selectedHeaderRows: [1] });
+    expect(first.rows[0].cellEvidence[0]).toMatchObject({
+      address: 'A2',
+      parsedType: 'date',
+      canonicalValue: '2026-07-18'
+    });
+    expect(first.rows[0].cellEvidence[1]).toMatchObject({
+      address: 'B2',
+      parsedType: 'number',
+      canonicalValue: '125.6',
+      displayValue: '125.6'
+    });
+    expect(first.rows[0].cellEvidence[2]).toMatchObject({
+      address: 'C2',
+      truncated: true,
+      lexicalSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
+    expect(first.rows[0].cellEvidence[2].lexicalValue).toHaveLength(2_000);
+    expect(first.rows[0].evidenceHash).toMatch(/^[a-f0-9]{64}$/);
   });
 });
