@@ -12,6 +12,12 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  financialPolicySnapshot,
+  H02_NON_NEGATIVE_DECIMAL_MESSAGE,
+  H02_POLICY_PENDING_REASON,
+  H02_POSITIVE_AMOUNT_MESSAGE
+} from './financial-policy-baseline';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 type PolicyTemplate = Template & {
@@ -98,9 +104,7 @@ export class RecordPolicyService {
     }
 
     const amount = this.parseMoney(amountInput, amountField.field.fieldName);
-    if (amount.lessThanOrEqualTo(0)) {
-      throw new BadRequestException('金额必须大于 0；冲销请使用显式作废流程');
-    }
+    this.assertFormalAmountAllowed(amount);
     const recordDate = this.parseDateOnly(String(dateInput ?? ''), dateField.field.fieldName);
 
     return {
@@ -159,6 +163,7 @@ export class RecordPolicyService {
       dataLayer: template.dataLayer,
       primaryAmountFieldId: template.primaryAmountFieldId,
       primaryDateFieldId: template.primaryDateFieldId,
+      financialPolicy: financialPolicySnapshot(),
       fields: template.templateFields.map((item) => ({
         fieldId: item.fieldId,
         fieldKey: item.field.fieldKey,
@@ -219,19 +224,36 @@ export class RecordPolicyService {
       confirmedAt: options.confirmedAt.toISOString(),
       confirmedBy: options.confirmedBy,
       attachments: options.attachments ?? [],
+      financialPolicy: financialPolicySnapshot(),
       values: snapshotValues
     } as Prisma.InputJsonObject;
   }
 
   parseMoney(value: unknown, fieldName = 'amount') {
     if (typeof value !== 'string' || !/^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/.test(value.trim())) {
-      throw new BadRequestException(`${fieldName}必须是最多两位小数的非负十进制字符串`);
+      const message = fieldName === 'amount'
+        ? H02_NON_NEGATIVE_DECIMAL_MESSAGE
+        : `${fieldName}必须是最多两位小数的非负十进制字符串；H02 尚未批准负数或冲销输入`;
+      throw new BadRequestException(message);
     }
     const amount = new Prisma.Decimal(value.trim());
     if (amount.greaterThan('9999999999999999.99')) {
       throw new BadRequestException(`${fieldName}超出允许范围`);
     }
     return amount;
+  }
+
+  assertFormalAmountAllowed(amount: Prisma.Decimal) {
+    if (amount.lessThanOrEqualTo(0)) {
+      throw new BadRequestException({
+        message: H02_POSITIVE_AMOUNT_MESSAGE,
+        data: {
+          reason: H02_POLICY_PENDING_REASON,
+          decisionId: 'H02',
+          policyVersion: financialPolicySnapshot().schemaVersion
+        }
+      });
+    }
   }
 
   parseNumericValue(value: unknown, fieldName: string, decimalPlaces = 4) {

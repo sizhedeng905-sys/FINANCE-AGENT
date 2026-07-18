@@ -107,9 +107,7 @@ export class RecordsService {
       const templateFields = this.validateValues(template, dto.values, status !== BusinessRecordStatus.draft);
       const values = this.applyTemplateDefaults(dto.values, templateFields);
       const topLevelAmount = this.recordPolicy.parseMoney(dto.amount, 'amount');
-      if (topLevelAmount.lessThanOrEqualTo(0)) {
-        throw new BadRequestException('金额必须大于 0；冲销请使用显式作废流程');
-      }
+      this.recordPolicy.assertFormalAmountAllowed(topLevelAmount);
       let amount = topLevelAmount;
       let recordDate = this.recordPolicy.parseDateOnly(dto.recordDate, 'recordDate');
       let category = template.accountingDirection === 'income' ? '收入' : '成本';

@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayUnique, IsArray, IsDateString, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 
 import { RecordValueInputDto } from './record-value-input.dto';
+import { H02_NON_NEGATIVE_DECIMAL_MESSAGE } from '../../record-policy/financial-policy-baseline';
 
 export class UpdateRecordDto {
   @ApiPropertyOptional({ example: '2026-07-10' })
@@ -15,7 +16,7 @@ export class UpdateRecordDto {
   @IsOptional()
   @IsString()
   @Matches(/^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/, {
-    message: 'amount 必须是最多两位小数的非负十进制字符串'
+    message: H02_NON_NEGATIVE_DECIMAL_MESSAGE
   })
   amount?: string;
 

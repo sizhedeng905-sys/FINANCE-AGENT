@@ -46,6 +46,7 @@ import { ImportTasksService } from '../../src/import-tasks/import-tasks.service'
 import { MockOcrProvider } from '../../src/ocr/mock-ocr.provider';
 import { OcrTasksService } from '../../src/ocr/ocr-tasks.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { H02_POLICY_PENDING_REASON } from '../../src/record-policy/financial-policy-baseline';
 import { dayRange, formatChinaDate, monthRange } from '../../src/reports/report-period';
 
 const TEST_USER_PREFIX = 'integration_';
@@ -1522,6 +1523,10 @@ describe('real PostgreSQL integration', () => {
         .send({ description: 'cannot update confirmed' })
         .expect(409);
 
+      const secondBeforeVoid = await prisma.businessRecord.findUniqueOrThrow({
+        where: { id: second.id },
+        include: { values: true }
+      });
       await request(app.getHttpServer())
         .delete(`/api/records/${second.id}`)
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -1533,6 +1538,20 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', 'integration-record-void-duplicate')
         .expect(200);
+      const secondAfterVoid = await prisma.businessRecord.findUniqueOrThrow({
+        where: { id: second.id },
+        include: { values: true }
+      });
+      expect(secondAfterVoid).toMatchObject({
+        status: BusinessRecordStatus.rejected,
+        amount: secondBeforeVoid.amount,
+        sourceSnapshot: secondBeforeVoid.sourceSnapshot,
+        templateSnapshot: secondBeforeVoid.templateSnapshot,
+        attachments: secondBeforeVoid.attachments
+      });
+      expect(secondAfterVoid.values).toHaveLength(secondBeforeVoid.values.length);
+      expect(secondAfterVoid.voidedAt).toBeInstanceOf(Date);
+      expect(secondAfterVoid.confirmedAt).toBeNull();
       await request(app.getHttpServer())
         .post(`/api/records/${second.id}/confirm`)
         .set('Authorization', `Bearer ${tokens.finance}`)
@@ -1729,6 +1748,30 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${financeToken}`)
         .send({ ...basePayload, amount: '88.123' })
         .expect(400);
+      const negativeAmount = await request(app.getHttpServer())
+        .post('/api/records')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          ...basePayload,
+          amount: '-1.00',
+          values: values.map((value) => value.fieldId === amountField.id ? { ...value, value: '-1.00' } : value)
+        })
+        .expect(400);
+      expect(negativeAmount.body.data.errors).toEqual(expect.arrayContaining([expect.stringContaining('H02')]));
+      const zeroAmount = await request(app.getHttpServer())
+        .post('/api/records')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          ...basePayload,
+          amount: '0.00',
+          values: values.map((value) => value.fieldId === amountField.id ? { ...value, value: '0.00' } : value)
+        })
+        .expect(400);
+      expect(zeroAmount.body.data).toMatchObject({
+        reason: H02_POLICY_PENDING_REASON,
+        decisionId: 'H02',
+        policyVersion: 'financial-policy-baseline/1.0'
+      });
       await request(app.getHttpServer())
         .post('/api/records')
         .set('Authorization', `Bearer ${financeToken}`)

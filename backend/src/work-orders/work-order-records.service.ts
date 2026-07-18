@@ -26,6 +26,7 @@ import {
   PolicyValueInput,
   RecordPolicyService
 } from '../record-policy/record-policy.service';
+import { H02_POSITIVE_AMOUNT_MESSAGE } from '../record-policy/financial-policy-baseline';
 import { workOrderInclude, WorkOrderWithRelations } from './work-order.presenter';
 
 type PolicyTemplate = Template & {
@@ -93,7 +94,7 @@ export class WorkOrderRecordsService {
 
   async prepareSubmission(tx: Prisma.TransactionClient, workOrder: WorkOrderWithRelations) {
     if (!workOrder.occurredDate) throw new UnprocessableEntityException('工单缺少发生日期');
-    if (workOrder.amount.lessThanOrEqualTo(0)) throw new UnprocessableEntityException('工单金额必须大于 0');
+    if (workOrder.amount.lessThanOrEqualTo(0)) throw new UnprocessableEntityException(H02_POSITIVE_AMOUNT_MESSAGE);
     const recordType = this.resolveRecordType(workOrder.type);
     await acquireProjectWriteLock(tx, workOrder.projectId);
     const templateId = workOrder.templateId ?? (await this.resolveTemplateId(tx, workOrder.projectId, recordType));

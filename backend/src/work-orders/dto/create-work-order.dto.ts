@@ -15,6 +15,8 @@ import {
   MaxLength
 } from 'class-validator';
 
+import { H02_NON_NEGATIVE_DECIMAL_MESSAGE } from '../../record-policy/financial-policy-baseline';
+
 export class CreateWorkOrderDto {
   @ApiProperty({ enum: WorkOrderType })
   @IsEnum(WorkOrderType)
@@ -31,7 +33,7 @@ export class CreateWorkOrderDto {
   @IsOptional()
   @IsString()
   @Matches(/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/, {
-    message: 'amount 必须是最多两位小数的非负十进制字符串'
+    message: H02_NON_NEGATIVE_DECIMAL_MESSAGE
   })
   amount?: string;
 
