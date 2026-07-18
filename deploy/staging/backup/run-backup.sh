@@ -4,6 +4,35 @@ set -Eeuo pipefail
 source /opt/staging/integrity-lib.sh
 require_integrity_tools
 
+if [[ "$(id -u)" != '999' ]]; then
+  integrity_fail 'backup_must_run_as_postgres_uid_999'
+  exit 1
+fi
+
+lock_file="${BACKUP_LOCK_FILE:-/backups/logical/.backup.lock}"
+exec 9> "$lock_file"
+if ! flock -w 1200 9; then
+  integrity_fail 'backup_lock_timeout'
+  exit 1
+fi
+
+required_after_epoch="${BACKUP_REQUIRED_AFTER_EPOCH:-}"
+if [[ -n "$required_after_epoch" ]]; then
+  if [[ ! "$required_after_epoch" =~ ^[0-9]+$ ]]; then
+    integrity_fail 'backup_required_after_epoch_invalid'
+    exit 1
+  fi
+  latest_complete="$(find /backups/logical -mindepth 2 -maxdepth 2 -name complete -print | sort | tail -1)"
+  if [[ -n "$latest_complete" ]]; then
+    latest_manifest="$(dirname "$latest_complete")/manifest.json"
+    latest_created_epoch="$(jq -r '.createdEpoch // empty' "$latest_manifest" 2>/dev/null || true)"
+    if [[ "$latest_created_epoch" =~ ^[0-9]+$ ]] && (( latest_created_epoch >= required_after_epoch )); then
+      echo 'A complete post-deploy backup already satisfies the release gate'
+      exit 0
+    fi
+  fi
+fi
+
 started_epoch="$(date +%s)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 assert_backup_id "$timestamp"

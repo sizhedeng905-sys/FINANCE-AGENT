@@ -77,9 +77,13 @@ if (manifest.previousModelRouteSnapshot) {
 
 const environment = { ...process.env, ...imageLock.environmentBindings };
 const compose = ['compose', '--env-file', '.env', '-f', 'compose.yaml'];
+const backupExecOptions = [
+  ...compose, 'exec', '-T', '--user', '999:999',
+  '-e', 'HOME=/tmp/backup-home', '-e', 'MC_CONFIG_DIR=/tmp/backup-home/.mc'
+];
 if (!option) assertMigrationCompatibility(manifest.migrations, readAppliedMigrations(environment));
 
-run('docker', [...compose, 'exec', '-T', 'backup', '/opt/staging/run-backup.sh'], environment);
+run('docker', [...backupExecOptions, 'backup', '/opt/staging/run-backup.sh'], environment);
 if (option === '--restore-data') {
   if (!/^[0-9]{8}T[0-9]{6}Z$/.test(backupId ?? '')) throw new Error('A valid backupId is required');
   const authorizationPath = process.env.RESTORE_AUTHORIZATION_FILE

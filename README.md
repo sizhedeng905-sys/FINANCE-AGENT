@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1 已把真实前后端镜像构建、身份、SBOM/CVE 和 Node 运行时一致性接入每次 CI；R8.2-R8.5 已建立条件工作流并把完整本地 release 推进到 Compose 启动阶段，18 镜像构建、锁定和供应链扫描已通过，数据库远程 TLS 就绪修复仍待完整重跑。M0-M8、目标 Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1 已把真实前后端镜像构建、身份、SBOM/CVE 和 Node 运行时一致性接入每次 CI；R8.2-R8.6 已把完整本地 release 推进到 API/浏览器 smoke 之后，18 镜像供应链、远程 TLS、migration 和服务健康均已动态通过，当前正在修复 release 的新鲜备份/恢复演练顺序。M0-M8、目标 Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R7.2、R8.1 与 R8.2-R8.5 条件门禁已完成；retention 仅 dry-run、step-up 默认关闭；下一步重跑数据库 TLS 修复后的完整 Compose release/恢复/回滚 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R7.2、R8.1 与 R8.2-R8.6 条件门禁已完成；retention 仅 dry-run、step-up 默认关闭；下一步重跑新鲜备份门禁修复后的完整 Compose release/恢复/回滚 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -74,6 +74,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R8.2 后续两次构建均被 Docker Hub 的 mutable BuildKit SBOM scanner 认证端点超时阻断，已按纪律标记 `blocked_external` 并停止重试。审计确认该重复产物从未进入发布清单；现保留 BuildKit max provenance，正式 SBOM 统一由逐镜像 Docker Scout SPDX 生成、封存并交给固定 Grype 门禁。
 - R8.5 第三次完整 release 已成功构建、锁定并扫描 18 个镜像，生成 57 份供应链产物和 sealed index；随后真实暴露 PostgreSQL 只监听 `localhost`，本地 socket 健康检查误报就绪，迁移容器以 P1001 失败。现改为监听私有 Compose 网络，并以 migrator 角色、`verify-full` CA 校验和真实 `SELECT 1` 作为健康条件；泛化 host HBA 被移除且非 TLS 明确拒绝。
 - 同次失败栈的日志门禁检出一个 exact secret，但旧证据只含类别，无法在清理后可靠归因。现新增只报告 secret 文件名、服务和次数的安全定位证据；策略单测 4/4，证据不保留值或原日志。失败栈已 `down -v --remove-orphans`，容器、网络和卷残留均为 0；完整 release/restore/rollback 仍待本修复提交后重跑。
+- R8.6 对 R8.5 commit 的 1001.3 秒完整发布已动态证明：18 镜像构建/锁定/扫描、PostgreSQL 远程 TLS、28 条 migration、全部服务健康、API smoke 与浏览器 smoke 均通过；随后因备份进程的 `mc` 默认配置目录不可写，首轮备份失败，restore drill 正确拒绝在没有完整备份时运行。
+- 临时以 UID 999 和可写配置目录验证后，备份 3 秒、隔离恢复 4 秒通过，覆盖 45 张表、migration 对账和 5 类对象故障注入。永久修复要求备份/恢复只能以 UID 999 运行，使用 `flock` 串行化，并在 restore 前确保存在本次发布开始后生成的完整备份；MinIO policy 输出已静默，运行日志重新比对 19 个 secret 后通过。完整发布仍需在 R8.6 干净提交后重跑，详见 [`docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md`](docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md)。
 - H10 的 MFA、自审批、跨账号同人、双人复核、break-glass 和正式动作矩阵仍未签字；这些人工门禁不由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
@@ -168,7 +170,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | Staging 静态门禁 | `passed` | 18 services、19 secrets、TLS、仓库自建服务、第三方 digest、私网和只读应用容器 |
 | R5 镜像身份与供应链 | `engineering_passed` | 17/17 篡改/漂移测试；22 个锁定镜像、66 份证据、无可修复 Critical；53 High/88 Medium/38 Low 仍在风险台账，签名与目标 registry 待 H13 |
 | R8.1 应用镜像 CI | `engineering_passed_locally` | Node 24.18.0 与部署镜像统一；真实前后端镜像构建、非 root/revision 核验、两份 SBOM 和固定 Grype 门禁通过；当前 commit 的 GitHub run 待 push 后验证 |
-| R8.2-R8.5 条件验收自动化 | `engineering_passed_locally / runtime_retest_pending` | 两份 workflow 通过 actionlint；日志策略 4/4、配置升级 3/3、Python 3.10.19 适配器 8/8、18 镜像构建/锁定/供应链扫描通过；PostgreSQL 远程 TLS 修复的部署契约 18/18，完整 release/rollback 与 GPU L0 尚待重跑 |
+| R8.2-R8.6 条件验收自动化 | `engineering_passed_locally / runtime_retest_pending` | 两份 workflow 通过 actionlint；日志策略 4/4、备份完整性 9/9 + 3 个权限/输入失败关闭、Python 适配器 8/8；18 镜像供应链、远程 TLS、migration、API/浏览器 smoke 动态通过，完整 release 的新鲜备份门禁、rollback 与 GPU L0 尚待重跑 |
 | 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
 | 日志泄露门禁 | `passed` | 实际 18 服务生成 200/400/503 日志；29 条网关 JSON 可解析，15 个合成敏感标记泄露 0，容器和卷残留 0 |
 | 存储容量真实性 | `engineering_passed` | S3 不再伪报固定容量；79/79 定向测试与 PostgreSQL 跨账号/项目并发通过；MinIO v3 物理指标实测存在；H13/H14 仍待签字 |

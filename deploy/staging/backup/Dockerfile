@@ -71,6 +71,7 @@ RUN echo "${POSTGRES_SIGNING_KEY_SHA256}  /usr/local/share/keyrings/postgres.gpg
       "libpq5=${LIBPQ_PACKAGE_VERSION}" \
       "postgresql-client-common=${POSTGRES_COMMON_VERSION}" \
       "postgresql-client-17=${POSTGRES_PACKAGE_VERSION}" \
+      util-linux \
     && rm -rf /var/lib/apt/lists/* /var/lib/postgresql
 COPY --from=minio-client-builder /out/mc /usr/local/bin/mc
 COPY --chmod=0555 backup-entrypoint.sh backup-loop.sh run-backup.sh restore-drill.sh restore-backup.sh integrity-lib.sh integrity-self-test.sh /opt/staging/

@@ -114,11 +114,15 @@ describe('B8-09 staging deployment', () => {
       restore.lastIndexOf('\nrestore_live_database\n')
     );
     expect(rollback).toContain('RESTORE_AUTHORIZATION_FILE');
+    expect(rollback).toContain("'--user', '999:999'");
+    expect(rollback).toContain("'MC_CONFIG_DIR=/tmp/backup-home/.mc'");
   });
 
   it('uses a versioned strong-hash manifest and isolated database/object restore drill', () => {
+    const compose = read(stagingRoot, 'compose.yaml');
     const backup = read(stagingRoot, 'backup', 'run-backup.sh');
     const drill = read(stagingRoot, 'backup', 'restore-drill.sh');
+    const minioInit = read(stagingRoot, 'minio', 'init.sh');
     const integrity = read(stagingRoot, 'backup', 'integrity-lib.sh');
     const dockerfile = read(stagingRoot, 'backup', 'Dockerfile');
     const roleProvisioning = read(stagingRoot, 'postgres', 'provision-restore-role.sh');
@@ -128,6 +132,15 @@ describe('B8-09 staging deployment', () => {
     expect(integrity).toContain('backup-manifest/1.0');
     expect(backup).toContain('object-manifest.jsonl');
     expect(backup).toContain('database-object-refs.jsonl');
+    expect(backup).toContain("backup_must_run_as_postgres_uid_999");
+    expect(backup).toContain('flock -w 1200');
+    expect(backup).toContain('BACKUP_REQUIRED_AFTER_EPOCH');
+    expect(drill).toContain('restore_drill_must_run_as_postgres_uid_999');
+    expect(compose).toContain('MC_CONFIG_DIR: /tmp/backup-home/.mc');
+    expect(compose).toContain('/tmp:size=32m,mode=1770,uid=999,gid=999');
+    expect(read(stagingRoot, 'scripts', 'verify-config.mjs')).toContain(
+      'Backup client credentials must use the UID 999 private tmpfs home'
+    );
     expect(backup).toContain('manifest.sha256');
     expect(backup).not.toContain('mc find');
     expect(integrity).toContain('generate_object_manifest');
@@ -150,6 +163,8 @@ describe('B8-09 staging deployment', () => {
     expect(drill).toContain('verify_backup_bundle');
     expect(drill).toContain('applicationReadSmoke');
     expect(drill).toContain('finance_agent_restore.prom');
+    expect(minioInit).toContain('minio_init_policy_attach_failed');
+    expect(minioInit).toContain('policy attach staging finance-agent-runtime --user "$runtime_user" >/dev/null 2>&1');
   });
 
   it('associates rollback with the target release model route snapshot', () => {
@@ -187,6 +202,12 @@ describe('B8-09 staging deployment', () => {
     );
     expect(release).toContain("'--scope', 'staging'");
     expect(release).toContain("const runtimePullServices = ['redis', 'clamav', 'gateway', 'grafana', 'loki']");
+    expect(release).toContain("'--user', '999:999'");
+    expect(release).toContain("'MC_CONFIG_DIR=/tmp/backup-home/.mc'");
+    expect(release).toContain('BACKUP_REQUIRED_AFTER_EPOCH=');
+    expect(release.lastIndexOf("'/opt/staging/run-backup.sh'")).toBeLessThan(
+      release.indexOf("'/opt/staging/restore-drill.sh'")
+    );
     expect(release).toContain("'pull', '--policy', 'missing', ...runtimePullServices");
     expect(release).not.toContain("'pull', '--ignore-buildable'");
     expect(lockImages).toContain("new Set(['staging', 'all'])");

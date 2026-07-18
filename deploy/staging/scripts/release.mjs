@@ -46,6 +46,10 @@ const runtimeEnv = {
 };
 const composePrefix = ['compose', '--env-file', '.env', '-f', 'compose.yaml'];
 const runtimePullServices = ['redis', 'clamav', 'gateway', 'grafana', 'loki'];
+const backupExecOptions = [
+  ...composePrefix, 'exec', '-T', '--user', '999:999',
+  '-e', 'HOME=/tmp/backup-home', '-e', 'MC_CONFIG_DIR=/tmp/backup-home/.mc'
+];
 
 run('node', ['scripts/verify-config.mjs'], runtimeEnv);
 await mkdir(releaseEvidenceRoot, { recursive: true, mode: 0o700 });
@@ -58,7 +62,7 @@ if (runningServices(runtimeEnv).includes('backend-api')) {
   await writeFile(previousModelRouteSnapshot, exportModelRoutes(runtimeEnv), { mode: 0o600 });
 }
 if (runningServices(runtimeEnv).includes('backup')) {
-  run('docker', [...composePrefix, 'exec', '-T', 'backup', '/opt/staging/run-backup.sh'], runtimeEnv);
+  run('docker', [...backupExecOptions, 'backup', '/opt/staging/run-backup.sh'], runtimeEnv);
 }
 
 run('docker', [...composePrefix, 'pull', '--policy', 'missing', ...runtimePullServices], runtimeEnv);
@@ -151,6 +155,7 @@ assertReleaseBundle({
   expectedSchema: RELEASE_PLAN_SCHEMA
 });
 
+const postDeployBackupNotBeforeEpoch = Math.floor(Date.now() / 1000);
 run('docker', [
   ...composePrefix, 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '1200'
 ], lockedEnv);
@@ -159,7 +164,12 @@ verifyRunningImages(imageLock, lockedEnv);
 assertMigrationCompatibility(migrationLedger, readAppliedMigrations(lockedEnv));
 run('node', ['scripts/smoke-test.mjs'], lockedEnv);
 run('node', ['scripts/browser-smoke.mjs'], lockedEnv);
-run('docker', [...composePrefix, 'exec', '-T', 'backup', '/opt/staging/restore-drill.sh'], lockedEnv);
+run('docker', [
+  ...backupExecOptions,
+  '-e', `BACKUP_REQUIRED_AFTER_EPOCH=${postDeployBackupNotBeforeEpoch}`,
+  'backup', '/opt/staging/run-backup.sh'
+], lockedEnv);
+run('docker', [...backupExecOptions, 'backup', '/opt/staging/restore-drill.sh'], lockedEnv);
 const modelRouteSnapshot = join(releasesRoot, `${releaseId}.model-routes.json`);
 await writeFile(modelRouteSnapshot, exportModelRoutes(lockedEnv), { mode: 0o600 });
 

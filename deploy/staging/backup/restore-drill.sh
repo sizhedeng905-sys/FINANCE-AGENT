@@ -4,6 +4,11 @@ set -Eeuo pipefail
 source /opt/staging/integrity-lib.sh
 require_integrity_tools
 
+if [[ "$(id -u)" != '999' ]]; then
+  integrity_fail 'restore_drill_must_run_as_postgres_uid_999'
+  exit 1
+fi
+
 started_epoch="$(date +%s)"
 restore_metrics_file="${RESTORE_METRICS_FILE:-/metrics/finance_agent_restore.prom}"
 migration_url="$(cat "${MIGRATION_DATABASE_URL_FILE:?}")"

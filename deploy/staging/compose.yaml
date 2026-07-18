@@ -386,6 +386,8 @@ services:
     restart: unless-stopped
     environment:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-21600}
+      HOME: /tmp/backup-home
+      MC_CONFIG_DIR: /tmp/backup-home/.mc
       BACKUP_DATABASE_URL_FILE: /run/secrets/backup_database_url
       MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
       RESTORE_DATABASE_URL_FILE: /run/secrets/restore_database_url
@@ -403,6 +405,8 @@ services:
       - backup_data:/backups
       - backup_metrics:/metrics
       - ./.runtime/tls/ca.crt:/run/tls/ca.crt:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1770,uid=999,gid=999
     depends_on:
       migrate:
         condition: service_completed_successfully

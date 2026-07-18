@@ -55,11 +55,20 @@ const compose = JSON.parse(composeResult.stdout);
 const services = compose.services ?? {};
 const sourceEnvironmentId = services.backup?.environment?.BACKUP_SOURCE_ENVIRONMENT_ID ?? '';
 const imageIdentityPolicy = services.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
+const backupEnvironment = services.backup?.environment ?? {};
+const backupTmpfs = services.backup?.tmpfs ?? [];
 if (!['local_identity', 'signed_registry'].includes(imageIdentityPolicy)) {
   throw new Error('IMAGE_IDENTITY_POLICY must be local_identity or signed_registry');
 }
 if (imageIdentityPolicy === 'local_identity' && !sourceEnvironmentId.endsWith('-local')) {
   throw new Error('local_identity requires BACKUP_SOURCE_ENVIRONMENT_ID ending with -local');
+}
+if (
+  backupEnvironment.HOME !== '/tmp/backup-home'
+  || backupEnvironment.MC_CONFIG_DIR !== '/tmp/backup-home/.mc'
+  || !backupTmpfs.includes('/tmp:size=32m,mode=1770,uid=999,gid=999')
+) {
+  throw new Error('Backup client credentials must use the UID 999 private tmpfs home');
 }
 for (const [name, service] of Object.entries(services)) {
   const image = service.image;
@@ -133,6 +142,7 @@ const evidence = {
     expectedRepositoryBuiltImages: true,
     onlyTlsGatewayPublished: true,
     databaseTlsEnabled: true,
+    backupClientConfigEphemeral: true,
     hardenedApplicationContainers: true,
     frontendApiModeExplicit: true,
     imageIdentityPolicy,
