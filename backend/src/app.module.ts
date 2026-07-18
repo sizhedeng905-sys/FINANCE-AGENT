@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { AuthModule } from './auth/auth.module';
 import { AiModule } from './ai/ai.module';
+import { AiPolicyModule } from './ai-policy/ai-policy.module';
 import configuration from './config/configuration';
 import { validateEnvironment } from './config/validate-environment';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
@@ -38,6 +39,7 @@ import { WorkerRuntimeModule } from './worker/worker-runtime.module';
       load: [configuration],
       validate: validateEnvironment
     }),
+    AiPolicyModule,
     RedisModule,
     PrismaModule,
     IdempotencyModule,

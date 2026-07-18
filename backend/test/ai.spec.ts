@@ -169,7 +169,11 @@ describe('phase 8 boss AI assistant', () => {
         }
       ])
     };
-    const provider = new AiProviderService(new MockAiProviderService(), {} as any);
+    const provider = new AiProviderService(
+      new MockAiProviderService(),
+      {} as any,
+      { assertCallAllowed: jest.fn() } as any
+    );
     const auditLogs = { write: jest.fn(async () => undefined) };
     const config: any = {
       get: jest.fn((key: string) => ({ 'ai.provider': 'mock', 'ai.model': 'unused' })[key])
@@ -256,6 +260,7 @@ describe('phase 8 boss AI assistant', () => {
       ],
       question: '那上个月呢？'
     }));
+    expect(historyProvider.generate).toHaveBeenCalledTimes(1);
     expect(callLogs).toHaveLength(3);
   });
 });

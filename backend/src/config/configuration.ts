@@ -118,6 +118,12 @@ export default () => ({
   },
   ai: {
     provider: process.env.AI_PROVIDER || 'mock',
+    providerClass: process.env.AI_PROVIDER_CLASS
+      || ((process.env.AI_PROVIDER || 'mock') === 'mock' ? 'mock' : 'external'),
+    ingestionMode: process.env.AI_INGESTION_MODE || 'disabled',
+    reportMode: process.env.AI_REPORT_MODE || 'disabled',
+    globalKillSwitch: process.env.AI_GLOBAL_KILL_SWITCH === 'true',
+    externalProviderMode: process.env.AI_EXTERNAL_PROVIDER_MODE || 'disabled',
     model: process.env.AI_MODEL || 'gpt-5.4-mini',
     baseUrl: process.env.AI_BASE_URL || 'https://api.openai.com/v1',
     apiKey: process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '',

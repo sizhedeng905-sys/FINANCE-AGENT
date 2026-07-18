@@ -4,6 +4,7 @@ import { AiMessageRole, Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { AiProviderClass } from '../ai-policy/ai-feature-policy.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { modelExecutionSnapshot } from '../model-runtime/model-deployment-config';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
@@ -73,6 +74,13 @@ export class AiService {
       this.prisma.aiPromptVersion.findFirst({ where: { promptKey: 'boss_chat', isActive: true }, orderBy: { versionNo: 'desc' } })
     ]);
     const model = providerName === 'mock' ? modelConfig?.modelName ?? 'mock-structured-v1' : runtimeModel || modelConfig?.modelName || 'gpt-5.4-mini';
+    const providerClass: AiProviderClass = providerName === 'mock'
+      ? 'mock'
+      : deployment
+        ? (deployment.isLocal ? 'local' : 'external')
+        : modelConfig?.isLocal
+          ? 'local'
+          : this.config.get<'local' | 'external'>('ai.providerClass') ?? 'external';
     const endpoint = deployment?.endpoint ?? modelConfig?.baseUrl ?? this.config.get<string>('ai.baseUrl');
     const modelVersion = deployment?.modelVersion;
     const timeoutMs = deployment?.timeoutMs ?? this.config.get<number>('ai.timeoutMs') ?? 30_000;
@@ -85,6 +93,7 @@ export class AiService {
       : {
           source: 'environment',
           provider: providerName,
+          providerClass,
           modelName: model,
           modelVersion: modelVersion ?? null,
           endpoint: endpoint ?? null,
@@ -121,6 +130,9 @@ export class AiService {
         timeoutMs,
         maxConcurrency,
         configHash: providerConfigHash,
+        capability: 'assistant' as const,
+        providerClass,
+        dataClassification: 'real' as const,
         instructions,
         question: dto.message,
         history,
@@ -137,17 +149,12 @@ export class AiService {
         validatedClaims = grounding.claims ?? [];
         raw = { providerResponse: result.raw, validatedClaims };
       } else {
-        const safe = await this.provider.generateSafe(providerRequest);
-        const safeGrounding = this.grounding.validate(safe.text, contexts, dto.message);
-        if (!safeGrounding.accepted) throw new Error('确定性 Claim fallback 未通过后端校验');
-        reply = safeGrounding.answer ?? '当前结构化数据不足，需要人工确认。';
-        validatedClaims = safeGrounding.claims ?? [];
         errorMessage = grounding.reason ?? '模型回答未通过数字溯源校验';
         raw = {
           providerResponse: result.raw,
-          groundingFallback: { reason: errorMessage, category: grounding.errorCategory },
-          validatedClaims
+          groundingRejected: { reason: errorMessage, category: grounding.errorCategory }
         };
+        throw new Error(errorMessage);
       }
     } catch (error) {
       errorMessage = error instanceof Error ? this.redactText(error.message).slice(0, 2000) : '未知AI调用错误';

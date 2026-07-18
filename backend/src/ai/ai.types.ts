@@ -1,3 +1,10 @@
+import {
+  AiDataClassification,
+  AiFeatureCapability,
+  AiProviderClass,
+  AiScopeModes
+} from '../ai-policy/ai-feature-policy.service';
+
 export type AiToolName =
   | 'get_today_report'
   | 'get_finance_report'
@@ -49,6 +56,10 @@ export interface AiProviderRequest {
   timeoutMs?: number;
   maxConcurrency?: number;
   configHash?: string;
+  capability?: AiFeatureCapability;
+  providerClass?: AiProviderClass;
+  dataClassification?: AiDataClassification;
+  scopeModes?: AiScopeModes;
   instructions: string;
   question: string;
   history: AiHistoryMessage[];

@@ -32,6 +32,12 @@ describe('environment validation', () => {
     [{ ...valid, PORT: '70000' }, 'PORT'],
     [{ ...valid, PORT: '3001invalid' }, 'PORT'],
     [{ ...valid, AI_PROVIDER: 'unknown' }, 'AI_PROVIDER'],
+    [{ ...valid, AI_PROVIDER_CLASS: 'trusted' }, 'AI_PROVIDER_CLASS'],
+    [{ ...valid, AI_PROVIDER_CLASS: 'external' }, 'AI_PROVIDER_CLASS'],
+    [{ ...valid, AI_INGESTION_MODE: 'auto_approve' }, 'AI_INGESTION_MODE'],
+    [{ ...valid, AI_REPORT_MODE: 'auto_commit' }, 'AI_REPORT_MODE'],
+    [{ ...valid, AI_GLOBAL_KILL_SWITCH: 'yes' }, 'AI_GLOBAL_KILL_SWITCH'],
+    [{ ...valid, AI_EXTERNAL_PROVIDER_MODE: 'enabled' }, 'AI_EXTERNAL_PROVIDER_MODE'],
     [{ ...valid, MAX_FILE_SIZE_MB: '0' }, 'MAX_FILE_SIZE_MB'],
     [{ ...valid, MAX_FILE_SIZE_MB: '51' }, 'MAX_FILE_SIZE_MB'],
     [{ ...valid, JWT_ALGORITHM: 'none' }, 'JWT_ALGORITHM'],
@@ -64,6 +70,19 @@ describe('environment validation', () => {
     expect(validateEnvironment({ ...valid, DATA_RETENTION_MODE: 'dry-run' })).toMatchObject({
       DATA_RETENTION_MODE: 'dry-run'
     });
+  });
+
+  it('allows only an explicitly classified local compatible provider or an external OpenAI provider', () => {
+    expect(validateEnvironment({
+      ...valid,
+      AI_PROVIDER: 'openai_compatible',
+      AI_PROVIDER_CLASS: 'local'
+    })).toMatchObject({ AI_PROVIDER_CLASS: 'local' });
+    expect(() => validateEnvironment({
+      ...valid,
+      AI_PROVIDER: 'openai',
+      AI_PROVIDER_CLASS: 'local'
+    })).toThrow('AI_PROVIDER=openai');
   });
 
   it('keeps step-up enforcement disabled until registered actions are explicit', () => {

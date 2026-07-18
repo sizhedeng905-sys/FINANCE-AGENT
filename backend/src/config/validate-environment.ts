@@ -7,6 +7,9 @@ const PLACEHOLDER_SECRETS = new Set([
 ]);
 
 const AI_PROVIDERS = new Set(['mock', 'openai', 'openai_compatible']);
+const AI_PROVIDER_CLASSES = new Set(['mock', 'local', 'external']);
+const AI_FEATURE_MODES = new Set(['disabled', 'suggest']);
+const AI_EXTERNAL_PROVIDER_MODES = new Set(['disabled', 'synthetic-only']);
 const OCR_PROVIDERS = new Set(['mock', 'local_paddle']);
 const NODE_ENVIRONMENTS = new Set(['development', 'test', 'production']);
 const FILE_SCAN_MODES = new Set(['basic', 'clamav']);
@@ -26,6 +29,11 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const port = Number(String(environment.PORT ?? '3001'));
   const jwtExpiresIn = String(environment.JWT_EXPIRES_IN ?? (environment.NODE_ENV === 'production' ? '30m' : '8h'));
   const aiProvider = String(environment.AI_PROVIDER ?? 'mock');
+  const aiProviderClass = String(environment.AI_PROVIDER_CLASS ?? (aiProvider === 'mock' ? 'mock' : 'external'));
+  const aiIngestionMode = String(environment.AI_INGESTION_MODE ?? 'disabled');
+  const aiReportMode = String(environment.AI_REPORT_MODE ?? 'disabled');
+  const aiGlobalKillSwitch = String(environment.AI_GLOBAL_KILL_SWITCH ?? 'false');
+  const aiExternalProviderMode = String(environment.AI_EXTERNAL_PROVIDER_MODE ?? 'disabled');
   const maxFileSizeMb = Number(String(environment.MAX_FILE_SIZE_MB ?? '10'));
   const uploadMaxConcurrentPerUser = Number(String(environment.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5'));
   const uploadMaxInFlightMbPerUser = Number(String(environment.UPLOAD_MAX_INFLIGHT_MB_PER_USER ?? '260'));
@@ -146,6 +154,27 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!AI_PROVIDERS.has(aiProvider)) {
     throw new Error(`AI_PROVIDER must be one of: ${Array.from(AI_PROVIDERS).join(', ')}.`);
+  }
+  if (!AI_PROVIDER_CLASSES.has(aiProviderClass)) {
+    throw new Error(`AI_PROVIDER_CLASS must be one of: ${Array.from(AI_PROVIDER_CLASSES).join(', ')}.`);
+  }
+  if ((aiProvider === 'mock') !== (aiProviderClass === 'mock')) {
+    throw new Error('AI_PROVIDER_CLASS must be mock only when AI_PROVIDER is mock.');
+  }
+  if (aiProvider === 'openai' && aiProviderClass !== 'external') {
+    throw new Error('AI_PROVIDER=openai must use AI_PROVIDER_CLASS=external.');
+  }
+  if (!AI_FEATURE_MODES.has(aiIngestionMode)) {
+    throw new Error('AI_INGESTION_MODE must be one of: disabled, suggest.');
+  }
+  if (!AI_FEATURE_MODES.has(aiReportMode)) {
+    throw new Error('AI_REPORT_MODE must be one of: disabled, suggest.');
+  }
+  if (!['true', 'false'].includes(aiGlobalKillSwitch)) {
+    throw new Error('AI_GLOBAL_KILL_SWITCH must be true or false.');
+  }
+  if (!AI_EXTERNAL_PROVIDER_MODES.has(aiExternalProviderMode)) {
+    throw new Error('AI_EXTERNAL_PROVIDER_MODE must be one of: disabled, synthetic-only.');
   }
   if (!Number.isInteger(maxFileSizeMb) || maxFileSizeMb < 1 || maxFileSizeMb > 50) {
     throw new Error('MAX_FILE_SIZE_MB must be an integer between 1 and 50.');
