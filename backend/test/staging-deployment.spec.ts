@@ -50,6 +50,8 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('cap_drop: [ALL]');
     expect(compose).toContain('read_only: true');
     expect(dockerfile).toContain('USER 10001:10001');
+    expect(dockerfile).toContain('FROM node-base AS runtime');
+    expect(dockerfile).toContain('OPENSSL_PACKAGE_VERSION=3.0.20-1~deb12u2');
     expect(dockerfile).not.toMatch(/(?:JWT_SECRET|DATABASE_URL)=/);
   });
 

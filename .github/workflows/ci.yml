@@ -43,6 +43,10 @@ jobs:
           test "$frontend_user" = '101:101'
           test "$backend_revision" = "$GITHUB_SHA"
           test "$frontend_revision" = "$GITHUB_SHA"
+          backend_prisma_version="$(docker run --rm --entrypoint sh "$BACKEND_CI_IMAGE" -c 'openssl version >/dev/null && ./node_modules/.bin/prisma -v' 2>&1)"
+          if grep -qi 'failed to detect' <<<"$backend_prisma_version"; then
+            exit 1
+          fi
           docker image inspect "$BACKEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/backend.identity.json"
           docker image inspect "$FRONTEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/frontend.identity.json"
 

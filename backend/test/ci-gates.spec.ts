@@ -29,6 +29,13 @@ describe('R8 CI gate contracts', () => {
     expect(workflow).toContain('VITE_APP_DATA_MODE=api');
     expect(workflow).toContain("test \"$backend_user\" = '10001:10001'");
     expect(workflow).toContain("test \"$frontend_user\" = '101:101'");
+    expect(workflow).toContain("'openssl version >/dev/null && ./node_modules/.bin/prisma -v'");
+    expect(workflow).toContain("if grep -qi 'failed to detect'");
+    const backendDockerfile = read('backend', 'Dockerfile');
+    expect(backendDockerfile).toContain('ARG OPENSSL_PACKAGE_VERSION=3.0.20-1~deb12u2');
+    expect(backendDockerfile).toContain('"ca-certificates=${CA_CERTIFICATES_PACKAGE_VERSION}"');
+    expect(backendDockerfile).toContain('"libssl3=${LIBSSL_PACKAGE_VERSION}"');
+    expect(backendDockerfile).toContain('"openssl=${OPENSSL_PACKAGE_VERSION}"');
     for (const generatedPath of [
       'deploy/staging/.evidence',
       'deploy/staging/.release',
