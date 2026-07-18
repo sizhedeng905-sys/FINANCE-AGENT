@@ -1,6 +1,6 @@
 # FINANCE-AGENT B8 阻断问题矩阵
 
-更新日期：2026-07-17
+更新日期：2026-07-18
 
 ## 冻结基线
 
@@ -109,6 +109,41 @@
 | 真实业务数据 | 未读取、未修改；Staging seed 仅使用随机密码合成账号 |
 
 ## 问题矩阵
+
+### 2026-07-18 R0 重新审计基线
+
+| 核验项 | 实际结果 |
+| --- | --- |
+| 仓库/分支 | `C:\Users\ASUS\Desktop\Financial agent` / `agent/b8-stable-hardening` |
+| R0 开始时 HEAD | `fb557f1a678cd2b931ae7a4407eec6867c9380e4`，与 `origin/agent/b8-stable-hardening` 一致 |
+| 已跟踪工作树 | `git diff --stat` 与 `git diff --cached --stat` 均为空 |
+| 受保护本地资产 | 11 个未跟踪文件，包含 IDE 配置、用户规划/需求文档、模型下载脚本和空白人工复核文件；全部未暂存、未修改 |
+| Git 忽略边界 | `backend/.env`、`model/`、`.realdata-test/`、`数据文件/`、`backend/uploads/` 均由实际 `git check-ignore -v` 证明被忽略 |
+| Draft PR #4 | `main <- agent/b8-stable-hardening`；69 commits；open、Draft、mergeable；3/3 review threads resolved 且 outdated |
+| GitHub checks | HEAD 的 Build and acceptance `29634353327` 与 CodeQL `29634353299` 均为 `success` |
+| 人工决策 | 指定文件 `FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 不存在；空白 `人工复核.md` 不构成批准，H01-H16 全部保持未决 |
+| 本机资源快照 | C 盘可用 798.6 GiB；空闲内存 65.4 GiB；RTX 5090 空闲显存约 7.4 GiB，真实模型任务前必须重新检查 |
+
+此前“锁定单 API/单 Worker 拓扑内没有开放代码 P0/P1”的结论已被本轮审计取代。下列条目在完成先失败复现、最小修复和对应回归前一律保持开放；仅凭静态阅读不得关闭。
+
+### R 系列开放问题
+
+| 编号 | 严重性 | 边界 | 负责人 | R0 复现/风险证据 | 修复提交 | 验收证据 | 状态 | 人工门禁 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R1-FRONTEND-001 | P0 | Staging frontend runtime/build/CSP | 工程执行者 | 审计指出镜像未显式 `api`，且 `/api` 可能触发单参数 `new URL` 异常；R1 先补红灯 | - | 待 runtime、镜像及浏览器 smoke | open | 无 |
+| R2-LOG-001 | P1 | Gateway/application access log | 工程执行者 | 日志模板可能记录完整 request URI/query，存在预签名参数泄露面；R2 先生成假签名红灯 | - | 待 JSON 日志泄露回归 | open | H09/H14 约束 IP 保留 |
+| R3-STORAGE-001 | P1 | S3 capacity/readiness | 工程执行者 | 容量可能以固定配置冒充可信物理可用空间；R3 先验证实际返回语义 | - | 待容量来源与降级矩阵 | open | H13/H14 约束正式告警阈值 |
+| R4-RECOVERY-001 | P1 | Database/object backup restore | 工程执行者 | 现有恢复可能只比较对象数量，且数据库与对象恢复缺少一致性边界 | - | 待 manifest 内容校验、失败注入和恢复演练 | open | H14 决定正式 RPO/RTO/保留 |
+| R5-IMAGE-001 | P1 | Release/rollback image identity | 工程执行者 | 回退流程可能接受可漂移 tag，未强制证明 digest/本地 image ID | - | 待 digest lock 与篡改拒绝测试 | open | H13 决定目标 registry |
+| R6-PREVIEW-001 | P1 | Excel preview API/browser | 工程执行者 | 预览可能一次返回接近 50,000 行，存在浏览器和 API 资源风险 | - | 待分页/上限 API、集成和浏览器测试 | open | 无 |
+| R6-TEMPLATE-LOCK-001 | P1 | Project template vs record/import/OCR/work order | 工程执行者 | 项目模板变更与消费入口可能没有统一项目级锁，存在 TOCTOU | - | 待真实 PostgreSQL 两种锁顺序矩阵 | open | H01/H07 只约束业务口径 |
+| R6-DUPLICATE-WINDOW-001 | P1 | Duplicate candidate calculation | 工程执行者 | `duplicate_submission.windowDays` 可能被接收但未进入候选时间范围 | - | 待边界日与跨来源候选测试 | open | H03 决定指纹和处置，不允许自动删单 |
+| R6-DECIMAL-001 | P1 | Rule threshold precision | 工程执行者 | 阈值可能先经过 JavaScript `number` 再转 Decimal，大额小数存在失真风险 | - | 待字符串 Decimal schema 与边界回归 | open | 无 |
+| R9-SCALE-001 | P1 条件风险 | Multi-instance login/upload/model gates | 工程执行者 | 登录、上传准入或模型并发仍可能依赖进程内状态；当前只能维持单 API/单 Worker | - | 待共享原子控制与多实例故障测试 | open | H13；未批准扩容前不得横向扩容 |
+| R6-IDEMPOTENCY-001 | 待分级 | Finance write endpoint inventory | 工程执行者/财务负责人 | 各财务写入口的幂等契约尚未完成逐项盘点，业务冲突语义未批准 | - | 待入口矩阵与通用基础设施测试 | pending_human_decision | H01/H02/H07 |
+| R7-RETENTION-001 | 待分级 | AI/audit/data retention and deletion | 安全/合规负责人 | 真实保留、删除、legal hold 和备份传播政策未批准 | - | 待策略矩阵、dry-run 与审计证据 | pending_human_decision | H09/H14 |
+| R7-STEPUP-001 | 待分级 | Step-up/MFA/SoD | 安全/业务负责人 | 技术预留不能替代高风险动作、TTL、自审批和应急账号规则 | - | 待批准策略及权限矩阵 | pending_human_decision | H10 |
+| R10-ACCURACY-001 | 发布门禁 | Real models and real business truth | 授权标注/财务/老板 | 合成 L0 证据不能替代 OCR 标签、L3 分币对账或老板标准答案 | - | 待冻结 L1 数据集和人工签字 | awaiting_human_signoff | H04-H09/H12/H16 |
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

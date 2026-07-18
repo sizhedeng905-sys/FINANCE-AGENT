@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。自动化工程工作已完成到 B8-09 与 RC-04，但真实 Staging、财务真值、OCR/AI 真值和人工签字尚未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。B8-09 与 RC-04 的历史自动化证据仍然有效，但 2026-07-18 的 R 系列重新审计又登记了 1 个 P0 和 9 个 P1/条件 P1；这些问题、真实 Staging、财务/OCR/AI 真值和人工签字都尚未关闭，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -13,21 +13,32 @@
 | 第一版业务闭环 | `engineering_complete` | 登录、工单、附件、四级审核、经营记录、通知、日报和 AI 助手均已接真实 API |
 | 后端阶段 0-10 | `engineering_complete` | NestJS/PostgreSQL/Prisma、业务模块、Excel 和 OCR 均已实现 |
 | B0-B7 真实数据工程 | `engineering_complete` | 大文件、四来源记录、模型、并发与故障恢复已有自动化证据 |
-| B8-01 至 B8-07 | `engineering_complete` | 状态机、金额精度、异步任务、AI grounding、安全和模型控制面已收口 |
+| B8-01 至 B8-07 | `historically_verified / reopened` | 历史门禁通过；R 系列又发现前端真实性、日志、容量、恢复、并发和精度边界 |
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
-| B8-09 Staging | `blocked_external` | 18 服务配置和运维工具已完成；最后一次 release 在 Compose `up` 前被 registry TLS 超时阻断 |
-| RC-00 至 RC-04 | `engineering_complete` | 机器可执行审计、修复、全量回归、交接和 PR 看护已完成 |
-| 发布结论 | `blocked_external` | 真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
+| B8-09 Staging | `blocked_p0_p1_and_external` | R1 P0 未关闭；18 服务尚未真实 `up`、smoke、restore 或 rollback |
+| RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
+| R0-R11 修复与再验收 | `in_progress` | R0 基线与问题台账完成，R1 P0 正在处理，其余按风险顺序排队 |
+| 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
-最新经过完整代码门禁的提交：`4d597721e693d14f09ec518c7ea9dfc4093766e9`
+R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 - 工作分支：`agent/b8-stable-hardening`
 - Draft PR：[PR #4: B8 stable hardening through model control plane](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
-- Build and acceptance：[run 29591539073](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29591539073)，成功
-- CodeQL：[run 29591542681](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29591542681)，成功
+- Build and acceptance：[run 29634353327](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29634353327)，成功
+- CodeQL：[run 29634353299](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29634353299)，成功
 - PR 安全 review thread：3/3 已解决且已过期，未解决数量为 0
 
-上述结论只代表工程候选状态。CI 全绿不能替代真实环境验收和业务签字。
+上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
+
+### R0 重新审计进展
+
+- 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
+- 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
+- PR #4 仍为 open Draft，`main <- agent/b8-stable-hardening`，69 commits，mergeable；未执行 merge、Ready、rebase、force push 或关闭旧 PR。
+- 指定人工文件 `FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 不存在，空白 `人工复核.md` 不构成批准；H01-H16 全部保持未决。
+- 开放问题包括 Staging 前端真实性 P0，以及日志泄露、S3 容量、恢复完整性、镜像身份、Excel 预览、项目模板并发锁、重复窗口、Decimal 阈值和多实例闸门 P1。
+
+逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 P0 未关闭前，不声明 Staging 可用，也不进入真实用户试运行。
 
 ## 已实现闭环
 
@@ -70,9 +81,9 @@
 | 9 | 已完成 | `.xlsx` 检查、映射、预览、错误行、字段建议和异步确认入账 |
 | 10 | 程序完成 | OCR Task、Paddle 适配、证据/置信度、纠错、重试、取消和人工确认；真实准确率待标注 |
 
-## B8 与 RC 加固进展
+## B8、RC 与 R 系列加固进展
 
-已完成的主要工程收口：
+以下是 B8/RC 已验证的历史工程能力，不表示 R 系列新问题已经关闭：
 
 - Excel 首次确认只接受正确状态；取消、确认、重试和并发请求具备数据库终态断言。
 - 5,001、30,196 和 49,999 行 Excel 完成后台分块确认、短事务写入、原子发布、审计、ledger 和报表闭环。
@@ -109,7 +120,7 @@
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |
 | Staging 静态门禁 | `passed` | 18 services、17 secrets、TLS、固定 tag、私网和只读应用容器 |
 | Shell/Compose | `passed` | 10/10 shell、1/1 PowerShell syntax、两份 Compose config |
-| 最新 GitHub Build | `passed` | 完整 build、263 单测、60 集成、16 E2E，耗时 6 分 46 秒 |
+| 最新 GitHub Build | `passed` | 完整 build、263 单测、60 集成、16 E2E，run `29634353327` |
 | 最新 GitHub CodeQL | `passed` | JavaScript/TypeScript 分析成功，无开放 review thread |
 | 真实 Staging release | `blocked_external` | Node 基础镜像 metadata TLS timeout；没有执行 `up`、smoke 或 restore drill |
 
