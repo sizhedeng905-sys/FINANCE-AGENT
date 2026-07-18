@@ -26,7 +26,7 @@
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
-| M0-M8 AI 分类/映射/审批/快照补充 | 排队 | 主任务 P0/P1 优先；随后先做复用矩阵，扩展阶段 9/10、现有 AI/审批/报告能力，不另造平行模块 |
+| M0-M8 AI 分类/映射/审批/快照补充 | M0 完成 / M1 执行中 | 复用矩阵、数据流、状态命令表、完整冻结向量和 migration 设计已完成；M1 开始补 Excel/OCR 规范 IR 和稳定 evidence hash |
 
 指定人工决策文件 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 已建立为 0.1-draft，但全部 H01-H16 条目均为 `Pending`，没有签字、业务样例或批准证据；空白或非指定文件不构成批准。
 

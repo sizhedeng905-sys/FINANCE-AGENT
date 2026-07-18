@@ -177,3 +177,24 @@
 - `blocked_external`：需要文档列明的人工输入、签字或基础设施。
 - `fixed`：实现完成但尚未跑完本阶段门禁。
 - `verified`：失败测试、实现和本阶段完整回归均通过。
+
+## AI 映射补充任务问题索引
+
+M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md`。以下状态不因旧 B8 测试通过而自动关闭：
+
+| 编号 | 严重性 | 边界 | 状态 | 关闭阶段 |
+| --- | --- | --- | --- | --- |
+| M0-INPUT-001 | P1 | Prompt Catalog 当前为 0 字节 | blocked_external | M2/M8 |
+| M1-EXCEL-EVIDENCE-001 | P0 | Excel IR/单元格证据/hash | open | M1 |
+| M1-OCR-EVIDENCE-001 | P0 | OCR token/block/bbox IR/hash | open | M1 |
+| M2-PROMPT-REGISTRY-001 | P1 | Prompt registry/version vector | open | M2 |
+| M2-STRICT-SCHEMA-001 | P0 | 严格 JSON/白名单/恶意结构 | open | M2 |
+| M2-AI-MODE-001 | P0 | ingestion/report mode 与 kill switch | open | M2 |
+| M3-PROFILE-001 | P1 | Mapping Profile 指纹/范围/失效 | open | M3 |
+| M4-OCR-REVIEW-001 | P1 | OCR evidence review revision | open | M4 |
+| M5-SELF-APPROVAL-001 | P0 | 上传者自审批与最终重鉴权 | open | M5 |
+| M5-PARTIAL-COMMIT-001 | P0 | 错误行存在时部分正式入账 | open | M5 |
+| M5-SNAPSHOT-COMMIT-001 | P0 | 不可变批准快照与唯一 commit | open | M5 |
+| M6-REPORT-SNAPSHOT-001 | P0 | canonical ReportSnapshot/Claim | open | M6 |
+| M7-ATTACK-BUDGET-001 | P1 | 攻击、资源和降级门禁 | open | M7 |
+| M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | open | M8 |

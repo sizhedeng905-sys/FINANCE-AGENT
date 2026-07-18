@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
-| AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
+| AI 映射补充 M0-M8 | `M0_passed / M1_in_progress` | 已完成复用矩阵、调用链、统一状态命令表、冻结向量和最小 migration 设计；Prompt Catalog 当前为空并诚实阻塞目录核对；开始 Excel/OCR 规范 IR |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -80,6 +80,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - H10 的 MFA、自审批、跨账号同人、双人复核、break-glass 和正式动作矩阵仍未签字；这些人工门禁不由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
+
+M0 没有另建平行 Excel/OCR/Provider/Worker：`ImportTask/Sheet/Column/Row`、`OcrTask/Attempt/Correction`、`AiPromptVersion/AiTask/AiCallAttempt/AiCallLog`、项目锁、幂等、audit/ledger 和现有 Reports/Claim 都作为首选扩展点。审计同时确认现有 Excel 会在错误行存在时按 `valid_rows_only` 部分入账、Import/OCR 上传者可自确认、缺少不可变 review/validation/approval/commit 与 canonical ReportSnapshot；这些已登记为 M1-M6 P0/P1，不能沿用旧 B8 绿色结论。详见 [`docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md`](docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md)。
 
 ## 已实现闭环
 
