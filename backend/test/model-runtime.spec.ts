@@ -16,7 +16,7 @@ function config(values: Record<string, unknown>) {
 describe('model runtime safeguards', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('parses fenced JSON and rejects output that violates its schema', () => {
+  it('accepts only strict JSON and rejects fenced, duplicate, unsafe, or oversized structures', () => {
     const validator = new StructuredOutputValidatorService();
     const schema = {
       type: 'object',
@@ -27,12 +27,24 @@ describe('model runtime safeguards', () => {
       required: ['amount', 'currency'],
       additionalProperties: false
     } as any;
-    expect(validator.parseAndValidate(schema, '```json\n{"amount":1280.5,"currency":"CNY"}\n```')).toEqual({
+    expect(validator.parseAndValidate(schema, '{"amount":1280.5,"currency":"CNY"}')).toEqual({
       amount: 1280.5,
       currency: 'CNY'
     });
+    expect(() => validator.parseAndValidate(schema, '```json\n{"amount":1280.5,"currency":"CNY"}\n```'))
+      .toThrow('INVALID_JSON');
+    expect(() => validator.parseAndValidate(schema, '{"amount":1,"amount":2,"currency":"CNY"}'))
+      .toThrow('DUPLICATE_KEY');
+    expect(() => validator.parseAndValidate(schema, '{"amount":1e3,"currency":"CNY"}'))
+      .toThrow('EXPONENT_NUMBER');
+    expect(() => validator.parseAndValidate(schema, '{"amount":1,"currency":"CNY","__proto__":{}}'))
+      .toThrow('FORBIDDEN_KEY');
+    expect(() => validator.parseAndValidate(schema, '{"amount":1,"currency":"safe\\u202Eunsafe"}'))
+      .toThrow('FORBIDDEN_CHARACTER');
+    expect(() => validator.parseAndValidate(schema, '{"amount":1,"currency":"CNY"}', { maxBytes: 8 }))
+      .toThrow('SIZE_LIMIT');
     expect(() => validator.validate(schema, { amount: '1280.5', currency: 'CNY' })).toThrow('结构化输出不合法');
-    expect(() => validator.parseAndValidate(schema, 'not-json')).toThrow('合法 JSON');
+    expect(() => validator.parseAndValidate(schema, 'not-json')).toThrow('INVALID_JSON');
   });
 
   it('queues model work at the configured concurrency and rejects an overflowing queue', async () => {

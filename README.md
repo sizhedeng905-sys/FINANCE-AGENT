@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M1 已完成复用审计及 Excel/OCR 规范 IR，M2-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M1 已完成复用审计及 Excel/OCR 规范 IR，M2.1 已建立严格 JSON、建议 Schema 和请求级白名单防线；M2 其余工作与 M3-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
-| AI 映射补充 M0-M8 | `M0-M1_passed / M2_next` | Excel/OCR 已有版本化 IR、稳定 evidence ref/hash、分页持久化和 29 条 migration 空库/升级证据；Prompt Catalog 当前为空并诚实阻塞目录核对 |
+| AI 映射补充 M0-M8 | `M0-M1_passed / M2_in_progress` | M2.1 严格 JSON、分类/映射/报告 Schema 和模板/字段/证据/转换白名单已通过 34 项定向断言；Prompt Catalog 当前为空并诚实阻塞目录核对 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -84,6 +84,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 M0 没有另建平行 Excel/OCR/Provider/Worker：`ImportTask/Sheet/Column/Row`、`OcrTask/Attempt/Correction`、`AiPromptVersion/AiTask/AiCallAttempt/AiCallLog`、项目锁、幂等、audit/ledger 和现有 Reports/Claim 都作为首选扩展点。审计同时确认现有 Excel 会在错误行存在时按 `valid_rows_only` 部分入账、Import/OCR 上传者可自确认、缺少不可变 review/validation/approval/commit 与 canonical ReportSnapshot；这些已登记为 M1-M6 P0/P1，不能沿用旧 B8 绿色结论。详见 [`docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md`](docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md)。
 
 M1 已在现有解析链上补齐 `excel-ir/1.0` 与 `ocr-ir/1.0`：Excel 保存 Sheet/表头/地址/lexical/display/公式缓存/合并锚点证据，OCR 保存页尺寸、真实预处理、稳定 block/token/candidate ref 和 bbox 坐标版本；任务冻结来源、解析输入、Provider 与 IR 哈希。29 条 migration 的空库和 28→29 升级、40/40 后端 suites、4 条 PostgreSQL Excel/OCR/Worker 链及构建均通过。真实 OCR 准确率、财务 review revision 和 AI 建议仍未宣称完成。详见 [`docs/M1_INGESTION_IR_EVIDENCE_REPORT_2026-07-18.md`](docs/M1_INGESTION_IR_EVIDENCE_REPORT_2026-07-18.md)。
+
+M2.1 已禁止从 Markdown code fence 宽松提取 JSON，并拒绝重复键、原型污染键、指数数字、超预算结构、控制字符、零宽字符和双向控制字符。分类、字段映射和报告叙述只能返回严格版本化 Schema 与 `NEEDS_FINANCE_REVIEW`；服务端再次核对本次请求的模板版本、字段、evidence ref、转换键和 Snapshot 白名单。定向 TypeScript 检查及 3/3 suites、34/34 tests 已通过；模式、kill switch、Prompt Registry 和 Provider 失败关闭仍在 M2 后续小块中推进。
 
 ## 已实现闭环
 

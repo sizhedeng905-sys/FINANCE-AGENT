@@ -11,6 +11,7 @@ import { AiController } from './ai.controller';
 import { AiAnswerGroundingService } from './ai-answer-grounding.service';
 import { AiProviderService } from './ai-provider.service';
 import { AiService } from './ai.service';
+import { AiSuggestionValidatorService } from './ai-suggestion-validator.service';
 import { AiToolsService } from './ai-tools.service';
 import { HttpAiProviderService } from './http-ai-provider.service';
 import { MockAiProviderService } from './mock-ai-provider.service';
@@ -21,6 +22,7 @@ import { MockAiProviderService } from './mock-ai-provider.service';
   providers: [
     AiService,
     AiAnswerGroundingService,
+    AiSuggestionValidatorService,
     AiToolsService,
     AiProviderService,
     MockAiProviderService,
