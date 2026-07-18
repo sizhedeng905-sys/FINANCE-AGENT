@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { AiTaskStatus, ImportTaskStatus, OcrTaskStatus } from '@prisma/client';
+import { AiTaskStatus, ImportTaskStatus, OcrTaskStatus, RetentionRunStatus } from '@prisma/client';
 import { timingSafeEqual } from 'node:crypto';
 import { Request, Response } from 'express';
 
@@ -41,11 +41,14 @@ export class MetricsController {
   @Get()
   async read(@Req() request: Request, @Res() response: Response) {
     this.assertAuthorized(request.headers.authorization);
-    const [importParse, importConfirm, ocr, ai, storedFiles, storageCapacity, heartbeat] = await Promise.all([
+    const [importParse, importConfirm, ocr, ai, retention, storedFiles, storageCapacity, heartbeat] = await Promise.all([
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.parsing, executionMode: 'background' } }),
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.confirming } }),
       this.prisma.ocrTask.count({ where: { status: { in: [OcrTaskStatus.queued, OcrTaskStatus.processing] } } }),
       this.prisma.aiTask.count({ where: { status: { in: [AiTaskStatus.queued, AiTaskStatus.running] } } }),
+      this.prisma.retentionRun.count({
+        where: { status: { in: [RetentionRunStatus.queued, RetentionRunStatus.running] } }
+      }),
       this.prisma.rawFile.aggregate({ where: { isVoided: false }, _sum: { fileSize: true } }),
       this.storageCapacity.read(),
       this.redis.readWorkerHeartbeat()
@@ -58,7 +61,8 @@ export class MetricsController {
         import_parse: importParse,
         import_confirm: importConfirm,
         ocr,
-        ai
+        ai,
+        retention
       },
       storedFileBytes: storedFiles._sum.fileSize ?? 0n,
       storageCapacity,

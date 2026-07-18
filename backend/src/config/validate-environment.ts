@@ -11,6 +11,7 @@ const FILE_SCAN_MODES = new Set(['basic', 'clamav']);
 const PROCESS_ROLES = new Set(['api', 'worker', 'all']);
 const FILE_STORAGE_DRIVERS = new Set(['local', 's3']);
 const RATE_LIMIT_STORES = new Set(['memory', 'redis']);
+const DATA_RETENTION_MODES = new Set(['disabled', 'dry-run']);
 
 export function validateEnvironment(environment: Record<string, unknown>) {
   const databaseUrl = String(environment.DATABASE_URL ?? '');
@@ -94,6 +95,10 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const aiMaxResponseBytes = Number(String(environment.AI_MAX_RESPONSE_BYTES ?? '2097152'));
   const aiAuditRetentionDays = Number(String(environment.AI_AUDIT_RETENTION_DAYS ?? '90'));
   const ocrMaxResponseBytes = Number(String(environment.OCR_MAX_RESPONSE_BYTES ?? '2097152'));
+  const dataRetentionMode = String(environment.DATA_RETENTION_MODE ?? 'disabled');
+  const dataRetentionBatchSize = Number(String(environment.DATA_RETENTION_BATCH_SIZE ?? '100'));
+  const dataRetentionLeaseMs = Number(String(environment.DATA_RETENTION_LEASE_MS ?? '60000'));
+  const dataRetentionMaxAttempts = Number(String(environment.DATA_RETENTION_MAX_ATTEMPTS ?? '3'));
 
   if (!NODE_ENVIRONMENTS.has(nodeEnv)) {
     throw new Error(`NODE_ENV must be one of: ${Array.from(NODE_ENVIRONMENTS).join(', ')}.`);
@@ -290,6 +295,18 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(ocrMaxResponseBytes) || ocrMaxResponseBytes < 1024 || ocrMaxResponseBytes > 10485760) {
     throw new Error('OCR_MAX_RESPONSE_BYTES must be an integer between 1024 and 10485760.');
+  }
+  if (!DATA_RETENTION_MODES.has(dataRetentionMode)) {
+    throw new Error('DATA_RETENTION_MODE must be one of: disabled, dry-run. Deletion is pending H12/H14 approval.');
+  }
+  if (!Number.isInteger(dataRetentionBatchSize) || dataRetentionBatchSize < 1 || dataRetentionBatchSize > 500) {
+    throw new Error('DATA_RETENTION_BATCH_SIZE must be an integer between 1 and 500.');
+  }
+  if (!Number.isInteger(dataRetentionLeaseMs) || dataRetentionLeaseMs < 10000 || dataRetentionLeaseMs > 600000) {
+    throw new Error('DATA_RETENTION_LEASE_MS must be an integer between 10000 and 600000.');
+  }
+  if (!Number.isInteger(dataRetentionMaxAttempts) || dataRetentionMaxAttempts < 1 || dataRetentionMaxAttempts > 10) {
+    throw new Error('DATA_RETENTION_MAX_ATTEMPTS must be an integer between 1 and 10.');
   }
   if (!Number.isInteger(modelHttpMaxRetries) || modelHttpMaxRetries < 0 || modelHttpMaxRetries > 5) {
     throw new Error('MODEL_HTTP_MAX_RETRIES must be an integer between 0 and 5.');

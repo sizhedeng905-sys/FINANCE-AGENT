@@ -19,6 +19,7 @@ import { TracingMiddleware } from './observability/tracing.middleware';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RecordsModule } from './records/records.module';
+import { RetentionModule } from './retention/retention.module';
 import { RiskRulesModule } from './risk-rules/risk-rules.module';
 import { ReportsModule } from './reports/reports.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -47,6 +48,7 @@ import { WorkerRuntimeModule } from './worker/worker-runtime.module';
     TemplatesModule,
     FieldsModule,
     RecordsModule,
+    RetentionModule,
     ImportTasksModule,
     WorkOrdersModule,
     FilesModule,

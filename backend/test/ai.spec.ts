@@ -193,6 +193,27 @@ describe('phase 8 boss AI assistant', () => {
     expect(messages.map((item) => item.role)).toEqual([AiMessageRole.user, AiMessageRole.assistant]);
     expect(callLogs).toHaveLength(1);
     expect(callLogs[0]).toMatchObject({ success: true, modelName: 'mock-structured-v1', provider: 'mock' });
+    expect(callLogs[0].requestPayload).toMatchObject({
+      schemaVersion: 'ai-call-audit/1.0',
+      inputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      questionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      questionCharacters: 6,
+      contextCount: 1,
+      tools: [{
+        name: 'get_today_report',
+        dataHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        fields: expect.arrayContaining(['income', 'profit'])
+      }]
+    });
+    expect(callLogs[0].requestPayload).not.toHaveProperty('message');
+    expect(callLogs[0].requestPayload).not.toHaveProperty('contexts');
+    expect(callLogs[0].responsePayload).toMatchObject({
+      schemaVersion: 'ai-call-audit/1.0',
+      providerResponseHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      replyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      validatedClaimCount: expect.any(Number)
+    });
+    expect(JSON.stringify(callLogs[0])).not.toContain('今天经营情况');
     expect(auditLogs.write).toHaveBeenCalledWith(expect.anything(), boss, 'ai.chat', 'ai_conversation', result.conversationId, expect.anything(), {});
 
     const failingService = new AiService(

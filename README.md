@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，R6.1-R6.6 已关闭 Excel 预览全量响应、项目模板并发锁、重复候选时间窗空转、规则金额阈值精度、财务写入口幂等和未决财务政策隐式固化的工程风险。仍有 1 个条件 P1、R7-R8、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R6.6 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等和未决政策隐式固化风险。R7.1 已完成 AI 审计内容/元数据分离和只盘点、不删除的 retention dry-run 框架。R7.2、R8、M0-M8、目标 Staging、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R6 已完成；H01/H02/H07 行为矩阵与 pending 基线已落地，下一步为 R7 数据生命周期和 step-up/职责分离框架 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R7.1 已完成；retention 仅支持 dry-run，H12/H14 仍阻断真实删除；下一步为 R7.2 step-up/职责分离框架 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -31,7 +31,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R6.6 重新审计进展
+### R0-R7.1 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -61,7 +61,10 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R6.6 建立 `financial-policy-baseline/1.0`：H01/H02/H07 均为 `pending_human_decision`，自动粒度选择、自动冲销/更正、附件主数据和 OCR 自动提交均关闭；新模板/确认快照保存这三个决策状态，旧记录不回填。
 - R6.6 保持正式金额只接受正数，但错误明确引用 H02；软作废只改变状态并保留金额、动态值、来源、模板快照和附件，不再把它描述为会计冲销。当前没有更正链、反向分录、关账期或不可变历史 ReportSnapshot。
 - H01 的明细/汇总互斥、H02 的负数/冲销/更正/关账、H07 的报销主表/票据主从仍待签字；只提供行为矩阵和 migration 草案，未创建表或改变真实业务语义。详见 [`docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md`](docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md)。
-- R6 工程门禁已关闭；当前开放工程问题只剩多实例闸门 1 个条件 P1，下一步进入 R7 数据生命周期与 step-up/职责分离。
+- R7.1 修复了新增 `AiCallLog` 在数据库中保存完整问题、工具上下文和原始 Provider 响应的风险；现只保存 `ai-call-audit/1.0` 哈希、大小、工具/字段名、版本和 grounding 计数，完整对话仍留在独立内容区。
+- 新增按 9 类数据盘点的 retention dry-run、PostgreSQL lease/重试/耗尽恢复、active legal hold、匿名证据和 Prometheus queue depth。配置只接受 `disabled|dry-run`，数据库约束强制 `dry_run=true`、`deleted_count=0`；实际天数、删除、hold 释放和备份/Provider 传播继续由 H12/H14 阻断。
+- R7.1 全量门禁为后端 37/37 suites、335/335 tests，PostgreSQL 6/6 suites、78/78 tests，Playwright 17/17，Prisma 空库 26 条和 25→26 升级、前后端 build、615 文件卫生及两套 0 vulnerability 审计。详细证据见 [`docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`](docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md)。
+- R6 与 R7.1 工程门禁已关闭；下一步进入 R7.2 step-up/职责分离基础设施，H10 未批准前不宣称 MFA 或正式职责分离完成。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -132,18 +135,19 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R6.6 本地全量 36/36 suites，329/329 tests |
-| PostgreSQL 集成 | `passed` | R6.6 本地全量 5/5 suites，75/75 tests；含 H02 失败关闭、软作废保留、跨操作者 key 隔离、并发文件单事实、事务回滚重试和 50,000 行 Worker 恢复 |
+| 后端 Jest | `passed` | R7.1 本地全量 37/37 suites，335/335 tests |
+| PostgreSQL 集成 | `passed` | R7.1 本地全量 6/6 suites，78/78 tests；含 retention 双实例 lease/legal hold/恢复、H02 失败关闭、跨操作者 key 隔离和 50,000 行 Worker 恢复 |
 | 浏览器 E2E | `passed` | Playwright 17/17；含真实 API 服务端翻页 20→5 行 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
-| Prisma | `passed` | 25/25 migrations；41 表、27 enums、173 indexes、77 foreign keys |
-| Migration 路径 | `passed` | 空 `_test` 库 25 条；上一基线 24 条再升级第 25 条 |
+| Prisma | `passed` | 26/26 migrations；43 表、29 enums、179 indexes、79 foreign keys |
+| Migration 路径 | `passed` | 空 `_test` 库 26 条；上一基线 25 条再升级第 26 条 |
 | Excel 预览预算 | `passed` | 当前页查询；摘要批次 500；pageSize 1-100；响应上限 1 MiB；50,000 行深页和缓存回访通过 |
 | 项目模板并发 | `passed` | 统一 key 22 事务锁；启用/停用与记录、Excel Worker、OCR、工单终审两种顺序均有 PostgreSQL 断言；锁超时稳定 409 |
 | 重复候选窗口 | `passed` | 0/365 天、UTC、前后边界、跨月/跨年和越界拒绝；结果、异常、audit、ledger 一致，H03 前不自动处置 |
 | 财务阈值 Decimal | `passed` | 规范字符串、按分精确比较、最大值、旧安全整数告警，以及 unsafe numeric/科学计数法字符串/超精度/越界稳定拒绝；全链路不静默舍入 |
 | 财务写入口幂等 | `passed` | 作用域指纹、请求哈希、首次响应重放、改体 409、并发单事实和事务回滚均有单元/PostgreSQL 断言；正式强制范围与保留期仍待 H 门禁 |
 | H01/H02/H07 保守基线 | `passed` | 三项均冻结为 pending；自动粒度/冲销/附件主数据/OCR 提交关闭；零负数和软作废保留有自动断言；正式业务决定仍未签字 |
+| Retention dry-run | `engineering_passed` | 新 AI 调用日志只留元数据；9 类盘点、legal hold、双实例 lease、匿名证据和耗尽恢复通过；真实删除由 H12/H14 禁止 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
 | OCR 并发 | `passed` | 1/3/5 精确并发门禁；最新 GitHub 集成 60/60 |
 | Repository hygiene | `passed` | 603 个 tracked/candidate 文件通过；真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
@@ -331,6 +335,7 @@ API 模式请求失败时不会静默回退到 Mock。
 | Excel | `/api/import-tasks/*`、`/api/field-suggestions/*` |
 | OCR | `/api/ocr-tasks/*` |
 | Model runtime | `/api/model-runtime/deployments`、`/routes`、`/health` |
+| Retention inventory | `/api/retention/classes`、`/runs`、`/legal-holds` |
 
 完整字段、状态码和权限以 Swagger 与后端 DTO/Guard 为准。
 

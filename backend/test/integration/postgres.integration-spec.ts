@@ -3765,6 +3765,14 @@ describe('real PostgreSQL integration', () => {
       expect(new Set(callLogIds).size).toBe(8);
       expect(logs.every((item) => item.success && item.provider === 'mock' && item.createdBy === bossUser.id)).toBe(true);
       expect(logs.every((item) => /^[a-f0-9]{64}$/.test(item.inputHash ?? ''))).toBe(true);
+      const generatedAuditLogs = logs.filter((item) => item.id !== callLogIds[0]);
+      expect(generatedAuditLogs).toHaveLength(7);
+      expect(generatedAuditLogs.every((item) => (
+        item.requestPayload as { schemaVersion?: string }
+      ).schemaVersion === 'ai-call-audit/1.0')).toBe(true);
+      expect(generatedAuditLogs.every((item) => !Object.prototype.hasOwnProperty.call(item.requestPayload, 'message'))).toBe(true);
+      expect(generatedAuditLogs.every((item) => !Object.prototype.hasOwnProperty.call(item.requestPayload, 'contexts'))).toBe(true);
+      expect(JSON.stringify(generatedAuditLogs.map((item) => item.requestPayload))).not.toContain('今天经营情况怎么样');
       expect(logs.map((item) => item.correlationId)).toEqual(expect.arrayContaining(
         Array.from({ length: 8 }, (_, index) => `${requestPrefix}-${index + 1}`)
       ));

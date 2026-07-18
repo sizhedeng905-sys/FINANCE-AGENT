@@ -42,11 +42,22 @@ describe('environment validation', () => {
     [{ ...valid, FILE_PDF_MAX_OBJECTS: '99' }, 'FILE_PDF_MAX_OBJECTS'],
     [{ ...valid, FILE_PARSE_TIMEOUT_MS: '99' }, 'FILE_PARSE_TIMEOUT_MS'],
     [{ ...valid, AI_AUDIT_RETENTION_DAYS: '0' }, 'AI_AUDIT_RETENTION_DAYS'],
+    [{ ...valid, DATA_RETENTION_MODE: 'execute' }, 'DATA_RETENTION_MODE'],
+    [{ ...valid, DATA_RETENTION_BATCH_SIZE: '501' }, 'DATA_RETENTION_BATCH_SIZE'],
+    [{ ...valid, DATA_RETENTION_LEASE_MS: '9999' }, 'DATA_RETENTION_LEASE_MS'],
+    [{ ...valid, DATA_RETENTION_MAX_ATTEMPTS: '0' }, 'DATA_RETENTION_MAX_ATTEMPTS'],
     [{ ...valid, STORAGE_CAPACITY_MAX_STALENESS_SECONDS: '0' }, 'STORAGE_CAPACITY_MAX_STALENESS_SECONDS'],
     [{ ...valid, XLS_CONVERTER_TIMEOUT_MS: '999' }, 'XLS_CONVERTER_TIMEOUT_MS'],
     [{ ...valid, XLS_CONVERTER_MAX_OUTPUT_MB: '101' }, 'XLS_CONVERTER_MAX_OUTPUT_MB']
   ])('rejects an invalid required setting', (environment, expectedMessage) => {
     expect(() => validateEnvironment(environment)).toThrow(expectedMessage);
+  });
+
+  it('fails closed to disabled retention and permits only an explicit dry-run', () => {
+    expect(validateEnvironment({ ...valid })).toMatchObject(valid);
+    expect(validateEnvironment({ ...valid, DATA_RETENTION_MODE: 'dry-run' })).toMatchObject({
+      DATA_RETENTION_MODE: 'dry-run'
+    });
   });
 
   it.each([

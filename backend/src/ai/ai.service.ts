@@ -150,11 +150,14 @@ export class AiService {
         };
       }
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message.slice(0, 2000) : '未知AI调用错误';
+      errorMessage = error instanceof Error ? this.redactText(error.message).slice(0, 2000) : '未知AI调用错误';
       reply = 'AI 服务暂不可用，需要人工确认。';
     }
 
     const latencyMs = Date.now() - startedAt;
+    const inputHash = this.hashAuditValue({ message: dto.message, workOrderId: dto.workOrderId ?? null, contexts });
+    const requestAudit = this.buildRequestAudit(dto, history, contexts, inputHash);
+    const responseAudit = this.buildResponseAudit(raw, reply, validatedClaims.length, errorMessage !== null);
     const persisted = await this.prisma.$transaction(async (tx) => {
       const message = await tx.aiMessage.create({
         data: {
@@ -177,22 +180,15 @@ export class AiService {
           providerConfig: this.json(providerConfig),
           providerConfigHash,
           secretRef,
-          requestPayload: this.json({
-            message: dto.message,
-            workOrderId: dto.workOrderId ?? null,
-            historyMessageCount: history.length,
-            contexts
-          }),
-          responsePayload: raw === null ? undefined : this.json(raw),
+          requestPayload: this.json(requestAudit),
+          responsePayload: this.json(responseAudit),
           inputTokens,
           outputTokens,
           latencyMs,
           success: errorMessage === null,
           errorMessage,
           endpointSnapshot: endpoint,
-          inputHash: createHash('sha256')
-            .update(JSON.stringify({ message: dto.message, workOrderId: dto.workOrderId ?? null, contexts }))
-            .digest('hex'),
+          inputHash,
           correlationId,
           attemptNo: 1,
           fallback: errorMessage !== null,
@@ -445,6 +441,53 @@ export class AiService {
   private auditRetentionCutoff() {
     const days = this.config.get<number>('ai.auditRetentionDays') ?? 90;
     return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  }
+
+  private buildRequestAudit(
+    dto: AiChatDto,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
+    contexts: Awaited<ReturnType<AiToolsService['buildContext']>>,
+    inputHash: string
+  ) {
+    return {
+      schemaVersion: 'ai-call-audit/1.0',
+      inputHash,
+      questionHash: this.hashAuditValue(dto.message),
+      questionCharacters: dto.message.length,
+      workOrderScoped: Boolean(dto.workOrderId),
+      historyMessageCount: history.length,
+      historyCharacters: history.reduce((total, item) => total + item.content.length, 0),
+      contextCount: contexts.length,
+      tools: contexts.map((item) => ({
+        name: item.name,
+        dataHash: this.hashAuditValue(item.data),
+        fields: item.data && typeof item.data === 'object' && !Array.isArray(item.data)
+          ? Object.keys(item.data).sort().slice(0, 64)
+          : []
+      }))
+    };
+  }
+
+  private buildResponseAudit(
+    raw: unknown,
+    reply: string,
+    validatedClaimCount: number,
+    fallback: boolean
+  ) {
+    const serializedRaw = JSON.stringify(raw ?? null);
+    return {
+      schemaVersion: 'ai-call-audit/1.0',
+      providerResponseHash: this.hashAuditValue(raw ?? null),
+      providerResponseBytes: Buffer.byteLength(serializedRaw, 'utf8'),
+      replyHash: this.hashAuditValue(reply),
+      replyCharacters: reply.length,
+      validatedClaimCount,
+      fallback
+    };
+  }
+
+  private hashAuditValue(value: unknown) {
+    return createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
   }
 
   private redactAuditValue(value: unknown, key = ''): unknown {

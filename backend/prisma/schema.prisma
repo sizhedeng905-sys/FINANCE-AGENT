@@ -223,6 +223,25 @@ enum AiCallAttemptStatus {
   failed
 }
 
+enum RetentionDataClass {
+  ai_conversation_content
+  ai_provider_payload
+  ai_task_payload
+  ocr_intermediate
+  import_intermediate
+  notification
+  idempotency_response
+  audit_event
+  ledger_event
+}
+
+enum RetentionRunStatus {
+  queued
+  running
+  completed
+  failed
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -250,6 +269,8 @@ model User {
   aiConversations      AiConversation[]
   aiTasks              AiTask[]
   notificationReceipts NotificationReceipt[]
+  retentionRuns        RetentionRun[]        @relation("RetentionRunRequester")
+  retentionLegalHolds  RetentionLegalHold[]  @relation("RetentionLegalHoldCreator")
 
   @@map("users")
 }
@@ -1309,4 +1330,58 @@ model IdempotencyKey {
   @@index([status], map: "idx_idempotency_status")
   @@index([expiresAt], map: "idx_idempotency_expires")
   @@map("idempotency_keys")
+}
+
+model RetentionRun {
+  id                  String             @id @default(cuid())
+  dataClass           RetentionDataClass @map("data_class")
+  status              RetentionRunStatus @default(queued)
+  dryRun              Boolean            @default(true) @map("dry_run")
+  cutoffAt            DateTime           @map("cutoff_at")
+  batchSize           Int                @map("batch_size")
+  policyVersion       String             @default("retention-framework/1.0-pending-h14") @map("policy_version")
+  requestedBy         String?            @map("requested_by")
+  requestedByUsername String?            @map("requested_by_username")
+  attemptCount        Int                @default(0) @map("attempt_count")
+  maxAttempts         Int                @default(3) @map("max_attempts")
+  leaseToken          String?            @map("lease_token")
+  leaseUntil          DateTime?          @map("lease_until")
+  beforeCount         Int                @default(0) @map("before_count")
+  afterCount          Int                @default(0) @map("after_count")
+  scannedCount        Int                @default(0) @map("scanned_count")
+  eligibleCount       Int                @default(0) @map("eligible_count")
+  heldCount           Int                @default(0) @map("held_count")
+  protectedCount      Int                @default(0) @map("protected_count")
+  deletedCount        Int                @default(0) @map("deleted_count")
+  evidence            Json               @default("{}")
+  errorCode           String?            @map("error_code")
+  errorMessage        String?            @map("error_message")
+  startedAt           DateTime?          @map("started_at")
+  completedAt         DateTime?          @map("completed_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  requester User? @relation("RetentionRunRequester", fields: [requestedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, leaseUntil])
+  @@index([dataClass, createdAt])
+  @@map("retention_runs")
+}
+
+model RetentionLegalHold {
+  id                String   @id @default(cuid())
+  resourceType      String   @map("resource_type")
+  resourceId        String   @map("resource_id")
+  reason            String
+  active            Boolean  @default(true)
+  createdBy         String?  @map("created_by")
+  createdByUsername String?  @map("created_by_username")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  creator User? @relation("RetentionLegalHoldCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([resourceType, resourceId])
+  @@index([active, resourceType])
+  @@map("retention_legal_holds")
 }

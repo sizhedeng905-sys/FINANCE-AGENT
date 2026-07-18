@@ -92,6 +92,12 @@ export default () => ({
     heartbeatIntervalMs: Number.parseInt(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? '5000', 10),
     heartbeatTtlMs: Number.parseInt(process.env.WORKER_HEARTBEAT_TTL_MS ?? '20000', 10)
   },
+  dataRetention: {
+    mode: process.env.DATA_RETENTION_MODE || 'disabled',
+    batchSize: Number.parseInt(process.env.DATA_RETENTION_BATCH_SIZE ?? '100', 10),
+    leaseMs: Number.parseInt(process.env.DATA_RETENTION_LEASE_MS ?? '60000', 10),
+    maxAttempts: Number.parseInt(process.env.DATA_RETENTION_MAX_ATTEMPTS ?? '3', 10)
+  },
   metrics: {
     token: process.env.METRICS_TOKEN || ''
   },

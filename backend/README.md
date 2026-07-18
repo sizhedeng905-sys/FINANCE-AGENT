@@ -84,13 +84,14 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-17, B8-09 engineering implementation):
+Current verification baseline (2026-07-18, R7.1 engineering implementation):
 
-- Backend build and Prisma validation pass with 24 applied migrations and no pending migration.
-- Jest: 27/27 suites and 256/256 tests.
-- Real PostgreSQL integration: 2/2 suites and 60/60 tests, including API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
-- Root Playwright acceptance: 14/14 tests.
+- Backend build and Prisma validation pass with 26 applied migrations and no pending migration.
+- Jest: 37/37 suites and 335/335 tests.
+- Real PostgreSQL integration: 6/6 suites and 78/78 tests, including retention lease/legal-hold recovery, API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
+- Root Playwright acceptance: 17/17 tests.
 - Root and backend dependency audits: 0 vulnerabilities.
+- R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
 - Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
 - B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
@@ -139,6 +140,7 @@ Current verification baseline (2026-07-17, B8-09 engineering implementation):
 - OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
 - OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/confirm`
 - Model runtime metadata: `GET /api/model-runtime/deployments`, `/routes`, `/health`
+- Retention inventory: `GET /api/retention/classes`, `GET/POST /api/retention/runs`, `GET/POST /api/retention/legal-holds`
 - Swagger UI: `/api/docs`
 
 Successful responses use:
@@ -211,6 +213,21 @@ The production global request limiter uses Redis. Login throttling, upload admis
 Development accepts only `finance_agent_session` / `finance_agent_csrf`; production accepts only `__Host-finance_agent_session` / `__Host-finance_agent_csrf`. Mixed families, duplicate names (including malformed or empty first values), and environment-incompatible names are rejected and cleared. Cookie writes require exact double-submit CSRF matching. JWT verification is fixed to `HS256`, configured issuer/audience, and `typ=access`.
 
 The `admin` role manages privileged accounts. `finance` and `boss` can manage employee accounts only; `reviewer`, `employee`, and `auditor` cannot use user administration. Privileged role, password, and status changes are audited and notify the target user. The step-up endpoint issues a five-minute purpose-bound token after password verification; MFA remains explicitly reserved until H-10 is approved.
+
+## Retention Boundary
+
+Retention is disabled by default. The only permitted enabled mode is non-destructive inventory:
+
+```env
+DATA_RETENTION_MODE=disabled
+DATA_RETENTION_BATCH_SIZE=100
+DATA_RETENTION_LEASE_MS=60000
+DATA_RETENTION_MAX_ATTEMPTS=3
+```
+
+Set `DATA_RETENTION_MODE=dry-run` only in a controlled environment to queue bounded inventory jobs. `execute`, unknown modes, `dryRun=false`, and future cutoffs are rejected. PostgreSQL constraints require every R7.1 run to remain a dry-run with `deletedCount=0`. Admin may create runs and legal holds; auditor has read-only access. Legal-hold release, actual retention days, Provider deletion guarantees, backup propagation, and destructive execution remain disabled pending H12/H14. See `docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`.
+
+New AI call logs use `ai-call-audit/1.0` and store only hashes, sizes, tool names/field names, version metadata, claim counts, and fallback status. Full questions, tool values, and raw Provider responses are not copied into new `AiCallLog` records. Conversation content and OCR/import evidence remain in their dedicated content stores and are not deleted by R7.1.
 
 ## AI Provider
 
