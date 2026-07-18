@@ -276,7 +276,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             fileName: rawFile.originalFileName,
             importType: dto.importType,
             uploadedBy: actor.id,
-            idempotencyKey
+            idempotencyKey: this.idempotency.persistenceKey(scope)
           }
         });
         await this.auditLogs.write(

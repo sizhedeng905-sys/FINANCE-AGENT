@@ -123,7 +123,13 @@ export class WorkOrdersController {
 
   @Patch(':id')
   @Roles(UserRole.employee)
-  update(@Param('id') id: string, @Body() dto: UpdateWorkOrderDto, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
-    return this.workOrders.update(id, dto, user, getRequestContext(request));
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateWorkOrderDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.workOrders.update(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 }

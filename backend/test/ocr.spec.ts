@@ -178,6 +178,7 @@ describe('OCR phase 10 providers and preprocessing', () => {
     };
     const idempotency = {
       prepare: jest.fn(() => ({})),
+      persistenceKey: jest.fn(() => 'idem-v1:test'),
       execute: jest.fn(async (_tx: unknown, _scope: unknown, _status: number, execute: () => Promise<unknown>) => execute())
     };
     const service = new OcrTasksService(

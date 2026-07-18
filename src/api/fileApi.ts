@@ -5,13 +5,22 @@ import { mockDeleteFile, mockGetFile, mockReadFile, mockUploadFile } from './moc
 
 export type UploadedFile = RawFile;
 
+function uploadIdempotencyKey(): string {
+  const id = typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `file-upload-${id}`;
+}
+
 export function uploadFile(file: File, relatedProjectId: string, workOrderId?: string): Promise<RawFile> {
   if (runtimeConfig.dataMode !== 'api') return mockUploadFile(file, relatedProjectId, workOrderId);
   const formData = new FormData();
   formData.set('file', file);
   formData.set('relatedProjectId', relatedProjectId);
   if (workOrderId) formData.set('workOrderId', workOrderId);
-  return httpClient.post<RawFile>('/files/upload', formData);
+  return httpClient.post<RawFile>('/files/upload', formData, {
+    headers: { 'Idempotency-Key': uploadIdempotencyKey() },
+  });
 }
 
 export function getFile(id: string): Promise<RawFile> {

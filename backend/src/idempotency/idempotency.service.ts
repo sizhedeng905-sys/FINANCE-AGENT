@@ -10,6 +10,9 @@ export interface IdempotencyScope {
   requestHash: string;
 }
 
+export const IDEMPOTENCY_PERSISTENCE_KEY_VERSION = 'idem-v1' as const;
+export const IDEMPOTENCY_RETENTION_POLICY = 'RETAIN_UNTIL_H14_APPROVED' as const;
+
 @Injectable()
 export class IdempotencyService {
   prepare(
@@ -21,11 +24,19 @@ export class IdempotencyService {
     required = true
   ): IdempotencyScope | undefined {
     if (!key) {
-      if (required) throw new BadRequestException('Idempotency-Key 请求头不能为空');
+      if (required) {
+        throw new BadRequestException({
+          message: 'Idempotency-Key 请求头不能为空',
+          data: { reason: 'IDEMPOTENCY_KEY_REQUIRED' }
+        });
+      }
       return undefined;
     }
     if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
-      throw new BadRequestException('Idempotency-Key 格式不合法');
+      throw new BadRequestException({
+        message: 'Idempotency-Key 格式不合法',
+        data: { reason: 'IDEMPOTENCY_KEY_FORMAT_INVALID' }
+      });
     }
     return {
       actorUserId,
@@ -34,6 +45,17 @@ export class IdempotencyService {
       requestPath,
       requestHash: createHash('sha256').update(this.canonicalStringify(request)).digest('hex')
     };
+  }
+
+  persistenceKey(scope: IdempotencyScope | undefined): string | undefined {
+    if (!scope) return undefined;
+    const scopedKey = this.canonicalStringify({
+      actorUserId: scope.actorUserId,
+      requestMethod: scope.requestMethod,
+      requestPath: scope.requestPath,
+      key: scope.key
+    });
+    return `${IDEMPOTENCY_PERSISTENCE_KEY_VERSION}:${createHash('sha256').update(scopedKey).digest('hex')}`;
   }
 
   async execute<T>(
@@ -58,10 +80,16 @@ export class IdempotencyService {
     });
     if (existing) {
       if (existing.requestHash !== scope.requestHash) {
-        throw new ConflictException('Idempotency-Key 已绑定其他请求');
+        throw new ConflictException({
+          message: 'Idempotency-Key 已绑定其他请求',
+          data: { reason: 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST' }
+        });
       }
       if (existing.status !== 'completed' || existing.responseBody === null) {
-        throw new ConflictException('相同幂等请求正在处理中');
+        throw new ConflictException({
+          message: '相同幂等请求正在处理中',
+          data: { reason: 'IDEMPOTENCY_REQUEST_IN_PROGRESS' }
+        });
       }
       return this.cloneResponse<T>(existing.responseBody);
     }

@@ -25,7 +25,7 @@ function queryString(query: RecordListQuery): string {
   return value ? `?${value}` : '';
 }
 
-function idempotencyKey(operation: 'create' | 'confirm') {
+function idempotencyKey(operation: 'create' | 'update' | 'confirm') {
   const id = typeof window.crypto?.randomUUID === 'function'
     ? window.crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -62,7 +62,9 @@ export function getRecord(id: string): Promise<BusinessRecord> {
 
 export function updateRecord(id: string, payload: UpdateRecordPayload): Promise<BusinessRecord> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.patch<BusinessRecord>(`/records/${encodeURIComponent(id)}`, payload)
+    ? httpClient.patch<BusinessRecord>(`/records/${encodeURIComponent(id)}`, payload, {
+      headers: { 'Idempotency-Key': idempotencyKey('update') },
+    })
     : mockUpdateRecord(id, payload);
 }
 

@@ -161,7 +161,7 @@ export class WorkOrdersService {
               occurredDate: dto.occurredDate ? this.parseDateOnly(dto.occurredDate, 'occurredDate') : null,
               extraValues: (dto.extraValues ?? {}) as Prisma.InputJsonValue,
               status: WorkOrderStatus.draft,
-              creationIdempotencyKey: idempotencyKey,
+              creationIdempotencyKey: this.idempotency.persistenceKey(scope),
               attachments: dto.attachments?.length
                 ? { create: dto.attachments.map((rawFileId) => ({ rawFileId, uploadedBy: actor.id })) }
                 : undefined,
@@ -199,8 +199,22 @@ export class WorkOrdersService {
     );
   }
 
-  async update(id: string, dto: UpdateWorkOrderDto, actor: CurrentUser, context: RequestContext) {
-    return this.prisma.$transaction(async (tx) => {
+  async update(
+    id: string,
+    dto: UpdateWorkOrderDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'PATCH',
+      '/api/work-orders/:id',
+      idempotencyKey,
+      { workOrderId: id, ...dto },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 200, async () => {
       await this.lockWorkOrder(tx, id);
       const before = await this.findOwnedOrThrow(id, actor, tx);
       if (before.status !== WorkOrderStatus.draft && before.status !== WorkOrderStatus.returned_for_supplement) {
@@ -273,7 +287,7 @@ export class WorkOrdersService {
         context
       );
       return toWorkOrder(after);
-    });
+    }));
   }
 
   async submit(id: string, actor: CurrentUser, context: RequestContext) {
@@ -505,7 +519,7 @@ export class WorkOrdersService {
             bossOpinion: dto.comment,
             completedAt: next === WorkOrderStatus.completed ? new Date() : null,
             generatedRecordId: generatedRecord?.id,
-            approvalIdempotencyKey: idempotencyKey,
+            approvalIdempotencyKey: this.idempotency.persistenceKey(scope),
             version: { increment: 1 }
           }
         });

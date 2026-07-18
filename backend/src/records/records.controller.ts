@@ -48,10 +48,11 @@ export class RecordsController {
   update(
     @Param('id') id: string,
     @Body() dto: UpdateRecordDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.update(id, dto, user, getRequestContext(request));
+    return this.recordsService.update(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Delete(':id')

@@ -17,6 +17,7 @@ import { FileSecurityService } from '../src/files/file-security.service';
 import { FilesService } from '../src/files/files.service';
 import { LocalFileStorageService } from '../src/files/local-file-storage.service';
 import { StorageCapacityService } from '../src/files/storage-capacity.service';
+import { IdempotencyService } from '../src/idempotency/idempotency.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
 
 function actor(role: UserRole, id: string = role) {
@@ -94,6 +95,7 @@ describe('phase 5 files and notifications', () => {
       ledgerEvents as any,
       new FileSecurityService(config),
       storageCapacity,
+      new IdempotencyService(),
       config
     );
     const pdf = await PDFDocument.create();
@@ -250,6 +252,7 @@ describe('phase 5 files and notifications', () => {
       { write: jest.fn() } as any,
       new FileSecurityService(config),
       new StorageCapacityService(prisma, storage, config),
+      new IdempotencyService(),
       config
     );
 
@@ -312,6 +315,7 @@ describe('phase 5 files and notifications', () => {
       { write: jest.fn() } as any,
       new FileSecurityService(config),
       new StorageCapacityService(prisma, storage, config),
+      new IdempotencyService(),
       config
     );
 

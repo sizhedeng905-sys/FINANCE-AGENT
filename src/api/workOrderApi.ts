@@ -87,9 +87,15 @@ export function createWorkOrderApi(
     : mockCreateWorkOrder(payload, idempotencyKey);
 }
 
-export function updateWorkOrderApi(id: string, payload: UpdateWorkOrderPayload): Promise<WorkOrder> {
+export function updateWorkOrderApi(
+  id: string,
+  payload: UpdateWorkOrderPayload,
+  idempotencyKey: string,
+): Promise<WorkOrder> {
   return runtimeConfig.dataMode === 'api'
-    ? httpClient.patch<WorkOrder>(`/work-orders/${encodeURIComponent(id)}`, payload)
+    ? httpClient.patch<WorkOrder>(`/work-orders/${encodeURIComponent(id)}`, payload, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      })
     : mockUpdateWorkOrder(id, payload);
 }
 

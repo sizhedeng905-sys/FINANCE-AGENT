@@ -1958,6 +1958,7 @@ describe('real PostgreSQL integration', () => {
     let templateId: string | undefined;
     let rawFileId: string | undefined;
     let workOrderId: string | undefined;
+    let crossActorWorkOrderId: string | undefined;
     let raceWorkOrderId: string | undefined;
     let generatedRecordId: string | undefined;
 
@@ -2034,6 +2035,16 @@ describe('real PostgreSQL integration', () => {
         amount: '0.00'
       });
 
+      const crossActorCreate = await request(app.getHttpServer())
+        .post('/api/work-orders')
+        .set('Authorization', `Bearer ${tokens['员工']}`)
+        .set('Idempotency-Key', creationKey)
+        .send({ type: WorkOrderType.expense, projectId: project.id })
+        .expect(201);
+      crossActorWorkOrderId = crossActorCreate.body.data.id as string;
+      expect(crossActorWorkOrderId).not.toBe(workOrderId);
+      expect(crossActorCreate.body.data.creatorId).not.toBe(employee.id);
+
       const raceCreate = await request(app.getHttpServer())
         .post('/api/work-orders')
         .set('Authorization', `Bearer ${tokens.employee}`)
@@ -2072,18 +2083,28 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${tokens.employee}`)
         .send({ creatorId: 'forged-user', status: WorkOrderStatus.completed })
         .expect(400);
-      await request(app.getHttpServer())
+      const updateKey = `integration-work-order-update-${suffix}`;
+      const updateDraft = (description = '  PostgreSQL workflow expense  ') => request(app.getHttpServer())
         .patch(`/api/work-orders/${workOrderId}`)
         .set('Authorization', `Bearer ${tokens.employee}`)
+        .set('Idempotency-Key', updateKey)
         .set('X-Request-Id', `integration-work-order-update-${suffix}`)
         .send({
           amount: '2450.50',
-          description: '  PostgreSQL workflow expense  ',
+          description,
           occurredDate: '2026-07-18',
           extraValues: { expenseType: '人工' }
-        })
-        .expect(200)
-        .expect(({ body }) => expect(body.data.description).toBe('PostgreSQL workflow expense'));
+        });
+      const firstUpdate = await updateDraft().expect(200);
+      const replayedUpdate = await updateDraft().expect(200);
+      expect(replayedUpdate.body).toEqual(firstUpdate.body);
+      await updateDraft('同键不能改变工单草稿').expect(409).expect(({ body }) => {
+        expect(body.data.reason).toBe('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST');
+      });
+      expect(firstUpdate.body.data.description).toBe('PostgreSQL workflow expense');
+      expect(await prisma.auditLog.count({
+        where: { resourceId: workOrderId, action: 'work_order.update' }
+      })).toBe(1);
       await request(app.getHttpServer())
         .post(`/api/work-orders/${workOrderId}/submit`)
         .set('Authorization', `Bearer ${tokens.employee}`)
@@ -2206,11 +2227,13 @@ describe('real PostgreSQL integration', () => {
       const storedWorkOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: workOrderId } });
       expect(storedWorkOrder).toMatchObject({
         creatorId: employee.id,
-        creationIdempotencyKey: creationKey,
-        approvalIdempotencyKey: approvalKey,
+        creationIdempotencyKey: expect.stringMatching(/^idem-v1:[a-f0-9]{64}$/),
+        approvalIdempotencyKey: expect.stringMatching(/^idem-v1:[a-f0-9]{64}$/),
         status: WorkOrderStatus.completed,
         generatedRecordId
       });
+      expect(storedWorkOrder.creationIdempotencyKey).not.toContain(creationKey);
+      expect(storedWorkOrder.approvalIdempotencyKey).not.toContain(approvalKey);
       expect(storedWorkOrder.occurredDate?.toISOString()).toBe('2026-07-18T00:00:00.000Z');
       expect(await prisma.businessRecord.count({
         where: { sourceType: RecordSourceType.work_order, sourceId: workOrderId }
@@ -2266,7 +2289,8 @@ describe('real PostgreSQL integration', () => {
       ).toBe(true);
     } finally {
       await prisma.idempotencyKey.deleteMany({ where: { key: { contains: suffix } } });
-      const workOrderIds = [workOrderId, raceWorkOrderId].filter((id): id is string => Boolean(id));
+      const workOrderIds = [workOrderId, crossActorWorkOrderId, raceWorkOrderId]
+        .filter((id): id is string => Boolean(id));
       if (workOrderIds.length) await prisma.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
       const projectRecordIds = projectId
         ? (await prisma.businessRecord.findMany({ where: { projectId }, select: { id: true } })).map((record) => record.id)
@@ -2316,12 +2340,14 @@ describe('real PostgreSQL integration', () => {
       mimeType?: string;
       workOrderId?: string;
       requestId?: string;
+      idempotencyKey?: string;
     } = {}) => {
       const uploadRequest = request(app.getHttpServer())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${token}`)
         .set('X-Request-Id', options.requestId ?? `integration-file-${suffix}`)
         .field('relatedProjectId', targetProjectId);
+      if (options.idempotencyKey) uploadRequest.set('Idempotency-Key', options.idempotencyKey);
       if (options.workOrderId) uploadRequest.field('workOrderId', options.workOrderId);
       return uploadRequest.attach('file', file, {
         filename: options.name ?? 'voucher.pdf',
@@ -2428,11 +2454,20 @@ describe('real PostgreSQL integration', () => {
         name: 'oversized.pdf'
       }).expect(413);
 
-      const uploadedResponse = await upload(tokens.employee, project.id, validPdf, {
+      const uploadIdempotencyKey = `integration-file-upload-${suffix}`;
+      const uploadIdempotently = () => upload(tokens.employee, project.id, validPdf, {
         workOrderId,
         name: '付款凭证.pdf',
-        requestId: `integration-file-upload-${suffix}`
-      }).expect(201);
+        requestId: `integration-file-upload-${suffix}`,
+        idempotencyKey: uploadIdempotencyKey
+      });
+      const [uploadedResponse, replayedUpload] = await Promise.all([
+        uploadIdempotently(),
+        uploadIdempotently()
+      ]);
+      expect(uploadedResponse.status).toBe(201);
+      expect(replayedUpload.status).toBe(201);
+      expect(replayedUpload.body).toEqual(uploadedResponse.body);
       const fileId = uploadedResponse.body.data.id as string;
       rawFileIds.push(fileId);
       expect(uploadedResponse.body.data).toMatchObject({
@@ -2449,6 +2484,12 @@ describe('real PostgreSQL integration', () => {
       storagePaths.push(storedFile.storagePath);
       expect(storedFile.storagePath).toMatch(/^\d{4}\/\d{2}\/[0-9a-f-]{36}\.pdf$/);
       expect(storedFile.storagePath).not.toContain('付款凭证');
+      expect(await prisma.rawFile.count({ where: { id: fileId } })).toBe(1);
+      expect(await prisma.workOrderAttachment.count({ where: { workOrderId, rawFileId: fileId } })).toBe(1);
+      expect(await prisma.auditLog.count({ where: { resourceId: fileId, action: 'file.upload' } })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: fileId, eventType: 'raw_file_uploaded' }
+      })).toBe(1);
 
       await request(app.getHttpServer())
         .get(`/api/files/${fileId}`)
@@ -2671,6 +2712,7 @@ describe('real PostgreSQL integration', () => {
         await prisma.project.deleteMany({ where: { id: { in: [projectId, secondProjectId].filter((id): id is string => Boolean(id)) } } });
       }
       if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+      await prisma.idempotencyKey.deleteMany({ where: { key: { contains: suffix } } });
       const resourceIds = [...rawFileIds, ...workOrderIds, ...recordIds].filter(Boolean);
       if (resourceIds.length) {
         await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
@@ -5271,7 +5313,9 @@ describe('real PostgreSQL integration', () => {
       const conflict = await upload(changedBuffer).expect(409);
       expect(replay.body).toEqual(first.body);
       expect(conflict.body).toMatchObject({ code: 40901, data: {} });
-      expect(await prisma.importTask.count({ where: { idempotencyKey: key } })).toBe(1);
+      const storedTask = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+      expect(storedTask.idempotencyKey).toMatch(/^idem-v1:[a-f0-9]{64}$/);
+      expect(storedTask.idempotencyKey).not.toContain(key);
     });
 
     const manualRecordPayload = (amount = '250.00', description = 'B8 manual idempotency') => ({
@@ -5303,9 +5347,29 @@ describe('real PostgreSQL integration', () => {
       const replay = await createManualRecord(key).expect(201);
       const conflict = await createManualRecord(key, '251.00').expect(409);
       expect(replay.body).toEqual(first.body);
-      expect(conflict.body).toMatchObject({ code: 40901, data: {} });
+      expect(conflict.body).toMatchObject({
+        code: 40901,
+        data: { reason: 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST' }
+      });
       expect(await prisma.businessRecord.count({
         where: { projectId, sourceType: RecordSourceType.manual, description: key }
+      })).toBe(1);
+    });
+
+    it('rolls back a failed financial operation and releases its idempotency key', async () => {
+      const key = `b8-record-rollback-${suffix}`;
+      await request(app.getHttpServer())
+        .post('/api/records')
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key)
+        .send(manualRecordPayload('invalid-money', key))
+        .expect(400);
+      expect(await prisma.idempotencyKey.count({ where: { key } })).toBe(0);
+
+      const recovered = await createManualRecord(key, '252.00').expect(201);
+      expect(recovered.body.data).toMatchObject({ amount: '252.00', description: key });
+      expect(await prisma.idempotencyKey.count({
+        where: { key, status: 'completed', responseStatus: 201 }
       })).toBe(1);
     });
 
@@ -5319,6 +5383,27 @@ describe('real PostgreSQL integration', () => {
       expect(first.body).toEqual(second.body);
       expect(await prisma.businessRecord.count({
         where: { projectId, sourceType: RecordSourceType.manual, description: key }
+      })).toBe(1);
+    });
+
+    it('replays manual record updates and rejects a changed payload under the same key', async () => {
+      const created = await createManualRecord(`b8-record-update-source-${suffix}`).expect(201);
+      const recordId = created.body.data.id as string;
+      const key = `b8-record-update-${suffix}`;
+      const update = (description: string) => request(app.getHttpServer())
+        .patch(`/api/records/${recordId}`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', key)
+        .send({ description });
+
+      const first = await update('idempotent update').expect(200);
+      const replay = await update('idempotent update').expect(200);
+      expect(replay.body).toEqual(first.body);
+      await update('changed update').expect(409).expect(({ body }) => {
+        expect(body.data.reason).toBe('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST');
+      });
+      expect(await prisma.auditLog.count({
+        where: { resourceId: recordId, action: 'business_record.update' }
       })).toBe(1);
     });
 

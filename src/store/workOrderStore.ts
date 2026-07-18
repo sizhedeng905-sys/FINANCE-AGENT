@@ -185,7 +185,11 @@ export const useWorkOrderStore = create<WorkOrderState>()(
             throw error;
           }
         },
-        updateWorkOrder: (id, payload) => runAction(() => updateWorkOrderApi(id, payload)),
+        updateWorkOrder: (id, payload) => runAction(() => updateWorkOrderApi(
+          id,
+          payload,
+          createIdempotencyKey('work-order-update'),
+        )),
         submitWorkOrder: (id) => runAction(() => submitWorkOrderApi(id)),
         supplementWorkOrder: (id, payload) => runAction(() => supplementWorkOrderApi(id, payload)),
         financeReview: (id, payload) => runAction(() => financeReviewWorkOrderApi(id, payload)),

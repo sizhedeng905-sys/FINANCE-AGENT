@@ -212,7 +212,15 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       tx,
       scope,
       201,
-      () => this.createTaskWithinTransaction(tx, dto, rawFile, prepared, actor, context, idempotencyKey)
+      () => this.createTaskWithinTransaction(
+        tx,
+        dto,
+        rawFile,
+        prepared,
+        actor,
+        context,
+        this.idempotency.persistenceKey(scope)
+      )
     ));
   }
 
@@ -263,7 +271,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           mockScenario: dto.mockScenario,
           pageStart: dto.pageStart,
           pageEnd: dto.pageEnd
-        }, rawFile, prepared, actor, context, idempotencyKey)
+        }, rawFile, prepared, actor, context, this.idempotency.persistenceKey(scope))
       ));
       if (task.rawFileId !== rawFile.id) {
         await this.files.discardFailedUpload(
@@ -292,7 +300,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     prepared: PreparedOcrTask,
     actor: CurrentUser,
     context: RequestContext,
-    idempotencyKey?: string
+    persistenceIdempotencyKey?: string
   ) {
     await acquireProjectWriteLock(tx, dto.projectId);
     const template = await this.recordPolicy.getWritableTemplate(tx, dto.projectId, dto.templateId);
@@ -319,7 +327,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         pages: this.json(pages),
         pageCount: pages.length,
         uploadedBy: actor.id,
-        idempotencyKey
+        idempotencyKey: persistenceIdempotencyKey
       }
     });
     await this.auditLogs.write(tx, actor, 'ocr_task.create', 'ocr_task', task.id, this.json({

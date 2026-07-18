@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Header,
+  Headers,
   Param,
   Post,
   Req,
@@ -55,10 +56,11 @@ export class FilesController {
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: UploadFileDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.files.upload(file, dto, user, getRequestContext(request));
+    return this.files.upload(file, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Get(':id/preview')

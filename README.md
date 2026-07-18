@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，R6.1-R6.4 已关闭 Excel 预览全量响应、项目模板并发锁、重复候选时间窗空转和规则金额阈值精度风险。仍有 1 个条件 P1、R6.5-R6.6、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R5 已依次关闭前端真实性、日志泄露、容量伪装、备份恢复完整性和镜像身份工程问题，R6.1-R6.5 已关闭 Excel 预览全量响应、项目模板并发锁、重复候选时间窗空转、规则金额阈值精度和财务写入口幂等工程风险。仍有 1 个条件 P1、R6.6、M0-M8 补充流水线、目标 Staging、财务/OCR/AI 真值和人工签字未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress` | R0-R5、R6.1-R6.4 已完成；金额阈值已使用规范 Decimal 字符串，下一步为 R6.5 幂等入口清单 |
+| R0-R11 修复与再验收 | `in_progress` | R0-R5、R6.1-R6.5 已完成；财务写入口已形成端点级幂等契约和故障证据，下一步为 R6.6 H 行为矩阵 |
 | AI 映射补充 M0-M8 | `queued_after_main_p0_p1` | 已纳入同一执行线；先复用阶段 9/10、Prompt/Provider/审批/报告能力，不另建平行模块 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -31,7 +31,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R6.4 重新审计进展
+### R0-R6.5 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -55,7 +55,10 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R6.3 只生成重复候选，自动动作固定为 `none`。当前仅使用同项目工单的精确金额、附件 SHA-256 或业务引用信号；正式指纹、金额容差、跨来源归一化和处置仍为 H03 `pending_human_decision`。
 - R6.4 将金额类风险阈值固定为 `financial-threshold/1.0` 规范十进制字符串，最大值与现有 `Decimal(14,2)` 对齐为 `999999999999.99`；验证、持久化、比较、结果和审计均不再经过 JavaScript 浮点数。
 - R6.4 仅兼容非负安全整数旧 numeric 输入，规范化后写弃用警告；小数 numeric、科学计数法字符串、多余小数位、前导零、负数、空值和越界值稳定 400，禁止静默舍入。H01/H02/H06 的币种、冲销和舍入政策仍未由工程代码代决。
-- 当前开放工程问题只剩多实例闸门 1 个条件 P1；R6.5 幂等入口清单和 R6.6 H01/H02/H07 行为矩阵仍需继续完成。
+- R6.5 完成文件、工单审批、手工记录、Excel、OCR、通知与报告写边界盘点；公共契约按 JWT 用户、method、稳定 route 和 key 隔离，持久化请求哈希与首次响应，并用 PostgreSQL 事务锁和唯一约束处理并发、回滚、重启和多实例重放。
+- R6.5 修复工单/ImportTask/OcrTask 全局唯一列保存原始 key 导致的跨操作者冲突；业务列现保存 `idem-v1` 作用域指纹。记录/工单编辑和文件上传新增可选精确响应重放，并发文件上传只保留一份文件事实、绑定、audit 和 ledger。
+- 正式强制 key 范围、跨来源重复和幂等记录保留仍分别受 H01/H02/H03/H07/H14 约束；工程代码不会把相似业务自动合并或删除。详细矩阵见 [`docs/R6_5_FINANCIAL_WRITE_IDEMPOTENCY_AUDIT_2026-07-18.md`](docs/R6_5_FINANCIAL_WRITE_IDEMPOTENCY_AUDIT_2026-07-18.md)。
+- 当前开放工程问题只剩多实例闸门 1 个条件 P1；下一步完成 R6.6 H01-H16 行为矩阵。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
 
@@ -126,8 +129,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R6.4 本地全量 34/34 suites，320/320 tests |
-| PostgreSQL 集成 | `passed` | R6.4 本地全量 5/5 suites，73/73 tests；含 Decimal 阈值持久化/审计、50,000 行深页预览、项目模板竞争矩阵和重复候选窗口证据链 |
+| 后端 Jest | `passed` | R6.5 本地全量 35/35 suites，326/326 tests |
+| PostgreSQL 集成 | `passed` | R6.5 本地全量 5/5 suites，75/75 tests；含跨操作者 key 隔离、并发文件单事实、请求改体冲突、事务回滚重试、50,000 行 Worker 恢复和既有并发矩阵 |
 | 浏览器 E2E | `passed` | Playwright 17/17；含真实 API 服务端翻页 20→5 行 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
 | Prisma | `passed` | 25/25 migrations；41 表、27 enums、173 indexes、77 foreign keys |
@@ -136,9 +139,10 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 | 项目模板并发 | `passed` | 统一 key 22 事务锁；启用/停用与记录、Excel Worker、OCR、工单终审两种顺序均有 PostgreSQL 断言；锁超时稳定 409 |
 | 重复候选窗口 | `passed` | 0/365 天、UTC、前后边界、跨月/跨年和越界拒绝；结果、异常、audit、ledger 一致，H03 前不自动处置 |
 | 财务阈值 Decimal | `passed` | 规范字符串、按分精确比较、最大值、旧安全整数告警，以及 unsafe numeric/科学计数法字符串/超精度/越界稳定拒绝；全链路不静默舍入 |
+| 财务写入口幂等 | `passed` | 作用域指纹、请求哈希、首次响应重放、改体 409、并发单事实和事务回滚均有单元/PostgreSQL 断言；正式强制范围与保留期仍待 H 门禁 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
 | OCR 并发 | `passed` | 1/3/5 精确并发门禁；最新 GitHub 集成 60/60 |
-| Repository hygiene | `passed` | 596 个 tracked/candidate 文件通过；真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
+| Repository hygiene | `passed` | 599 个 tracked/candidate 文件通过；真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
 | 生产依赖审计 | `passed` | 根目录与后端均为 0 vulnerabilities |
 | Paddle adapter | `passed` | 运行镜像内 8/8；合成 PDF 实际 OCR 接受测试通过 |
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |

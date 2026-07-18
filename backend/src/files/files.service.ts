@@ -20,6 +20,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
+import { IdempotencyService } from '../idempotency/idempotency.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { UploadFileDto } from './dto/upload-file.dto';
@@ -64,6 +65,7 @@ export class FilesService {
     @Inject(LedgerEventsService) private readonly ledgerEvents: LedgerEventsService,
     @Inject(FileSecurityService) private readonly fileSecurity: FileSecurityService,
     @Inject(StorageCapacityService) private readonly storageCapacity: StorageCapacityService,
+    @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
     @Inject(ConfigService) config: ConfigService
   ) {
     const configuredMb = config.get<number>('maxFileSizeMb') ?? 20;
@@ -78,7 +80,8 @@ export class FilesService {
     file: Express.Multer.File | undefined,
     dto: UploadFileDto,
     actor: CurrentUser,
-    context: RequestContext
+    context: RequestContext,
+    idempotencyKey?: string
   ) {
     if (!file) throw new BadRequestException('请选择上传文件');
     if (actor.role === UserRole.employee && !dto.workOrderId) {
@@ -108,12 +111,26 @@ export class FilesService {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (!project || project.status !== 'active') throw new BadRequestException('项目不存在或未启用');
     const originalFileName = await this.validateFile(file);
+    const fileSha256 = createHash('sha256').update(file.buffer).digest('hex');
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/files/upload',
+      idempotencyKey,
+      {
+        ...dto,
+        relatedProjectId: projectId,
+        file: { name: originalFileName, mimeType: file.mimetype, size: file.size, sha256: fileSha256 }
+      },
+      false
+    );
 
     await this.storageCapacity.assertUploadAllowed(BigInt(file.size));
 
     const storagePath = await this.storage.save(file);
+    let created = false;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
         if (dto.workOrderId) {
           await this.lockWorkOrder(tx, dto.workOrderId);
         }
@@ -152,7 +169,7 @@ export class FilesService {
             mimeType: file.mimetype,
             fileSize: BigInt(file.size),
             storagePath,
-            sha256: createHash('sha256').update(file.buffer).digest('hex'),
+            sha256: fileSha256,
             uploadedBy: actor.id,
             relatedProjectId: projectId,
             relatedWorkOrderId: dto.workOrderId,
@@ -161,6 +178,7 @@ export class FilesService {
             previewStatus: 'untrusted_original'
           }
         });
+        created = true;
         if (dto.workOrderId) {
           await tx.workOrderAttachment.create({
             data: { workOrderId: dto.workOrderId, rawFileId: rawFile.id, uploadedBy: actor.id }
@@ -194,7 +212,16 @@ export class FilesService {
           `raw_file:${rawFile.id}:uploaded`
         );
         return toRawFile(rawFile);
-      });
+      }));
+      if (!created) {
+        await this.storage.remove(storagePath).catch((cleanupError: unknown) => {
+          this.logger.error(JSON.stringify({
+            event: 'idempotent_upload_cleanup_deferred',
+            cleanupError: cleanupError instanceof Error ? cleanupError.name : 'UnknownError'
+          }));
+        });
+      }
+      return result;
     } catch (error) {
       await this.storage.remove(storagePath).catch((cleanupError: unknown) => {
         this.logger.error(JSON.stringify({

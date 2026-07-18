@@ -178,8 +178,22 @@ export class RecordsService {
     }));
   }
 
-  async update(id: string, dto: UpdateRecordDto, actor: CurrentUser, context: RequestContext) {
-    return this.prisma.$transaction(async (tx) => {
+  async update(
+    id: string,
+    dto: UpdateRecordDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'PATCH',
+      '/api/records/:id',
+      idempotencyKey,
+      { recordId: id, ...dto },
+      false
+    );
+    return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 200, async () => {
       const before = await this.findRecordOrThrow(id, tx);
       await acquireProjectWriteLock(tx, before.projectId);
       if (this.isTerminal(before.status)) throw new ConflictException('终态记录不能直接修改');
@@ -270,7 +284,7 @@ export class RecordsService {
         context
       );
       return toBusinessRecord(after);
-    });
+    }));
   }
 
   async void(id: string, actor: CurrentUser, context: RequestContext) {
