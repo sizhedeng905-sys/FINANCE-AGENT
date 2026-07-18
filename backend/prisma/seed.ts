@@ -491,11 +491,11 @@ async function main() {
     {
       id: 'rr-duplicate',
       ruleKey: 'duplicate_same_day',
-      ruleName: '同日同项目同金额疑似重复',
+      ruleName: '同日同项目重复候选',
       ruleType: 'duplicate_submission',
       severity: RiskLevel.medium,
-      conditionJson: {},
-      description: '同一员工在同项目同一天提交相同金额时提示重复。'
+      conditionJson: { windowDays: 0 },
+      description: '同一项目同一天出现相同金额、票据号或附件时仅标记重复候选，等待人工核对。'
     },
     {
       id: 'rr-after-hours',

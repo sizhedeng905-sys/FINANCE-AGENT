@@ -23,6 +23,14 @@ import { QueryAnomaliesDto } from './dto/query-anomalies.dto';
 import { QueryRiskRulesDto } from './dto/query-risk-rules.dto';
 import { UpdateRiskRuleDto } from './dto/update-risk-rule.dto';
 import { HandleAnomalyDto } from './dto/handle-anomaly.dto';
+import {
+  buildDuplicateCandidateWindow,
+  DUPLICATE_CANDIDATE_MAX_WINDOW_DAYS,
+  DuplicateCandidateMatchSignal,
+  normalizeDuplicateCandidateCondition,
+  resolveDuplicateCandidatePolicy,
+  utcCalendarDayOffset
+} from './duplicate-candidate-policy';
 import { toAnomaly, toRiskRule } from './risk-rule.presenter';
 
 interface RuleEvaluation {
@@ -55,12 +63,13 @@ export class RiskRulesService {
 
   async create(dto: CreateRiskRuleDto, actor: CurrentUser, context: RequestContext) {
     this.validateRuleCondition(dto.ruleType, dto.conditionJson);
+    const conditionJson = this.normalizeRuleCondition(dto.ruleType, dto.conditionJson);
     return this.prisma.$transaction(async (tx) => {
       const rule = await tx.riskRule.create({
         data: {
           ...dto,
           targetType: dto.targetType ?? 'work_order',
-          conditionJson: dto.conditionJson as Prisma.InputJsonValue,
+          conditionJson: conditionJson as Prisma.InputJsonValue,
           isActive: dto.isActive ?? true,
           createdBy: actor.id
         }
@@ -74,12 +83,15 @@ export class RiskRulesService {
     return this.prisma.$transaction(async (tx) => {
       const before = await tx.riskRule.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('资源不存在');
-      this.validateRuleCondition(dto.ruleType ?? before.ruleType, dto.conditionJson ?? this.asObject(before.conditionJson));
+      const ruleType = dto.ruleType ?? before.ruleType;
+      const requestedCondition = dto.conditionJson ?? this.asObject(before.conditionJson);
+      this.validateRuleCondition(ruleType, requestedCondition);
+      const conditionJson = this.normalizeRuleCondition(ruleType, requestedCondition);
       const rule = await tx.riskRule.update({
         where: { id },
         data: {
           ...dto,
-          conditionJson: dto.conditionJson as Prisma.InputJsonValue | undefined
+          conditionJson: conditionJson as Prisma.InputJsonValue
         }
       });
       await this.auditLogs.write(tx, actor, 'risk_rule.update', 'risk_rule', id, { before: toRiskRule(before), after: toRiskRule(rule) }, context);
@@ -277,8 +289,26 @@ export class RiskRulesService {
           relatedWorkOrderId: id
         }
       });
-      await this.auditLogs.write(tx, actor, 'work_order.rules.run', 'work_order', id, { runId, hitCount: hits.length, riskLevel }, context);
-      await this.ledgerEvents.write(tx, actor, 'work_order_rules_completed', 'work_order', id, { runId, hitCount: hits.length, riskLevel });
+      const duplicateCandidateWindows = evaluations
+        .filter(({ rule }) => rule.ruleType === 'duplicate_submission')
+        .map(({ rule, evaluation }) => ({
+          ruleId: rule.id,
+          ruleKey: rule.ruleKey,
+          hit: evaluation.hit,
+          candidateOnly: evaluation.evidence.candidateOnly,
+          policyStatus: evaluation.evidence.policyStatus,
+          windowDays: evaluation.evidence.windowDays,
+          windowStartInclusive: evaluation.evidence.windowStartInclusive ?? null,
+          windowEndExclusive: evaluation.evidence.windowEndExclusive ?? null,
+          duplicateWorkOrderId: evaluation.evidence.duplicateWorkOrderId ?? null,
+          duplicateOccurredDate: evaluation.evidence.duplicateOccurredDate ?? null,
+          matchedDayOffset: evaluation.evidence.matchedDayOffset ?? null,
+          matchedSignals: evaluation.evidence.matchedSignals ?? [],
+          automaticAction: evaluation.evidence.automaticAction
+        }));
+      const runEvidence = { runId, hitCount: hits.length, riskLevel, duplicateCandidateWindows };
+      await this.auditLogs.write(tx, actor, 'work_order.rules.run', 'work_order', id, runEvidence, context);
+      await this.ledgerEvents.write(tx, actor, 'work_order_rules_completed', 'work_order', id, runEvidence);
       return {
         workOrder: toWorkOrder(updated),
         runId,
@@ -329,35 +359,65 @@ export class RiskRulesService {
       );
     }
     if (rule.ruleType === 'duplicate_submission') {
+      const policy = resolveDuplicateCandidatePolicy(condition);
       if (!workOrder.occurredDate) {
-        return this.result(true, '工单缺少发生日期', '请补充业务发生日期后重新提交。', { occurredDate: null });
+        return this.result(true, '工单缺少发生日期', '请补充业务发生日期后重新提交。', {
+          occurredDate: null,
+          referenceDate: null,
+          windowStartInclusive: null,
+          windowEndExclusive: null,
+          duplicateWorkOrderId: null,
+          ...this.duplicatePolicyEvidence(policy)
+        });
       }
-      const start = new Date(workOrder.occurredDate);
-      start.setUTCHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setUTCDate(end.getUTCDate() + 1);
+      const window = buildDuplicateCandidateWindow(workOrder.occurredDate, policy);
       const hashes = [...new Set(workOrder.attachments.map((item) => item.rawFile.sha256))];
       const reference = this.businessReference(workOrder.extraValues);
-      const alternatives: Prisma.WorkOrderWhereInput[] = [
-        { amount: workOrder.amount, occurredDate: { gte: start, lt: end } }
-      ];
+      const alternatives: Prisma.WorkOrderWhereInput[] = [{ amount: workOrder.amount }];
       if (hashes.length) alternatives.push({ attachments: { some: { rawFile: { sha256: { in: hashes } } } } });
       if (reference) alternatives.push({ extraValues: { path: [reference.key], equals: reference.value } });
       const duplicate = await this.prisma.workOrder.findFirst({
         where: {
           id: { not: workOrder.id },
           projectId: workOrder.projectId,
+          occurredDate: { gte: window.startInclusive, lt: window.endExclusive },
           OR: alternatives,
           status: { notIn: [WorkOrderStatus.finance_rejected, WorkOrderStatus.boss_rejected] }
         },
-        select: { id: true, orderNo: true, creatorId: true }
+        orderBy: [{ occurredDate: 'desc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          orderNo: true,
+          creatorId: true,
+          occurredDate: true,
+          amount: true,
+          extraValues: true,
+          attachments: { select: { rawFile: { select: { sha256: true } } } }
+        }
       });
+      const matchedSignals: DuplicateCandidateMatchSignal[] = [];
+      if (duplicate?.amount.equals(workOrder.amount)) matchedSignals.push('AMOUNT_EXACT');
+      const duplicateHashes = duplicate?.attachments.map((item) => item.rawFile.sha256) ?? [];
+      if (hashes.some((hash) => duplicateHashes.includes(hash))) matchedSignals.push('ATTACHMENT_SHA256_EXACT');
+      const duplicateReference = duplicate ? this.businessReference(duplicate.extraValues) : null;
+      if (reference && duplicateReference?.key === reference.key && duplicateReference.value === reference.value) {
+        matchedSignals.push('BUSINESS_REFERENCE_EXACT');
+      }
       return this.result(
         Boolean(duplicate),
-        `疑似与工单${duplicate?.orderNo ?? ''}重复提交`,
-        '请核对同日同项目同金额、票据号或相同附件的工单。',
+        duplicate ? `发现与工单${duplicate.orderNo}匹配的重复候选` : '未发现重复候选',
+        '该结果仅为重复候选，请人工核对金额、票据号和附件；H03 批准前不自动删除、合并或驳回。',
         {
+          ...this.duplicatePolicyEvidence(policy),
+          referenceDate: window.referenceDate.toISOString(),
+          windowStartInclusive: window.startInclusive.toISOString(),
+          windowEndExclusive: window.endExclusive.toISOString(),
           duplicateWorkOrderId: duplicate?.id ?? null,
+          duplicateOccurredDate: duplicate?.occurredDate?.toISOString() ?? null,
+          matchedDayOffset: duplicate?.occurredDate
+            ? utcCalendarDayOffset(duplicate.occurredDate, window.referenceDate)
+            : null,
+          matchedSignals,
           crossEmployee: duplicate ? duplicate.creatorId !== workOrder.creatorId : false,
           attachmentHashesCompared: hashes.length,
           businessReference: reference?.value ?? null
@@ -437,6 +497,32 @@ export class RiskRulesService {
     return null;
   }
 
+  private duplicatePolicyEvidence(policy: ReturnType<typeof resolveDuplicateCandidatePolicy>): Prisma.InputJsonObject {
+    return {
+      schemaVersion: policy.schemaVersion,
+      policyStatus: policy.policyStatus,
+      candidateOnly: policy.candidateOnly,
+      automaticAction: policy.automaticAction,
+      calendarBasis: policy.calendarBasis,
+      timeZone: policy.timeZone,
+      windowSemantics: policy.windowSemantics,
+      sourceScope: policy.sourceScope,
+      fingerprintPolicy: policy.fingerprintPolicy,
+      amountTolerancePolicy: policy.amountTolerancePolicy,
+      crossSourceNormalizationPolicy: policy.crossSourceNormalizationPolicy,
+      dispositionPolicy: policy.dispositionPolicy,
+      windowDays: policy.windowDays,
+      maximumWindowDays: policy.maximumWindowDays,
+      provisionalMatchSignals: [...policy.provisionalMatchSignals]
+    };
+  }
+
+  private normalizeRuleCondition(ruleType: string, condition: Record<string, unknown>) {
+    return ruleType === 'duplicate_submission'
+      ? normalizeDuplicateCandidateCondition(condition)
+      : condition;
+  }
+
   private validateRuleCondition(ruleType: string, condition: Record<string, unknown>) {
     const allowed = new Set<string>();
     const requireFinite = (key: string, minimum: number, maximum: number, integer = false) => {
@@ -461,7 +547,9 @@ export class RiskRulesService {
         throw new BadRequestException('风险规则参数 workOrderType 不合法');
       }
     }
-    if (ruleType === 'duplicate_submission') requireFinite('windowDays', 1, 365, true);
+    if (ruleType === 'duplicate_submission') {
+      requireFinite('windowDays', 0, DUPLICATE_CANDIDATE_MAX_WINDOW_DAYS, true);
+    }
     if (ruleType === 'after_hours') {
       requireFinite('startHour', 0, 23, true);
       requireFinite('endHour', 0, 23, true);

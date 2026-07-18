@@ -14,6 +14,110 @@ const actor = {
 };
 
 describe('RiskRulesService phase 6', () => {
+  it('persists an explicit zero-day default and rejects windows beyond the supported boundary', async () => {
+    const now = new Date('2026-07-18T00:00:00.000Z');
+    const create = jest.fn(async ({ data }) => ({
+      id: 'rule_zero_day',
+      ...data,
+      createdAt: now,
+      updatedAt: now
+    }));
+    const prisma: any = {
+      riskRule: { create },
+      $transaction: jest.fn(async (callback) => callback(prisma))
+    };
+    const service = new RiskRulesService(
+      prisma,
+      { write: jest.fn(async () => undefined) } as any,
+      { write: jest.fn(async () => undefined) } as any
+    );
+    const base = {
+      ruleKey: 'duplicate_zero_day',
+      ruleName: '零天重复候选',
+      ruleType: 'duplicate_submission' as const,
+      severity: RiskLevel.medium,
+      description: '仅生成候选'
+    };
+
+    await service.create({ ...base, conditionJson: {} }, actor, {});
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ conditionJson: { windowDays: 0 } })
+    }));
+    await expect(service.create({
+      ...base,
+      ruleKey: 'duplicate_too_wide',
+      conditionJson: { windowDays: 366 }
+    }, actor, {})).rejects.toThrow('windowDays');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies duplicate_submission.windowDays to the candidate search boundary and evidence', async () => {
+    const occurredDate = new Date('2026-01-01T00:00:00.000Z');
+    const candidateDate = new Date('2025-12-30T00:00:00.000Z');
+    const findFirst = jest.fn(async () => ({
+      id: 'wo_candidate',
+      orderNo: 'WO-CANDIDATE',
+      creatorId: 'employee_2',
+      occurredDate: candidateDate,
+      amount: new Prisma.Decimal('100.00'),
+      extraValues: {},
+      attachments: []
+    }));
+    const service = new RiskRulesService(
+      { workOrder: { findFirst } } as any,
+      { write: jest.fn() } as any,
+      { write: jest.fn() } as any
+    );
+    const evaluation = await (service as unknown as {
+      evaluate: (rule: any, workOrder: any) => Promise<any>;
+    }).evaluate(
+      {
+        id: 'rule_duplicate_window',
+        ruleKey: 'duplicate_window',
+        ruleName: '重复候选时间窗',
+        ruleType: 'duplicate_submission',
+        targetType: 'work_order',
+        severity: RiskLevel.medium,
+        conditionJson: { windowDays: 2 },
+        description: '',
+        isActive: true,
+        createdBy: null,
+        createdAt: occurredDate,
+        updatedAt: occurredDate
+      },
+      {
+        id: 'wo_current',
+        orderNo: 'WO-CURRENT',
+        projectId: 'project_1',
+        creatorId: 'employee_1',
+        amount: new Prisma.Decimal('100.00'),
+        occurredDate,
+        extraValues: {},
+        attachments: []
+      }
+    );
+
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        occurredDate: {
+          gte: new Date('2025-12-30T00:00:00.000Z'),
+          lt: new Date('2026-01-04T00:00:00.000Z')
+        }
+      })
+    }));
+    expect(evaluation).toMatchObject({
+      hit: true,
+      evidence: {
+        candidateOnly: true,
+        policyStatus: 'pending_human_decision',
+        windowDays: 2,
+        windowStartInclusive: '2025-12-30T00:00:00.000Z',
+        windowEndExclusive: '2026-01-04T00:00:00.000Z',
+        matchedDayOffset: -2
+      }
+    });
+  });
+
   it('persists rule results and anomalies, chooses highest risk, and advances idempotently', async () => {
     const now = new Date('2026-07-11T02:00:00.000Z');
     const timeline: any[] = [];
