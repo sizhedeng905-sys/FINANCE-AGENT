@@ -185,7 +185,8 @@ describe('B8-09 staging deployment', () => {
     expect(release.indexOf('expectedSchema: RELEASE_PLAN_SCHEMA')).toBeLessThan(
       release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
     );
-    expect(release).toContain("'--provenance=mode=max', '--sbom=true'");
+    expect(release).toContain("'build', '--provenance=mode=max'");
+    expect(release).not.toContain("'--sbom=true'");
     expect(release).toContain("POSTGRES_IMAGE: `finance-agent/staging-postgres:${shortSha}`");
     expect(release).toContain("MINIO_IMAGE: `finance-agent/staging-minio:${shortSha}`");
     for (const service of ['minio', 'prometheus', 'alertmanager', 'node-exporter', 'alloy', 'tempo']) {
@@ -208,6 +209,7 @@ describe('B8-09 staging deployment', () => {
     expect(lockImages).toContain("'backup', 'postgres'");
     expect(lockImages).toContain('signed_registry');
     expect(scanImages).toContain('const imageEntries = lock.entries');
+    expect(scanImages).toContain("sbomSource: 'docker_scout_spdx_sealed'");
     expect(integrity).toContain('Mutable image tag drift detected');
     expect(integrity).toContain('Database migration set is not exactly compatible');
     expect(read(stagingRoot, 'scripts', 'verify-config.mjs')).toContain(

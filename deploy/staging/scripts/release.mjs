@@ -63,7 +63,7 @@ if (runningServices(runtimeEnv).includes('backup')) {
 
 run('docker', [...composePrefix, 'pull', '--policy', 'missing', ...runtimePullServices], runtimeEnv);
 run('docker', [
-  ...composePrefix, 'build', '--provenance=mode=max', '--sbom=true',
+  ...composePrefix, 'build', '--provenance=mode=max',
   'backend-api', 'frontend', 'postgres', 'backup', 'minio', 'prometheus',
   'alertmanager', 'node-exporter', 'alloy', 'tempo'
 ], runtimeEnv);

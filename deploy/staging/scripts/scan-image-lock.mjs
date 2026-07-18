@@ -88,7 +88,8 @@ const written = await writeSealedJson(indexPath, {
   provenance: {
     imageIdentityVerified: true,
     revisionLabelsRecorded: true,
-    buildkitAttestationRequested: true
+    buildkitProvenanceRequested: true,
+    sbomSource: 'docker_scout_spdx_sealed'
   },
   signatures: signatureEvidence,
   registryAuthorization: identityPolicy === 'signed_registry' ? 'operator_verified_h13' : 'pending_h13'
