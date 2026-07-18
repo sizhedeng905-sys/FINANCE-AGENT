@@ -95,8 +95,22 @@ for (const name of ['postgres', 'redis', 'clamav', 'minio']) {
 if (services.frontend?.build?.args?.VITE_APP_DATA_MODE !== 'api' || services.frontend?.build?.args?.VITE_API_BASE_URL !== '/api') {
   throw new Error('Staging frontend build must explicitly use API mode and the same-origin /api base');
 }
-if (!String(services.postgres?.command ?? '').includes('ssl=on')) {
+const postgresCommand = String(services.postgres?.command ?? '');
+if (!postgresCommand.includes('ssl=on')) {
   throw new Error('PostgreSQL TLS is not enabled in the rendered Compose config');
+}
+if (!postgresCommand.includes('listen_addresses=*')) {
+  throw new Error('PostgreSQL must listen on the private Compose network');
+}
+const postgresHealthcheck = JSON.stringify(services.postgres?.healthcheck?.test ?? []);
+for (const requirement of [
+  'sslmode=verify-full',
+  '/run/secrets/migration_password',
+  'user=finance_migrator',
+]) {
+  if (!postgresHealthcheck.includes(requirement)) {
+    throw new Error(`PostgreSQL healthcheck is missing remote TLS requirement: ${requirement}`);
+  }
 }
 
 const tracked = run('git', ['ls-files', '--', 'deploy/staging/.secrets', 'deploy/staging/.runtime'], { cwd: resolve(stagingRoot, '../..') });

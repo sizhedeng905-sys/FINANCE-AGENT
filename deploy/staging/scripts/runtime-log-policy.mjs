@@ -10,6 +10,45 @@ const leakPatterns = [
   ['cookie_header', /\b(?:cookie|set-cookie)["':=\s]+[^\r\n]{16,}/i],
 ];
 
+export function locateExactSecretMatches(logText, secretEntries = []) {
+  if (typeof logText !== 'string') throw new TypeError('logText must be a string');
+
+  const matches = [];
+  for (const entry of secretEntries) {
+    if (
+      !entry
+      || typeof entry.name !== 'string'
+      || typeof entry.value !== 'string'
+      || entry.value.length < 8
+    ) continue;
+
+    const services = new Set();
+    let occurrenceCount = 0;
+    for (const line of logText.split(/\r?\n/)) {
+      let offset = 0;
+      let lineOccurrences = 0;
+      while ((offset = line.indexOf(entry.value, offset)) !== -1) {
+        lineOccurrences += 1;
+        offset += entry.value.length;
+      }
+      if (lineOccurrences === 0) continue;
+
+      occurrenceCount += lineOccurrences;
+      services.add(line.match(/^([a-zA-Z0-9_.-]+)\s+\|/)?.[1] ?? 'unknown');
+    }
+
+    if (occurrenceCount > 0) {
+      matches.push({
+        secretName: entry.name,
+        occurrenceCount,
+        services: [...services].sort(),
+      });
+    }
+  }
+
+  return matches.sort((left, right) => left.secretName.localeCompare(right.secretName));
+}
+
 export function analyzeRuntimeLogs(logText, secretValues = []) {
   if (typeof logText !== 'string') throw new TypeError('logText must be a string');
   const bytes = Buffer.byteLength(logText);

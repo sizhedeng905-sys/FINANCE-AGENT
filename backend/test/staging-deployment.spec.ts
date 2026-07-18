@@ -17,6 +17,10 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('FILE_SCAN_MODE: clamav');
     expect(compose).toContain('ssl=on');
+    expect(compose).toContain('listen_addresses=*');
+    expect(compose).toContain('sslmode=verify-full');
+    expect(compose).toContain('/run/secrets/migration_password');
+    expect(compose).toContain('user=finance_migrator');
     expect(compose).toContain('internal: true');
     expect(compose).toContain('http://127.0.0.1:9000/minio/health/live');
     expect(compose).not.toContain('["CMD", "mc", "ready", "local"]');
@@ -31,6 +35,10 @@ describe('B8-09 staging deployment', () => {
       expect(compose).not.toContain(port);
     }
     expect(compose).not.toMatch(/image:\s+[^\n]*:latest(?:\s|$)/i);
+
+    const databaseRoles = read(stagingRoot, 'postgres', '01-init-roles.sh');
+    expect(databaseRoles).toContain("sed -i -E '/^[[:space:]]*host[[:space:]]/d'");
+    expect(databaseRoles).toContain('hostnossl all all all reject');
   });
 
   it('uses split non-root API and worker containers with secret-file injection', () => {

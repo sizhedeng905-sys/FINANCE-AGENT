@@ -24,7 +24,11 @@ GRANT CONNECT ON DATABASE finance_agent_staging TO finance_migrator, finance_run
 GRANT pg_read_all_data TO finance_backup;
 SQL
 
+# The upstream entrypoint adds broad host rules. Staging permits remote database
+# traffic only through the explicit TLS role rules below.
+sed -i -E '/^[[:space:]]*host[[:space:]]/d' "$PGDATA/pg_hba.conf"
 cat >> "$PGDATA/pg_hba.conf" <<'HBA'
+hostnossl all all all reject
 hostssl finance_agent_staging finance_migrator all scram-sha-256
 hostssl finance_agent_staging finance_runtime all scram-sha-256
 hostssl finance_agent_staging finance_backup all scram-sha-256

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createRuntimeLogEvidence } from './runtime-log-policy.mjs';
+import {
+  createRuntimeLogEvidence,
+  locateExactSecretMatches,
+} from './runtime-log-policy.mjs';
 
 test('accepts structured logs without query strings or credential values', () => {
   const logs = [
@@ -19,6 +22,25 @@ test('rejects exact secrets without copying them into evidence', () => {
   assert.equal(evidence.status, 'failed');
   assert.ok(evidence.findingCategories.includes('exact_secret_value'));
   assert.equal(JSON.stringify(evidence).includes(secret), false);
+});
+
+test('locates exact secret sources without retaining secret values or log lines', () => {
+  const secret = 'synthetic-secret-value-1234567890';
+  const matches = locateExactSecretMatches([
+    `postgres-1  | first ${secret}`,
+    `postgres-1  | second ${secret} and ${secret}`,
+    'worker-1    | no secret here',
+  ].join('\n'), [
+    { name: 'synthetic_database_url', value: secret },
+    { name: 'absent_secret', value: 'another-secret-value-1234567890' },
+  ]);
+
+  assert.deepEqual(matches, [{
+    secretName: 'synthetic_database_url',
+    occurrenceCount: 3,
+    services: ['postgres-1'],
+  }]);
+  assert.equal(JSON.stringify(matches).includes(secret), false);
 });
 
 test('rejects bearer, JWT, credential URL, signed query, and cookie leakage', () => {

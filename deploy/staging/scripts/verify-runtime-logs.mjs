@@ -3,16 +3,19 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { createRuntimeLogEvidence } from './runtime-log-policy.mjs';
+import {
+  createRuntimeLogEvidence,
+  locateExactSecretMatches,
+} from './runtime-log-policy.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const secretsRoot = join(stagingRoot, '.secrets');
 const evidenceRoot = join(stagingRoot, '.evidence');
-const secretValues = [];
+const secretEntries = [];
 for (const entry of await readdir(secretsRoot, { withFileTypes: true })) {
   if (!entry.isFile()) continue;
   const value = (await readFile(join(secretsRoot, entry.name), 'utf8')).trim();
-  if (value.length >= 8) secretValues.push(value);
+  if (value.length >= 8) secretEntries.push({ name: entry.name, value });
 }
 
 const result = spawnSync(
@@ -31,7 +34,8 @@ if (result.error || result.status !== 0) throw new Error('Unable to collect stag
 
 const logs = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
 const evidence = {
-  ...createRuntimeLogEvidence(logs, secretValues),
+  ...createRuntimeLogEvidence(logs, secretEntries.map((entry) => entry.value)),
+  exactSecretMatches: locateExactSecretMatches(logs, secretEntries),
   generatedAt: new Date().toISOString(),
   source: 'docker-compose-logs-tail-20000',
 };
