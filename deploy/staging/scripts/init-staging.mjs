@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { synchronizeManagedEnvironment } from './managed-environment.mjs';
+
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const secretsRoot = join(stagingRoot, '.secrets');
 const tlsRoot = join(stagingRoot, '.runtime', 'tls');
@@ -12,8 +14,22 @@ const tlsRoot = join(stagingRoot, '.runtime', 'tls');
 await mkdir(secretsRoot, { recursive: true, mode: 0o700 });
 await mkdir(tlsRoot, { recursive: true, mode: 0o700 });
 
-if (!existsSync(join(stagingRoot, '.env'))) {
-  await copyFile(join(stagingRoot, '.env.example'), join(stagingRoot, '.env'));
+const environmentPath = join(stagingRoot, '.env');
+const environmentTemplatePath = join(stagingRoot, '.env.example');
+let environmentCreated = false;
+let environmentManagedKeysUpdated = [];
+if (!existsSync(environmentPath)) {
+  await copyFile(environmentTemplatePath, environmentPath);
+  environmentCreated = true;
+} else {
+  const synchronized = synchronizeManagedEnvironment(
+    await readFile(environmentPath, 'utf8'),
+    await readFile(environmentTemplatePath, 'utf8'),
+  );
+  environmentManagedKeysUpdated = synchronized.updatedKeys;
+  if (environmentManagedKeysUpdated.length > 0) {
+    await writeFile(environmentPath, synchronized.content, { encoding: 'utf8' });
+  }
 }
 
 const hex = (bytes = 48) => randomBytes(bytes).toString('hex');
@@ -34,9 +50,13 @@ const secrets = {
   staging_seed_password: hex(32)
 };
 
+let secretFilesCreated = 0;
 for (const [name, proposed] of Object.entries(secrets)) {
   const path = join(secretsRoot, name);
-  if (!existsSync(path)) await writeFile(path, `${proposed}\n`, { mode: 0o600, flag: 'wx' });
+  if (!existsSync(path)) {
+    await writeFile(path, `${proposed}\n`, { mode: 0o600, flag: 'wx' });
+    secretFilesCreated += 1;
+  }
 }
 
 const readSecret = async (name) => (await readFile(join(secretsRoot, name), 'utf8')).trim();
@@ -46,25 +66,31 @@ const backupPassword = await readSecret('backup_password');
 const restorePassword = await readSecret('restore_password');
 const redisPassword = await readSecret('redis_password');
 const query = 'sslmode=verify-full&sslrootcert=%2Frun%2Ftls%2Fca.crt';
-await writeIfMissing(
+secretFilesCreated += Number(await writeIfMissing(
   join(secretsRoot, 'migration_database_url'),
   `postgresql://finance_migrator:${migrationPassword}@postgres:5432/finance_agent_staging?${query}\n`
-);
-await writeIfMissing(
+));
+secretFilesCreated += Number(await writeIfMissing(
   join(secretsRoot, 'runtime_database_url'),
   `postgresql://finance_runtime:${runtimePassword}@postgres:5432/finance_agent_staging?${query}\n`
-);
-await writeIfMissing(
+));
+secretFilesCreated += Number(await writeIfMissing(
   join(secretsRoot, 'backup_database_url'),
   `postgresql://finance_backup:${backupPassword}@postgres:5432/finance_agent_staging?${query}\n`
-);
-await writeIfMissing(
+));
+secretFilesCreated += Number(await writeIfMissing(
   join(secretsRoot, 'restore_database_url'),
   `postgresql://finance_restore:${restorePassword}@postgres:5432/postgres?${query}\n`
-);
-await writeIfMissing(join(secretsRoot, 'redis_url'), `redis://:${redisPassword}@redis:6379/0\n`);
+));
+secretFilesCreated += Number(await writeIfMissing(
+  join(secretsRoot, 'redis_url'),
+  `redis://:${redisPassword}@redis:6379/0\n`,
+));
 
+const tlsFiles = ['ca.crt', 'ca.key', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
+const tlsFilesBefore = new Set(tlsFiles.filter((name) => existsSync(join(tlsRoot, name))));
 ensureCertificates();
+const tlsFilesCreated = tlsFiles.filter((name) => !tlsFilesBefore.has(name) && existsSync(join(tlsRoot, name))).length;
 
 await writeFile(join(stagingRoot, '.runtime', 'initialization.json'), JSON.stringify({
   schemaVersion: 1,
@@ -85,13 +111,19 @@ await writeFile(join(stagingRoot, '.runtime', 'initialization.json'), JSON.strin
 process.stdout.write(JSON.stringify({
   status: 'ok',
   stagingRoot,
-  secretsCreated: true,
-  tlsCreated: true,
+  environmentCreated,
+  environmentManagedKeysUpdated,
+  secretsCreated: secretFilesCreated > 0,
+  secretFilesCreated,
+  tlsCreated: tlsFilesCreated > 0,
+  tlsFilesCreated,
   next: 'Add staging.finance-agent.local and objects.finance-agent.local to the local hosts file, then run verify-config.mjs.'
 }, null, 2) + '\n');
 
 async function writeIfMissing(path, value) {
-  if (!existsSync(path)) await writeFile(path, value, { mode: 0o600, flag: 'wx' });
+  if (existsSync(path)) return false;
+  await writeFile(path, value, { mode: 0o600, flag: 'wx' });
+  return true;
 }
 
 function ensureCertificates() {

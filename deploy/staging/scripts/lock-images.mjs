@@ -15,6 +15,9 @@ const releaseRoot = join(stagingRoot, '.release');
 const arguments_ = process.argv.slice(2);
 const outputArgument = optionValue(arguments_, '--output');
 const expectedGitSha = optionValue(arguments_, '--expected-git-sha', false);
+const scope = optionValue(arguments_, '--scope', false) ?? 'all';
+const allowedScopes = new Set(['staging', 'all']);
+if (!allowedScopes.has(scope)) throw new Error('--scope must be staging or all');
 const outputPath = outputArgument ? resolve(stagingRoot, outputArgument) : join(releaseRoot, 'images.lock.json');
 const fileEnvironment = await readEnvironmentFile(join(stagingRoot, '.env'));
 const environment = { ...fileEnvironment, ...process.env };
@@ -24,16 +27,18 @@ const stagingCompose = renderCompose({
   environment
 });
 const modelComposeRoot = join(repositoryRoot, 'deploy', 'model-services');
-const modelCompose = renderCompose({
-  cwd: modelComposeRoot,
-  file: 'compose.yaml',
-  environment: {
-    MODEL_ROOT: '/models-not-mounted-during-image-lock',
-    LOCAL_MODEL_API_KEY: 'synthetic-image-lock-key',
-    ...environment
-  },
-  profiles: ['vl', 'embedding']
-});
+const modelCompose = scope === 'all'
+  ? renderCompose({
+      cwd: modelComposeRoot,
+      file: 'compose.yaml',
+      environment: {
+        MODEL_ROOT: '/models-not-mounted-during-image-lock',
+        LOCAL_MODEL_API_KEY: 'synthetic-image-lock-key',
+        ...environment
+      },
+      profiles: ['vl', 'embedding']
+    })
+  : null;
 const identityPolicy = stagingCompose.services?.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
 const sourceEnvironmentId = stagingCompose.services?.backup?.environment?.BACKUP_SOURCE_ENVIRONMENT_ID ?? '';
 if (!['local_identity', 'signed_registry'].includes(identityPolicy)) {
@@ -45,7 +50,7 @@ if (identityPolicy === 'local_identity' && !sourceEnvironmentId.endsWith('-local
 
 const targets = [
   ...collectTargets(stagingCompose, 'staging'),
-  ...collectTargets(modelCompose, 'model-services')
+  ...(modelCompose ? collectTargets(modelCompose, 'model-services') : [])
 ];
 const environmentBindings = collectEnvironmentBindings(stagingCompose);
 const lock = createImageLock({
@@ -53,6 +58,7 @@ const lock = createImageLock({
   environmentBindings,
   metadata: {
     identityPolicy,
+    imageScope: scope,
     sourceEnvironmentId,
     gitSha: expectedGitSha || null,
     configSchemaVersion: 'staging-compose/2.0',
@@ -76,6 +82,7 @@ process.stdout.write(JSON.stringify({
   fileSha256: written.fileSha256,
   contentSha256: lock.integrity.contentSha256,
   imageCount: lock.entries.length,
+  imageScope: scope,
   identityPolicy
 }, null, 2) + '\n');
 

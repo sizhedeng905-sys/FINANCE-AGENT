@@ -65,15 +65,31 @@ async function main() {
 }
 
 async function initializeEnvironment() {
-  try {
-    await access(envFile);
-    console.log(`Configuration already exists: ${envFile}`);
-    return;
-  } catch {
-    // Create the local-only file below.
+  const requestedRoot = process.env.MODEL_ROOT?.trim();
+  if (requestedRoot && !path.isAbsolute(requestedRoot)) {
+    throw new Error('MODEL_ROOT must be an absolute path when supplied to model:init.');
   }
 
-  const modelRoot = path.join(repositoryRoot, 'model').replaceAll('\\', '/');
+  let environmentExists = true;
+  try {
+    await access(envFile);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    environmentExists = false;
+  }
+
+  if (environmentExists) {
+    if (requestedRoot) {
+      const existing = parseEnv(await readFile(envFile, 'utf8')).MODEL_ROOT;
+      if (!existing || path.resolve(existing) !== path.resolve(requestedRoot)) {
+        throw new Error('Existing model .env uses a different MODEL_ROOT; refusing to overwrite it.');
+      }
+    }
+    console.log(`Configuration already exists: ${envFile}`);
+    return;
+  }
+
+  const modelRoot = (requestedRoot || path.join(repositoryRoot, 'model')).replaceAll('\\', '/');
   const secret = randomBytes(32).toString('hex');
   const template = await readFile(exampleEnvFile, 'utf8');
   const content = template

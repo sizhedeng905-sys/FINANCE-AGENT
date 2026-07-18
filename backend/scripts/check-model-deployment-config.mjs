@@ -40,6 +40,14 @@ assert(contract.includes('/live:') && contract.includes('/ready:') && contract.i
 for (const token of ['withModelSwitchLock', 'stopAndVerify(gpuServices)', 'restoring_text', 'waitForOpenAiModel']) {
   assert(switcher.includes(token), `Model transition safeguard is missing: ${token}`);
 }
+for (const token of [
+  'process.env.MODEL_ROOT?.trim()',
+  'MODEL_ROOT must be an absolute path',
+  'Existing model .env uses a different MODEL_ROOT',
+  "error?.code !== 'ENOENT'"
+]) {
+  assert(switcher.includes(token), `Model root initialization safeguard is missing: ${token}`);
+}
 
 const composeValidation = spawnSync('docker', [
   'compose', '--env-file', '.env.example', '-f', 'compose.yaml', '--profile', 'vl', '--profile', 'embedding', 'config', '--quiet'

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - finance-agent-staging
+    - finance-agent-gpu

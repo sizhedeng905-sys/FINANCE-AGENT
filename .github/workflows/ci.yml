@@ -29,8 +29,8 @@ jobs:
 
       - name: Build real backend and frontend images
         run: |
-          docker build --file backend/Dockerfile --build-arg BUILD_GIT_SHA=${GITHUB_SHA} --tag "$BACKEND_CI_IMAGE" backend
-          docker build --file Dockerfile.frontend --build-arg BUILD_GIT_SHA=${GITHUB_SHA} --build-arg VITE_APP_DATA_MODE=api --build-arg VITE_API_BASE_URL=/api --build-arg VITE_API_TIMEOUT_MS=15000 --tag "$FRONTEND_CI_IMAGE" .
+          docker build --file backend/Dockerfile --build-arg "BUILD_GIT_SHA=${GITHUB_SHA}" --tag "$BACKEND_CI_IMAGE" backend
+          docker build --file Dockerfile.frontend --build-arg "BUILD_GIT_SHA=${GITHUB_SHA}" --build-arg VITE_APP_DATA_MODE=api --build-arg VITE_API_BASE_URL=/api --build-arg VITE_API_TIMEOUT_MS=15000 --tag "$FRONTEND_CI_IMAGE" .
 
       - name: Verify application image identity and runtime users
         run: |
@@ -182,7 +182,9 @@ jobs:
       - name: Validate B8-09 staging topology and recovery scripts
         run: |
           npm run staging:init
+          npm run staging:config:test
           npm run staging:check
+          npm run staging:logs:test
           npm run staging:backup-integrity:test
           npm run staging:image-integrity:test -- --defer-scan --retain-fixtures
           find deploy/staging backend/docker -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n

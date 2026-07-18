@@ -68,7 +68,7 @@ run('docker', [
 ], runtimeEnv);
 const buildCompletedAt = new Date().toISOString();
 run('node', [
-  'scripts/lock-images.mjs', '--output', imageLockPath, '--expected-git-sha', gitSha
+  'scripts/lock-images.mjs', '--output', imageLockPath, '--expected-git-sha', gitSha, '--scope', 'staging'
 ], runtimeEnv);
 const { document: imageLock, fileSha256: imageLockFileSha256 } = await readSealedJson(imageLockPath, IMAGE_LOCK_SCHEMA);
 verifyImageLock(imageLock);

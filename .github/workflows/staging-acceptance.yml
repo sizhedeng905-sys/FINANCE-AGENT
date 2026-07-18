@@ -1,0 +1,188 @@
+name: Staging release acceptance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * 6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-agent-staging-acceptance
+  cancel-in-progress: false
+
+jobs:
+  python-ocr-adapter-contract:
+    name: Python OCR adapter dependency contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.10.19"
+          cache: pip
+          cache-dependency-path: deploy/model-services/paddle-ocr-adapter/requirements.txt
+
+      - name: Install complete adapter dependencies
+        working-directory: deploy/model-services/paddle-ocr-adapter
+        run: |
+          python -m pip install --upgrade pip==26.1.2
+          python -m pip install --requirement requirements.txt
+          python -m pip check
+
+      - name: Run Python adapter contract
+        working-directory: deploy/model-services/paddle-ocr-adapter
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Record dependency evidence
+        run: |
+          mkdir -p deploy/staging/.evidence/r8-python-ocr-contract
+          python --version > deploy/staging/.evidence/r8-python-ocr-contract/python-version.txt 2>&1
+          python -m pip freeze --all > deploy/staging/.evidence/r8-python-ocr-contract/pip-freeze.txt
+          printf '%s\n' 'No model inference or accuracy claim; this gate executes the complete FastAPI adapter dependency contract.' > deploy/staging/.evidence/r8-python-ocr-contract/scope.txt
+
+      - name: Upload Python adapter evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-ocr-adapter-contract-evidence
+          path: deploy/staging/.evidence/r8-python-ocr-contract/
+          if-no-files-found: warn
+          retention-days: 14
+
+  staging-release:
+    name: Full Compose release, restore, rollback, and browser smoke
+    needs: python-ocr-adapter-contract
+    runs-on: [self-hosted, linux, x64, finance-agent-staging]
+    timeout-minutes: 180
+    env:
+      GRYPE_ALLOW_NETWORK_UPDATE: "true"
+      IMAGE_SCAN_TIMEOUT_MS: "1800000"
+    steps:
+      - name: Checkout without deleting operator assets
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          clean: false
+          persist-credentials: false
+
+      - name: Setup deployed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Preflight Docker and host resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail_blocked() {
+            printf '%s\n' "status: blocked_external" "reason: $1" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          docker info >/dev/null 2>&1 || fail_blocked "Docker daemon unavailable"
+          docker compose version >/dev/null 2>&1 || fail_blocked "Docker Compose unavailable"
+          command -v openssl >/dev/null 2>&1 || fail_blocked "OpenSSL unavailable"
+          available_kb="$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')"
+          memory_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+          test "$available_kb" -ge 50331648 || fail_blocked "less than 48 GiB free disk"
+          test "$memory_kb" -ge 12582912 || fail_blocked "less than 12 GiB RAM"
+
+      - name: Install browser smoke dependencies
+        run: |
+          npm ci
+          npm run staging:config:test
+          npm run staging:logs:test
+          mkdir -p deploy/staging/.evidence/r8-staging-acceptance
+          npx playwright install --with-deps chromium
+
+      - name: Install and exercise Docker Scout CLI
+        env:
+          DOCKER_SCOUT_CACHE_DIR: ${{ runner.temp }}/finance-agent-staging-scout
+          DOCKER_SCOUT_NO_CACHE: "true"
+          DOCKER_SCOUT_OFFLINE: "true"
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
+        with:
+          command: sbom
+          image: fs://deploy/staging/scripts
+          format: spdx
+          output: deploy/staging/.evidence/r8-staging-acceptance/scout-bootstrap.spdx.json
+          summary: false
+          write-comment: false
+
+      - name: Initialize isolated staging configuration
+        run: |
+          npm run staging:init
+          npm run staging:check
+
+      - name: Build, scan, release, smoke, and isolate-restore
+        run: npm run staging:release
+
+      - name: Verify released runtime logs
+        run: npm run staging:logs:check
+
+      - name: Resolve sealed release manifest
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(npm run --silent staging:current-release)"
+          printf 'manifest=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+
+      - name: Exercise sealed rollback path
+        run: npm run staging:rollback -- "${{ steps.release.outputs.manifest }}"
+
+      - name: Re-run API and browser smoke after rollback
+        run: npm run staging:smoke
+
+      - name: Verify rollback runtime logs
+        run: npm run staging:logs:check
+
+      - name: Capture non-sensitive Compose status
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p deploy/staging/.evidence/r8-staging-acceptance
+          docker compose --env-file deploy/staging/.env -f deploy/staging/compose.yaml ps --format json > deploy/staging/.evidence/r8-staging-acceptance/compose-ps.json 2>/dev/null || true
+          docker system df > deploy/staging/.evidence/r8-staging-acceptance/docker-system-df.txt 2>&1 || true
+
+      - name: Remove isolated Compose resources
+        if: always()
+        shell: bash
+        run: |
+          docker compose --env-file deploy/staging/.env -f deploy/staging/compose.yaml down -v --remove-orphans || true
+
+      - name: Verify Compose cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(docker ps -a --filter label=com.docker.compose.project=finance-agent-staging --format '{{.ID}}')"
+          test -z "$(docker network ls --filter label=com.docker.compose.project=finance-agent-staging --format '{{.ID}}')"
+          test -z "$(docker volume ls --filter label=com.docker.compose.project=finance-agent-staging --format '{{.Name}}')"
+
+      - name: Upload sealed staging acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-release-acceptance-evidence
+          path: |
+            deploy/staging/.release/
+            deploy/staging/.evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Record acceptance scope
+        if: success()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "status: passed" \
+            "commit: $GITHUB_SHA" \
+            "scope: full local-identity Compose release, browser smoke, isolated restore drill, same-manifest rollback" \
+            "production: not authorized; H13/H14/H15/H16 remain required" >> "$GITHUB_STEP_SUMMARY"

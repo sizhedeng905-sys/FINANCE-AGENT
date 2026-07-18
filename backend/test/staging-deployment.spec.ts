@@ -177,6 +177,8 @@ describe('B8-09 staging deployment', () => {
     expect(release.indexOf("'scripts/lock-images.mjs'")).toBeLessThan(
       release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
     );
+    expect(release).toContain("'--scope', 'staging'");
+    expect(lockImages).toContain("new Set(['staging', 'all'])");
     expect(release.indexOf('expectedSchema: RELEASE_PLAN_SCHEMA')).toBeLessThan(
       release.indexOf("'up', '-d', '--no-build', '--pull', 'never'")
     );

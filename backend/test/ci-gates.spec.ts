@@ -49,4 +49,54 @@ describe('R8 CI gate contracts', () => {
     expect(workflow).toContain('frontend.grype.sarif.json');
     expect(workflow).toContain('application-container-evidence');
   });
+
+  it('provides a scheduled and manual full staging release acceptance path', () => {
+    const workflow = read('.github', 'workflows', 'staging-acceptance.yml');
+
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('schedule:');
+    expect(workflow).toContain('node-version: 24.18.0');
+    expect(workflow).toContain('npm run staging:release');
+    expect(workflow).toContain('npm run staging:logs:check');
+    expect(workflow).toContain('command: sbom');
+    expect(workflow).toContain('image: fs://deploy/staging/scripts');
+    expect(workflow).not.toContain('command: version');
+    expect(workflow).toContain('npm run staging:rollback --');
+    expect(workflow).toContain('npm run staging:smoke');
+    expect(workflow).toContain("down -v --remove-orphans");
+    expect(workflow).toContain('staging-release-acceptance-evidence');
+    expect(workflow).not.toMatch(/path:[^\n]*(?:\.secrets|\.runtime\/tls)/);
+  });
+
+  it('keeps real model inference on an explicit GPU L0 workflow', () => {
+    const workflow = read('.github', 'workflows', 'model-runtime-acceptance.yml');
+
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).not.toContain('schedule:');
+    expect(workflow).toContain('finance-agent-gpu');
+    expect(workflow).toContain('clean: false');
+    expect(workflow).toContain('model_root:');
+    expect(workflow).toContain('npm run model:resident');
+    expect(workflow).toContain('npm run model:ocr:acceptance --prefix backend');
+    expect(workflow).toContain('npm run model:switch:acceptance --prefix backend');
+    expect(workflow).toContain('npm run model:restore');
+    expect(workflow).toContain('L0 engineering evidence only');
+  });
+
+  it('runs the Python adapter dependency contract without claiming model accuracy', () => {
+    const workflow = read('.github', 'workflows', 'staging-acceptance.yml');
+
+    expect(workflow).toContain('python-ocr-adapter-contract:');
+    expect(workflow).toContain('actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1');
+    expect(workflow).toContain('python -m pip check');
+    expect(workflow).toContain('python -m unittest discover -s tests -p "test_*.py"');
+    expect(workflow).toContain('No model inference or accuracy claim');
+  });
+
+  it('runs the runtime log leak policy in regular CI', () => {
+    const workflow = read('.github', 'workflows', 'ci.yml');
+
+    expect(workflow).toContain('npm run staging:config:test');
+    expect(workflow).toContain('npm run staging:logs:test');
+  });
 });
