@@ -92,7 +92,8 @@ export class HttpAiProviderService {
       body: JSON.stringify(body)
     }, {
       circuitKey: `ai:${new URL(url).origin}`,
-      timeoutMs
+      timeoutMs,
+      maxRetries: request.maxAttempts === undefined ? undefined : Math.max(0, request.maxAttempts - 1)
     }));
     const payload = await this.readLimitedJson(response);
     if (!response.ok) {
@@ -109,7 +110,8 @@ export class HttpAiProviderService {
   private toolDataMessage(request: AiProviderRequest) {
     const serialized = JSON.stringify(request.contexts);
     const claimCandidates = JSON.stringify(request.claimCandidates ?? []);
-    if (serialized.length + claimCandidates.length > MAX_CONTEXT_CHARACTERS) {
+    const maxInputCharacters = Math.min(request.maxInputCharacters ?? MAX_CONTEXT_CHARACTERS, MAX_CONTEXT_CHARACTERS);
+    if (serialized.length + claimCandidates.length > maxInputCharacters) {
       throw new Error('AI 工具上下文超过安全上限');
     }
     return [

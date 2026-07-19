@@ -187,6 +187,7 @@ describe('phase 8 boss AI assistant', () => {
       resolveActive: jest.fn(async () => ({
         promptVersion: { id: 'prompt_v2', promptKey: 'boss_chat', versionNo: 2 },
         instructions: 'Return strict grounded claim JSON.',
+        maxInputBudget: 100_000,
         timeoutPolicy: { timeoutMs: 5000, maxAttempts: 1, onFailure: 'MANUAL_REVIEW' },
         versionVector: { schemaVersion: 'ai-prompt-bundle/1.0', prompt: { id: 'prompt_v2' }, components: [] },
         bundleSha256: 'a'.repeat(64)
@@ -278,7 +279,9 @@ describe('phase 8 boss AI assistant', () => {
         expect.objectContaining({ role: AiMessageRole.user, content: '今天经营情况' }),
         expect.objectContaining({ role: AiMessageRole.assistant })
       ],
-      question: '那上个月呢？'
+      question: '那上个月呢？',
+      maxAttempts: 1,
+      maxInputCharacters: expect.any(Number)
     }));
     expect(historyProvider.generate).toHaveBeenCalledTimes(1);
     expect(callLogs).toHaveLength(3);

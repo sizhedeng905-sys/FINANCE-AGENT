@@ -54,7 +54,9 @@ export interface AiProviderRequest {
   apiKey?: string;
   secretRef?: string;
   timeoutMs?: number;
+  maxAttempts?: number;
   maxConcurrency?: number;
+  maxInputCharacters?: number;
   configHash?: string;
   capability?: AiFeatureCapability;
   providerClass?: AiProviderClass;
@@ -65,6 +67,9 @@ export interface AiProviderRequest {
   history: AiHistoryMessage[];
   contexts: AiToolContext[];
   claimCandidates?: AiFinancialClaim[];
+  mockScenario?: 'success' | 'unmapped' | 'invalid_json' | 'timeout' | 'injection';
+  mockOutput?: unknown;
+  mockTemplateVersionId?: string;
 }
 
 export interface AiProviderResult {

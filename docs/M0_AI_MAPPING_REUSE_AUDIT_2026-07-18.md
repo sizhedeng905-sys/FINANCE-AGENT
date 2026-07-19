@@ -212,11 +212,11 @@ reviewRevision + validationSnapshotHash + normalizedOutputHash
 | 编号 | 严重性 | 问题 | M 阶段 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | M0-INPUT-001 | P1 | Prompt Catalog 文件为 0 字节，无法核对目录正文 | M0/M2/M8 | `blocked_external` |
-| M1-EXCEL-EVIDENCE-001 | P0 | Excel 缺少稳定单元格 lexical/display/address/formula 证据和 IR hash | M1 | `open` |
-| M1-OCR-EVIDENCE-001 | P0 | OCR 缺 token/block stable ID、坐标版本和 IR hash | M1 | `open` |
-| M2-PROMPT-REGISTRY-001 | P1 | Prompt 散落、registry 契约和 content hash 不完整 | M2 | `open` |
-| M2-STRICT-SCHEMA-001 | P0 | 宽松剥离 Markdown fence，缺少重复键/深度/污染键防线 | M2 | `open` |
-| M2-AI-MODE-001 | P0 | ingestion/report 模式、kill switch、H12 外部 Provider失败关闭缺失 | M2 | `open` |
+| M1-EXCEL-EVIDENCE-001 | P0 | Excel 缺少稳定单元格 lexical/display/address/formula 证据和 IR hash | M1 | `verified` |
+| M1-OCR-EVIDENCE-001 | P0 | OCR 缺 token/block stable ID、坐标版本和 IR hash | M1 | `verified` |
+| M2-PROMPT-REGISTRY-001 | P1 | Prompt 散落、registry 契约和 content hash 不完整 | M2 | `verified` |
+| M2-STRICT-SCHEMA-001 | P0 | 宽松剥离 Markdown fence，缺少重复键/深度/污染键防线 | M2 | `verified` |
+| M2-AI-MODE-001 | P0 | ingestion/report 模式、kill switch、H12 外部 Provider失败关闭缺失 | M2 | `verified` |
 | M3-PROFILE-001 | P1 | Profile 无项目范围、结构指纹、版本、失效和 transform | M3 | `open` |
 | M4-OCR-REVIEW-001 | P1 | OCR evidence UI 无 token/bbox 稳定引用及 revision 语义 | M4 | `open` |
 | M5-SELF-APPROVAL-001 | P0 | 上传者可确认 Import/OCR，最终事务未按保守策略重验身份 | M5 | `open` |
