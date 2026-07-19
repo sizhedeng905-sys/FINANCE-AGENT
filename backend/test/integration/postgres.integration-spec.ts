@@ -13,6 +13,7 @@ import {
   ImportRowStatus,
   ImportTaskStatus,
   MappingDecisionType,
+  MappingProfileStatus,
   OcrAttemptStatus,
   OcrTaskStatus,
   Prisma,
@@ -5577,6 +5578,208 @@ describe('real PostgreSQL integration', () => {
         errors: expect.arrayContaining([expect.stringContaining('B8 precision default')])
       });
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+    });
+  });
+
+  describe('M3 mapping profile structural scope', () => {
+    it('reuses only exact project structures and invalidates stale or revoked profiles', async () => {
+      const suffix = randomUUID().slice(0, 8);
+      const taskIds: string[] = [];
+      const rawFileIds: string[] = [];
+      const projectIds: string[] = [];
+      let templateId: string | undefined;
+
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      const token = login.body.data.accessToken as string;
+      const fields = await prisma.fieldDefinition.findMany({
+        where: { fieldKey: { in: ['date', 'amount'] } }
+      });
+      const dateField = fields.find((field) => field.fieldKey === 'date')!;
+      const amountField = fields.find((field) => field.fieldKey === 'amount')!;
+      expect(dateField).toBeDefined();
+      expect(amountField).toBeDefined();
+
+      const buildWorkbook = async (headers: string[]) => {
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('结构 测试');
+        sheet.addRow(headers);
+        const valuesByHeader = new Map([
+          [`m3_day_${suffix}`, '2026-07-18'],
+          [`m3_money_${suffix}`, '100.25']
+        ]);
+        sheet.addRow(headers.map((header) => valuesByHeader.get(header)));
+        return Buffer.from(await workbook.xlsx.writeBuffer());
+      };
+
+      try {
+        const template = await prisma.template.create({
+          data: {
+            name: `${TEST_USER_PREFIX}m3_profile_template_${suffix}`,
+            recordType: DataRecordType.cost,
+            primaryDateFieldId: dateField.id,
+            primaryAmountFieldId: amountField.id,
+            createdBy: 'finance'
+          }
+        });
+        templateId = template.id;
+        await prisma.templateField.createMany({
+          data: [
+            { templateId: template.id, fieldId: dateField.id, displayOrder: 1, isRequired: true },
+            { templateId: template.id, fieldId: amountField.id, displayOrder: 2, isRequired: true }
+          ]
+        });
+        const projects = await Promise.all(['a', 'b'].map((label) => prisma.project.create({
+          data: {
+            name: `${TEST_USER_PREFIX}m3_profile_${label}_${suffix}`,
+            customerName: 'Synthetic customer',
+            ownerName: 'Synthetic owner',
+            createdBy: 'finance'
+          }
+        })));
+        projectIds.push(...projects.map((project) => project.id));
+        await prisma.projectTemplate.createMany({
+          data: projects.map((project) => ({
+            projectId: project.id,
+            templateId: template.id,
+            recordType: template.recordType
+          }))
+        });
+
+        const headers = [`m3_day_${suffix}`, `m3_money_${suffix}`];
+        const createAndParse = async (projectId: string, orderedHeaders: string[], label: string) => {
+          const contents = await buildWorkbook(orderedHeaders);
+          const created = await request(app.getHttpServer())
+            .post('/api/import-tasks')
+            .set('Authorization', `Bearer ${token}`)
+            .set('Idempotency-Key', `m3-profile-${suffix}-${label}`)
+            .field('projectId', projectId)
+            .field('templateId', template.id)
+            .field('importType', DataRecordType.cost)
+            .attach('file', contents, {
+              filename: `${label}.xlsx`,
+              contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            })
+            .expect(201);
+          const taskId = created.body.data.id as string;
+          taskIds.push(taskId);
+          rawFileIds.push(created.body.data.rawFileId as string);
+          const parsed = await request(app.getHttpServer())
+            .post(`/api/import-tasks/${taskId}/parse`)
+            .set('Authorization', `Bearer ${token}`)
+            .send({ sheetIndex: 0, headerStartRowIndex: 1, headerRowIndex: 1 })
+            .expect(201);
+          return { taskId, data: parsed.body.data };
+        };
+
+        const saveMappings = async (taskId: string, columns: Array<{ id: string; sourceName: string }>) => {
+          await request(app.getHttpServer())
+            .put(`/api/import-tasks/${taskId}/mappings`)
+            .set('Authorization', `Bearer ${token}`)
+            .send({
+              mappings: columns.map((column) => ({
+                columnId: column.id,
+                targetFieldId: column.sourceName === headers[0] ? dateField.id : amountField.id
+              })),
+              saveToProfile: true
+            })
+            .expect(200);
+        };
+
+        const first = await createAndParse(projects[0].id, headers, 'first');
+        expect(first.data.mappingProfile.profileId).toBeUndefined();
+        await saveMappings(first.taskId, first.data.columns);
+        const firstStored = await prisma.importTask.findUniqueOrThrow({ where: { id: first.taskId } });
+        expect(firstStored).toMatchObject({
+          mappingProfileId: expect.any(String),
+          mappingProfileVersion: 1,
+          structureFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+          mappingProfileSnapshotHash: expect.stringMatching(/^[0-9a-f]{64}$/)
+        });
+        const firstProfileId = firstStored.mappingProfileId!;
+
+        const exact = await createAndParse(projects[0].id, headers, 'exact');
+        expect(exact.data.mappingProfile).toMatchObject({
+          profileId: firstProfileId,
+          profileVersion: 1,
+          structureFingerprint: firstStored.structureFingerprint
+        });
+        expect(exact.data.columns.map((column: { decision?: { mappingType: string } }) => column.decision?.mappingType))
+          .toEqual([MappingDecisionType.profile, MappingDecisionType.profile]);
+
+        const firstRule = await prisma.mappingProfileRule.findFirstOrThrow({
+          where: { mappingProfileId: firstProfileId },
+          orderBy: { columnIndex: 'asc' }
+        });
+        await expect(prisma.mappingProfileRule.update({
+          where: { id: firstRule.id },
+          data: { transformKey: 'UNSAFE_EXPRESSION' }
+        })).rejects.toThrow();
+        await prisma.mappingProfile.update({
+          where: { id: firstProfileId },
+          data: { approvalSnapshotHash: 'b'.repeat(64) }
+        });
+        const tampered = await createAndParse(projects[0].id, headers, 'tampered-profile');
+        expect(tampered.data.mappingProfile.profileId).toBeUndefined();
+        expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: firstProfileId } })).toMatchObject({
+          status: MappingProfileStatus.stale,
+          isActive: false
+        });
+        expect(await prisma.businessRecord.count({ where: { importTaskId: tampered.taskId } })).toBe(0);
+        await saveMappings(tampered.taskId, tampered.data.columns);
+        expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: firstProfileId } })).toMatchObject({
+          status: MappingProfileStatus.active,
+          isActive: true,
+          profileVersion: 2
+        });
+
+        const otherProject = await createAndParse(projects[1].id, headers, 'other-project');
+        expect(otherProject.data.mappingProfile.profileId).toBeUndefined();
+        expect(otherProject.data.columns.some(
+          (column: { decision?: { mappingType: string } }) => column.decision?.mappingType === MappingDecisionType.profile
+        )).toBe(false);
+
+        const changedHeaders = [...headers].reverse();
+        const changed = await createAndParse(projects[0].id, changedHeaders, 'changed');
+        expect(changed.data.mappingProfile.profileId).toBeUndefined();
+        await saveMappings(changed.taskId, changed.data.columns);
+        expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: firstProfileId } })).toMatchObject({
+          status: MappingProfileStatus.stale,
+          isActive: false
+        });
+        const changedStored = await prisma.importTask.findUniqueOrThrow({ where: { id: changed.taskId } });
+        expect(changedStored.mappingProfileId).not.toBe(firstProfileId);
+
+        const reapplied = await createAndParse(projects[0].id, changedHeaders, 'reapplied');
+        expect(reapplied.data.mappingProfile.profileId).toBe(changedStored.mappingProfileId);
+        await request(app.getHttpServer())
+          .post(`/api/mapping-profiles/${changedStored.mappingProfileId}/revoke`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(201);
+        expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: changedStored.mappingProfileId! } }))
+          .toMatchObject({ status: MappingProfileStatus.revoked, isActive: false });
+        expect(await prisma.mappingDecision.count({
+          where: { importTaskId: reapplied.taskId, mappingType: MappingDecisionType.profile }
+        })).toBe(0);
+        expect(await prisma.importTask.findUniqueOrThrow({ where: { id: reapplied.taskId } })).toMatchObject({
+          status: ImportTaskStatus.mapping,
+          mappingProfileId: null,
+          mappingProfileVersion: null
+        });
+        expect(await prisma.auditLog.count({
+          where: { action: 'mapping_profile.revoke', resourceId: changedStored.mappingProfileId! }
+        })).toBe(1);
+      } finally {
+        if (taskIds.length) await prisma.importTask.deleteMany({ where: { id: { in: taskIds } } });
+        if (rawFileIds.length) await prisma.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+        if (projectIds.length) await prisma.mappingProfile.deleteMany({ where: { projectId: { in: projectIds } } });
+        if (templateId) await prisma.templateField.deleteMany({ where: { templateId } });
+        if (projectIds.length) await prisma.projectTemplate.deleteMany({ where: { projectId: { in: projectIds } } });
+        if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+        if (projectIds.length) await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
+      }
     });
   });
 

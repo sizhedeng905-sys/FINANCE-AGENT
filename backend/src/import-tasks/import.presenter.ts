@@ -44,6 +44,14 @@ export function toImportTask(task: ImportTaskDetail) {
       irHash: task.irHash ?? undefined,
       rowEvidenceDigest: task.rowEvidenceDigest ?? undefined
     },
+    mappingProfile: {
+      structureFingerprint: task.structureFingerprint ?? undefined,
+      fingerprintVersion: task.fingerprintVersion ?? undefined,
+      transformRegistryVersion: task.transformRegistryVersion ?? undefined,
+      profileId: task.mappingProfileId ?? undefined,
+      profileVersion: task.mappingProfileVersion ?? undefined,
+      approvalSnapshotHash: task.mappingProfileSnapshotHash ?? undefined
+    },
     progress: {
       executionMode: task.executionMode ?? undefined,
       processingMode: task.processingMode ?? undefined,

@@ -156,6 +156,12 @@ enum MappingDecisionType {
   ignored
 }
 
+enum MappingProfileStatus {
+  active
+  stale
+  revoked
+}
+
 enum FieldSuggestionStatus {
   pending
   approved
@@ -325,6 +331,7 @@ model Project {
   fieldSuggestions FieldSuggestion[]
   ruleRunResults   RuleRunResult[]
   aiAnomalies      AiAnomaly[]
+  mappingProfiles  MappingProfile[]
 
   @@index([status])
   @@map("projects")
@@ -584,51 +591,57 @@ model RawFile {
 }
 
 model ImportTask {
-  id                        String           @id @default(cuid())
-  projectId                 String           @map("project_id")
-  templateId                String           @map("template_id")
-  templateVersion           Int              @default(1) @map("template_version")
-  templateSnapshot          Json?            @map("template_snapshot")
-  rawFileId                 String           @unique @map("raw_file_id")
-  fileName                  String           @map("file_name")
-  importType                DataRecordType   @map("import_type")
-  status                    ImportTaskStatus @default(uploaded)
-  version                   Int              @default(1)
-  leaseToken                String?          @map("lease_token")
-  leaseUntil                DateTime?        @map("lease_until")
-  parseConfig               Json?            @map("parse_config")
-  parseRequestedBy          String?          @map("parse_requested_by")
-  executionMode             String?          @map("execution_mode")
-  processingMode            String?          @map("processing_mode")
-  sourceSha256              String?          @map("source_sha256")
-  parserInputSha256         String?          @map("parser_input_sha256")
-  irSchemaVersion           String?          @map("ir_schema_version")
-  parserVersion             String?          @map("parser_version")
-  irHash                    String?          @map("ir_hash")
-  rowEvidenceDigest         String?          @map("row_evidence_digest")
-  processedRows             Int              @default(0) @map("processed_rows")
-  parseAttempts             Int              @default(0) @map("parse_attempts")
-  confirmRequestedBy        String?          @map("confirm_requested_by")
-  confirmationTotalRows     Int              @default(0) @map("confirmation_total_rows")
-  confirmationProcessedRows Int              @default(0) @map("confirmation_processed_rows")
-  confirmationSuccessRows   Int              @default(0) @map("confirmation_success_rows")
-  confirmationErrorRows     Int              @default(0) @map("confirmation_error_rows")
-  confirmationAttempts      Int              @default(0) @map("confirmation_attempts")
-  confirmationStartedAt     DateTime?        @map("confirmation_started_at")
-  uploadedBy                String           @map("uploaded_by")
-  createdAt                 DateTime         @default(now()) @map("created_at")
-  parsedAt                  DateTime?        @map("parsed_at")
-  confirmedAt               DateTime?        @map("confirmed_at")
-  confirmedBy               String?          @map("confirmed_by")
-  errorMessage              String?          @map("error_message")
-  idempotencyKey            String?          @unique @map("idempotency_key")
-  totalRows                 Int              @default(0) @map("total_rows")
-  validRows                 Int              @default(0) @map("valid_rows")
-  errorRows                 Int              @default(0) @map("error_rows")
-  duplicateRows             Int              @default(0) @map("duplicate_rows")
-  ignoredRows               Int              @default(0) @map("ignored_rows")
-  importedRows              Int              @default(0) @map("imported_rows")
-  previewSummaryVersion     Int?             @map("preview_summary_version")
+  id                         String           @id @default(cuid())
+  projectId                  String           @map("project_id")
+  templateId                 String           @map("template_id")
+  templateVersion            Int              @default(1) @map("template_version")
+  templateSnapshot           Json?            @map("template_snapshot")
+  rawFileId                  String           @unique @map("raw_file_id")
+  fileName                   String           @map("file_name")
+  importType                 DataRecordType   @map("import_type")
+  status                     ImportTaskStatus @default(uploaded)
+  version                    Int              @default(1)
+  leaseToken                 String?          @map("lease_token")
+  leaseUntil                 DateTime?        @map("lease_until")
+  parseConfig                Json?            @map("parse_config")
+  parseRequestedBy           String?          @map("parse_requested_by")
+  executionMode              String?          @map("execution_mode")
+  processingMode             String?          @map("processing_mode")
+  sourceSha256               String?          @map("source_sha256")
+  parserInputSha256          String?          @map("parser_input_sha256")
+  irSchemaVersion            String?          @map("ir_schema_version")
+  parserVersion              String?          @map("parser_version")
+  irHash                     String?          @map("ir_hash")
+  rowEvidenceDigest          String?          @map("row_evidence_digest")
+  processedRows              Int              @default(0) @map("processed_rows")
+  parseAttempts              Int              @default(0) @map("parse_attempts")
+  confirmRequestedBy         String?          @map("confirm_requested_by")
+  confirmationTotalRows      Int              @default(0) @map("confirmation_total_rows")
+  confirmationProcessedRows  Int              @default(0) @map("confirmation_processed_rows")
+  confirmationSuccessRows    Int              @default(0) @map("confirmation_success_rows")
+  confirmationErrorRows      Int              @default(0) @map("confirmation_error_rows")
+  confirmationAttempts       Int              @default(0) @map("confirmation_attempts")
+  confirmationStartedAt      DateTime?        @map("confirmation_started_at")
+  uploadedBy                 String           @map("uploaded_by")
+  createdAt                  DateTime         @default(now()) @map("created_at")
+  parsedAt                   DateTime?        @map("parsed_at")
+  confirmedAt                DateTime?        @map("confirmed_at")
+  confirmedBy                String?          @map("confirmed_by")
+  errorMessage               String?          @map("error_message")
+  idempotencyKey             String?          @unique @map("idempotency_key")
+  totalRows                  Int              @default(0) @map("total_rows")
+  validRows                  Int              @default(0) @map("valid_rows")
+  errorRows                  Int              @default(0) @map("error_rows")
+  duplicateRows              Int              @default(0) @map("duplicate_rows")
+  ignoredRows                Int              @default(0) @map("ignored_rows")
+  importedRows               Int              @default(0) @map("imported_rows")
+  previewSummaryVersion      Int?             @map("preview_summary_version")
+  structureFingerprint       String?          @map("structure_fingerprint")
+  fingerprintVersion         String?          @map("fingerprint_version")
+  transformRegistryVersion   String?          @map("transform_registry_version")
+  mappingProfileId           String?          @map("mapping_profile_id")
+  mappingProfileVersion      Int?             @map("mapping_profile_version")
+  mappingProfileSnapshotHash String?          @map("mapping_profile_snapshot_hash")
 
   project          Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   template         Template          @relation(fields: [templateId], references: [id], onDelete: Restrict)
@@ -641,6 +654,7 @@ model ImportTask {
   mappingDecisions MappingDecision[]
   fieldSuggestions FieldSuggestion[]
   businessRecords  BusinessRecord[]
+  mappingProfile   MappingProfile?   @relation("AppliedMappingProfile", fields: [mappingProfileId], references: [id], onDelete: SetNull)
 
   @@index([projectId, createdAt])
   @@index([status, leaseUntil])
@@ -648,6 +662,8 @@ model ImportTask {
   @@index([status])
   @@index([uploadedBy])
   @@index([irHash])
+  @@index([structureFingerprint])
+  @@index([mappingProfileId])
   @@map("import_tasks")
 }
 
@@ -735,28 +751,50 @@ model ImportRow {
 }
 
 model MappingProfile {
-  id         String   @id @default(cuid())
-  templateId String   @map("template_id")
-  name       String
-  isActive   Boolean  @default(true) @map("is_active")
-  reviewedBy String?  @map("reviewed_by")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id                         String               @id @default(cuid())
+  projectId                  String?              @map("project_id")
+  templateId                 String               @map("template_id")
+  templateVersion            Int                  @default(1) @map("template_version")
+  name                       String
+  profileVersion             Int                  @default(1) @map("profile_version")
+  sourceStructureFingerprint String?              @map("source_structure_fingerprint")
+  fingerprintVersion         String?              @map("fingerprint_version")
+  transformRegistryVersion   String?              @map("transform_registry_version")
+  policyVersion              String?              @map("policy_version")
+  scopeKey                   String?              @unique @map("scope_key")
+  approvalSnapshotHash       String?              @map("approval_snapshot_hash")
+  status                     MappingProfileStatus @default(active)
+  isActive                   Boolean              @default(true) @map("is_active")
+  reviewedBy                 String?              @map("reviewed_by")
+  approvedAt                 DateTime?            @map("approved_at")
+  usageCount                 Int                  @default(0) @map("usage_count")
+  lastUsedAt                 DateTime?            @map("last_used_at")
+  createdFromTaskId          String?              @map("created_from_task_id")
+  createdAt                  DateTime             @default(now()) @map("created_at")
+  updatedAt                  DateTime             @updatedAt @map("updated_at")
 
-  template Template             @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  rules    MappingProfileRule[]
+  project      Project?             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template     Template             @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  rules        MappingProfileRule[]
+  appliedTasks ImportTask[]         @relation("AppliedMappingProfile")
 
-  @@unique([templateId, name])
+  @@index([templateId, name])
+  @@index([projectId, templateId, status])
   @@index([templateId, isActive])
+  @@index([sourceStructureFingerprint])
   @@map("mapping_profiles")
 }
 
 model MappingProfileRule {
   id                   String   @id @default(cuid())
   mappingProfileId     String   @map("mapping_profile_id")
+  sourceColumnId       String   @map("source_column_id")
+  columnIndex          Int      @map("column_index")
   sourceName           String   @map("source_name")
   normalizedSourceName String   @map("normalized_source_name")
+  sourceInferredType   String   @map("source_inferred_type")
   targetFieldId        String?  @map("target_field_id")
+  transformKey         String   @default("IDENTITY_V1") @map("transform_key")
   ignored              Boolean  @default(false)
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
@@ -764,7 +802,8 @@ model MappingProfileRule {
   profile     MappingProfile   @relation(fields: [mappingProfileId], references: [id], onDelete: Cascade)
   targetField FieldDefinition? @relation(fields: [targetFieldId], references: [id], onDelete: Restrict)
 
-  @@unique([mappingProfileId, normalizedSourceName])
+  @@unique([mappingProfileId, sourceColumnId])
+  @@index([mappingProfileId, normalizedSourceName])
   @@index([targetFieldId])
   @@map("mapping_profile_rules")
 }

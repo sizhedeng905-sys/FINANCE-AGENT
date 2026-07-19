@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M2 已完成复用审计、Excel/OCR 规范 IR、严格输出/白名单、失败关闭、版本化 Prompt Registry 和完整调用版本向量；M3-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M3.1 已完成复用审计、Excel/OCR 规范 IR、严格输出/白名单、失败关闭、版本化 Prompt Registry、完整调用版本向量，以及项目级精确结构 Mapping Profile；M3.2-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
-| AI 映射补充 M0-M8 | `M0-M2_passed / M3_next` | M2 完成严格输出/白名单/失败关闭、9 Prompt + core guard、完整版本向量和 5 类 Mock 故障；44/44 后端 suites、8/8 PostgreSQL suites、30 条 migration 空库/升级通过；Prompt Catalog 空文件仍阻塞逐字目录核对 |
+| AI 映射补充 M0-M8 | `M0-M3.1_passed / M3.2_next` | M3.1 完成项目/模板/结构/转换/策略精确作用域、Profile 版本/哈希/撤销与跨项目隔离；32 条 migration 空库及 31→32 升级、指纹 8/8 和 PostgreSQL 行为 1/1 通过；Prompt Catalog 空文件仍阻塞逐字目录核对 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -92,6 +92,8 @@ M2.2 新增服务端 `AI_INGESTION_MODE`、`AI_REPORT_MODE`、`AI_GLOBAL_KILL_SW
 M2.3 基于现有 `AiPromptVersion` 落地固定 9 项 manifest、`finance_core_guard` 和兼容老板助手 V2；每个不可变版本保存用途、输入/输出 Schema、Provider class、输入预算、超时、脱敏版本、组件引用和内容 SHA-256。运行时同时核对代码定义、数据库内容和核心 guard 哈希，退役版本可历史读取但不能发起新调用；seed 遇到同版本漂移会失败并要求新增版本。第 30 条 migration 的空库及 29→30 升级、7/7 suites 106/106 tests、Registry PostgreSQL 3/3 及真实老板 AI PostgreSQL 链路 1/1 已通过。受保护的 Prompt Catalog 文件仍为空，因此仅声明固定 manifest 来自任务书，不声明完成目录逐字核对。
 
 M2.4 新增 `ai-invocation-vector/1.0`，一次冻结 source/IR、模板/候选集、Prompt/Schema、Provider/模型、转换器、校验规则、mapping profile、脱敏、授权、feature policy 与输入哈希，并为输出生成独立 completion hash；任一版本变化都会改变向量哈希。显式 Mock Provider 覆盖成功、无映射、非法 JSON、超时和注入输出，所有 raw 元数据标明 `mock: true`。Prompt 的输入预算、超时和最大尝试次数已进入真实 HTTP 执行参数。M2 全量证据为后端 44/44 suites、390/390 tests，PostgreSQL 8/8 suites、87/87 tests，后端 build、30 条 migration 空库及 29→30 升级通过；详见 [`docs/M2_AI_GUARDRAILS_AND_PROMPT_REGISTRY_REPORT_2026-07-18.md`](docs/M2_AI_GUARDRAILS_AND_PROMPT_REGISTRY_REPORT_2026-07-18.md)。
+
+M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构配置：指纹只包含工作簿格式、解析器主版本、Sheet/多行表头/合并结构、列顺序与推断类型、模板版本和转换注册表版本，不包含整表业务值。Profile 保存版本、审批快照哈希、策略版本、使用次数和 `active/stale/revoked` 状态；只在项目和结构完全匹配时复用，跨项目或结构变化不会模糊匹配。新结构获财务保存会令旧结构失效，撤销会清除未提交任务中的 Profile 决定并写 audit/ledger；数据库还拒绝未知转换键和状态/活动标志矛盾。第 32 条 migration 的空库及 31→32 升级、后端 45/45 suites 398/398 tests、PostgreSQL Profile 与历史 Excel 定向回归各 1/1 和后端 build 已通过；详见 [`docs/M3_1_MAPPING_PROFILE_STRUCTURE_SCOPE_REPORT_2026-07-18.md`](docs/M3_1_MAPPING_PROFILE_STRUCTURE_SCOPE_REPORT_2026-07-18.md)。
 
 ## 已实现闭环
 

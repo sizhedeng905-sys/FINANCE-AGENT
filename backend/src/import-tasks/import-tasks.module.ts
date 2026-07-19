@@ -12,11 +12,12 @@ import { ExcelParserService } from './excel-parser.service';
 import { FieldSuggestionsController } from './field-suggestions.controller';
 import { ImportTasksController } from './import-tasks.controller';
 import { ImportTasksService } from './import-tasks.service';
+import { MappingProfilesController } from './mapping-profiles.controller';
 import { XlsConverterService } from './xls-converter.service';
 
 @Module({
   imports: [FilesModule, AuditLogsModule, LedgerEventsModule, RecordPolicyModule, JwtModule.register({})],
-  controllers: [ImportTasksController, FieldSuggestionsController],
+  controllers: [ImportTasksController, FieldSuggestionsController, MappingProfilesController],
   providers: [
     ImportTasksService,
     ExcelParserService,

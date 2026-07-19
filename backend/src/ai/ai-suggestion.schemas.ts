@@ -1,17 +1,12 @@
 import { JSONSchemaType } from 'ajv';
 
+import { IMPORT_TRANSFORM_KEYS, ImportTransformKey } from '../import-tasks/import-transform-registry';
+
 export const AI_REVIEW_DECISION = 'NEEDS_FINANCE_REVIEW' as const;
 
-export const TRANSFORM_KEYS = [
-  'IDENTITY_V1',
-  'TRIM_TEXT_V1',
-  'DECIMAL_CANONICAL_V1',
-  'DATE_ISO_WITH_LOCALE_V1',
-  'ENUM_ALIAS_LOOKUP_V1',
-  'PROJECT_ALIAS_LOOKUP_V1'
-] as const;
+export const TRANSFORM_KEYS = IMPORT_TRANSFORM_KEYS;
 
-export type TransformKey = typeof TRANSFORM_KEYS[number];
+export type TransformKey = ImportTransformKey;
 
 export interface ClassificationSuggestionOutput {
   schemaVersion: 'classification/1.0';

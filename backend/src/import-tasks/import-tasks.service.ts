@@ -19,6 +19,7 @@ import {
   ImportRowStatus,
   ImportTaskStatus,
   MappingDecisionType,
+  MappingProfileStatus,
   OcrTaskStatus,
   Prisma,
   RawFileStatus,
@@ -43,8 +44,10 @@ import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
+import { QueryMappingProfilesDto } from './dto/query-mapping-profiles.dto';
 import { MappingInputDto, SaveMappingsDto } from './dto/save-mappings.dto';
 import {
+  EXCEL_PARSER_VERSION,
   ExcelParserService,
   ParsedImportColumn,
   ParsedImportRow,
@@ -53,6 +56,17 @@ import {
   WorkbookInspection,
   WorkbookSelectionRequiredException
 } from './excel-parser.service';
+import {
+  buildExcelStructureFingerprint,
+  buildMappingProfileScopeKey,
+  buildMappingProfileSnapshotHash,
+  MAPPING_PROFILE_POLICY_VERSION,
+  MappingProfileRuleSnapshot
+} from './mapping-profile-fingerprint';
+import {
+  IMPORT_TRANSFORM_REGISTRY_VERSION,
+  isRegisteredImportTransformKey
+} from './import-transform-registry';
 import {
   importTaskDetailInclude,
   ImportTaskDetail,
@@ -1041,6 +1055,82 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return { items: items.map(toImportRow), page, pageSize, total };
   }
 
+  async findMappingProfiles(query: QueryMappingProfilesDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const where: Prisma.MappingProfileWhereInput = {
+      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.templateId ? { templateId: query.templateId } : {}),
+      ...(query.status ? { status: query.status } : {})
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.mappingProfile.findMany({
+        where,
+        include: { rules: { orderBy: { columnIndex: 'asc' } } },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      }),
+      this.prisma.mappingProfile.count({ where })
+    ]);
+    return { items: items.map((profile) => this.presentMappingProfile(profile)), page, pageSize, total };
+  }
+
+  async revokeMappingProfile(id: string, actor: CurrentUser, context: RequestContext) {
+    await this.prisma.$transaction(async (tx) => {
+      const profile = await tx.mappingProfile.findUnique({ where: { id } });
+      if (!profile) throw new NotFoundException('映射配置不存在');
+      if (profile.status === MappingProfileStatus.revoked) return;
+      if (profile.projectId) await acquireProjectWriteLock(tx, profile.projectId);
+
+      const affectedTasks = await tx.importTask.findMany({
+        where: {
+          mappingProfileId: id,
+          status: { notIn: [ImportTaskStatus.confirming, ImportTaskStatus.confirmed, ImportTaskStatus.cancelled] }
+        },
+        select: { id: true }
+      });
+      const taskIds = affectedTasks.map((task) => task.id);
+      if (taskIds.length > 0) {
+        await tx.mappingDecision.deleteMany({
+          where: { importTaskId: { in: taskIds }, mappingType: MappingDecisionType.profile }
+        });
+        await tx.importTask.updateMany({
+          where: { id: { in: taskIds } },
+          data: {
+            mappingProfileId: null,
+            mappingProfileVersion: null,
+            mappingProfileSnapshotHash: null,
+            previewSummaryVersion: null,
+            version: { increment: 1 }
+          }
+        });
+        for (const taskId of taskIds) await this.refreshTaskMappingStatus(tx, taskId);
+      }
+      await tx.mappingProfile.update({
+        where: { id },
+        data: { status: MappingProfileStatus.revoked, isActive: false }
+      });
+      await this.auditLogs.write(tx, actor, 'mapping_profile.revoke', 'mapping_profile', id, {
+        projectId: profile.projectId,
+        templateId: profile.templateId,
+        profileVersion: profile.profileVersion,
+        affectedTaskIds: taskIds
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'mapping_profile_revoked', 'mapping_profile', id, {
+        projectId: profile.projectId,
+        templateId: profile.templateId,
+        profileVersion: profile.profileVersion,
+        affectedTaskCount: taskIds.length
+      });
+    });
+    const profile = await this.prisma.mappingProfile.findUniqueOrThrow({
+      where: { id },
+      include: { rules: { orderBy: { columnIndex: 'asc' } } }
+    });
+    return this.presentMappingProfile(profile);
+  }
+
   async autoMatch(id: string, actor: CurrentUser, context: RequestContext) {
     await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
@@ -1064,6 +1154,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const task = await tx.importTask.findUnique({ where: { id } });
       if (!task) throw new NotFoundException('资源不存在');
       this.assertTaskMutable(task.status);
+      await acquireProjectWriteLock(tx, task.projectId);
 
       const columnIds = dto.mappings.map((item) => item.columnId);
       const columns = await tx.importColumn.findMany({ where: { importTaskId: id, id: { in: columnIds } } });
@@ -1096,7 +1187,6 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       }
 
       const fields = new Map(templateFields.map((item) => [item.fieldId, item.field]));
-      const columnById = new Map(columns.map((column) => [column.id, column]));
       for (const mapping of dto.mappings) {
         const ignored = mapping.ignore === true;
         await tx.mappingDecision.upsert({
@@ -1131,34 +1221,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      if (dto.saveToProfile !== false) {
-        const profile = await this.getOrCreateReviewedProfile(tx, task.templateId, actor);
-        for (const mapping of dto.mappings) {
-          const column = columnById.get(mapping.columnId)!;
-          await tx.mappingProfileRule.upsert({
-            where: {
-              mappingProfileId_normalizedSourceName: {
-                mappingProfileId: profile.id,
-                normalizedSourceName: column.normalizedName
-              }
-            },
-            create: {
-              mappingProfileId: profile.id,
-              sourceName: column.sourceName,
-              normalizedSourceName: column.normalizedName,
-              targetFieldId: mapping.ignore ? null : mapping.targetFieldId,
-              ignored: mapping.ignore === true
-            },
-            update: {
-              sourceName: column.sourceName,
-              targetFieldId: mapping.ignore ? null : mapping.targetFieldId,
-              ignored: mapping.ignore === true
-            }
-          });
-        }
-      }
-
       await this.refreshTaskMappingStatus(tx, id);
+      const profile = dto.saveToProfile === false
+        ? undefined
+        : await this.saveReviewedProfileForTask(tx, id, actor);
       await this.auditLogs.write(tx, actor, 'import_task.mappings_saved', 'import_task', id, {
         mappings: dto.mappings.map((mapping) => ({
           columnId: mapping.columnId,
@@ -1166,11 +1232,16 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           ignored: mapping.ignore === true,
           targetFieldName: mapping.targetFieldId ? fields.get(mapping.targetFieldId)?.fieldName : undefined
         })),
-        savedToProfile: dto.saveToProfile !== false
+        savedToProfile: Boolean(profile),
+        profileId: profile?.id,
+        profileVersion: profile?.profileVersion,
+        structureFingerprint: profile?.sourceStructureFingerprint
       }, context);
       await this.ledgerEvents.write(tx, actor, 'mapping_rules_saved', 'import_task', id, {
         mappingCount: dto.mappings.length,
-        savedToProfile: dto.saveToProfile !== false
+        savedToProfile: Boolean(profile),
+        profileId: profile?.id,
+        profileVersion: profile?.profileVersion
       });
     });
     return toImportTask(await this.findDetailOrThrow(id));
@@ -1969,7 +2040,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         }
       });
       const templateId = await this.ensureTemplateField(tx, suggestion, field.id, actor, context);
-      await this.resolveSuggestion(tx, suggestion, field, FieldSuggestionStatus.approved, actor, templateId);
+      await this.resolveSuggestion(tx, suggestion, field, FieldSuggestionStatus.approved, actor);
       await this.auditLogs.write(
         tx,
         actor,
@@ -1998,7 +2069,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const field = await tx.fieldDefinition.findUnique({ where: { id: dto.fieldId } });
       if (!field || !field.isActive) throw new BadRequestException('目标字段不存在或已停用');
       const templateId = await this.ensureTemplateField(tx, suggestion, field.id, actor, context);
-      await this.resolveSuggestion(tx, suggestion, field, FieldSuggestionStatus.mapped_to_existing, actor, templateId);
+      await this.resolveSuggestion(tx, suggestion, field, FieldSuggestionStatus.mapped_to_existing, actor);
       await this.auditLogs.write(
         tx,
         actor,
@@ -2041,8 +2112,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           confirmedBy: actor.id
         }
       });
-      await this.saveProfileRule(tx, suggestion.templateId, suggestion.importColumn.normalizedName, suggestion.sourceName, null, true, actor);
       await this.refreshTaskMappingStatus(tx, suggestion.importTaskId);
+      await this.saveReviewedProfileForTask(tx, suggestion.importTaskId, actor);
       await this.auditLogs.write(tx, actor, 'field_suggestion.reject', 'field_suggestion', id, {}, context);
       await this.ledgerEvents.write(tx, actor, 'field_suggestion_rejected', 'field_suggestion', id, {});
     });
@@ -2051,9 +2122,11 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
   private async applyAutomaticMappings(
     tx: Prisma.TransactionClient,
-    task: { id: string; templateId: string; projectId: string },
+    task: { id: string; templateId: string; projectId: string; templateVersion: number },
     columns: Array<{
       id: string;
+      sourceColumnId?: string | null;
+      columnIndex?: number;
       sourceName: string;
       normalizedName: string;
       inferredType: string;
@@ -2068,24 +2141,80 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       orderBy: { displayOrder: 'asc' }
     });
     const fields = templateFields.map((item) => item.field);
-    const profiles = await tx.mappingProfile.findMany({
-      where: { templateId: task.templateId, isActive: true },
-      include: { rules: true },
-      orderBy: { updatedAt: 'desc' }
+    const validFieldIds = new Set(fields.map((field) => field.id));
+    const structure = await this.getTaskStructureFingerprint(tx, task.id);
+    const scopeKey = buildMappingProfileScopeKey({
+      projectId: task.projectId,
+      templateId: task.templateId,
+      templateVersion: task.templateVersion,
+      structureFingerprint: structure.fingerprint,
+      transformRegistryVersion: structure.transformRegistryVersion
     });
-    const profileRules = new Map<string, (typeof profiles)[number]['rules'][number]>();
-    for (const profile of profiles) {
-      for (const rule of profile.rules) if (!profileRules.has(rule.normalizedSourceName)) profileRules.set(rule.normalizedSourceName, rule);
+    let profile = await tx.mappingProfile.findUnique({
+      where: { scopeKey },
+      include: { rules: true }
+    });
+    const profileTargetFieldIds = profile?.rules.flatMap((rule) => rule.targetFieldId ? [rule.targetFieldId] : []) ?? [];
+    const expectedProfileSnapshotHash = profile
+      ? buildMappingProfileSnapshotHash({
+          scopeKey,
+          profileVersion: profile.profileVersion,
+          rules: profile.rules
+        })
+      : null;
+    if (
+      profile &&
+      (
+        profile.status !== MappingProfileStatus.active ||
+        !profile.isActive ||
+        profile.projectId !== task.projectId ||
+        profile.templateId !== task.templateId ||
+        profile.templateVersion !== task.templateVersion ||
+        profile.sourceStructureFingerprint !== structure.fingerprint ||
+        profile.fingerprintVersion !== structure.fingerprintVersion ||
+        profile.transformRegistryVersion !== structure.transformRegistryVersion ||
+        profile.policyVersion !== MAPPING_PROFILE_POLICY_VERSION ||
+        profile.approvalSnapshotHash !== expectedProfileSnapshotHash ||
+        profile.rules.length !== columns.length ||
+        new Set(profileTargetFieldIds).size !== profileTargetFieldIds.length ||
+        profile.rules.some((rule) =>
+          !isRegisteredImportTransformKey(rule.transformKey)
+          || (!rule.ignored && (!rule.targetFieldId || !validFieldIds.has(rule.targetFieldId)))
+          || (rule.ignored && rule.targetFieldId !== null)
+        ) ||
+        columns.some((column) => !profile!.rules.some((rule) => this.profileRuleMatchesColumn(rule, column)))
+      )
+    ) {
+      if (profile.status === MappingProfileStatus.active || profile.isActive) {
+        await tx.mappingProfile.update({
+          where: { id: profile.id },
+          data: { status: MappingProfileStatus.stale, isActive: false }
+        });
+      }
+      profile = null;
     }
+    const profileRules = new Map(
+      (profile?.rules ?? []).map((rule) => [rule.sourceColumnId, rule])
+    );
+    await tx.importTask.update({
+      where: { id: task.id },
+      data: {
+        structureFingerprint: structure.fingerprint,
+        fingerprintVersion: structure.fingerprintVersion,
+        transformRegistryVersion: structure.transformRegistryVersion,
+        mappingProfileId: profile?.id ?? null,
+        mappingProfileVersion: profile?.profileVersion ?? null,
+        mappingProfileSnapshotHash: profile?.approvalSnapshotHash ?? null
+      }
+    });
     const existing = await tx.mappingDecision.findMany({ where: { importTaskId: task.id } });
     const existingByColumn = new Map(existing.map((decision) => [decision.importColumnId, decision]));
     const usedFieldIds = new Set(existing.flatMap((decision) => decision.targetFieldId ? [decision.targetFieldId] : []));
-    const validFieldIds = new Set(fields.map((field) => field.id));
 
     for (const column of columns) {
       if (existingByColumn.has(column.id)) continue;
       let match: { field?: FieldDefinition; type: MappingDecisionType; confidence: number; ignored?: boolean } | undefined;
-      const profileRule = profileRules.get(column.normalizedName);
+      const profileRule = profileRules.get(this.sourceColumnId(column));
       if (profileRule && (profileRule.ignored || (profileRule.targetFieldId && validFieldIds.has(profileRule.targetFieldId)))) {
         match = {
           field: fields.find((field) => field.id === profileRule.targetFieldId),
@@ -2106,7 +2235,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             mappingType: match.ignored ? MappingDecisionType.ignored : match.type,
             confidence: new Prisma.Decimal(match.confidence),
             ignored: match.ignored === true,
-            confirmedBy: match.type === MappingDecisionType.profile ? actor.id : undefined
+            confirmedBy: undefined
           }
         });
         if (match.field) usedFieldIds.add(match.field.id);
@@ -2119,6 +2248,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       } else {
         await this.upsertSuggestion(tx, task, column);
       }
+    }
+    if (profile) {
+      await tx.mappingProfile.update({
+        where: { id: profile.id },
+        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() }
+      });
     }
   }
 
@@ -2442,8 +2577,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     suggestion: Awaited<ReturnType<ImportTasksService['findSuggestionOrThrow']>>,
     field: FieldDefinition,
     status: FieldSuggestionStatus,
-    actor: CurrentUser,
-    templateId = suggestion.templateId
+    actor: CurrentUser
   ) {
     await tx.fieldSuggestion.update({
       where: { id: suggestion.id },
@@ -2467,46 +2601,269 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         confirmedBy: actor.id
       }
     });
-    await this.saveProfileRule(
-      tx,
-      templateId,
-      suggestion.importColumn.normalizedName,
-      suggestion.sourceName,
-      field.id,
-      false,
-      actor
-    );
     await this.refreshTaskMappingStatus(tx, suggestion.importTaskId);
+    await this.saveReviewedProfileForTask(tx, suggestion.importTaskId, actor);
   }
 
-  private async saveProfileRule(
+  private async saveReviewedProfileForTask(
     tx: Prisma.TransactionClient,
-    templateId: string,
-    normalizedSourceName: string,
-    sourceName: string,
-    targetFieldId: string | null,
-    ignored: boolean,
+    taskId: string,
     actor: CurrentUser
   ) {
-    const profile = await this.getOrCreateReviewedProfile(tx, templateId, actor);
-    await tx.mappingProfileRule.upsert({
-      where: {
-        mappingProfileId_normalizedSourceName: {
-          mappingProfileId: profile.id,
-          normalizedSourceName
+    const task = await tx.importTask.findUnique({
+      where: { id: taskId },
+      include: {
+        columns: {
+          include: { decision: { include: { targetField: true } } },
+          orderBy: { columnIndex: 'asc' }
         }
+      }
+    });
+    if (!task) throw new NotFoundException('导入任务不存在');
+    if (task.columns.length === 0 || task.columns.some((column) => !column.decision)) return undefined;
+    await acquireProjectWriteLock(tx, task.projectId);
+
+    const structure = await this.getTaskStructureFingerprint(tx, task.id);
+    const scopeKey = buildMappingProfileScopeKey({
+      projectId: task.projectId,
+      templateId: task.templateId,
+      templateVersion: task.templateVersion,
+      structureFingerprint: structure.fingerprint,
+      transformRegistryVersion: structure.transformRegistryVersion
+    });
+    const existing = await tx.mappingProfile.findUnique({ where: { scopeKey } });
+    const profileVersion = (existing?.profileVersion ?? 0) + 1;
+    const rules: MappingProfileRuleSnapshot[] = task.columns.map((column) => ({
+      sourceColumnId: this.sourceColumnId(column),
+      columnIndex: column.columnIndex,
+      normalizedSourceName: column.normalizedName,
+      sourceInferredType: column.inferredType,
+      targetFieldId: column.decision!.ignored ? null : column.decision!.targetFieldId,
+      transformKey: this.mappingTransformKey(column.decision!.targetField?.fieldType),
+      ignored: column.decision!.ignored
+    }));
+    const approvalSnapshotHash = buildMappingProfileSnapshotHash({ scopeKey, profileVersion, rules });
+    const now = new Date();
+
+    await tx.mappingProfile.updateMany({
+      where: {
+        projectId: task.projectId,
+        templateId: task.templateId,
+        status: MappingProfileStatus.active,
+        scopeKey: { not: scopeKey }
       },
-      create: { mappingProfileId: profile.id, normalizedSourceName, sourceName, targetFieldId, ignored },
-      update: { sourceName, targetFieldId, ignored }
+      data: { status: MappingProfileStatus.stale, isActive: false }
+    });
+
+    const profile = existing
+      ? await tx.mappingProfile.update({
+          where: { id: existing.id },
+          data: {
+            templateVersion: task.templateVersion,
+            profileVersion,
+            sourceStructureFingerprint: structure.fingerprint,
+            fingerprintVersion: structure.fingerprintVersion,
+            transformRegistryVersion: structure.transformRegistryVersion,
+            policyVersion: MAPPING_PROFILE_POLICY_VERSION,
+            approvalSnapshotHash,
+            status: MappingProfileStatus.active,
+            isActive: true,
+            reviewedBy: actor.id,
+            approvedAt: now,
+            createdFromTaskId: task.id
+          }
+        })
+      : await tx.mappingProfile.create({
+          data: {
+            projectId: task.projectId,
+            templateId: task.templateId,
+            templateVersion: task.templateVersion,
+            name: `财务确认-${structure.fingerprint.slice(0, 12)}`,
+            profileVersion,
+            sourceStructureFingerprint: structure.fingerprint,
+            fingerprintVersion: structure.fingerprintVersion,
+            transformRegistryVersion: structure.transformRegistryVersion,
+            policyVersion: MAPPING_PROFILE_POLICY_VERSION,
+            scopeKey,
+            approvalSnapshotHash,
+            status: MappingProfileStatus.active,
+            isActive: true,
+            reviewedBy: actor.id,
+            approvedAt: now,
+            createdFromTaskId: task.id
+          }
+        });
+
+    await tx.mappingProfileRule.deleteMany({ where: { mappingProfileId: profile.id } });
+    await tx.mappingProfileRule.createMany({
+      data: task.columns.map((column, index) => ({
+        mappingProfileId: profile.id,
+        sourceColumnId: rules[index].sourceColumnId,
+        columnIndex: column.columnIndex,
+        sourceName: column.sourceName,
+        normalizedSourceName: column.normalizedName,
+        sourceInferredType: column.inferredType,
+        targetFieldId: rules[index].targetFieldId,
+        transformKey: rules[index].transformKey,
+        ignored: rules[index].ignored
+      }))
+    });
+    await tx.importTask.update({
+      where: { id: task.id },
+      data: {
+        structureFingerprint: structure.fingerprint,
+        fingerprintVersion: structure.fingerprintVersion,
+        transformRegistryVersion: structure.transformRegistryVersion,
+        mappingProfileId: profile.id,
+        mappingProfileVersion: profile.profileVersion,
+        mappingProfileSnapshotHash: profile.approvalSnapshotHash
+      }
+    });
+    return profile;
+  }
+
+  private async getTaskStructureFingerprint(tx: PrismaWriter, taskId: string) {
+    const task = await tx.importTask.findUnique({
+      where: { id: taskId },
+      select: {
+        fileName: true,
+        templateId: true,
+        templateVersion: true,
+        parserVersion: true,
+        sheets: {
+          orderBy: { sheetIndex: 'asc' },
+          select: {
+            sheetIndex: true,
+            sheetName: true,
+            selectedHeaderRows: true,
+            mergedRanges: true
+          }
+        },
+        columns: {
+          orderBy: { columnIndex: 'asc' },
+          select: {
+            sourceColumnId: true,
+            columnIndex: true,
+            columnLetter: true,
+            headerParts: true,
+            normalizedName: true,
+            inferredType: true
+          }
+        }
+      }
+    });
+    if (!task || task.sheets.length === 0 || task.columns.length === 0) {
+      throw new ConflictException('导入结构尚未解析完成');
+    }
+    const extension = extname(task.fileName).toLowerCase();
+    if (extension !== '.xls' && extension !== '.xlsx') {
+      throw new ConflictException('导入结构来源格式不受支持');
+    }
+    return buildExcelStructureFingerprint({
+      workbookType: extension.slice(1) as 'xls' | 'xlsx',
+      parserVersion: task.parserVersion ?? EXCEL_PARSER_VERSION,
+      templateId: task.templateId,
+      templateVersion: task.templateVersion,
+      transformRegistryVersion: IMPORT_TRANSFORM_REGISTRY_VERSION,
+      sheets: task.sheets,
+      columns: task.columns
     });
   }
 
-  private async getOrCreateReviewedProfile(tx: Prisma.TransactionClient, templateId: string, actor: CurrentUser) {
-    return tx.mappingProfile.upsert({
-      where: { templateId_name: { templateId, name: '财务人工确认' } },
-      create: { templateId, name: '财务人工确认', reviewedBy: actor.id },
-      update: { isActive: true, reviewedBy: actor.id }
-    });
+  private sourceColumnId(column: { sourceColumnId?: string | null; columnIndex?: number }) {
+    return column.sourceColumnId ?? `column:${column.columnIndex ?? 0}`;
+  }
+
+  private profileRuleMatchesColumn(
+    rule: {
+      sourceColumnId: string;
+      columnIndex: number;
+      normalizedSourceName: string;
+      sourceInferredType: string;
+    },
+    column: {
+      sourceColumnId?: string | null;
+      columnIndex?: number;
+      normalizedName: string;
+      inferredType: string;
+    }
+  ) {
+    return rule.sourceColumnId === this.sourceColumnId(column)
+      && rule.columnIndex === (column.columnIndex ?? 0)
+      && rule.normalizedSourceName === column.normalizedName
+      && rule.sourceInferredType === column.inferredType;
+  }
+
+  private mappingTransformKey(fieldType?: FieldType) {
+    if (fieldType === FieldType.money || fieldType === FieldType.number) return 'DECIMAL_CANONICAL_V1';
+    if (fieldType === FieldType.date) return 'DATE_ISO_WITH_LOCALE_V1';
+    if (fieldType === FieldType.select) return 'ENUM_ALIAS_LOOKUP_V1';
+    if (fieldType === FieldType.text || fieldType === FieldType.textarea) return 'TRIM_TEXT_V1';
+    return 'IDENTITY_V1';
+  }
+
+  private presentMappingProfile(profile: {
+    id: string;
+    projectId: string | null;
+    templateId: string;
+    templateVersion: number;
+    name: string;
+    profileVersion: number;
+    sourceStructureFingerprint: string | null;
+    fingerprintVersion: string | null;
+    transformRegistryVersion: string | null;
+    policyVersion: string | null;
+    approvalSnapshotHash: string | null;
+    status: MappingProfileStatus;
+    usageCount: number;
+    lastUsedAt: Date | null;
+    approvedAt: Date | null;
+    reviewedBy: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    rules: Array<{
+      id: string;
+      sourceColumnId: string;
+      columnIndex: number;
+      sourceName: string;
+      normalizedSourceName: string;
+      sourceInferredType: string;
+      targetFieldId: string | null;
+      transformKey: string;
+      ignored: boolean;
+    }>;
+  }) {
+    return {
+      id: profile.id,
+      projectId: profile.projectId,
+      templateId: profile.templateId,
+      templateVersion: profile.templateVersion,
+      name: profile.name,
+      profileVersion: profile.profileVersion,
+      sourceStructureFingerprint: profile.sourceStructureFingerprint,
+      fingerprintVersion: profile.fingerprintVersion,
+      transformRegistryVersion: profile.transformRegistryVersion,
+      policyVersion: profile.policyVersion,
+      approvalSnapshotHash: profile.approvalSnapshotHash,
+      status: profile.status,
+      usageCount: profile.usageCount,
+      lastUsedAt: profile.lastUsedAt?.toISOString(),
+      approvedAt: profile.approvedAt?.toISOString(),
+      reviewedBy: profile.reviewedBy,
+      createdAt: profile.createdAt.toISOString(),
+      updatedAt: profile.updatedAt.toISOString(),
+      rules: profile.rules.map((rule) => ({
+        id: rule.id,
+        sourceColumnId: rule.sourceColumnId,
+        columnIndex: rule.columnIndex,
+        sourceName: rule.sourceName,
+        normalizedSourceName: rule.normalizedSourceName,
+        sourceInferredType: rule.sourceInferredType,
+        targetFieldId: rule.targetFieldId,
+        transformKey: rule.transformKey,
+        ignored: rule.ignored
+      }))
+    };
   }
 
   private async ensureTemplateField(
@@ -2804,7 +3161,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private async assertOwnedParse(tx: Prisma.TransactionClient, id: string, leaseToken: string) {
     const task = await tx.importTask.findUnique({
       where: { id },
-      select: { id: true, templateId: true, projectId: true, status: true, leaseToken: true }
+      select: {
+        id: true,
+        templateId: true,
+        templateVersion: true,
+        projectId: true,
+        status: true,
+        leaseToken: true
+      }
     });
     if (!task || task.status !== ImportTaskStatus.parsing || task.leaseToken !== leaseToken) {
       throw new ImportParseLeaseLostError();
