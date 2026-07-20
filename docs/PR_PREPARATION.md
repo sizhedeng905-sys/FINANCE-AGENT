@@ -1,32 +1,49 @@
-# GitHub PR 准备
+# GitHub Draft PR 准备
 
-更新日期：2026-07-15
+更新日期：2026-07-20
 
 ## 当前 PR
 
-标题：
+- 仓库：`sizhedeng905-sys/FINANCE-AGENT`
+- 分支：`agent/b8-stable-hardening`
+- 目标：`main`
+- Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
+- 状态：保持 Draft，不 merge、不标记 Ready
+- 远端状态：本地分支相对已知远端领先；此前两次推送因 `github.com:443` 连接失败，只有网络探针恢复后才重试
+
+PR #4 是 B8 稳定化、R 系列补救和 M0-M8 AI 映射补充任务的累计审查入口。自动化工程门禁通过不等于真实财务验收、目标环境验证或生产授权。
+
+## 当前范围
+
+- R1-R8.9：前端真实性、安全日志、容量语义、备份恢复、供应链、财务并发/Decimal/幂等、retention dry-run、step-up 框架和本机 Staging 工程。
+- M0-M2：现有 Excel/OCR/Provider/Worker 复用、版本化证据 IR、严格 AI Schema、模式与 kill switch、不可变 Prompt Registry 和完整调用版本向量。
+- M3-M4：Excel 列级 AI 建议、Mapping Profile、OCR evidence 建议、review revision、ValidationSnapshot 和 bbox 人工复核。
+- M5：OCR/Excel 双人财务批准、最终重鉴权、禁止上传者自审批、幂等批准快照和事务写入。
+- M5.2：按 H01 每个有效明细行生成一条记录；普通错误明细不能被排除后部分发布，疑似汇总行必须由财务处置，整批失败关闭。
+- M6-M7：canonical ReportSnapshot、Decimal/分币种固定查询、严格 Claim grounding、并发快照复用、攻击性测试、Provider 降级和资源边界。
+- M8：架构/API/运行手册、迁移路径、Prompt 漂移、最终证据、README 和 Draft PR 交接。
+
+## 数据库迁移
+
+当前 Prisma 目录共 41 条 migration。M0-M8 的增量为：
 
 ```text
-test: complete real business data validation through B7
+20260719000000_ingestion_ir_evidence
+20260719010000_ai_prompt_registry_contracts
+20260719020000_mapping_profile_structure_scope
+20260719021000_mapping_profile_rule_constraints
+20260719030000_ai_task_request_identity
+20260720161500_ai_task_execution_lease
+20260720173000_ocr_review_revisions
+20260720203000_ocr_approval_snapshots
+20260720220000_excel_review_validation_snapshots
+20260720233000_report_snapshots_and_grounded_narratives
+20260720234000_report_audit_maintenance_guard
+20260720235000_remove_unused_currency_write_index
+20260720235500_report_narrative_version_identity
 ```
 
-工作分支：`agent/real-business-data-validation`。GitHub Draft PR：[#3](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/3)。B7 工程结果可以提交和推送；财务签字与 OCR 标签未完成前保持 Draft，不宣称生产就绪、不 merge。
-
-## 完成内容
-
-- PostgreSQL dev/test 可重复初始化，Prisma schema、18 个 migration、seed 和 40 张预期业务表结构核对通过。
-- 前端所有 C-1 至 C-11 领域完成显式 Mock/API Repository，API 错误不回退 Mock。
-- 工单完整审批、文件、通知、规则、confirmed 经营记录、报表和老板结构化 AI 工具形成真实闭环。
-- 阶段 9/B2 支持真实 `.xlsx` 与隔离转换 `.xls` 上传、解析、映射、错误行隔离、字段建议和幂等事务确认。
-- 阶段 10 支持 OCR Task、Provider、证据/置信度、纠错、重试和幂等确认入库。
-- 模型运行时提供部署/路由登记、健康检查、Schema、超时、重试、熔断、并发和安全日志；真实模型默认 disabled。
-- 本地权重校验、PaddleOCR-VL 适配器、文本/OCR 常驻编排和 VL/Embedding 按需切换已实现；RTX 5090 真实常驻、切换、恢复和并发推理通过。
-- CI、CORS、Helmet、请求/登录限流、就绪探针、结构化日志、生产 Swagger 开关、仓库卫生检查和文档完成。
-- 真实业务数据 B0-B7 工程门禁完成；财务 L3 对账和 OCR 人工标签记录在 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`。
-
-## Migration
-
-本分支包含阶段 4-10、安全增强和真实业务数据适配 migration。当前完整目录共 18 个；新增环境必须执行：
+已验证空库安装 41 条和上一版本 40→41 升级；最终结构含 222 个索引和 89 个外键。migration 为前向流程，生产不得运行 `prisma migrate dev` 或开发 seed。
 
 ```bash
 cd backend
@@ -35,64 +52,62 @@ npm run prisma:generate
 npm run prisma:migrate:deploy
 ```
 
-Migration 是前向、非破坏性建表/加字段流程。不要在生产使用 `prisma migrate dev`，不要运行开发 seed。
+## 配置边界
 
-## 环境变量
+- 必需：`DATABASE_URL`、高熵 `JWT_SECRET`、`PORT`；production 还要求明确的 CORS、TLS、存储、扫描、Redis、Metrics 和 OTLP 配置。
+- `AI_INGESTION_MODE`、`AI_REPORT_MODE` 只接受 `disabled|suggest`，缺失默认 `disabled`。
+- `AI_GLOBAL_KILL_SWITCH` 优先于项目、模板和在途任务的新 Provider 调用。
+- 外部 Provider 在 H12 未批准时拒绝真实或未知数据；失败转人工，不静默冒充 Mock 成功。
+- 默认文本模型与 OCR 常驻，VL/Embedding 按需；模型资产不得提交 Git。
 
-必须：`DATABASE_URL`、`JWT_SECRET`、`PORT`。生产必须显式提供 `CORS_ORIGINS`。
+完整清单见 `backend/.env.example`、`backend/.env.test.example` 和 `docs/LOCAL_SETUP.md`。
 
-运行安全：`NODE_ENV`、`SWAGGER_ENABLED`、`TRUST_PROXY_HOPS`、`REQUEST_RATE_LIMIT_WINDOW_MS`、`REQUEST_RATE_LIMIT_MAX`、`UPLOAD_DIR`、`MAX_FILE_SIZE_MB`。
+## 当前自动化证据
 
-AI/OCR：`AI_*`、`OCR_*`、`MODEL_*`、`AI_MAX_CONCURRENCY`、`OCR_MAX_CONCURRENCY`。默认 `AI_PROVIDER=mock`、`OCR_PROVIDER=mock`，无需 GPU。
+2026-07-20 M7 全量基线：
 
-测试：`TEST_DATABASE_URL` 必须指向名称以 `_test` 结尾的专用数据库。完整清单见 `backend/.env.example`、`backend/.env.test.example` 和 `docs/LOCAL_SETUP.md`。
+| 门禁 | 结果 |
+| --- | --- |
+| 后端 Jest | 47/47 suites，410/410 tests |
+| PostgreSQL 集成 | 10/10 suites，97/97 tests |
+| Playwright API | 17/17 tests，teardown 后 0 文件残留 |
+| Migration | 空库 41；40→41；222 indexes、89 foreign keys |
+| 前端 runtime | 4/4 |
+| 前后端 build | 通过；Vite 3,147 modules |
+| 依赖审计 | 根目录与 backend 均 0 vulnerabilities |
+| Repository hygiene | M7 706；M8 文档加入后 708 tracked/candidate files |
+| Prompt 漂移定向 | 4/4 unit + 3/3 PostgreSQL；manifest/seed/Schema/hash 漂移失败关闭 |
 
-## 测试证据
+49,999 行 Worker 的两次全量样本为 46.014 秒和 143.199 秒，均低于现有 180 秒断言，但波动明显；不得据此宣称目标环境稳定 p95。
 
-2026-07-15 B7 本地：
+## Reviewer 检查顺序
 
-- 前端 production build：通过；保留 bundle 大于 500 kB 的非阻断警告。
-- 后端 production build：通过。
-- 后端单测：17 suites，184 tests，通过 184，失败 0。
-- PostgreSQL 集成：1 suite，30 tests，通过 30，失败 0。
-- Playwright：14 tests，通过 14，失败 0；teardown 后测试数据库和磁盘孤儿均为 0。
-- Prisma format/validate/generate/migrate status/db:verify：通过；40 张业务表，无缺失/意外表。
-- PaddleOCR 适配器纯逻辑：4 tests，通过 4，失败 0。
-- 模型资产：文本、OCR、VL、Embedding 全部完整；文本/OCR healthy，VL/Embedding 按需离线。
-- 仓库卫生：424 个 tracked/candidate 文件通过。
-- 生产依赖审计：根目录和后端均为 0 vulnerabilities。
-- 原始样本：112/112 份 SHA-256 不变，真实文件、模型和本地报告未进入 Git。
+1. 先读 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md` 和 `docs/B8_BLOCKER_MATRIX.md`，确认没有把 H 门禁写成完成。
+2. 核对 M5.2：错误明细不能被排除，汇总候选必须显式处置，最终 staging 只能整批原子发布。
+3. 核对 M5：最终事务重读账号、角色、项目、来源、模板、证据、版本和 hash，上传者不能自审批。
+4. 核对 M2-M4：AI 仅能引用服务端模板/字段/transform/evidence 白名单，输出不能到达正式记录写服务。
+5. 核对 M6-M7：报告只读 `confirmed + actual`，Decimal 分币种，AI Claim 必须逐项与 Snapshot JSON Pointer 一致。
+6. 核对 41 条 migration 的空库与升级路径、唯一约束、不可变触发器和回滚边界。
+7. 查看 `docs/PR4_REVIEW_GUIDE.md` 执行独立代码/安全审查；在 H15/H16 前保持 Draft。
 
-## 手工验收
+## 回滚原则
 
-1. 按 `docs/LOCAL_SETUP.md` 初始化 dev/test 数据库并启动前后端 API 模式。
-2. 用八个中英文账号登录；验证错误密码、停用账号、登出后旧 Token。
-3. employee 创建并提交工单，finance/reviewer/boss 完成审批，确认生成 confirmed 经营记录、时间线、通知和报表。
-4. finance 上传合成 Excel，检查映射、错误行和合法行入库；重复确认不得重复生成记录。
-5. finance 上传合成 PDF，检查 OCR 证据、修改字段、确认入库；确认前不得出现经营记录。
-6. 检查 `/api/health/ready`、允许/拒绝 Origin、安全头、Swagger 开关及非授权 401/403。
+- 应用回滚到已锁定的上一镜像/提交；旧代码应忽略新增表和可空字段。
+- 数据库 migration 不自动向下回滚。先停止写流量并保护当前快照，再使用已验证 manifest 做隔离恢复或受控前向修复。
+- 导入/OCR 已提交数据通过批准快照、source、commit、audit、ledger 和 idempotency 关联定位，不物理删除审计链。
+- AI 可用全局 kill switch 立即停止新调用；手工映射和人工复核路径保持可用。
+- ReportSnapshot、Narrative 和 Claim 是不可变审计事实；临时 Provider payload 清理不能删除 canonical Snapshot。
 
-## 兼容性
+## 未关闭门禁
 
-- 前端仍支持 `VITE_APP_DATA_MODE=mock`，无数据库演示不受影响。
-- 成功/错误继续使用 `{ code, message, data }`，现有 `src/api` 类型保持兼容。
-- OCR 同时保留 `/api/ocr-tasks` 和 `/api/ocr/tasks` 路由别名。
-- 开发文件仍可本地存储；生产对象存储尚未实现。
+- `M0-INPUT-001`：受保护的 `docs/ai/FINANCE_AGENT_AI_PROMPT_CATALOG_V0_1.md` 当前为 0 字节，运行时固定 manifest 已验证，但无法逐字核对目录正文。
+- H01：每行明细规则已实现；真实汇总行样例、识别特征和正式签名未齐。
+- H02/H07/H10/H11/H12/H14：负数/更正、附件清单、职责分离/MFA、文件政策、外部 Provider 和保留期限仍缺正式执行清单。
+- H04-H09：OCR/AI 真值、真实逐分对账、报表口径和不可重识别脱敏仍需独立人工证据。
+- H13：目标 Linux、域名、GPU、对象存储、告警、RPO/RTO 和正式容量预算未提供。
+- H15/H16：独立代码/安全 Review 与最终 UAT/Go Live 未完成。
+- GitHub push、远端 Build/CI 和 Draft PR 更新在网络恢复前为 `blocked_external`。
 
-## 回滚
+## 提交边界
 
-- 应用回滚：部署上一个镜像/提交；旧代码应忽略新增表和可空字段。
-- 数据库不建议自动向下 migration。上线前做快照；发生问题时先停止写流量、回滚应用，再按已验证备份恢复方案处理数据库。
-- 导入/OCR/审批产生的数据通过审计、ledger 和 source/idempotency 标识定位；不要直接删除生产审计链。
-- 新模型路由可先设为 disabled，不影响 Mock 和非模型核心业务。
-
-## 保留项与发布门禁
-
-- OCR 字段准确率未声明达标；17 份匿名样本必须由财务完成人工真值复核。
-- L3 金额、入账粒度、负数/冲销、主表/凭证和 35 页拆分政策必须由财务签字。
-- 跨 Excel/OCR/手工来源的业务级重复仍按用户决定暂缓，当前以 SHA-256、任务幂等和人工复核降级。
-- 对象存储、病毒扫描、共享限流、监控告警、密钥托管和生产备份仍是上线任务。
-
-## 提交与审查边界
-
-批次 A-B7 已按功能、测试和验收边界形成独立提交。最终推送前只暂存项目实现与公开聚合文档；用户模型目录、下载脚本、真实 `.env`、上传物、样本和 `.realdata-test/` 私有报告不得进入提交。PR 保持 Draft，直到外部签字门禁关闭。
+只暂存明确列出的跟踪实现和公开汇总文档。`.env`、模型权重、下载脚本、真实/本地数据、上传物、证书、`.realdata-test/`、测试录像和用户未跟踪资料不得进入提交。不得 force push、历史改写、merge 或标记 Ready。

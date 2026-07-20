@@ -213,8 +213,10 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | M6-REPORT-SNAPSHOT-001 | P0 | canonical ReportSnapshot/Claim | engineering_verified | M6 |
 | M7-REPORT-CONCURRENCY-001 | P1 | 相同报告快照并发请求偶发 409 | verified | M7 |
 | M7-ATTACK-BUDGET-001 | P1 | 攻击、资源和降级门禁 | engineering_verified | M7 |
-| M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | open | M8 |
+| M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | engineering_verified | M8；远端 push/CI blocked_external |
 
 M6 关闭证据见 `docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`：固定 confirmed actual 查询、repeatable-read 水位、Decimal 分币种、来源版本/hash、不可变数据库行、精确 Claim 白名单、独立 report kill switch、Provider 失败关闭及真实 API 浏览器链均已通过。H06/H08 的真实对账、正式指标口径、标准答案和签字仍为人工门禁，不因工程 P0 关闭而自动通过。
 
 M7 关闭证据见 `docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`：六路 Snapshot/Narrative 并发、权限、kill switch、Provider 超时/截断、秘密脱敏、4,999 至 50,001 行、文件字节边界、Worker 恢复、模型健康、迁移双路径和 Staging 静态门禁均有自动断言。目标 Linux、外部 Provider、真实准确率、正式性能 p95、独立审查和最终 UAT 继续引用 H04-H16，不因工程门禁通过而关闭。
+
+M8 收口证据见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`：Prompt manifest/guard 4/4 unit 与空库 41 migration 后 registry/seed/Schema/hash 3/3 PostgreSQL、前后端 build、runtime 4/4、迁移双路径、708 文件卫生和两套 0 vulnerability 审计通过。`M0-INPUT-001`、GitHub push/远端 CI 和 H01-H16 不因 M8 工程收口而关闭。

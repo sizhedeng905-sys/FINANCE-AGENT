@@ -84,7 +84,7 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-20, M7 attack, resource, and Provider degradation acceptance):
+Current verification baseline (2026-07-20, M8 engineering handoff):
 
 - Backend build and Prisma validation pass. Migration-path verification installs all 41 migrations on an empty database and upgrades the 40-migration predecessor to the current schema.
 - Jest: 47/47 suites and 410/410 tests.
@@ -92,6 +92,7 @@ Current verification baseline (2026-07-20, M7 attack, resource, and Provider deg
 - Root Playwright acceptance: 17/17 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
+- M8 re-ran frontend runtime 4/4, both production builds, the 41-migration empty and 40-to-41 upgrade paths, repository hygiene for 708 tracked/candidate files, and both production dependency audits. Prompt manifest/guard drift checks pass 4/4 unit tests and 3/3 PostgreSQL tests after an empty-database migration/seed.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.

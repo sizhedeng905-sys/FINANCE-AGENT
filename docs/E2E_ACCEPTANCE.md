@@ -1,6 +1,6 @@
 # E2E 验收说明
 
-更新日期：2026-07-15
+更新日期：2026-07-20
 
 ## 目标
 
@@ -46,28 +46,31 @@ npx playwright show-trace test-results/<case>/trace.zip
 
 ## 自动化覆盖
 
-后端真实 PostgreSQL 集成测试共 30 条，覆盖：
+后端真实 PostgreSQL 集成测试为 10/10 suites、97/97 tests，覆盖：
 
 - 四角色权限、员工资源归属、finance/boss 管理边界；
 - 无 Token、伪造 Token、过期 Token、旧 `tokenVersion`、停用和登出失效；
 - 身份字段伪造、合法/非法状态跳转、补充材料、重复和并发终审；
 - 动态字段类型、模板归属、项目归档、幂等和事务回滚；
 - 文件签名/MIME/扩展名/大小、归属授权和原件保留；
-- confirmed 报表口径、北京时间边界及 AI 工具一致性。
-- 真实 `.xlsx`、隔离 `.xls`、Sheet/合并表头、公式缓存、媒体流式隔离、字段建议/Profile、错误行部分成功、并发确认和项目结构统计。
-- 合成 PDF、OCR低置信度、纠错证据、未确认不入库、失败重试、并发确认和项目结构统计。
-- 模型 deployment/route 只暴露安全元数据，权限边界和显式健康检查。
+- confirmed actual 报表口径、北京时间边界、Decimal 分币种、canonical ReportSnapshot/source hash、严格 AI Claim 和并发快照复用；
+- 真实 `.xlsx`、隔离 `.xls`、Sheet/合并表头、公式缓存、媒体流式隔离、字段建议/Profile、AI 列映射、revision/revalidate、阻断错误整批失败关闭、双人批准和项目结构统计；
+- 4,999/5,000/5,001/30,196/49,999/50,000/50,001 行、服务端分页、响应体预算、Worker crash/lease 接管和原子发布；
+- 合成 PDF、OCR IR/page/token/bbox、AI evidence mapping、人工 override、旧 ValidationSnapshot 失效、自审批拒绝、权限撤销、失败重试和并发批准；
+- 模型 deployment/route/prompt/version vector 只暴露安全元数据，外部真实数据失败关闭，kill switch、超时、截断 JSON 和注入输出不生成正式记录或 Narrative；
+- 文件大小上限减一/恰好/超一字节、低磁盘 507、隔离区/对象残留、幂等重放、通知 outbox 和 retention dry-run。
 
-Playwright 共 14 条，覆盖：
+Playwright 共 17 条，覆盖：
 
 - employee、finance、reviewer、boss 真实登录及默认首页；
 - 员工创建提交、财务通过、复核并自动规则检查、老板终审；
 - 终审生成 confirmed BusinessRecord，数据中心和老板日报可见；
 - 401 自动清理会话、网络错误显示 requestId、客户端 403 页面；
 - Mock 模式明确显示且后端请求数为 0。
-- 财务真实上传 `.xlsx`、人工忽略未知列、错误行隔离、合法行入库及本月报表可见。
-- 财务在含媒体 XLSX 中看到隔离提示，并显式授权公式缓存后解析。
-- 财务真实上传 PDF、读取 OCR 证据、人工修改金额、确认后生成 OCR 来源经营记录。
+- 财务真实上传 `.xlsx`，任何阻断行错误都不能部分入账；预览只加载当前服务端页；
+- 财务在公式 XLSX 中显式授权缓存证据，另一名财务重新校验并批准；旧 `.xls` 走隔离转换；
+- 财务真实上传 PDF，在原件画布/bbox 证据上修改 OCR 字段，另一名财务批准后才生成经营记录；
+- 老板报告展示 canonical Snapshot、source digest、warning、Provider/Prompt 和逐条 `sourcePath`；
 - CORS 白名单、拒绝未知 Origin、安全响应头和 PostgreSQL readiness。
 
 ## CI
@@ -76,14 +79,15 @@ Playwright 共 14 条，覆盖：
 
 ## 当前证据
 
-2026-07-15 B7 本地验收结果：
+2026-07-20 M7 全量与 M8 收口验收结果：
 
 - 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：17 suites，184 tests，失败 0；
-- PostgreSQL 集成：1 suite，30 tests，失败 0；
-- Playwright：14 tests，失败 0；
+- 后端单测：47 suites，410 tests，失败 0；
+- PostgreSQL 集成：10 suites，97 tests，失败 0；
+- Playwright：17 tests，失败 0；
 - E2E teardown：测试数据库和 `backend/test-uploads/e2e` 均为 0 残留；
-- Prisma：18 个 migration，40 张预期业务表，无缺失或意外表；
-- 仓库卫生：424 个 tracked/candidate 文件通过；
+- Prisma：41 个 migration，空库和 40→41 升级通过，222 个索引、89 个外键；
+- Prompt Registry 漂移：4/4 unit 与空库 41 migration 后 3/3 PostgreSQL 通过；
+- 仓库卫生：708 个 tracked/candidate 文件通过；
 - 根目录和后端生产依赖审计：0 vulnerabilities。

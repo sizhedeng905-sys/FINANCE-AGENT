@@ -1,10 +1,10 @@
 # 系统架构
 
-更新日期：2026-07-17
+更新日期：2026-07-20
 
 ## 范围
 
-当前版本完成物流企业财务运营第一版闭环，以及阶段 9 Excel 导入、阶段 10 OCR 人工确认框架。核心业务以 PostgreSQL 为事实来源；前端 Mock 只用于显式离线演示，不能在 API 失败时自动兜底。
+当前版本完成物流企业财务运营第一版闭环、阶段 9 Excel、阶段 10 OCR，以及 M0-M8 的 AI 建议、双人财务批准、不可变报告快照、攻击性工程验收和最终证据收口。核心业务以 PostgreSQL 为事实来源；前端 Mock 只用于显式离线演示，不能在 API 失败时自动兜底。真实业务口径、模型准确率、目标 Staging 与生产发布仍受 H01-H16 门禁约束。
 
 ```text
 React/Vite
@@ -32,6 +32,15 @@ Observability
   -> Prometheus / Alertmanager
   -> Loki / Promtail
   -> Tempo OTLP / Grafana
+
+Excel deterministic parser ----\
+                                -> versioned IR -> AI suggestion -> finance revision
+OCR Provider + evidence --------/                                  -> revalidate
+                                                                  -> immutable approval snapshot
+                                                                  -> atomic BusinessRecord commit
+
+confirmed + actual records -> fixed Decimal query -> canonical ReportSnapshot
+                                                   -> constrained AI narrative suggestion
 ```
 
 ## 前端边界
@@ -60,10 +69,12 @@ Observability
 | 经营记录 | BusinessRecord、RecordValue、LedgerEvent |
 | 审批 | WorkOrder、Approval、WorkOrderTimeline、WorkOrderAttachment |
 | 文件与通知 | RawFile、Notification、NotificationReceipt |
-| 规则与 AI | RiskRule、RuleRunResult、AiAnomaly、AiConversation、AiMessage、AiCallLog |
-| Excel | ImportTask、ImportSheet、ImportColumn、ImportRow、MappingProfile、MappingDecision、FieldSuggestion |
-| OCR | OcrTask、OcrAttempt、OcrCorrection |
-| 模型运行时 | ModelDeployment、TaskModelRoute、AiTask、AiCallAttempt |
+| 规则与 AI | RiskRule、RuleRunResult、AiAnomaly、AiConversation、AiMessage、AiCallLog、AiPromptVersion |
+| Excel | ImportTask、ImportSheet、ImportColumn、ImportRow、MappingProfile、MappingProfileRule、MappingDecision、FieldSuggestion |
+| OCR | OcrTask、OcrAttempt、OcrCorrection；任务内冻结 IR、review/validation/approval snapshot |
+| 模型运行时 | ModelDeployment、TaskModelRoute、AiTask、AiCallAttempt、AiModelConfig |
+| 报告证据 | ReportSnapshot、ReportSnapshotSource、ReportNarrative、AiFinancialClaim |
+| 写入治理 | IdempotencyKey、StepUpGrant、RetentionRun、RetentionLegalHold |
 
 动态字段由 `field_definitions` 和关系表定义，新增字段不会修改数据库列。动态值按类型落入 `record_values.value_text/value_number/value_date/value_json`，统计金额和数值不依赖字符串解析。
 
@@ -73,14 +84,29 @@ Observability
 2. 员工创建草稿、上传附件并提交工单。
 3. 财务、复核员按后端状态机执行各自动作；规则检查产生运行结果和异常。
 4. 老板最终审批。通过时在同一事务内幂等生成 `BusinessRecord/RecordValue`、时间线、审计和 ledger 事件。
-5. confirmed 经营记录进入财务/老板/项目报表，通知按目标用户或角色隔离。
-6. 老板 AI 助手只能调用批准的结构化工具；模型不直接连接数据库。
+5. confirmed actual 经营记录进入固定查询和 canonical ReportSnapshot；draft、对账层和预算层不能混入 actual 报告。
+6. 通知按目标用户或角色隔离；报告叙述和老板 AI 助手只能使用批准的结构化工具或服务端 Claim 白名单，模型不直接连接数据库。
 
 ## 导入与 OCR
 
-Excel 导入保存任务、Sheet、列、原始行、映射决定和逐行错误。确认动作只导入合法行，并用事务、行哈希和幂等键阻止重复入账。后台解析/确认使用 PostgreSQL lease 作为事实源，API 持久化显式 handoff 标记，Worker 领取正常交接时不消耗故障重试额度，只有真实过期租约恢复才递增 attempt。
+Excel 导入保存任务、Sheet、列、原始行、映射决定、稳定单元格证据和逐行错误。AI 只对列摘要做模板/字段建议，不逐行调用模型。每个通过校验的有效明细行生成一条记录；普通错误明细不可被排除后部分发布，疑似汇总行必须由财务明确处置。人工修改产生新 revision 并使旧 ValidationSnapshot 失效；另一名有效财务重新校验后批准。后台确认先写 report-invisible staging，最终事务重验身份、来源、模板、行集合和输出 hash 后整批原子发布。PostgreSQL lease、行 hash 和幂等键阻止恢复或重放造成重复入账。
 
-OCR 先保存原文件与任务，再由 Provider 返回原文、字段候选、置信度和证据。低置信度结果必须经过人工纠正；确认前不会产生经营记录。Mock Provider 用于确定性验收，Local Paddle 适配器只接受内部 JSON Schema 契约。
+OCR 先保存原文件与任务，再由 Provider 返回版本化 page/block/token/bbox 证据。AI 只能在项目启用模板、字段和 evidence ref 白名单内建议。人工纠正必须保存 `MANUAL_OVERRIDE` revision 和理由，并使旧 ValidationSnapshot 失效；上传者不能自审批。最终事务重新读取账号、角色、文件安全状态、模板、候选证据和当前 hash，冻结 approval snapshot 后最多生成一条记录。确认前不会产生经营记录。Mock Provider 用于确定性验收，Local Paddle 适配器只接受内部 JSON Schema 契约。
+
+## AI 建议与批准边界
+
+- `AI_INGESTION_MODE` 和 `AI_REPORT_MODE` 只接受 `disabled|suggest`，缺失默认 disabled；全局 kill switch 优先。
+- `AiPromptVersion`、严格输出 Schema、`finance_core_guard`、Provider/模型、source/IR、模板、转换、规则、脱敏和授权策略形成完整版本向量。
+- Excel/OCR/文件文字均是不可信数据，不会成为系统指令；未知 ID、字段、状态、转换、证据和 JSON 属性均拒绝。
+- AI Worker 最多推进到待财务复核。AI 模块不能导入正式记录写服务，也不能批准、提交、执行 SQL 或修改模板。
+- 外部 Provider 在 H12 白名单和数据政策批准前拒绝真实或未知数据；失败转人工，不静默回 Mock。
+
+## 报告快照
+
+- canonical ReportSnapshot 在 PostgreSQL `REPEATABLE READ` 中固定读取 `confirmed + actual`，金额始终使用 `Prisma.Decimal`。
+- 不同币种分别统计，不做未批准的汇率换算；来源记录 ID/version/content hash 形成稳定 source digest。
+- Snapshot/Narrative/Claim 为不可变审计事实；相同事实复用相同快照，并发冲突仅对 `P2002/P2034` 做三次有界新事务重试。
+- 报告 AI 只能逐字选择服务端 Claim Catalog，必须保留全部 warning；新增数字、实体、原因、比较或预测会被确定性 validator 拒绝。
 
 ## 模型运行时
 
@@ -103,6 +129,6 @@ OCR 先保存原文件与任务，再由 Provider 返回原文、字段候选、
 
 - B8-09 工程配置已经提供对象存储、ClamAV、Redis、TLS、观测和备份恢复，但尚未在 H-13 指定的目标服务器完成真实容器、RPO/RTO 与回退演练。
 - 生产全局请求限流使用 Redis；登录、上传准入和模型并发闸门当前仍为进程内状态，B8-09 Staging 因此限制为单 API、单 Worker，横向扩容属于 RC 后续工作。
-- 本机到 Docker Hub 鉴权端点连接失败，镜像 digest 锁定和完整 Staging smoke 当前为 `blocked_external`。
+- R8.6 已有本机 18 服务 release/restore/同 manifest rollback 证据；R8.7 完整重验曾因 Debian security 502 停止，目标 Linux 与新的远端 CI 仍为 `blocked_external`。
 - 真实 OCR/AI 仍需脱敏企业样本、标准答案集和业务人员验收；外部 AI 数据政策待 H-12。
 - RPO/RTO、数据/日志/原件保留、删除和法务留存待 H-14；独立 Review 和最终 UAT 待 H-15/H-16。

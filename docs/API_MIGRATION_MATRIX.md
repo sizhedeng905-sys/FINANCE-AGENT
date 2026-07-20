@@ -1,6 +1,6 @@
 # 前端 API 迁移矩阵
 
-更新日期：2026-07-12
+更新日期：2026-07-20
 
 ## 判定规则
 
@@ -24,13 +24,14 @@
 | C-7 工单 | `workOrderApi`、`workOrderStore` | `/api/work-orders` 创建/更新/提交/补充/审核/规则/AI/终审/催办/时间线 | 已对齐 | 已接通 | 四角色、资源范围、状态机、并发幂等已通过 | 真实闭环完成 |
 | C-8 文件 | `fileApi`、`mockFileRepository`、`AttachmentPreview` | `/api/files` 上传/元数据/预览/下载/删除 | 已对齐 | 已接通 | 角色、归属、状态、内容、保留策略已通过 | 本地文件真实闭环完成 |
 | C-9 通知 | `notificationApi`、`notificationStore` | `/api/notifications` | 已对齐 | 已接通 | 目标用户/角色、用户级已读隔离和幂等已通过 | 真实闭环完成 |
-| C-10 报表 | `reportApi`、`reportStore` | `/api/reports` | 已对齐 | 已接通 | 四角色、confirmed 口径、时区边界和 AI 一致性已通过 | 真实闭环完成 |
-| C-11 AI | `aiApi`、`ChatBox` | `/api/ai/chat`、`/api/ai/call-logs` | 已对齐 | 已接通 | boss-only、会话归属、六工具和日志已通过 | 真实 API 闭环完成；默认 Mock |
-| D E2E | Playwright、真实 API、Mock 前端 | 阶段 0-10 核心接口 | 0 后端请求已验证 | 完整审批、Excel、OCR与安全运行验收 | 24 条 PostgreSQL + 12 条浏览器测试 | 批次 D 完成并持续扩展 |
-| E Excel | `importApi`、`importStore`、导入/映射/确认/任务/建议页 | `/import-tasks`、parse/mappings/preview/confirm/errors、`/field-suggestions`、records filter | 显式内存 Repository，无 API 回退 | 真实 `.xlsx` / 隔离转换 `.xls` → BusinessRecord/RecordValue/audit/ledger | 解析器与转换器单测 + PostgreSQL 原件/转换证据链 + Playwright 浏览器上传 | 批次 E 与 B2 适配完成 |
-| F OCR | `ocrApi`、`ocrStore`、上传/任务/详情纠错页 | `/ocr-tasks` 与 `/ocr/tasks` 兼容路由，run/corrections/confirm/retry/cancel | 显式内存 Repository，无 API 回退 | 合成 PDF → Provider → 人工纠错 → BusinessRecord/RecordValue | Provider/PDF 单测 + PostgreSQL 纠错重试并发 + Playwright | 批次 F 完成 |
-| G 模型运行时 | 无普通业务页面；受保护管理 API | `/model-runtime/deployments|routes|health` | Mock deployment 默认启用 | OpenAI-compatible/Local Paddle 适配、Schema、队列、重试、熔断 | 运行时单测 + PostgreSQL 权限/密钥边界/健康检查 | 框架完成；真实 GPU 待验收 |
-| H 工程化 | 无新增业务页面 | `/health/live|ready`、全局安全/日志中间件 | 不适用 | CORS、Helmet、限流、requestId、生产 Swagger 开关、CI | 62 单测 + 24 PostgreSQL + 12 Playwright + hygiene/audit | 工程化收尾完成 |
+| C-10 报表 | `reportApi`、`reportStore` | `/api/reports`、`/api/reports/snapshots`、snapshot sources | 已对齐 | 已接通 | confirmed actual、时区、Decimal、分币种、并发快照和不可变来源通过 | 工程闭环完成；H06/H08 真实口径待签字 |
+| C-11 AI | `aiApi`、`ChatBox`、老板报告页 | `/api/ai/chat`、call logs、report narrative | 已对齐 | 已接通 | boss-only、会话归属、结构化工具、严格 Claim、kill switch 和降级通过 | 真实 API 工程闭环；建议仍需人工复核 |
+| D E2E | Playwright、真实 API、Mock 前端 | 阶段 0-10 与 M5-M7 核心接口 | 0 后端请求已验证 | 完整审批、Excel、OCR、Snapshot/Narrative 与安全运行验收 | 10 suites/97 PostgreSQL + 17 浏览器测试 | 持续回归通过 |
+| E Excel | `importApi`、`importStore`、导入/映射/确认/任务/建议页 | `/import-tasks`、inspect/parse/AI suggestions/preview/revalidate/confirm/errors | 显式内存 Repository，无 API 回退 | `.xlsx` / 隔离 `.xls` → IR → AI 建议 → 财务 revision/validation → staging → 原子整批 BusinessRecord | IR/Schema 单测 + PostgreSQL 双人审批/并发/恢复/5万行 + Playwright | M5.2 工程通过；每行明细、阻断错误整批失败关闭 |
+| F OCR | `ocrApi`、`ocrStore`、上传/任务/详情纠错页 | `/ocr-tasks` 与 `/ocr/tasks`，AI suggestions/corrections/revalidate/confirm/retry/cancel | 显式内存 Repository，无 API 回退 | PDF/图片 → OCR IR/evidence → AI 建议 → 人工 override/validation → 不可变批准快照 → 单记录 | Provider/IR/PDF 单测 + PostgreSQL 自审批/权限变化/并发 + Playwright bbox 复核 | M5.1 工程通过；真实准确率待 H04/H05 |
+| G 模型运行时 | 受保护管理 API 与本地编排脚本 | `/model-runtime/deployments|routes|health` | Mock deployment 默认启用 | OpenAI-compatible/Local Paddle、Prompt Registry、Schema、队列、重试、熔断、版本向量 | 单元/PostgreSQL + 本地资产、身份探针、并发切换和常驻健康 | 工程通过；文本/OCR 常驻，VL/Embedding 按需 |
+| H 工程化 | 无新增业务页面 | `/health/live|ready`、全局安全/日志中间件 | 不适用 | CORS、Helmet、Redis 限流、requestId/trace、生产 Swagger、CI/Staging/backup | 47 suites/410 unit + 10 suites/97 PostgreSQL + 17 Playwright + hygiene/audit | 本机工程通过；目标 Staging 外部阻断 |
+| M0-M8 AI 映射与报告 | Excel/OCR review UI、老板报告证据 UI | suggestion/revalidate/approve、Snapshot/source/Narrative | 显式 Mock 且标识 | AI 只建议；程序解析/校验/Decimal/状态/写库；财务批准前零正式记录 | manifest/hash 漂移、攻击、权限、并发、资源与 Provider 降级 | 工程与合成验收完成；外部/人工门禁未关闭 |
 
 ## 批次 B 证据
 
@@ -138,12 +139,13 @@
 ## C-10 报表证据
 
 - 财务和老板页面只调用 `reportApi/reportStore`；API 模式不读取 fixture，Mock 模式不请求后端，前端不再按固定倍率、比例或工单列表计算正式报表。
-- 后端查询条件固定为 `BusinessRecordStatus.confirmed`，内部以 `Prisma.Decimal` 汇总；draft、pending_confirm、rejected 均不计入收入、支出、分类、项目排行和趋势。
+- 后端固定查询条件为 `BusinessRecordStatus.confirmed + RecordDataLayer.actual`，内部以 `Prisma.Decimal` 汇总；draft、pending_confirm、rejected、reconciliation 和 budget 均不计入 canonical actual Snapshot。
 - `Asia/Shanghai` 日初/日末、周一至周日、月初/月末和无效日期均有单元/真实数据库证据；指定日期使用 `[start, end)` 避免跨日重复。
 - finance/boss 可读取财务报表，只有 boss 可读取老板报表；finance/boss 可读取项目日/月报，employee/reviewer 均由后端返回 403。
 - 固定 PostgreSQL 数据下财务、老板、项目日报/月报结果一致；AI `get_today_report` 保存的 toolContext 与普通老板日报金额逐项一致。
 - API 浏览器覆盖财务三个周期、老板首页/日报/月报和项目概览；Mock 覆盖同入口且后端请求数为 0，390px 页面无横向溢出。
 - 前后端 build、35/35 单测、19/19 集成测试通过；开发后端 `npm run dev` 与健康检查实测通过，验收临时数据已清理。
+- M6/M7 增加 canonical Snapshot/source 分页和 AI Narrative：来源 ID/version/hash、query/canonical version 与 warning 不可变；相同事实和六路并发请求复用一份 Snapshot，报告 AI 只能逐字选择服务端 Claim Catalog。
 
 ## C-11 老板 AI 助手证据
 
@@ -152,6 +154,7 @@
 - 后端只允许 boss 调用 chat/call-logs；finance、employee、reviewer 返回 403，第二个 boss 不能续问第一个 boss 的会话。
 - 六个批准工具均有真实 PostgreSQL 证据；本月/项目/客户问题复用 C-10 报表服务，不存在项目明确转人工，不编造金额。
 - 空白/超长问题、过长 ID、51 条 history、多余 role 和非法 `success` 查询均由 DTO 拒绝。
-- 同一会话 6 次调用严格产生 12 条消息、6 条调用日志和 6 条审计；日志包含模型、prompt、工具、延迟和结果，不含 Token、密码或 JWT secret。
+- 同一会话 6 次调用严格产生 12 条消息、6 条调用日志和 6 条审计；新增 AI 调用日志只保存 hash、大小、版本、工具/字段名和结果元数据，不复制完整问题、工具值或 Provider 原始响应。
 - API 浏览器完成经营、项目、待审批、不存在项目和工单风险问答；Mock 完成对应页面交互，390px 无横向溢出。
 - 前后端 build、35/35 单测和 20/20 集成测试通过；API 浏览器会话、调用日志与审计已精确清理。
+- 报告 Narrative 独立使用 `AI_REPORT_MODE`，禁用/kill switch/超时/截断 JSON/值篡改/warning 遗漏均失败关闭且不生成 Narrative；输出固定为 `NEEDS_FINANCE_REVIEW`。

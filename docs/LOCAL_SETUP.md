@@ -1,6 +1,6 @@
 # 本地开发环境
 
-更新日期：2026-07-12
+更新日期：2026-07-20
 
 本项目使用两个独立 PostgreSQL 数据库：
 
@@ -51,6 +51,8 @@ cp backend/.env.test.example backend/.env.test
 - `backend/.env.test` 的 `DATABASE_URL` / `TEST_DATABASE_URL` 指向 `finance_agent_test`。
 - 两个文件分别使用至少 32 字符、非示例值的 `JWT_SECRET`。
 - 生产环境必须显式配置精确的 `CORS_ORIGINS`。
+- `AI_INGESTION_MODE`、`AI_REPORT_MODE` 缺失时默认 `disabled`，只允许 `disabled|suggest`；不要添加自动批准或自动入账模式。
+- `AI_GLOBAL_KILL_SWITCH=true` 会阻止所有新 AI 调用；`AI_EXTERNAL_PROVIDER_MODE=disabled` 在 H12 批准前不得放宽真实数据外发。
 
 真实 `.env`、密码、API key、上传文件、模型目录和真实样本不得提交到 Git。
 
@@ -142,7 +144,7 @@ npm run check:hygiene
 
 `test:integration` 和 `test:e2e` 会对专用测试库执行 generate、`migrate deploy`、seed 和精确测试数据清理。脚本检测到非 `_test` 数据库会立即终止。
 
-当前本地证据：前端/后端 build 通过，后端 64/64 单测、PostgreSQL 24/24 集成测试、Playwright 12/12、Paddle 适配器 4/4 通过。
+当前 M8 收口证据：前端/后端 build 通过，后端 47/47 suites、410/410 tests，PostgreSQL 10/10 suites、97/97 tests，Playwright 17/17，Prompt 漂移 4/4 unit + 3/3 PostgreSQL，41 条 migration 空库与 40→41 升级通过。
 
 ## 模型与 OCR
 
@@ -151,9 +153,13 @@ npm run check:hygiene
 ```env
 AI_PROVIDER=mock
 OCR_PROVIDER=mock
+AI_INGESTION_MODE=disabled
+AI_REPORT_MODE=disabled
+AI_GLOBAL_KILL_SWITCH=false
+AI_EXTERNAL_PROVIDER_MODE=disabled
 ```
 
-普通开发和自动化验收仍无需启动模型。当前 `model` 目录中的文本、OCR、Embedding 权重已经过只读完整性校验；Qwen3-VL 缺少第 3 个分片。
+普通开发和自动化验收无需启动模型。当前 `model` 目录中的 Qwen 文本、PaddleOCR、Qwen3-VL 和 Embedding 权重均已通过只读完整性校验；文本与 OCR 常驻，VL 与 Embedding 默认按需离线。资产完整和健康不代表真实业务准确率达标。
 
 模型环境初始化和校验：
 
@@ -170,6 +176,14 @@ npm run model:status
 ```
 
 Embedding/VL 使用 `npm run model:on-demand -- <embedding|vl>`，任务完成后必须执行 `npm run model:restore`。真实 Paddle/Qwen 接入、密钥同步、路由启用和显存验收见 `docs/MODEL_DEPLOYMENT.md`；不要移动或提交用户模型目录。
+
+查看当前常驻状态：
+
+```powershell
+npm run model:status
+```
+
+AI 建议默认关闭。仅在合成/匿名开发数据且财务仍人工批准时，才可把对应模式改为 `suggest`；前端参数不能扩大服务端模式。外部 Provider 未经 H12 批准不得接收真实或未知数据。
 
 ## 常见问题
 
