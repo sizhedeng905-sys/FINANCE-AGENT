@@ -75,6 +75,6 @@ npm run staging:check
 
 ## 6. PR 关系与签字
 
-PR #4 是当前聚合 Draft，分支为 `agent/b8-stable-hardening`，包含此前阶段历史。其他 PR 的实时状态以 GitHub 为准；不要在未决定合并顺序时机械合并。独立 reviewer 应把意见写入 PR #4，P0/P1 必须有复现、修复提交和防回归测试后才能关闭。远端 run `29768468874` 的大批量发布超时由 `cc033d4` 修复，当前 head `9e889bb` 的 Build/CodeQL 正在运行；新 head 全绿前仍按待验问题审查。M0-INPUT-001 的人类 Prompt Catalog 仍为 0 字节，不能把运行时 manifest 通过写成目录逐字核对完成。
+PR #4 是当前聚合 Draft，分支为 `agent/b8-stable-hardening`，包含此前阶段历史。其他 PR 的实时状态以 GitHub 为准；不要在未决定合并顺序时机械合并。独立 reviewer 应把意见写入 PR #4，P0/P1 必须有复现、修复提交和防回归测试后才能关闭。远端 run `29768468874` 的大批量发布超时由 `cc033d4` 修复；包含该修复的最新 PR head 全绿前仍按待验问题审查，实时 SHA/checks 见 PR 页面。M0-INPUT-001 的人类 Prompt Catalog 仍为 0 字节，不能把运行时 manifest 通过写成目录逐字核对完成。
 
 需要的最终签字：代码 owner、安全负责人、财务负责人、业务负责人和老板。Codex 自动化结果不能代签。

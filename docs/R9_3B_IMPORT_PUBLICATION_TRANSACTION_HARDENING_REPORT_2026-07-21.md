@@ -1,7 +1,7 @@
 # R9.3B Import Publication Transaction Hardening Report
 
 > Date: 2026-07-21
-> Status: `engineering_verified_locally / remote_ci_running`
+> Status: `engineering_verified_locally / remote_ci_required`
 > Issue: `R9-CONFIRM-PUBLICATION-002`
 
 ## Failure evidence
@@ -50,7 +50,7 @@ The full integration run with all Redis suites required repeated the confirmatio
 
 ## Remaining gates
 
-1. Commit `cc033d4` and the R11 documentation are pushed at head `9e889bb`. Build run `29771646166` and CodeQL run `29771646143` must complete successfully; the current status is `remote_ci_running`.
+1. Commit `cc033d4` and R11 documentation commit `9e889bb` are pushed. The latest Draft PR head containing them must pass Build and CodeQL; live SHA/check status is maintained on PR #4 rather than frozen in this report.
 2. H13 target-host testing remains required for storage latency, WAL/checkpoint behavior, p95/p99 latency, and concurrent workload capacity. Local and CI evidence is not a production sizing result.
 3. Automatic recovery remains bounded by `IMPORT_CONFIRM_MAX_ATTEMPTS`; exhaustion fails closed for manual investigation.
 4. The atomic final update still writes every staged row. If target-host evidence exceeds the publication budget, a separate reviewed design for an atomic batch-visibility marker is required. Timeout inflation alone is not an accepted remedy.

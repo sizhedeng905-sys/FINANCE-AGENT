@@ -9,7 +9,7 @@
 - 目标：`main`
 - Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 状态：保持 Draft，不 merge、不标记 Ready
-- 远端状态：R9.3B 与 R11 已推送到 head `9e889bb`；Build run `29771646166`、CodeQL run `29771646143` 正在运行
+- 远端状态：R9.3B `cc033d4` 与 R11 `9e889bb` 已推送；状态记录提交可能产生更新 head，实时 SHA/checks 只以 Draft PR #4 为准
 
 PR #4 是 B8 稳定化、R 系列补救和 M0-M8 AI 映射补充任务的累计审查入口。自动化工程门禁通过不等于真实财务验收、目标环境验证或生产授权。
 
@@ -110,7 +110,7 @@ npm run prisma:migrate:deploy
 - H04-H09：OCR/AI 真值、真实逐分对账、报表口径和不可重识别脱敏仍需独立人工证据。
 - H13：目标 Linux、域名、GPU、对象存储、告警、RPO/RTO 和正式容量预算未提供。
 - H15/H16：独立代码/安全 Review 与最终 UAT/Go Live 未完成。
-- Draft PR 保持 OPEN Draft；3/3 历史 CodeQL review threads 已 resolved/outdated。远端 run `29768468874` 的 30,196 行发布超时已由 `cc033d4` 修复并通过本地 114/114；新 head `9e889bb` 已触发 Build/CodeQL，在全部结束前仍保持待验状态，旧绿灯不自动覆盖新提交。
+- Draft PR 保持 OPEN Draft；3/3 历史 CodeQL review threads 已 resolved/outdated。远端 run `29768468874` 的 30,196 行发布超时已由 `cc033d4` 修复并通过本地 114/114；包含该修复的最新 PR head 必须重新通过 Build/CodeQL，旧绿灯不自动覆盖新提交。
 
 ## 提交边界
 
