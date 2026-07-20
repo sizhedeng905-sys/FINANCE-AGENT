@@ -6,10 +6,12 @@ import type {
   CorrectOCRTaskPayload,
   CreateOCRTaskPayload,
   OCRConfirmResult,
+  OCRAiSuggestionResult,
   OCRFieldCandidate,
   OCRTask,
   OCRTaskListQuery,
   PaginatedOCRTasks,
+  RevalidateOCRTaskPayload,
   TemplateField,
 } from '@/types/dataCenter';
 
@@ -40,13 +42,30 @@ function clone(task: OCRTask): OCRTask {
     ...task,
     extractedFields: { ...task.extractedFields },
     fieldConfidence: { ...task.fieldConfidence },
-    fields: task.fields.map((field) => ({ ...field, boundingBox: field.boundingBox ? { ...field.boundingBox } : undefined })),
+    fields: task.fields.map((field) => ({
+      ...field,
+      boundingBox: field.boundingBox ? { ...field.boundingBox } : undefined,
+      evidenceRefs: [...field.evidenceRefs],
+      alternatives: field.alternatives.map((alternative) => ({
+        ...alternative,
+        evidenceRefs: [...alternative.evidenceRefs],
+        boundingBox: alternative.boundingBox ? { ...alternative.boundingBox } : undefined,
+      })),
+    })),
     pages: task.pages.map((page) => ({ ...page })),
     textBlocks: task.textBlocks.map((block) => ({ ...block })),
     tables: task.tables.map((table) => ({ ...table })),
     rawFile: { ...task.rawFile },
     attempts: task.attempts.map((attempt) => ({ ...attempt })),
-    corrections: task.corrections.map((correction) => ({ ...correction })),
+    corrections: task.corrections.map((correction) => ({ ...correction, evidenceRefs: [...correction.evidenceRefs] })),
+    validation: task.validation ? {
+      ...task.validation,
+      snapshot: {
+        ...task.validation.snapshot,
+        blockingErrors: task.validation.snapshot.blockingErrors.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+        warnings: task.validation.snapshot.warnings.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+      },
+    } : null,
   };
 }
 
@@ -73,8 +92,14 @@ function candidate(field: TemplateField, rawFileId: string, index: number): OCRF
     rawValue: value,
     normalizedValue: value,
     page: 1,
+    boundingBox: { x: 80, y: 80 + index * 70, width: 360, height: 48 },
     confidence: Math.max(0.82, 0.98 - index * 0.01),
     evidence: 'Mock OCR 第 1 页识别结果',
+    evidenceRefs: [`p1-b${index + 1}`],
+    valueSource: field.field.fieldType === 'file' ? 'SYSTEM_FILE_BINDING' : 'OCR_PROVIDER',
+    reviewRevision: 0,
+    evidenceConflict: false,
+    alternatives: [],
     missing: false,
     lowConfidence: false,
     corrected: false,
@@ -98,6 +123,8 @@ export async function mockCreateOCRTask(payload: CreateOCRTaskPayload): Promise<
     templateName: template.name,
     recordType: template.recordType,
     status: 'uploaded',
+    version: 1,
+    reviewRevision: 0,
     provider: 'mock',
     modelName: 'mock-ocr-v1',
     modelVersion: '1',
@@ -105,7 +132,7 @@ export async function mockCreateOCRTask(payload: CreateOCRTaskPayload): Promise<
     extractedFields: {},
     fieldConfidence: {},
     fields: [],
-    pages: [{ page: 1 }],
+    pages: [{ page: 1, width: 1000, height: 1400 }],
     textBlocks: [],
     tables: [],
     pageCount: 1,
@@ -113,6 +140,7 @@ export async function mockCreateOCRTask(payload: CreateOCRTaskPayload): Promise<
     retryCount: 0,
     uploadedBy: user.name,
     uploadedById: user.id,
+    validation: null,
     createdAt: now,
     updatedAt: now,
     rawFile: {
@@ -169,8 +197,26 @@ export async function mockRunOCRTask(id: string): Promise<OCRTask> {
   task.extractedFields = Object.fromEntries(fields.map((field) => [field.fieldId, field.normalizedValue]));
   task.fieldConfidence = Object.fromEntries(fields.map((field) => [field.fieldId, field.confidence]));
   task.extractedText = fields.filter((field) => !field.missing).map((field) => `${field.fieldName}：${String(field.normalizedValue)}`).join('\n');
+  task.textBlocks = fields.map((field, index) => ({
+    blockId: `p1-b${index + 1}`,
+    page: 1,
+    text: `${field.fieldName}：${String(field.normalizedValue ?? '')}`,
+    bbox: field.boundingBox
+      ? [
+        field.boundingBox.x,
+        field.boundingBox.y,
+        field.boundingBox.x + field.boundingBox.width,
+        field.boundingBox.y + field.boundingBox.height,
+      ]
+      : null,
+    confidence: String(field.confidence),
+    tokens: [],
+  }));
   task.avgConfidence = fields.reduce((sum, field) => sum + field.confidence, 0) / Math.max(fields.length, 1);
   task.status = 'pending_confirm';
+  task.version += 1;
+  task.reviewRevision = 0;
+  task.validation = null;
   task.errorMessage = undefined;
   task.attempts.unshift({ id: `attempt-${id}-${task.attemptCount}`, attemptNo: task.attemptCount, status: 'succeeded', provider: 'mock', modelName: task.modelName, correlationId: `mock-${Date.now()}`, latencyMs: 30, pageCount: 1 });
   task.updatedAt = new Date().toISOString();
@@ -182,11 +228,30 @@ export async function mockCorrectOCRTask(id: string, payload: CorrectOCRTaskPayl
   await delay();
   const task = findTask(id);
   if (task.status !== 'pending_confirm') throw new Error('当前 OCR 状态不能人工纠错');
+  if (payload.expectedVersion !== undefined && payload.expectedVersion !== task.version) throw new Error('OCR 任务版本已变化，请刷新后重试');
+  if (payload.expectedReviewRevision !== undefined && payload.expectedReviewRevision !== task.reviewRevision) throw new Error('OCR 审核版本已变化，请刷新后重试');
+  const nextReviewRevision = task.reviewRevision + 1;
   payload.corrections.forEach((correction) => {
     const index = task.fields.findIndex((field) => field.fieldId === correction.fieldId);
     if (index < 0) throw new Error('OCR 字段候选不存在');
     const before = task.fields[index];
-    task.fields[index] = { ...before, rawValue: correction.correctedValue, normalizedValue: correction.correctedValue, confidence: 1, missing: false, lowConfidence: false, corrected: true, validationError: undefined };
+    const evidenceRefs = correction.evidenceRefs?.length ? correction.evidenceRefs : before.evidenceRefs;
+    task.fields[index] = {
+      ...before,
+      rawValue: correction.correctedValue,
+      normalizedValue: correction.correctedValue,
+      confidence: 1,
+      evidence: correction.reason,
+      evidenceRefs,
+      valueSource: 'MANUAL_OVERRIDE',
+      reviewRevision: nextReviewRevision,
+      evidenceConflict: false,
+      alternatives: [],
+      missing: false,
+      lowConfidence: false,
+      corrected: true,
+      validationError: undefined,
+    };
     task.corrections.unshift({
       id: `mock-correction-${Date.now()}-${correction.fieldId}`,
       fieldId: correction.fieldId,
@@ -195,13 +260,115 @@ export async function mockCorrectOCRTask(id: string, payload: CorrectOCRTaskPayl
       afterValue: String(correction.correctedValue),
       originalConfidence: before.confidence,
       reason: correction.reason,
+      reviewRevision: nextReviewRevision,
+      overrideType: 'MANUAL_OVERRIDE',
+      evidenceRefs: [...evidenceRefs],
       correctedBy: user.name,
       correctedAt: new Date().toISOString(),
     });
   });
   task.extractedFields = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.normalizedValue]));
   task.fieldConfidence = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.confidence]));
+  task.reviewRevision = nextReviewRevision;
+  task.version += 1;
+  task.validation = null;
   return clone(task);
+}
+
+export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTaskPayload): Promise<OCRTask> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以重新校验');
+  if (payload.expectedVersion !== task.version || payload.expectedReviewRevision !== task.reviewRevision) {
+    throw new Error('OCR 审核内容已变化，请刷新后重新校验');
+  }
+  const blockingErrors = task.fields
+    .filter((field) => (field.isRequired && field.missing) || field.validationError || (!field.missing && field.evidenceRefs.length === 0))
+    .map((field) => ({
+      code: field.validationError ? 'FIELD_VALIDATION_ERROR' : field.missing ? 'REQUIRED_FIELD_MISSING' : 'EVIDENCE_MISSING',
+      fieldId: field.fieldId,
+      message: `${field.fieldName} 未通过确定性校验`,
+      evidenceRefs: [...field.evidenceRefs],
+    }));
+  const warnings = task.fields.filter((field) => field.lowConfidence).map((field) => ({
+    code: 'LOW_OCR_CONFIDENCE',
+    fieldId: field.fieldId,
+    message: `${field.fieldName} 需要人工核对`,
+    evidenceRefs: [...field.evidenceRefs],
+  }));
+  const hashSource = JSON.stringify({ id, reviewRevision: task.reviewRevision, fields: task.fields, blockingErrors, warnings });
+  const snapshotHash = Array.from(hashSource).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
+    .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+  task.validation = {
+    reviewRevision: task.reviewRevision,
+    ruleVersion: 'ocr-deterministic-validation/1.0',
+    snapshotHash,
+    validatedAt: new Date().toISOString(),
+    snapshot: {
+      schemaVersion: 'ocr-validation/1.0',
+      valid: blockingErrors.length === 0,
+      candidatePayloadHash: snapshotHash,
+      blockingErrors,
+      warnings,
+    },
+  };
+  task.version += 1;
+  task.updatedAt = new Date().toISOString();
+  return clone(task);
+}
+
+export async function mockRequestOCRAiSuggestions(id: string): Promise<OCRAiSuggestionResult> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以生成 AI 建议');
+  return {
+    status: 'needs_finance_review',
+    mode: 'suggest',
+    mock: true,
+    businessRecordsCreated: 0,
+    classification: {
+      status: 'succeeded',
+      provider: 'mock',
+      providerClass: 'mock',
+      model: 'mock-structured-v1',
+      promptVersion: '1',
+      output: {
+        selectedTemplateVersionId: `${task.templateId}:v1`,
+        candidateTemplateVersionIds: [`${task.templateId}:v1`],
+        confidence: '1.0',
+        evidenceRefs: task.fields.flatMap((field) => field.evidenceRefs),
+        reasonCodes: ['MOCK_CURRENT_TEMPLATE'],
+        warnings: ['Mock 建议仅供测试，仍需财务复核。'],
+        decision: 'NEEDS_FINANCE_REVIEW',
+      },
+    },
+    mapping: {
+      status: 'succeeded',
+      provider: 'mock',
+      providerClass: 'mock',
+      model: 'mock-structured-v1',
+      promptVersion: '1',
+      output: {
+        mappings: task.fields.filter((field) => field.fieldType !== 'file' && !field.missing).map((field) => ({
+          sourceRef: `candidate:${field.fieldId}`,
+          targetFieldKey: field.fieldKey,
+          targetFieldId: field.fieldId,
+          targetFieldName: field.fieldName,
+          transformKey: mockTransformKey(field.field.fieldType),
+          confidence: '1.0',
+          evidenceRefs: [...field.evidenceRefs],
+        })),
+        unmappedSourceRefs: [],
+        unresolvedRequiredFields: [],
+        warnings: ['Mock 建议不会自动批准或入账。'],
+        decision: 'NEEDS_FINANCE_REVIEW',
+      },
+    },
+    conflicts: [],
+    aiCalls: 2,
+  };
 }
 
 export async function mockConfirmOCRTask(id: string, acknowledge: boolean): Promise<OCRConfirmResult> {
@@ -210,6 +377,9 @@ export async function mockConfirmOCRTask(id: string, acknowledge: boolean): Prom
   const task = findTask(id);
   if (task.status === 'confirmed' && task.generatedRecordId) return { task: clone(task), record: mockRecord(task, task.generatedRecordId, user.name), alreadyConfirmed: true };
   if (task.status !== 'pending_confirm') throw new Error('OCR 结果尚未进入人工确认状态');
+  if (!task.validation || task.validation.reviewRevision !== task.reviewRevision || !task.validation.snapshot.valid) {
+    throw new Error('当前审核版本尚未通过确定性校验');
+  }
   if (task.fields.some((field) => field.lowConfidence) && !acknowledge) throw new Error('存在低置信度字段，必须人工确认');
   if (task.fields.some((field) => field.isRequired && (field.missing || field.normalizedValue == null))) throw new Error('必填字段缺失');
   const recordId = `mock-ocr-record-${Date.now()}`;
@@ -217,6 +387,8 @@ export async function mockConfirmOCRTask(id: string, acknowledge: boolean): Prom
   task.generatedRecordId = recordId;
   task.confirmedBy = user.name;
   task.confirmedAt = new Date().toISOString();
+  task.version += 1;
+  task.updatedAt = task.confirmedAt;
   return { task: clone(task), record: mockRecord(task, recordId, user.name), alreadyConfirmed: false };
 }
 
@@ -268,4 +440,11 @@ function mockRecord(task: OCRTask, id: string, actor: string): BusinessRecord {
     confirmedAt: now,
     confirmedBy: actor,
   };
+}
+
+function mockTransformKey(fieldType: TemplateField['field']['fieldType']) {
+  if (fieldType === 'number' || fieldType === 'money') return 'DECIMAL_CANONICAL_V1';
+  if (fieldType === 'date') return 'DATE_ISO_WITH_LOCALE_V1';
+  if (fieldType === 'select') return 'ENUM_ALIAS_LOOKUP_V1';
+  return fieldType === 'text' || fieldType === 'textarea' ? 'TRIM_TEXT_V1' : 'IDENTITY_V1';
 }

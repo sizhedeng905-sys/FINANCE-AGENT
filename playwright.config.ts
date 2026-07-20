@@ -42,6 +42,8 @@ const serverEnvironment = {
   UPLOAD_DIR: process.env.E2E_UPLOAD_DIR || 'test-uploads/e2e',
   MAX_FILE_SIZE_MB: process.env.MAX_FILE_SIZE_MB || '5',
   AI_PROVIDER: 'mock',
+  AI_PROVIDER_CLASS: 'mock',
+  AI_INGESTION_MODE: 'suggest',
   AI_MODEL: 'mock-structured-v1',
   AI_TIMEOUT_MS: '5000'
 };

@@ -10,9 +10,22 @@ import {
 
 interface OcrTaskDto {
   id: string;
+  rawFileId: string;
   status: string;
+  version: number;
+  reviewRevision: number;
   extractedText: string;
-  fields: Array<{ fieldId: string; fieldName: string; normalizedValue: unknown; corrected: boolean }>;
+  fields: Array<{
+    fieldId: string;
+    fieldName: string;
+    normalizedValue: unknown;
+    corrected: boolean;
+    evidenceRefs: string[];
+  }>;
+  validation: null | {
+    reviewRevision: number;
+    snapshot: { valid: boolean; blockingErrors: unknown[] };
+  };
 }
 
 interface RecordDto {
@@ -46,6 +59,42 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   const amountRow = page.locator('.ant-table-row').filter({ hasText: '金额' }).first();
   await expect(amountRow).toBeVisible({ timeout: 30_000 });
   await expect(amountRow).toContainText('1280.5');
+
+  const aiResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/ocr-tasks/${created.data.id}/ai-suggestions`
+  ));
+  await page.getByRole('button', { name: /生成 AI 建议/ }).first().click();
+  const aiSuggestion = await readEnvelope<{ mode: string; mock: boolean; businessRecordsCreated: number }>(await aiResponse);
+  expect(aiSuggestion.data).toMatchObject({ mode: 'suggest', mock: true, businessRecordsCreated: 0 });
+  await expect(page.getByRole('tab', { name: 'AI建议' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Mock（仅测试）')).toBeVisible();
+  await expect(page.getByText('AI 结果仅为建议，不会自动应用、批准或入账')).toBeVisible();
+  await expect(page.locator('.ant-tabs-tabpane-active .ant-table-row').filter({ hasText: '金额' }).first()).toBeVisible();
+
+  await page.getByRole('tab', { name: '结构化字段' }).click();
+
+  const previewResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/files/${created.data.rawFileId}/preview`
+  ));
+  await amountRow.getByRole('button', { name: '查看证据' }).click();
+  await expect(page.getByRole('tab', { name: '证据定位' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.ocr-evidence-stage canvas')).toBeVisible();
+  await expect(page.locator('.ocr-evidence-box')).toBeVisible();
+  await previewResponse;
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileStage = await page.locator('.ocr-evidence-stage').boundingBox();
+  expect(mobileStage).not.toBeNull();
+  expect(mobileStage!.x).toBeGreaterThanOrEqual(0);
+  expect(mobileStage!.x + mobileStage!.width).toBeLessThanOrEqual(390);
+  await expect(page.locator('.ocr-evidence-box')).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  await page.getByRole('tab', { name: '结构化字段' }).click();
   await amountRow.getByRole('button', { name: '修正' }).click();
   const dialog = page.getByRole('dialog', { name: /修正字段：金额/ });
   await dialog.getByLabel('修正值').fill('1366.66');
@@ -62,7 +111,21 @@ test('API mode: finance corrects OCR evidence before creating a business record'
     normalizedValue: '1366.66',
     corrected: true
   });
+  expect(corrected.data.reviewRevision).toBe(1);
+  expect(corrected.data.validation).toBeNull();
   await expect(dialog).toBeHidden();
+
+  const confirmButton = page.getByRole('button', { name: '确认并生成经营记录' });
+  await expect(confirmButton).toBeDisabled();
+  const revalidateResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/ocr-tasks/${created.data.id}/revalidate`
+  ));
+  await page.getByRole('button', { name: '重新校验' }).click();
+  const revalidated = await readEnvelope<OcrTaskDto>(await revalidateResponse);
+  expect(revalidated.data.validation).toMatchObject({ reviewRevision: 1, snapshot: { valid: true, blockingErrors: [] } });
+  await expect(confirmButton).toBeEnabled();
 
   const confirmResponse = page.waitForResponse((response) => isApiResponse(
     response,

@@ -3,9 +3,11 @@ import type {
   CorrectOCRTaskPayload,
   CreateOCRTaskPayload,
   OCRConfirmResult,
+  OCRAiSuggestionResult,
   OCRTask,
   OCRTaskListQuery,
   PaginatedOCRTasks,
+  RevalidateOCRTaskPayload,
 } from '@/types/dataCenter';
 import { httpClient } from './httpClient';
 import {
@@ -15,6 +17,8 @@ import {
   mockCreateOCRTask,
   mockGetOCRTask,
   mockGetOCRTasks,
+  mockRequestOCRAiSuggestions,
+  mockRevalidateOCRTask,
   mockRetryOCRTask,
   mockRunOCRTask,
 } from './mockOcrRepository';
@@ -84,6 +88,18 @@ export function correctOCRTask(id: string, payload: CorrectOCRTaskPayload): Prom
   return runtimeConfig.dataMode === 'api'
     ? httpClient.put<OCRTask>(`/ocr-tasks/${encodeURIComponent(id)}/corrections`, payload)
     : mockCorrectOCRTask(id, payload);
+}
+
+export function revalidateOCRTask(id: string, payload: RevalidateOCRTaskPayload): Promise<OCRTask> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<OCRTask>(`/ocr-tasks/${encodeURIComponent(id)}/revalidate`, payload)
+    : mockRevalidateOCRTask(id, payload);
+}
+
+export function requestOCRAiSuggestions(id: string): Promise<OCRAiSuggestionResult> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<OCRAiSuggestionResult>(`/ocr-tasks/${encodeURIComponent(id)}/ai-suggestions`)
+    : mockRequestOCRAiSuggestions(id);
 }
 
 export function confirmOCRTask(id: string, acknowledgeLowConfidence: boolean): Promise<OCRConfirmResult> {

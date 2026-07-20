@@ -586,6 +586,18 @@ export interface OCRFieldCandidate {
   boundingBox?: { x: number; y: number; width: number; height: number };
   confidence: number;
   evidence: string;
+  evidenceRefs: string[];
+  valueSource: 'OCR_PROVIDER' | 'SYSTEM_FILE_BINDING' | 'MANUAL_OVERRIDE';
+  reviewRevision: number;
+  evidenceConflict: boolean;
+  alternatives: Array<{
+    page: number;
+    rawValue: unknown;
+    normalizedValue: unknown;
+    confidence: number;
+    evidenceRefs: string[];
+    boundingBox?: { x: number; y: number; width: number; height: number };
+  }>;
   missing: boolean;
   lowConfidence: boolean;
   corrected: boolean;
@@ -619,7 +631,10 @@ export interface OCRCorrection {
   beforeValue?: string;
   afterValue: string;
   originalConfidence?: number;
-  reason?: string;
+  reason: string;
+  reviewRevision: number;
+  overrideType: 'MANUAL_OVERRIDE';
+  evidenceRefs: string[];
   correctedBy: string;
   correctedAt: string;
 }
@@ -633,6 +648,8 @@ export interface OCRTask {
   templateName: string;
   recordType: DataRecordType;
   status: OCRTaskStatus;
+  version: number;
+  reviewRevision: number;
   provider: string;
   modelName: string;
   modelVersion?: string;
@@ -657,6 +674,19 @@ export interface OCRTask {
   confirmedBy?: string;
   confirmedAt?: string;
   generatedRecordId?: string;
+  validation: null | {
+    reviewRevision: number;
+    ruleVersion: string;
+    snapshotHash: string;
+    validatedAt: string;
+    snapshot: {
+      schemaVersion: 'ocr-validation/1.0';
+      valid: boolean;
+      candidatePayloadHash: string;
+      blockingErrors: Array<{ code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
+      warnings: Array<{ code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
+    };
+  };
   createdAt: string;
   updatedAt: string;
   rawFile: {
@@ -694,7 +724,63 @@ export interface CreateOCRTaskPayload {
 }
 
 export interface CorrectOCRTaskPayload {
-  corrections: Array<{ fieldId: string; correctedValue: unknown; reason?: string }>;
+  expectedVersion?: number;
+  expectedReviewRevision?: number;
+  corrections: Array<{ fieldId: string; correctedValue: unknown; reason: string; evidenceRefs?: string[] }>;
+}
+
+export interface RevalidateOCRTaskPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+}
+
+export interface OCRAiSuggestionResult {
+  status: 'needs_finance_review' | 'manual_required';
+  mode: 'suggest' | 'manual';
+  mock?: boolean;
+  reasonCode?: string;
+  message?: string;
+  businessRecordsCreated: 0;
+  classification?: {
+    status: string;
+    provider?: string;
+    providerClass?: string;
+    model?: string;
+    promptVersion?: string;
+    output?: {
+      selectedTemplateVersionId: string | null;
+      candidateTemplateVersionIds: string[];
+      confidence: string;
+      evidenceRefs: string[];
+      reasonCodes: string[];
+      warnings: string[];
+      decision: 'NEEDS_FINANCE_REVIEW';
+    };
+  } | null;
+  mapping?: {
+    status: string;
+    provider?: string;
+    providerClass?: string;
+    model?: string;
+    promptVersion?: string;
+    output?: {
+      mappings: Array<{
+        sourceRef: string;
+        targetFieldKey: string;
+        targetFieldId?: string;
+        targetFieldName?: string;
+        transformKey: string;
+        confidence: string;
+        evidenceRefs: string[];
+      }>;
+      unmappedSourceRefs: string[];
+      unresolvedRequiredFields: string[];
+      warnings: string[];
+      decision: 'NEEDS_FINANCE_REVIEW';
+    };
+  } | null;
+  conflicts?: Array<{ sourceRef: string; evidenceRefs: string[] }>;
+  aiCalls?: number;
 }
 
 export interface OCRConfirmResult {

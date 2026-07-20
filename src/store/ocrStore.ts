@@ -7,6 +7,7 @@ import {
   getOCRTask,
   getOCRTasks,
   retryOCRTask,
+  revalidateOCRTask,
   runOCRTask,
   uploadAndCreateOCRTask,
 } from '@/api/ocrApi';
@@ -16,6 +17,7 @@ import type {
   OCRConfirmResult,
   OCRTask,
   OCRTaskListQuery,
+  RevalidateOCRTaskPayload,
 } from '@/types/dataCenter';
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'OCR 请求失败';
@@ -34,6 +36,7 @@ interface OCRState {
   uploadAndRun: (file: File, payload: Omit<CreateOCRTaskPayload, 'rawFileId'>) => Promise<OCRTask>;
   runTask: (id: string) => Promise<OCRTask>;
   correctTask: (id: string, payload: CorrectOCRTaskPayload) => Promise<OCRTask>;
+  revalidateTask: (id: string, payload: RevalidateOCRTaskPayload) => Promise<OCRTask>;
   confirmTask: (id: string, acknowledgeLowConfidence: boolean) => Promise<OCRConfirmResult>;
   retryTask: (id: string) => Promise<OCRTask>;
   cancelTask: (id: string) => Promise<OCRTask>;
@@ -104,6 +107,7 @@ export const useOCRStore = create<OCRState>((set) => {
     },
     runTask: (id) => run(() => runOCRTask(id)),
     correctTask: (id, payload) => run(() => correctOCRTask(id, payload)),
+    revalidateTask: (id, payload) => run(() => revalidateOCRTask(id, payload)),
     confirmTask: async (id, acknowledgeLowConfidence) => {
       set({ loading: true, error: null });
       try {
