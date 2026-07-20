@@ -10,6 +10,7 @@ export class MockAiProviderService {
   ) {}
 
   async generate(request: AiProviderRequest): Promise<AiProviderResult> {
+    await request.beforeProviderRequest?.();
     if (request.mockScenario) return this.generateScenario(request);
     const envelope = {
       claims: request.claimCandidates ?? this.grounding.createExpectedEnvelope(request.contexts, request.question).claims

@@ -114,7 +114,14 @@ describe('explicit Mock AI scenarios', () => {
       warnings: [],
       decision: 'NEEDS_FINANCE_REVIEW'
     };
-    const success = await provider.generate({ ...baseRequest, mockScenario: 'success', mockOutput: validOutput });
+    const beforeProviderRequest = jest.fn(async () => undefined);
+    const success = await provider.generate({
+      ...baseRequest,
+      mockScenario: 'success',
+      mockOutput: validOutput,
+      beforeProviderRequest
+    });
+    expect(beforeProviderRequest).toHaveBeenCalledTimes(1);
     expect(success.raw).toMatchObject({ provider: 'mock', mock: true, scenario: 'success' });
     expect(validator.mapping(success.text, allowlist)).toMatchObject({ mappings: [{ targetFieldKey: 'amount' }] });
 

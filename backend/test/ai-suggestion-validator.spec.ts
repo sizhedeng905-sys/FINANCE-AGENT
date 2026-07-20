@@ -130,6 +130,55 @@ describe('AI suggestion output contracts', () => {
     })).toThrow('INVALID_JSON');
   });
 
+  it('enforces complete source coverage, server-derived required fields, and field-specific transforms', () => {
+    const strictAllowlist = {
+      templateVersionIds,
+      evidenceRefs: new Set(['sheet0:C', 'sheet0:D']),
+      sourceRefs: new Set(['sheet0:C', 'sheet0:D']),
+      fieldKeys,
+      requiredFieldKeys: new Set(['amount', 'recordDate']),
+      transformKeysByField: new Map([
+        ['amount', new Set(['DECIMAL_CANONICAL_V1'])],
+        ['recordDate', new Set(['DATE_ISO_WITH_LOCALE_V1'])]
+      ]),
+      requireSourceEvidence: true
+    };
+    const valid = {
+      schemaVersion: 'mapping/1.0',
+      templateVersionId: 'template-expense:v3',
+      mappings: [{
+        sourceRef: 'sheet0:C',
+        targetFieldKey: 'amount',
+        transformKey: 'DECIMAL_CANONICAL_V1',
+        confidence: '0.9',
+        evidenceRefs: ['sheet0:C']
+      }],
+      unmappedSourceRefs: ['sheet0:D'],
+      unresolvedRequiredFields: ['recordDate'],
+      warnings: [],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    };
+    expect(service.mapping(JSON.stringify(valid), strictAllowlist)).toMatchObject({
+      unresolvedRequiredFields: ['recordDate']
+    });
+    expect(() => service.mapping(JSON.stringify({
+      ...valid,
+      unmappedSourceRefs: []
+    }), strictAllowlist)).toThrow('omitted source reference');
+    expect(() => service.mapping(JSON.stringify({
+      ...valid,
+      unresolvedRequiredFields: []
+    }), strictAllowlist)).toThrow('unresolved required fields');
+    expect(() => service.mapping(JSON.stringify({
+      ...valid,
+      mappings: [{ ...valid.mappings[0], transformKey: 'IDENTITY_V1' }]
+    }), strictAllowlist)).toThrow('unauthorized field transform');
+    expect(() => service.mapping(JSON.stringify({
+      ...valid,
+      mappings: [{ ...valid.mappings[0], evidenceRefs: ['sheet0:D'] }]
+    }), strictAllowlist)).toThrow('source evidence is missing');
+  });
+
   it('accepts only a whitelisted report snapshot and review-only narrative', () => {
     const narrative = JSON.stringify({
       schemaVersion: 'report-narrative/1.0',

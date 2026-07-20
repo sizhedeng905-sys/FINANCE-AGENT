@@ -70,6 +70,10 @@ export interface AiProviderRequest {
   mockScenario?: 'success' | 'unmapped' | 'invalid_json' | 'timeout' | 'injection';
   mockOutput?: unknown;
   mockTemplateVersionId?: string;
+  structuredInput?: unknown;
+  outputSchema?: unknown;
+  requestIdempotencyKey?: string;
+  beforeProviderRequest?: () => Promise<void>;
 }
 
 export interface AiProviderResult {

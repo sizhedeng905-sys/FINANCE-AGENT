@@ -27,6 +27,10 @@ export interface ClassificationAllowlist {
 export interface MappingAllowlist extends ClassificationAllowlist {
   fieldKeys: ReadonlySet<string>;
   allowRepeatedTargetFieldKeys?: ReadonlySet<string>;
+  sourceRefs?: ReadonlySet<string>;
+  requiredFieldKeys?: ReadonlySet<string>;
+  transformKeysByField?: ReadonlyMap<string, ReadonlySet<string>>;
+  requireSourceEvidence?: boolean;
 }
 
 @Injectable()
@@ -51,16 +55,22 @@ export class AiSuggestionValidatorService {
   mapping(text: string, allowlist: MappingAllowlist): MappingSuggestionOutput {
     const output = this.structuredOutput.parseAndValidate(MAPPING_SUGGESTION_SCHEMA, text);
     this.assertAllowed(output.templateVersionId, allowlist.templateVersionIds, 'template version');
-    this.assertAllowedMany(output.unmappedSourceRefs, allowlist.evidenceRefs, 'unmapped source reference');
+    const allowedSourceRefs = allowlist.sourceRefs ?? allowlist.evidenceRefs;
+    this.assertAllowedMany(output.unmappedSourceRefs, allowedSourceRefs, 'unmapped source reference');
     this.assertAllowedMany(output.unresolvedRequiredFields, allowlist.fieldKeys, 'required field');
 
     const sourceRefs = new Set<string>();
     const targetFieldKeys = new Set<string>();
     for (const mapping of output.mappings) {
-      this.assertAllowed(mapping.sourceRef, allowlist.evidenceRefs, 'source reference');
+      this.assertAllowed(mapping.sourceRef, allowedSourceRefs, 'source reference');
       this.assertAllowed(mapping.targetFieldKey, allowlist.fieldKeys, 'target field');
       this.assertAllowed(mapping.transformKey, this.transformKeys, 'transform');
+      const allowedTransforms = allowlist.transformKeysByField?.get(mapping.targetFieldKey);
+      if (allowedTransforms) this.assertAllowed(mapping.transformKey, allowedTransforms, 'field transform');
       this.assertAllowedMany(mapping.evidenceRefs, allowlist.evidenceRefs, 'evidence reference');
+      if (allowlist.requireSourceEvidence && !mapping.evidenceRefs.includes(mapping.sourceRef)) {
+        throw this.invalid(`source evidence is missing for: ${mapping.sourceRef}`);
+      }
       if (sourceRefs.has(mapping.sourceRef)) throw this.invalid(`duplicate source reference: ${mapping.sourceRef}`);
       sourceRefs.add(mapping.sourceRef);
       if (
@@ -74,6 +84,29 @@ export class AiSuggestionValidatorService {
 
     const overlapping = output.unmappedSourceRefs.find((sourceRef) => sourceRefs.has(sourceRef));
     if (overlapping) throw this.invalid(`source reference is both mapped and unmapped: ${overlapping}`);
+    if (allowlist.sourceRefs) {
+      const covered = new Set([...sourceRefs, ...output.unmappedSourceRefs]);
+      for (const sourceRef of allowlist.sourceRefs) {
+        if (!covered.has(sourceRef)) throw this.invalid(`mapping omitted source reference: ${sourceRef}`);
+      }
+      if (covered.size !== allowlist.sourceRefs.size) {
+        throw this.invalid('mapping does not account for every source reference');
+      }
+    }
+    if (allowlist.requiredFieldKeys) {
+      const expectedUnresolved = new Set(
+        [...allowlist.requiredFieldKeys].filter((fieldKey) => !targetFieldKeys.has(fieldKey))
+      );
+      const reportedUnresolved = new Set(output.unresolvedRequiredFields);
+      if (reportedUnresolved.size !== expectedUnresolved.size) {
+        throw this.invalid('unresolved required fields do not match server template facts');
+      }
+      for (const fieldKey of expectedUnresolved) {
+        if (!reportedUnresolved.has(fieldKey)) {
+          throw this.invalid(`missing unresolved required field: ${fieldKey}`);
+        }
+      }
+    }
     return output;
   }
 

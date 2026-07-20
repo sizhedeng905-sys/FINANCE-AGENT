@@ -240,6 +240,7 @@ describe('model runtime safeguards', () => {
       'ai.maxOutputTokens': 120,
       'ai.maxResponseBytes': 1024
     }), http, gate);
+    const beforeProviderRequest = jest.fn(async () => undefined);
 
     await expect(provider.generate({
       provider: 'openai_compatible',
@@ -256,9 +257,11 @@ describe('model runtime safeguards', () => {
       instructions: 'Return JSON.',
       question: 'health',
       history: [],
-      contexts: []
+      contexts: [],
+      beforeProviderRequest
     })).resolves.toMatchObject({ text: '{"claims":[]}' });
 
+    expect(beforeProviderRequest).toHaveBeenCalledTimes(1);
     expect(gate.run).toHaveBeenCalledWith('ai:config-hash-1', 3, expect.any(Function));
     expect(http.request).toHaveBeenCalledWith(
       'http://127.0.0.1:18000/v1/chat/completions',
