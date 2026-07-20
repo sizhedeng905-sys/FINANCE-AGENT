@@ -1,6 +1,6 @@
 # FINANCE-AGENT 人工决策与 UAT 签字
 
-文档版本：0.2-draft
+文档版本：0.4-draft
 当前状态：`Owner decisions captured / Pending formal signoff and evidence`
 创建日期：2026-07-18
 最近更新：2026-07-20
@@ -84,6 +84,13 @@
 - 证据引用：负责人问卷 Q10-Q11
 - 冲突与例外：必填附件模板清单未给出
 
+## H06/H08 报告工程证据
+
+- 工程报告：[`M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`](M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md)
+- 已实现的保守行为：只读取 `confirmed + actual`；金额使用 Decimal；币种分组且不跨币相加；固定 `Asia/Shanghai` 期间；来源记录 ID/version/hash 与核心 Snapshot hash 可复核。
+- AI 边界：报告 AI 不查询数据库、不计算金额、不写业务记录；只能逐字选择服务端生成的 Claim 白名单，任何新增客户、原因、比较、预测、数字、值篡改或 warning 遗漏都会失败关闭。
+- 人工门禁仍开放：上述均为合成工程证据，不能替代真实逐分对账、正式指标定义、老板标准答案、授权人姓名/角色/日期和签字。
+
 ## H03-H16 状态索引
 
 | 编号 | 决策主题 | 当前状态 | 负责人 | 最小证据 |
@@ -91,8 +98,8 @@
 | H03 | 跨来源重复指纹与处置 | `Decision captured / Pending signoff` | 财务、业务 | A-E 信号；前后 3 天且金额逐分一致；仅提示。仍需真实样例和处置签字 |
 | H04 | 17 份 OCR 字段真值 | `Awaiting real evidence` | 独立标注/复核人员 | 已选择独立人员标注 17 份；仍缺人员、日期、冻结标签和分歧处理 |
 | H05 | 5 份 OCR 盲测冻结 | `Awaiting real evidence` | 独立评测人员 | 已选择冻结 5 份；仍缺未参与调参者、阈值、冻结清单和盲测记录 |
-| H06 | L3 分币对账真值 | `Pending - scope details required` | 财务负责人 | 已要求按项目/日期/币种/方向逐分一致；仍缺周期、人工来源和真实签字 |
-| H08 | 老板问题与正确答案 | `Pending - metric definitions required` | 老板/授权审批人 | 已给三类问题与保守回答风格；仍缺期间、指标口径、合理性规则和标准答案 |
+| H06 | L3 分币对账真值 | `Engineering framework passed / Pending real truth and signoff` | 财务负责人 | M6 已固定 confirmed actual、分币种 Decimal、时区/期间、来源 digest 与不可变 Snapshot；仍缺周期、人工真值、逐分结果和签字 |
+| H08 | 老板问题与正确答案 | `Engineering framework passed / Pending metric definitions and signoff` | 老板/授权审批人 | M6 已限制 AI 逐字选择服务端 Claim 白名单并展示 sourcePath/warning；仍缺期间、正式指标口径、合理性规则和标准答案 |
 | H09 | 脱敏不可重识别标准 | `Decision captured / Pending evidence` | 安全/合规 | 本机内受控使用原数据，离开本机必须稳定匿名；仍缺字段清单和重识别测试 |
 | H10 | 权限、职责分离、MFA、自审批 | `Decision captured / Pending implementation and signoff` | 管理层、安全、业务 | 四角色沿用；自审批仅在二次确认和完整审计后开放；批量入账及用户安全操作需 step-up |
 | H11 | 文件准入、预览、下载、净化 | `Pending - safe resource/bypass policy required` | 安全、业务 | xlsx/PDF/JPG/PNG；仅财务/老板下载；仍缺技术预算和人工绕过责任边界 |
@@ -123,3 +130,4 @@ H07 已在上文单独列出，因此没有在索引表重复。
 | 0.1-draft | 2026-07-18 | Codex（仅创建模板） | 建立 H01-H16 唯一决策入口，未填写任何业务结论 | 全部保持 `Pending` |
 | 0.2-draft | 2026-07-20 | Codex（依据项目负责人问卷回填） | 导入 Q01-Q30，登记明确规则、冲突、缺项和失败关闭行为 | 无项目升级为 `Approved`；H03/H09/H10 等进入已记录待签字，真实证据门禁保持开放 |
 | 0.3-draft | 2026-07-20 | Codex（工程证据回填） | 关联 M5.2 每行明细、汇总行人工处置和整批失败关闭证据 | H01 保持 `Pending formal signoff and examples`，未用合成验收替代人工签字 |
+| 0.4-draft | 2026-07-20 | Codex（M6 工程证据回填） | 关联 canonical ReportSnapshot、分币种 Decimal 和严格 Claim grounding 证据 | H06/H08 工程框架通过；真实对账、正式口径、标准答案和签字仍保持 Pending |

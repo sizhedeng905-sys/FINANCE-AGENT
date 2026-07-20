@@ -121,3 +121,97 @@ export interface AIAnomaly {
   reason: string;
   statusText: string;
 }
+
+export type ReportSnapshotType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
+
+export interface ReportSnapshotWarning {
+  code: string;
+  message: string;
+}
+
+export interface ReportCurrencyMetrics {
+  currency: string;
+  income: string;
+  cost: string;
+  profit: string;
+  recordCount: number;
+}
+
+export interface ReportSnapshot {
+  schemaVersion: 'report-snapshot/1.0';
+  snapshotId: string;
+  reportType: ReportSnapshotType;
+  period: { start: string; endExclusive: string; timezone: 'Asia/Shanghai' };
+  scope: {
+    organizationId: string;
+    scopeType: 'COMPANY' | 'PROJECT' | 'PROJECT_SET';
+    projectIds: string[];
+  };
+  dataPolicy: {
+    recordStatus: 'CONFIRMED';
+    dataLayer: 'ACTUAL';
+    currencies: string[];
+    currencyAggregation: 'SEPARATE_BY_CURRENCY';
+  };
+  metrics: {
+    currency: string | null;
+    income: string | null;
+    cost: string | null;
+    profit: string | null;
+    recordCount: number;
+    byCurrency: ReportCurrencyMetrics[];
+  };
+  breakdowns: Array<ReportCurrencyMetrics & { projectId: string; projectName: string }>;
+  warnings: ReportSnapshotWarning[];
+  queryVersion: string;
+  dataWatermark: string;
+  sourceDigest: string;
+  canonicalizationVersion: string;
+  snapshotHash: string;
+  generatedAt: string;
+  retentionClass: string;
+}
+
+export interface ReportSnapshotResult {
+  snapshot: ReportSnapshot;
+  reused: boolean;
+  sourceCount: number;
+}
+
+export interface ReportNarrativeClaim {
+  claimId: string;
+  claimType: 'MONEY' | 'COUNT' | 'PERCENT' | 'DATE' | 'TEXT' | 'COMPARISON' | 'WARNING';
+  text: string;
+  sourcePath: string;
+  value: string;
+  sourceValueHash: string;
+}
+
+export interface ReportNarrative {
+  id: string;
+  snapshotId: string;
+  snapshotHash: string;
+  schemaVersion: 'report-narrative/1.0';
+  title: string;
+  summary: string;
+  warningPaths: string[];
+  decision: 'NEEDS_FINANCE_REVIEW';
+  narrativeHash: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  versionVectorHash: string;
+  aiTaskId: string;
+  claims: ReportNarrativeClaim[];
+  createdAt: string;
+}
+
+export interface ReportNarrativeGenerationResult {
+  status: 'needs_finance_review' | 'disabled' | 'failed' | 'in_progress';
+  snapshotId?: string;
+  reasonCode?: string;
+  message?: string;
+  policy?: unknown;
+  aiTaskId?: string;
+  narrative?: ReportNarrative;
+}

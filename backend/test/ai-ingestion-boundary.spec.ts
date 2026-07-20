@@ -41,4 +41,20 @@ describe('AI ingestion dependency boundary', () => {
     expect(provider).toContain("headers['Idempotency-Key']");
     expect(provider).toContain('<untrusted_structured_input_json>');
   });
+
+  it('keeps report AI read-only and behind the independent report policy', async () => {
+    const [narratives, grounding] = await Promise.all([
+      source('ai/report-narratives.service.ts'),
+      source('ai/report-narrative-grounding.service.ts')
+    ]);
+    const combined = `${narratives}\n${grounding}`;
+
+    expect(combined).not.toContain('records.service');
+    expect(combined).not.toContain('work-order-records.service');
+    expect(combined).not.toMatch(/\.businessRecord\.(create|createMany|update|upsert|delete)/);
+    expect(narratives).toContain("capability: 'report'");
+    expect(narratives).toContain("decision: 'NEEDS_FINANCE_REVIEW'");
+    expect(grounding).toContain('warning paths do not exactly cover');
+    expect(grounding).toContain('ungrounded numeric token');
+  });
 });

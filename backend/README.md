@@ -84,11 +84,11 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-20, M5.2 Excel approval hardening):
+Current verification baseline (2026-07-20, M6 immutable report snapshots and grounded narratives):
 
-- Backend build and Prisma validation pass. Migration-path verification installs all 37 migrations on an empty database and upgrades the 36-migration predecessor to the current schema.
-- Jest: 46/46 suites and 403/403 tests.
-- Full PostgreSQL integration passes 9/9 suites and 96/96 tests, including strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, and 30,196/49,999-row accounting closure.
+- Backend build and Prisma validation pass. Migration-path verification installs all 41 migrations on an empty database and upgrades the 40-migration predecessor to the current schema.
+- Jest: 47/47 suites and 410/410 tests.
+- Full PostgreSQL integration passes 10/10 suites and 97/97 tests, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, and 30,196/49,999-row accounting closure.
 - Root Playwright acceptance: 17/17 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
@@ -101,6 +101,7 @@ Current verification baseline (2026-07-20, M5.2 Excel approval hardening):
 - R4 upgrades linked backups to `backup-manifest/1.0`, streamed per-object SHA-256, database/object reference checks, isolated database/bucket restore, fault injection, and one-time H13/H14 live-restore authorization. Local synthetic object and empty restore paths pass; target Linux restore, formal RPO/RTO, encryption/offsite retention, and live cutover remain `blocked_external`.
 - M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
 - M5.2 makes Excel posting whole-batch fail-closed. Each valid detail row creates one record; ordinary invalid detail rows cannot be excluded, summary candidates require a reasoned finance decision, and every review invalidates the old validation snapshot. A second active finance user submits exact versions/hashes/warnings and an idempotency key; staged records remain report-invisible until one final transaction rechecks identity, source, template, row-set and output hashes and publishes the complete batch.
+- M6 freezes confirmed actual report facts under PostgreSQL repeatable-read, uses Decimal and separate currency totals, stores immutable source/version hashes, and reuses a content-addressed canonical snapshot. Report AI uses the independent report policy and may only copy exact server-generated Claim catalog entries; invented entities, causes, comparisons, predictions, numbers, modified values, and hidden warnings are rejected. H06/H08 business truth and signoff remain external.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -134,6 +135,8 @@ Current verification baseline (2026-07-20, M5.2 Excel approval hardening):
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
 - Risk rules and anomalies: `/api/risk-rules`, `/api/reports/anomalies`, `/api/ai/anomalies`
 - Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/ranking`, `/api/reports/projects/:projectId/{daily|monthly}`
+- Immutable report snapshots: `POST /api/reports/snapshots`, `GET /api/reports/snapshots/:id`, `GET /api/reports/snapshots/:id/sources`
+- Grounded report narrative: `POST /api/ai/report-snapshots/:id/narrative`, `GET /api/ai/report-narratives/:id`
 - Boss AI assistant: `POST /api/ai/chat`
 - Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
 - Owner-scoped AI call logs: `GET /api/ai/call-logs`, `GET /api/ai/call-logs/:id`
@@ -170,7 +173,7 @@ Errors use the same envelope:
 
 Notification visibility is always derived from the authenticated user: a notification must target that user or the user's role. Read state is stored per user in `notification_receipts`, so one user cannot read a shared role notification on behalf of another. Repeated read and read-all requests are idempotent and do not duplicate audit logs.
 
-Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, and voided records are excluded; money and explicit project/customer rankings are aggregated with `Prisma.Decimal`, and day/week/month boundaries use `Asia/Shanghai`. Boss AI providers return only strict Claim JSON; the backend validates the complete source tuple and deterministically renders answers from the same `ReportsService` used by normal report APIs.
+Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, reconciliation, and voided records are excluded from canonical actual snapshots; money is aggregated with `Prisma.Decimal`, currencies are never implicitly combined, and day/week/month boundaries use `Asia/Shanghai`. A canonical snapshot freezes query/canonicalization versions, source record versions and hashes, consistency watermarks, source digests, warnings, and the exact JSON facts. Report AI cannot query or write business records: it returns strict JSON and can only select exact server-generated Claim catalog entries whose `sourcePath` and value are revalidated before immutable persistence.
 
 All accounting amounts in JSON are fixed-decimal strings, not JavaScript numbers. Templates define immutable `accountingDirection`, `primaryAmountFieldId`, and `primaryDateFieldId`; manual entry, work orders, Excel, and OCR use the shared record policy so top-level amount/date and dynamic values cannot diverge.
 
@@ -318,6 +321,7 @@ Completed:
 - B8-09 engineering implementation: split API/Worker runtime, Redis coordination, private S3 storage, PostgreSQL TLS/least privilege, centralized observability, linked backups, restore drills, and guarded application/data/model rollback; target-environment execution remains external.
 - M5.1 OCR approval hardening: immutable approval snapshots, stable validation issue IDs, exact warning acknowledgement, uploader self-approval rejection, final transaction authorization, optimistic concurrency, and request-body-bound idempotent posting.
 - M5.2 Excel approval hardening: H01 detail-row posting, summary-only review revisions, deterministic whole-batch revalidation, immutable approval snapshots, second-finance authorization, report-invisible staging, and atomic idempotent publication.
+- M6 report evidence: immutable canonical ReportSnapshot/source rows, Decimal and separate-currency metrics, deterministic source/canonical hashes, independent report AI policy, exact Claim catalog grounding, version-preserving narratives, and boss evidence UI.
 
 Explicitly deferred by the user:
 
@@ -335,7 +339,7 @@ Completed audit follow-up:
 
 Deployment or data work still required:
 
-- M6 must add an immutable canonical ReportSnapshot, Decimal/query-version evidence, source digests, and deterministic claim validation before AI report narration can be considered complete.
+- H06/H08 must supply signed real cent-level reconciliation, periods, formal metric definitions, and owner-approved question/answer truth before report correctness or business usefulness can be claimed.
 - Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
 - GPU container startup, 30-minute residency, OOM/latency observation, text/VL/Embedding switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
 - Object storage, a running ClamAV service, production backup/restore, and retention jobs.

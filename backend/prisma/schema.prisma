@@ -229,6 +229,16 @@ enum AiCallAttemptStatus {
   failed
 }
 
+enum ReportSnapshotType {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum ReportNarrativeStatus {
+  NEEDS_FINANCE_REVIEW
+}
+
 enum RetentionDataClass {
   auth_security_grant
   ai_conversation_content
@@ -285,6 +295,8 @@ model User {
   retentionRuns        RetentionRun[]        @relation("RetentionRunRequester")
   retentionLegalHolds  RetentionLegalHold[]  @relation("RetentionLegalHoldCreator")
   stepUpGrants         StepUpGrant[]
+  reportSnapshots      ReportSnapshot[]      @relation("ReportSnapshotCreator")
+  reportNarratives     ReportNarrative[]     @relation("ReportNarrativeCreator")
 
   @@map("users")
 }
@@ -447,6 +459,7 @@ model BusinessRecord {
   version              Int                  @default(1)
   recordDate           DateTime             @map("record_date")
   amount               Decimal              @default(0) @db.Decimal(18, 2)
+  currency             String               @default("CNY") @db.VarChar(3)
   category             String?
   subCategory          String?              @map("sub_category")
   description          String?
@@ -463,13 +476,14 @@ model BusinessRecord {
   voidedAt             DateTime?            @map("voided_at")
   voidedBy             String?              @map("voided_by")
 
-  project                Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  template               Template      @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  project                Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template               Template               @relation(fields: [templateId], references: [id], onDelete: Restrict)
   values                 RecordValue[]
-  generatedFromWorkOrder WorkOrder?    @relation("GeneratedRecord")
-  importTask             ImportTask?   @relation(fields: [importTaskId], references: [id], onDelete: Restrict)
-  sourceImportRow        ImportRow?    @relation("ImportRowGeneratedRecord")
-  generatedFromOcrTask   OcrTask?      @relation("OcrGeneratedRecord")
+  generatedFromWorkOrder WorkOrder?             @relation("GeneratedRecord")
+  importTask             ImportTask?            @relation(fields: [importTaskId], references: [id], onDelete: Restrict)
+  sourceImportRow        ImportRow?             @relation("ImportRowGeneratedRecord")
+  generatedFromOcrTask   OcrTask?               @relation("OcrGeneratedRecord")
+  reportSnapshotSources  ReportSnapshotSource[]
 
   @@unique([importTaskId, sourceId], map: "uq_business_records_import_source")
   @@index([projectId])
@@ -1292,8 +1306,9 @@ model AiTask {
   createdAt         DateTime     @default(now()) @map("created_at")
   updatedAt         DateTime     @updatedAt @map("updated_at")
 
-  creator  User?           @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  attempts AiCallAttempt[]
+  creator          User?             @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  attempts         AiCallAttempt[]
+  reportNarratives ReportNarrative[]
 
   @@index([taskType, status])
   @@index([resourceType, resourceId])
@@ -1407,6 +1422,108 @@ model AiCallLog {
   @@index([createdAt])
   @@index([correlationId])
   @@map("ai_call_logs")
+}
+
+model ReportSnapshot {
+  id                      String             @id @default(cuid())
+  schemaVersion           String             @default("report-snapshot/1.0") @map("schema_version")
+  reportType              ReportSnapshotType @map("report_type")
+  scopeType               String             @map("scope_type")
+  projectIds              Json               @default("[]") @map("project_ids")
+  periodStart             DateTime           @map("period_start")
+  periodEndExclusive      DateTime           @map("period_end_exclusive")
+  timezone                String             @default("Asia/Shanghai")
+  dataPolicy              Json               @map("data_policy_json")
+  metrics                 Json               @map("metrics_json")
+  breakdowns              Json               @default("[]") @map("breakdowns_json")
+  warnings                Json               @default("[]") @map("warnings_json")
+  queryVersion            String             @map("query_version")
+  dataWatermark           String             @map("data_watermark")
+  sourceDigest            String             @map("source_digest") @db.VarChar(64)
+  sourceCount             Int                @map("source_count")
+  canonicalizationVersion String             @map("canonicalization_version")
+  snapshotHash            String             @unique @map("snapshot_hash") @db.VarChar(64)
+  snapshotJson            Json               @map("snapshot_json")
+  retentionClass          String             @map("retention_class")
+  createdBy               String             @map("created_by")
+  createdAt               DateTime           @default(now()) @map("created_at")
+
+  creator    User                   @relation("ReportSnapshotCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  sources    ReportSnapshotSource[]
+  narratives ReportNarrative[]
+
+  @@index([reportType, periodStart, periodEndExclusive])
+  @@index([createdBy, createdAt])
+  @@index([sourceDigest])
+  @@map("report_snapshots")
+}
+
+model ReportSnapshotSource {
+  id                  BigInt              @id @default(autoincrement())
+  snapshotId          String              @map("snapshot_id")
+  recordId            String              @map("record_id")
+  recordVersion       Int                 @map("record_version")
+  recordHash          String              @map("record_hash") @db.VarChar(64)
+  projectId           String              @map("project_id")
+  recordDate          DateTime            @map("record_date")
+  currency            String              @db.VarChar(3)
+  accountingDirection AccountingDirection @map("accounting_direction")
+  amount              Decimal             @db.Decimal(18, 2)
+
+  snapshot ReportSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  record   BusinessRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, recordId])
+  @@index([recordId])
+  @@index([snapshotId, projectId, currency])
+  @@map("report_snapshot_sources")
+}
+
+model ReportNarrative {
+  id                String                @id @default(cuid())
+  snapshotId        String                @map("snapshot_id")
+  aiTaskId          String                @unique @map("ai_task_id")
+  schemaVersion     String                @default("report-narrative/1.0") @map("schema_version")
+  title             String
+  summary           String
+  warningPaths      Json                  @default("[]") @map("warning_paths")
+  decision          ReportNarrativeStatus @default(NEEDS_FINANCE_REVIEW)
+  narrativeHash     String                @map("narrative_hash") @db.VarChar(64)
+  narrativeJson     Json                  @map("narrative_json")
+  provider          String
+  modelName         String                @map("model_name")
+  promptVersion     String                @map("prompt_version")
+  versionVectorHash String                @map("version_vector_hash") @db.VarChar(64)
+  createdBy         String                @map("created_by")
+  createdAt         DateTime              @default(now()) @map("created_at")
+
+  snapshot ReportSnapshot     @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  aiTask   AiTask             @relation(fields: [aiTaskId], references: [id], onDelete: Restrict)
+  creator  User               @relation("ReportNarrativeCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  claims   AiFinancialClaim[]
+
+  @@unique([snapshotId, narrativeHash, versionVectorHash])
+  @@index([snapshotId, createdAt])
+  @@index([createdBy, createdAt])
+  @@map("report_narratives")
+}
+
+model AiFinancialClaim {
+  id                String   @id @default(cuid())
+  reportNarrativeId String   @map("report_narrative_id")
+  claimId           String   @map("claim_id")
+  claimType         String   @map("claim_type")
+  text              String
+  sourcePath        String   @map("source_path")
+  value             String
+  sourceValueHash   String   @map("source_value_hash") @db.VarChar(64)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  narrative ReportNarrative @relation(fields: [reportNarrativeId], references: [id], onDelete: Restrict)
+
+  @@unique([reportNarrativeId, claimId])
+  @@index([reportNarrativeId, sourcePath])
+  @@map("ai_financial_claims")
 }
 
 model RecordValue {

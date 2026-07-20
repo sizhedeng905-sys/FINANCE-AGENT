@@ -207,9 +207,11 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | M3-AI-SUGGESTION-001 | P0 | Excel 列级分类/映射建议、白名单与失败关闭 | verified | M3.2 |
 | M3-AI-LEASE-001 | P0 | AI 调用幂等、租约接管、旧响应竞争与重试耗尽 | verified | M3.2 |
 | M4-OCR-REVIEW-001 | P1 | OCR evidence review revision | verified | M4 |
-| M5-SELF-APPROVAL-001 | P0 | 上传者自审批与最终重鉴权 | partial_verified_ocr / open_excel | M5.1 / M5.2 |
-| M5-PARTIAL-COMMIT-001 | P0 | 错误行存在时部分正式入账 | open | M5 |
-| M5-SNAPSHOT-COMMIT-001 | P0 | 不可变批准快照与唯一 commit | partial_verified_ocr / open_excel | M5.1 / M5.2 |
-| M6-REPORT-SNAPSHOT-001 | P0 | canonical ReportSnapshot/Claim | open | M6 |
+| M5-SELF-APPROVAL-001 | P0 | 上传者自审批与最终重鉴权 | engineering_verified | M5.1 / M5.2 |
+| M5-PARTIAL-COMMIT-001 | P0 | 错误行存在时部分正式入账 | verified | M5.2 |
+| M5-SNAPSHOT-COMMIT-001 | P0 | 不可变批准快照与唯一 commit | engineering_verified | M5.1 / M5.2 |
+| M6-REPORT-SNAPSHOT-001 | P0 | canonical ReportSnapshot/Claim | engineering_verified | M6 |
 | M7-ATTACK-BUDGET-001 | P1 | 攻击、资源和降级门禁 | open | M7 |
 | M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | open | M8 |
+
+M6 关闭证据见 `docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`：固定 confirmed actual 查询、repeatable-read 水位、Decimal 分币种、来源版本/hash、不可变数据库行、精确 Claim 白名单、独立 report kill switch、Provider 失败关闭及真实 API 浏览器链均已通过。H06/H08 的真实对账、正式指标口径、标准答案和签字仍为人工门禁，不因工程 P0 关闭而自动通过。

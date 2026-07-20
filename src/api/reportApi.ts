@@ -1,11 +1,22 @@
 import { runtimeConfig } from '@/config/runtime';
-import type { BossReport, BossReportPeriod, FinanceReport, FinanceReportPeriod, ProjectReport } from '@/types/report';
+import type {
+  BossReport,
+  BossReportPeriod,
+  FinanceReport,
+  FinanceReportPeriod,
+  ProjectReport,
+  ReportNarrativeGenerationResult,
+  ReportSnapshotResult,
+  ReportSnapshotType,
+} from '@/types/report';
 import { httpClient } from './httpClient';
 import {
   mockFetchBossReport,
   mockFetchFinanceReport,
   mockFetchProjectDailyReport,
   mockFetchProjectMonthlyReport,
+  mockCreateReportSnapshot,
+  mockGenerateReportNarrative,
 } from './mockReportRepository';
 
 function reportQuery(periodKey: string, period: string, dateKey?: string, date?: string): string {
@@ -52,4 +63,33 @@ export function fetchProjectMonthlyReportApi(projectId: string, month?: string):
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<ProjectReport>(`/reports/projects/${encodeURIComponent(projectId)}/monthly${query}`)
     : mockFetchProjectMonthlyReport(projectId, month);
+}
+
+const snapshotTypeByPeriod: Record<BossReportPeriod, ReportSnapshotType> = {
+  daily: 'DAILY',
+  weekly: 'WEEKLY',
+  monthly: 'MONTHLY',
+};
+
+export function createReportSnapshotApi(
+  period: BossReportPeriod,
+  date?: string,
+  projectIds?: string[],
+): Promise<ReportSnapshotResult> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<ReportSnapshotResult>('/reports/snapshots', {
+      reportType: snapshotTypeByPeriod[period],
+      ...(date ? { date } : {}),
+      ...(projectIds?.length ? { projectIds } : {}),
+    })
+    : mockCreateReportSnapshot(period);
+}
+
+export function generateReportNarrativeApi(snapshotId: string): Promise<ReportNarrativeGenerationResult> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<ReportNarrativeGenerationResult>(
+      `/ai/report-snapshots/${encodeURIComponent(snapshotId)}/narrative`,
+      {},
+    )
+    : mockGenerateReportNarrative(snapshotId);
 }

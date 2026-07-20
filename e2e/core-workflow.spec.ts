@@ -121,4 +121,31 @@ test('API mode: employee submission reaches a confirmed record and boss report',
   const expenseMetric = page.locator('.metric-card').filter({ hasText: '确认支出' });
   await expect(expenseMetric).toContainText('4,321.09');
   await expect(page.getByText('项目利润排行', { exact: true })).toBeVisible();
+
+  const snapshotResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/reports/snapshots'
+  ));
+  await page.getByRole('button', { name: '生成审计快照' }).click();
+  const snapshot = await readEnvelope<{
+    snapshot: { snapshotId: string; snapshotHash: string; warnings: Array<{ code: string }> };
+    sourceCount: number;
+  }>(await snapshotResponse);
+  expect(snapshot.data.snapshot.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(snapshot.data.sourceCount).toBeGreaterThanOrEqual(1);
+  await expect(page.getByText('FORMAL_METRIC_POLICY_PENDING', { exact: true })).toBeVisible();
+
+  const narrativeResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/ai/report-snapshots/${snapshot.data.snapshot.snapshotId}/narrative`
+  ));
+  await page.getByRole('button', { name: '生成 AI 叙述' }).click();
+  const narrative = await readEnvelope<{
+    status: string;
+    narrative: { snapshotHash: string; claims: Array<{ sourcePath: string }> };
+  }>(await narrativeResponse);
+  expect(narrative.data.status).toBe('needs_finance_review');
+  expect(narrative.data.narrative.snapshotHash).toBe(snapshot.data.snapshot.snapshotHash);
+  expect(narrative.data.narrative.claims.some((claim) => claim.sourcePath === '/metrics/recordCount')).toBe(true);
+  await expect(page.getByText('需财务复核', { exact: true })).toBeVisible();
+  await expect(page.getByText('/metrics/recordCount', { exact: true })).toBeVisible();
 });

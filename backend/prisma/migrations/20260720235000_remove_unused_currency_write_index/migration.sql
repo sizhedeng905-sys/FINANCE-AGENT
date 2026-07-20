@@ -1,0 +1,1 @@
+DROP INDEX "business_records_currency_data_layer_status_record_date_idx";

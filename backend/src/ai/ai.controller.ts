@@ -12,13 +12,33 @@ import { AiService } from './ai.service';
 import { AiChatDto } from './dto/ai-chat.dto';
 import { QueryAiCallLogsDto } from './dto/query-ai-call-logs.dto';
 import { QueryAiConversationsDto } from './dto/query-ai-conversations.dto';
+import { ReportNarrativesService } from './report-narratives.service';
 
 @ApiTags('ai')
 @ApiBearerAuth()
 @Controller('ai')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AiController {
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly reportNarratives: ReportNarrativesService
+  ) {}
+
+  @Post('report-snapshots/:id/narrative')
+  @Roles(UserRole.boss)
+  reportNarrative(
+    @Param('id') id: string,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.reportNarratives.generate(id, user, getRequestContext(request));
+  }
+
+  @Get('report-narratives/:id')
+  @Roles(UserRole.boss)
+  reportNarrativeDetail(@Param('id') id: string) {
+    return this.reportNarratives.findOne(id);
+  }
 
   @Post('chat')
   @Roles(UserRole.boss)

@@ -97,9 +97,34 @@ async function main() {
     select: { id: true }
   });
   const recordIds = records.map((item) => item.id);
-  const resourceIds = [...new Set([...workOrderIds, ...importTaskIds, ...ocrTaskIds, ...recordIds, ...rawFileIds])];
+  const reportSnapshotLinks = await prisma.reportSnapshotSource.findMany({
+    where: { recordId: { in: recordIds } },
+    select: { snapshotId: true }
+  });
+  const reportSnapshotIds = [...new Set(reportSnapshotLinks.map((item) => item.snapshotId))];
+  const reportNarratives = await prisma.reportNarrative.findMany({
+    where: { snapshotId: { in: reportSnapshotIds } },
+    select: { id: true, aiTaskId: true }
+  });
+  const reportNarrativeIds = reportNarratives.map((item) => item.id);
+  const reportAiTaskIds = reportNarratives.map((item) => item.aiTaskId);
+  const resourceIds = [...new Set([
+    ...workOrderIds,
+    ...importTaskIds,
+    ...ocrTaskIds,
+    ...recordIds,
+    ...rawFileIds,
+    ...reportSnapshotIds,
+    ...reportNarrativeIds
+  ])];
 
   await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.allow_report_audit_purge', 'on', true)`;
+    await tx.aiFinancialClaim.deleteMany({ where: { reportNarrativeId: { in: reportNarrativeIds } } });
+    await tx.reportNarrative.deleteMany({ where: { id: { in: reportNarrativeIds } } });
+    await tx.reportSnapshotSource.deleteMany({ where: { snapshotId: { in: reportSnapshotIds } } });
+    await tx.reportSnapshot.deleteMany({ where: { id: { in: reportSnapshotIds } } });
+    await tx.aiTask.deleteMany({ where: { id: { in: reportAiTaskIds } } });
     await tx.workOrder.updateMany({
       where: { id: { in: workOrderIds } },
       data: { generatedRecordId: null }
@@ -126,7 +151,7 @@ async function main() {
   await rm(uploadRoot, { recursive: true, force: true });
 
   console.log(
-    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
+    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${reportSnapshotIds.length} report snapshot(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
   );
 }
 

@@ -682,7 +682,9 @@ async function main() {
         'excel_template_classification',
         'excel_column_mapping',
         'ocr_document_classification',
-        'ocr_field_mapping'
+        'ocr_field_mapping',
+        'report_narrative',
+        'report_fact_check'
       ],
       maxConcurrency: 4,
       timeoutMs: 5000,
@@ -705,7 +707,9 @@ async function main() {
         'excel_template_classification',
         'excel_column_mapping',
         'ocr_document_classification',
-        'ocr_field_mapping'
+        'ocr_field_mapping',
+        'report_narrative',
+        'report_fact_check'
       ],
       maxConcurrency: 1,
       timeoutMs: 60000,
@@ -791,6 +795,10 @@ async function main() {
     ['ocr_document_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
     ['ocr_field_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
     ['ocr_field_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['report_narrative', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['report_narrative', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['report_fact_check', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['report_fact_check', 'model-deployment-qwen-text', 10, false, 'manual'],
     ['ocr_document', 'model-deployment-paddle-ocr', 10, false, 'manual'],
     ['ocr_ambiguity_review', 'model-deployment-qwen-vl', 10, false, 'manual'],
     ['embedding', 'model-deployment-qwen-embedding', 10, false, 'manual']

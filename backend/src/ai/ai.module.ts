@@ -16,6 +16,8 @@ import { AiSuggestionValidatorService } from './ai-suggestion-validator.service'
 import { AiToolsService } from './ai-tools.service';
 import { HttpAiProviderService } from './http-ai-provider.service';
 import { MockAiProviderService } from './mock-ai-provider.service';
+import { ReportNarrativeGroundingService } from './report-narrative-grounding.service';
+import { ReportNarrativesService } from './report-narratives.service';
 
 @Module({
   imports: [AuditLogsModule, ReportsModule, RiskRulesModule, WorkOrdersModule, JwtModule.register({})],
@@ -29,9 +31,11 @@ import { MockAiProviderService } from './mock-ai-provider.service';
     AiProviderService,
     MockAiProviderService,
     HttpAiProviderService,
+    ReportNarrativeGroundingService,
+    ReportNarrativesService,
     JwtAuthGuard,
     RolesGuard
   ],
-  exports: [AiStructuredSuggestionService, AiSuggestionValidatorService]
+  exports: [AiStructuredSuggestionService, AiSuggestionValidatorService, ReportNarrativesService]
 })
 export class AiModule {}

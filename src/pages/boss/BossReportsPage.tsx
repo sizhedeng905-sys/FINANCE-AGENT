@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, List, Row, Spin, Table, Tabs, Typography } from 'antd';
+import { FileProtectOutlined, RobotOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Col, Descriptions, Empty, List, Row, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import MetricCard from '@/components/MetricCard';
 import { useReportStore } from '@/store/reportStore';
-import type { BossReportPeriod, ProjectRankingItem } from '@/types/report';
+import { createReportSnapshotApi, generateReportNarrativeApi } from '@/api/reportApi';
+import type {
+  BossReportPeriod,
+  ProjectRankingItem,
+  ReportNarrativeClaim,
+  ReportNarrativeGenerationResult,
+  ReportSnapshotResult,
+} from '@/types/report';
 import { formatMoney, formatPercent } from '@/utils/format';
 
 const periods: Array<{ key: BossReportPeriod; label: string }> = [
@@ -22,16 +30,64 @@ const rankingColumns: ColumnsType<ProjectRankingItem> = [
   { title: '异常', dataIndex: 'riskCount' },
 ];
 
+const claimColumns: ColumnsType<ReportNarrativeClaim> = [
+  { title: '叙述', dataIndex: 'text' },
+  { title: '快照值', dataIndex: 'value', width: 150 },
+  {
+    title: '数据路径',
+    dataIndex: 'sourcePath',
+    width: 240,
+    render: (value: string) => <Typography.Text code copyable>{value}</Typography.Text>,
+  },
+];
+
 export default function BossReportsPage() {
   const [period, setPeriod] = useState<BossReportPeriod>('daily');
   const report = useReportStore((state) => state.bossReports.find((item) => item.period === period));
   const loading = useReportStore((state) => state.bossLoading);
   const error = useReportStore((state) => state.bossError);
   const fetchReport = useReportStore((state) => state.fetchBossReport);
+  const [snapshotResult, setSnapshotResult] = useState<ReportSnapshotResult | null>(null);
+  const [narrativeResult, setNarrativeResult] = useState<ReportNarrativeGenerationResult | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchReport(period).catch(() => undefined);
   }, [fetchReport, period]);
+
+  useEffect(() => {
+    setSnapshotResult(null);
+    setNarrativeResult(null);
+    setEvidenceError(null);
+  }, [period]);
+
+  const createSnapshot = async () => {
+    setSnapshotLoading(true);
+    setEvidenceError(null);
+    setNarrativeResult(null);
+    try {
+      setSnapshotResult(await createReportSnapshotApi(period));
+    } catch (requestError) {
+      setEvidenceError(requestError instanceof Error ? requestError.message : '报告快照生成失败');
+    } finally {
+      setSnapshotLoading(false);
+    }
+  };
+
+  const generateNarrative = async () => {
+    if (!snapshotResult) return;
+    setNarrativeLoading(true);
+    setEvidenceError(null);
+    try {
+      setNarrativeResult(await generateReportNarrativeApi(snapshotResult.snapshot.snapshotId));
+    } catch (requestError) {
+      setEvidenceError(requestError instanceof Error ? requestError.message : 'AI 叙述生成失败');
+    } finally {
+      setNarrativeLoading(false);
+    }
+  };
 
   return (
     <div>
@@ -69,6 +125,102 @@ export default function BossReportsPage() {
 
             <Card title="经营摘要" className="section-row">
               <Alert type={report.anomalyCount ? 'warning' : 'success'} showIcon message={report.aiSummary} description={report.aiSuggestion} />
+            </Card>
+
+            <Card
+              title="报告快照与数据依据"
+              className="section-row"
+              extra={(
+                <Space wrap>
+                  <Button
+                    icon={<FileProtectOutlined />}
+                    loading={snapshotLoading}
+                    onClick={() => void createSnapshot()}
+                  >
+                    生成审计快照
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<RobotOutlined />}
+                    disabled={!snapshotResult}
+                    loading={narrativeLoading}
+                    onClick={() => void generateNarrative()}
+                  >
+                    生成 AI 叙述
+                  </Button>
+                </Space>
+              )}
+            >
+              {evidenceError ? <Alert type="error" showIcon message={evidenceError} style={{ marginBottom: 16 }} /> : null}
+              {!snapshotResult ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未生成审计快照" /> : null}
+              {snapshotResult ? (
+                <>
+                  <Descriptions bordered size="small" column={{ xs: 1, sm: 1, md: 2 }}>
+                    <Descriptions.Item label="状态">
+                      <Tag color={snapshotResult.reused ? 'blue' : 'green'}>
+                        {snapshotResult.reused ? '已复用相同事实快照' : '新快照'}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="来源记录">{snapshotResult.sourceCount} 条</Descriptions.Item>
+                    <Descriptions.Item label="统计口径">
+                      {snapshotResult.snapshot.dataPolicy.recordStatus} · {snapshotResult.snapshot.dataPolicy.dataLayer}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="币种">
+                      {snapshotResult.snapshot.dataPolicy.currencies.join('、') || '无数据'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="快照哈希" span={2}>
+                      <Typography.Text code copyable>{snapshotResult.snapshot.snapshotHash}</Typography.Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="来源摘要" span={2}>
+                      <Typography.Text code copyable>{snapshotResult.snapshot.sourceDigest}</Typography.Text>
+                    </Descriptions.Item>
+                  </Descriptions>
+                  <List
+                    size="small"
+                    header="快照警告"
+                    dataSource={snapshotResult.snapshot.warnings}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <Space align="start"><Tag color="warning">{item.code}</Tag><span>{item.message}</span></Space>
+                      </List.Item>
+                    )}
+                  />
+                </>
+              ) : null}
+              {narrativeResult && !narrativeResult.narrative ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={narrativeResult.status === 'disabled' ? '报告 AI 当前未启用' : '报告 AI 叙述不可用'}
+                  description={narrativeResult.message}
+                  style={{ marginTop: 16 }}
+                />
+              ) : null}
+              {narrativeResult?.narrative ? (
+                <div style={{ marginTop: 16 }}>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={narrativeResult.narrative.summary}
+                    description={(
+                      <Space wrap>
+                        <Tag color="gold">需财务复核</Tag>
+                        <Tag>{narrativeResult.narrative.provider}</Tag>
+                        <Typography.Text type="secondary">{narrativeResult.narrative.promptVersion}</Typography.Text>
+                      </Space>
+                    )}
+                    style={{ marginBottom: 16 }}
+                  />
+                  <Table
+                    rowKey="claimId"
+                    size="small"
+                    columns={claimColumns}
+                    dataSource={narrativeResult.narrative.claims}
+                    pagination={false}
+                    scroll={{ x: 760 }}
+                  />
+                </div>
+              ) : null}
             </Card>
 
             <Card title="项目利润排行" className="section-row">

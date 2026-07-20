@@ -4156,6 +4156,8 @@ describe('real PostgreSQL integration', () => {
       expect.objectContaining({ taskType: 'boss_chat', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
       expect.objectContaining({ taskType: 'ocr_document_classification', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
       expect.objectContaining({ taskType: 'ocr_field_mapping', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
+      expect.objectContaining({ taskType: 'report_narrative', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
+      expect.objectContaining({ taskType: 'report_fact_check', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
       expect.objectContaining({ taskType: 'ocr_document', isEnabled: false, deployment: expect.objectContaining({ key: 'paddleocr-vl' }) })
     ]));
 
@@ -4169,7 +4171,7 @@ describe('real PostgreSQL integration', () => {
       expect.objectContaining({ key: 'qwen3-14b-awq', enabled: false, healthy: false, status: 'disabled' })
     ]));
     expect(await prisma.modelDeployment.count()).toBe(5);
-    expect(await prisma.taskModelRoute.count()).toBe(13);
+    expect(await prisma.taskModelRoute.count()).toBe(17);
   });
 
   it('imports a real XLSX with mapping decisions and rejects partial-row posting', async () => {

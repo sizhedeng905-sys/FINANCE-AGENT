@@ -10,6 +10,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import {
   AI_POLICY_VERSION,
   AiDataClassification,
+  AiFeatureCapability,
   AiFeaturePolicyService,
   AiProviderClass,
   AiScopeModes
@@ -37,6 +38,7 @@ const AI_TASK_MAX_INVOCATIONS = 3;
 const AI_TASK_LEASE_GRACE_MS = 30_000;
 
 export interface AiStructuredSuggestionInput<T> {
+  capability?: Exclude<AiFeatureCapability, 'assistant'>;
   taskType: string;
   promptKey: string;
   resourceType: string;
@@ -128,7 +130,8 @@ export class AiStructuredSuggestionService {
   ) {}
 
   async execute<T>(input: AiStructuredSuggestionInput<T>): Promise<AiStructuredSuggestionResult<T>> {
-    const policySnapshot = this.policy.snapshot('ingestion', input.scopeModes);
+    const capability = input.capability ?? 'ingestion';
+    const policySnapshot = this.policy.snapshot(capability, input.scopeModes);
     if (policySnapshot.effectiveMode !== 'suggest') {
       return { status: 'disabled', policy: policySnapshot, reasonCode: 'AI_DISABLED' };
     }
@@ -147,7 +150,7 @@ export class AiStructuredSuggestionService {
       : deployment.isLocal ? 'local' : 'external';
     try {
       this.policy.assertCallAllowed({
-        capability: 'ingestion',
+        capability,
         providerClass,
         dataClassification: input.dataClassification,
         scopeModes: input.scopeModes
@@ -274,7 +277,7 @@ export class AiStructuredSuggestionService {
         maxConcurrency: deployment.maxConcurrency,
         maxInputCharacters: promptBundle.maxInputBudget ?? undefined,
         configHash: deployment.configHash,
-        capability: 'ingestion',
+        capability,
         providerClass,
         dataClassification: input.dataClassification,
         scopeModes: input.scopeModes,
@@ -774,7 +777,7 @@ export class AiStructuredSuggestionService {
     leaseDurationMs: number;
   }) {
     this.policy.assertCallAllowed({
-      capability: 'ingestion',
+      capability: args.input.capability ?? 'ingestion',
       providerClass: args.providerClass,
       dataClassification: args.input.dataClassification,
       scopeModes: args.input.scopeModes

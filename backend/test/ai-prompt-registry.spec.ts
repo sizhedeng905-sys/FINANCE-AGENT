@@ -73,9 +73,12 @@ describe('versioned AI prompt registry', () => {
     const registry = new AiPromptRegistryService(prisma);
     const bundle = await registry.resolveActive('report_narrative', 'mock');
     expect(bundle.instructions).toContain('untrusted data');
-    expect(bundle.instructions).toContain('Narrate only supplied snapshot facts');
+    expect(bundle.instructions).toContain('Choose only from allowedClaims');
+    expect(bundle.instructions).toContain('without paraphrasing or adding facts');
     expect(bundle.versionVector).toMatchObject({
       prompt: { contentSha256: prompt.contentSha256 },
+      inputSchemaVersion: 'report-narrative-input/1.0',
+      outputSchemaVersion: 'report-narrative/1.0',
       components: [{ contentSha256: FINANCE_CORE_GUARD.contentSha256 }]
     });
     expect(bundle.bundleSha256).toMatch(/^[0-9a-f]{64}$/);
