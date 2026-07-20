@@ -89,6 +89,10 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const requestRateLimitWindowMs = Number(String(environment.REQUEST_RATE_LIMIT_WINDOW_MS ?? '60000'));
   const requestRateLimitMax = Number(String(environment.REQUEST_RATE_LIMIT_MAX ?? '600'));
   const requestRateLimitStore = String(environment.REQUEST_RATE_LIMIT_STORE ?? 'memory');
+  const loginRateLimitStore = String(environment.LOGIN_RATE_LIMIT_STORE ?? 'memory');
+  const loginRateLimitWindowMs = Number(String(environment.LOGIN_RATE_LIMIT_WINDOW_MS ?? '900000'));
+  const loginRateLimitBlockMs = Number(String(environment.LOGIN_RATE_LIMIT_BLOCK_MS ?? '900000'));
+  const loginRateLimitLeaseMs = Number(String(environment.LOGIN_RATE_LIMIT_LEASE_MS ?? '30000'));
   const redisUrl = String(environment.REDIS_URL ?? '');
   const redisKeyPrefix = String(environment.REDIS_KEY_PREFIX ?? 'finance-agent');
   const redisConnectTimeoutMs = Number(String(environment.REDIS_CONNECT_TIMEOUT_MS ?? '5000'));
@@ -425,6 +429,21 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   if (nodeEnv === 'production' && requestRateLimitStore !== 'redis') {
     throw new Error('REQUEST_RATE_LIMIT_STORE must be redis in production.');
   }
+  if (!RATE_LIMIT_STORES.has(loginRateLimitStore)) {
+    throw new Error(`LOGIN_RATE_LIMIT_STORE must be one of: ${Array.from(RATE_LIMIT_STORES).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && loginRateLimitStore !== 'redis') {
+    throw new Error('LOGIN_RATE_LIMIT_STORE must be redis in production.');
+  }
+  if (!Number.isInteger(loginRateLimitWindowMs) || loginRateLimitWindowMs < 1000 || loginRateLimitWindowMs > 3600000) {
+    throw new Error('LOGIN_RATE_LIMIT_WINDOW_MS must be an integer between 1000 and 3600000.');
+  }
+  if (!Number.isInteger(loginRateLimitBlockMs) || loginRateLimitBlockMs < 1000 || loginRateLimitBlockMs > 3600000) {
+    throw new Error('LOGIN_RATE_LIMIT_BLOCK_MS must be an integer between 1000 and 3600000.');
+  }
+  if (!Number.isInteger(loginRateLimitLeaseMs) || loginRateLimitLeaseMs < 1000 || loginRateLimitLeaseMs > 120000) {
+    throw new Error('LOGIN_RATE_LIMIT_LEASE_MS must be an integer between 1000 and 120000.');
+  }
   if (redisUrl) {
     let parsedRedisUrl: URL;
     try {
@@ -438,7 +457,7 @@ export function validateEnvironment(environment: Record<string, unknown>) {
     if (nodeEnv === 'production' && !parsedRedisUrl.password) {
       throw new Error('Production REDIS_URL must include authentication.');
     }
-  } else if (requestRateLimitStore === 'redis' || nodeEnv === 'production') {
+  } else if (requestRateLimitStore === 'redis' || loginRateLimitStore === 'redis' || nodeEnv === 'production') {
     throw new Error('REDIS_URL is required for Redis-backed runtime services.');
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9:_-]{2,63}$/.test(redisKeyPrefix)) {

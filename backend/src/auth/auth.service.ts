@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { HttpException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
@@ -12,7 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StepUpEnforcementService } from '../step-up/step-up-enforcement.service';
 import { LoginDto } from './dto/login.dto';
 import { StepUpDto } from './dto/step-up.dto';
-import { LoginRateLimitService } from './login-rate-limit.service';
+import { LoginRateLimitService, LoginReservation } from './login-rate-limit.service';
 
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('finance-agent-dummy-password', 10);
 
@@ -28,13 +28,19 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto, context: RequestContext) {
-    let reservation;
+    let reservation: LoginReservation;
     try {
-      reservation = this.loginRateLimit.reserve(dto.username, context.ip);
+      reservation = await this.loginRateLimit.reserve(dto.username, context.ip);
     } catch (error) {
       await this.auditLogs.writeAuthentication(
         this.prisma,
-        { username: dto.username, success: false, failureReason: 'rate_limited' },
+        {
+          username: dto.username,
+          success: false,
+          failureReason: error instanceof HttpException && error.getStatus() === 429
+            ? 'rate_limited'
+            : 'rate_limit_store_unavailable'
+        },
         context
       );
       throw error;
@@ -46,12 +52,17 @@ export class AuthService {
       user = await this.prisma.user.findUnique({ where: { username: dto.username } });
       passwordMatched = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
     } catch (error) {
-      this.loginRateLimit.release(reservation);
+      await this.loginRateLimit.release(reservation).catch(() => undefined);
       throw error;
     }
 
     if (!user || user.status !== UserStatus.active || !passwordMatched) {
-      this.loginRateLimit.failure(reservation);
+      let limiterError: unknown;
+      try {
+        await this.loginRateLimit.failure(reservation);
+      } catch (error) {
+        limiterError = error;
+      }
       await this.auditLogs.writeAuthentication(
         this.prisma,
         {
@@ -62,10 +73,20 @@ export class AuthService {
         },
         context
       );
+      if (limiterError) throw limiterError;
       throw new UnauthorizedException('账号或密码错误');
     }
 
-    this.loginRateLimit.success(reservation);
+    try {
+      await this.loginRateLimit.success(reservation);
+    } catch (error) {
+      await this.auditLogs.writeAuthentication(
+        this.prisma,
+        { userId: user.id, username: user.username, success: false, failureReason: 'rate_limit_store_unavailable' },
+        context
+      );
+      throw error;
+    }
 
     const accessToken = await this.signAccessToken(
       user.id,

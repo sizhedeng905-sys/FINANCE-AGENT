@@ -122,6 +122,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return { count, ttlMs: Math.max(1, ttlMs) };
   }
 
+  async evalAtomic(
+    script: string,
+    keys: string[],
+    args: Array<string | number>,
+    unavailableMessage: string
+  ): Promise<unknown> {
+    const client = this.requireClient(unavailableMessage);
+    try {
+      return await client.eval(script, {
+        keys: keys.map((key) => this.key(key)),
+        arguments: args.map(String)
+      });
+    } catch (error) {
+      this.logger.warn(`Redis atomic operation failed: ${this.safeMessage(error)}`);
+      throw new ServiceUnavailableException(unavailableMessage);
+    }
+  }
+
   async writeWorkerHeartbeat(heartbeat: Omit<WorkerHeartbeat, 'timestamp'>, ttlMs: number) {
     const client = this.requireClient();
     const value: WorkerHeartbeat = { ...heartbeat, timestamp: new Date().toISOString() };
@@ -141,8 +159,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private requireClient() {
-    if (!this.client?.isReady) throw new ServiceUnavailableException('Redis is unavailable');
+  private requireClient(message = 'Redis is unavailable') {
+    if (!this.client?.isReady) throw new ServiceUnavailableException(message);
     return this.client;
   }
 

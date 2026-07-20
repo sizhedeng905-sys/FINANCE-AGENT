@@ -81,9 +81,17 @@ export default () => ({
     windowMs: Number.parseInt(process.env.REQUEST_RATE_LIMIT_WINDOW_MS ?? '60000', 10),
     max: Number.parseInt(process.env.REQUEST_RATE_LIMIT_MAX ?? '600', 10)
   },
+  loginRateLimit: {
+    store: process.env.LOGIN_RATE_LIMIT_STORE || 'memory',
+    windowMs: Number.parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? '900000', 10),
+    blockMs: Number.parseInt(process.env.LOGIN_RATE_LIMIT_BLOCK_MS ?? '900000', 10),
+    leaseMs: Number.parseInt(process.env.LOGIN_RATE_LIMIT_LEASE_MS ?? '30000', 10)
+  },
   redis: {
     url: process.env.REDIS_URL || '',
-    required: process.env.NODE_ENV === 'production' || process.env.REQUEST_RATE_LIMIT_STORE === 'redis',
+    required: process.env.NODE_ENV === 'production'
+      || process.env.REQUEST_RATE_LIMIT_STORE === 'redis'
+      || process.env.LOGIN_RATE_LIMIT_STORE === 'redis',
     keyPrefix: process.env.REDIS_KEY_PREFIX || 'finance-agent',
     connectTimeoutMs: Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10)
   },
