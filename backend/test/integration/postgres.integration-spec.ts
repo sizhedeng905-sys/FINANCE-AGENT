@@ -6450,7 +6450,8 @@ describe('real PostgreSQL integration', () => {
         apiLatencyMs,
         elapsedMs,
         peakRssDeltaMb: Number(((peakRss - baselineRss) / 1024 / 1024).toFixed(2)),
-        peakConnections
+        peakConnections,
+        errorMessage: finished.errorMessage
       }));
 
       expect(finished).toMatchObject({
@@ -6696,7 +6697,11 @@ describe('real PostgreSQL integration', () => {
       expect(publishedReport.body.data).toMatchObject({ expense: '1231.23', recordCount: rowCount });
     });
 
-    it('recovers after a simulated short PostgreSQL disconnect', async () => {
+    it.each([
+      { code: 'P1001', label: 'short PostgreSQL disconnect' },
+      { code: 'P2028', label: 'Prisma transaction timeout' },
+      { code: 'P2034', label: 'transaction write conflict' }
+    ])('recovers after a simulated $label', async ({ code }) => {
       const rowCount = 1_001;
       const taskId = await createTask(rowCount, '2026-07-21');
       const approval = await loadImportApproval(taskId, financeToken);
@@ -6704,12 +6709,12 @@ describe('real PostgreSQL integration', () => {
         processConfirmationBatch(job: { taskId: string }): Promise<boolean>;
       };
       const original = service.processConfirmationBatch.bind(service);
-      let disconnected = false;
+      let failedOnce = false;
       const failure = jest.spyOn(service, 'processConfirmationBatch').mockImplementation(async (job) => {
-        if (job.taskId === taskId && !disconnected) {
-          disconnected = true;
-          throw new Prisma.PrismaClientKnownRequestError('simulated short database disconnect', {
-            code: 'P1001',
+        if (job.taskId === taskId && !failedOnce) {
+          failedOnce = true;
+          throw new Prisma.PrismaClientKnownRequestError(`simulated transient database error ${code}`, {
+            code,
             clientVersion: '6.19.3'
           });
         }
@@ -6719,7 +6724,7 @@ describe('real PostgreSQL integration', () => {
         await confirmRequest(
           taskId,
           approval.payload,
-          `b8-confirm-${suffix}-database-disconnect`
+          `b8-confirm-${suffix}-database-${code.toLowerCase()}`
         ).expect(201);
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {

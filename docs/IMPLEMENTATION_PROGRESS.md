@@ -90,6 +90,7 @@ B8-09 已完成的工程证据：
 - M8 完成最终证据收口并以 `30c6ead` 推送到 Draft PR #4；Prompt manifest/guard 4/4 unit 与 3/3 PostgreSQL、前后端 build、runtime 4/4、41 条 migration 双路径、708 文件卫生和两套 0 vulnerability 审计通过。受保护 Prompt Catalog 和 H 门禁仍未关闭，详见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`。
 - 生产全局请求限流、登录口令限流、上传准入与模型执行门已由 Redis 共享。R9.1/R9.2 使用原子 Lua、摘要身份键、Redis 时钟租约、续租/崩溃回收和断连失败关闭；R9.3 将 AI、OCR 与推理健康探针统一置于共享 FIFO 并发预算下，租约丢失会中止 Provider 请求且不会污染熔断统计。模型双实例专项 6/6、后端 47 suites / 428 tests、最终 PostgreSQL/Redis 13 suites / 113 tests 与 build 本地通过。代码层子项已关闭，但 B8-09 Compose 继续固定单 API、单 Worker，目标多实例部署、恢复和回退受 H13/H14 阻断；详见 R9.1-R9.3 三份验收报告。
 - R9.1A 对一次 shared-string 未解析观察实施确定性预加载和残留 token 失败关闭。Excel parser 15/15、连续 10 轮 0 失败、单轮 4 路并发一致、全量 unit 419/419、PostgreSQL 真实 XLSX API 场景与 41 migrations 通过；详见 `docs/R9_1A_XLSX_SHARED_STRING_HARDENING_REPORT_2026-07-21.md`。
+- R9.3A 的全量回归在默认 PostgreSQL 容器上稳定复现 WAL checkpoint 期间最终发布事务 `P2028`：旧实现把已完整暂存的 30,196 行错误标成终态失败。现在 `P2028/P2034` 释放租约并由 reaper 有界接管，仍受最大尝试次数、不可变批准快照、最终重鉴权和幂等发布约束。P1001/P2028/P2034 定向 3/3、最终 PostgreSQL/Redis 13 suites / 113 tests 通过；30,196 行真实恢复为 167.004 秒，H13 仍须验证目标磁盘和 PostgreSQL WAL/checkpoint 余量。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。
 - 真实 GPU 再验收覆盖文本重启、VL 按需切换和文本恢复，期间 OCR 432 次 readiness 采样 0 失败；最终文本/OCR常驻，VL/Embedding离线。

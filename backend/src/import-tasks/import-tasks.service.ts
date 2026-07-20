@@ -4475,7 +4475,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   private isTransientDatabaseError(error: unknown) {
     if (error instanceof Prisma.PrismaClientInitializationError) return true;
     if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-    return ['P1001', 'P1002', 'P1008', 'P1017', 'P2024'].includes(error.code);
+    return ['P1001', 'P1002', 'P1008', 'P1017', 'P2024', 'P2028', 'P2034'].includes(error.code);
   }
 
   private safeConfirmationErrorMessage(error: unknown) {
