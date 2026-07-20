@@ -65,7 +65,8 @@ import {
 } from './mapping-profile-fingerprint';
 import {
   IMPORT_TRANSFORM_REGISTRY_VERSION,
-  isRegisteredImportTransformKey
+  isRegisteredImportTransformKey,
+  transformKeyForFieldType
 } from './import-transform-registry';
 import {
   importTaskDetailInclude,
@@ -2795,11 +2796,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
   }
 
   private mappingTransformKey(fieldType?: FieldType) {
-    if (fieldType === FieldType.money || fieldType === FieldType.number) return 'DECIMAL_CANONICAL_V1';
-    if (fieldType === FieldType.date) return 'DATE_ISO_WITH_LOCALE_V1';
-    if (fieldType === FieldType.select) return 'ENUM_ALIAS_LOOKUP_V1';
-    if (fieldType === FieldType.text || fieldType === FieldType.textarea) return 'TRIM_TEXT_V1';
-    return 'IDENTITY_V1';
+    return fieldType ? transformKeyForFieldType(fieldType) : 'IDENTITY_V1';
   }
 
   private presentMappingProfile(profile: {

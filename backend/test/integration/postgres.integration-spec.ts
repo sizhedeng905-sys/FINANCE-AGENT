@@ -4121,7 +4121,7 @@ describe('real PostgreSQL integration', () => {
       expect.objectContaining({ key: 'qwen3-14b-awq', enabled: false, healthy: false, status: 'disabled' })
     ]));
     expect(await prisma.modelDeployment.count()).toBe(5);
-    expect(await prisma.taskModelRoute.count()).toBe(5);
+    expect(await prisma.taskModelRoute.count()).toBe(9);
   });
 
   it('imports a real XLSX with mapping decisions, partial success, idempotency, and report visibility', async () => {

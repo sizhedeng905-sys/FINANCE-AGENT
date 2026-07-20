@@ -677,7 +677,7 @@ async function main() {
       modelVersion: '1',
       endpoint: null,
       secretRef: null,
-      taskTypes: ['boss_chat'],
+      taskTypes: ['boss_chat', 'excel_template_classification', 'excel_column_mapping'],
       maxConcurrency: 4,
       timeoutMs: 5000,
       isLocal: true,
@@ -692,7 +692,13 @@ async function main() {
       modelVersion: '0.23.0',
       endpoint: 'http://127.0.0.1:8000/v1',
       secretRef: 'AI_API_KEY',
-      taskTypes: ['boss_chat', 'structured_extraction', 'risk_explanation'],
+      taskTypes: [
+        'boss_chat',
+        'structured_extraction',
+        'risk_explanation',
+        'excel_template_classification',
+        'excel_column_mapping'
+      ],
       maxConcurrency: 1,
       timeoutMs: 60000,
       isLocal: true,
@@ -769,6 +775,10 @@ async function main() {
   const modelRoutes = [
     ['boss_chat', 'model-deployment-mock-text', 100, true, 'mock'],
     ['boss_chat', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['excel_template_classification', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['excel_template_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['excel_column_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['excel_column_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
     ['ocr_document', 'model-deployment-paddle-ocr', 10, false, 'manual'],
     ['ocr_ambiguity_review', 'model-deployment-qwen-vl', 10, false, 'manual'],
     ['embedding', 'model-deployment-qwen-embedding', 10, false, 'manual']

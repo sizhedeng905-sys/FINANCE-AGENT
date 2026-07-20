@@ -32,6 +32,7 @@ import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { SaveMappingsDto } from './dto/save-mappings.dto';
+import { ExcelAiSuggestionService } from './excel-ai-suggestion.service';
 import { ImportTasksService } from './import-tasks.service';
 
 @ApiTags('import-tasks')
@@ -40,7 +41,10 @@ import { ImportTasksService } from './import-tasks.service';
 @UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 @Roles(UserRole.finance)
 export class ImportTasksController {
-  constructor(private readonly imports: ImportTasksService) {}
+  constructor(
+    private readonly imports: ImportTasksService,
+    private readonly aiSuggestions: ExcelAiSuggestionService
+  ) {}
 
   @Post()
   @ApiConsumes('multipart/form-data')
@@ -135,6 +139,20 @@ export class ImportTasksController {
   @Post(':id/generate-suggestions')
   generateSuggestions(@Param('id') id: string, @CurrentUserDecorator() user: CurrentUser, @Req() request: AuthenticatedRequest) {
     return this.imports.generateSuggestions(id, user, getRequestContext(request));
+  }
+
+  @Post(':id/ai-suggestions')
+  aiSuggest(
+    @Param('id') id: string,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.aiSuggestions.suggest(id, user, getRequestContext(request));
+  }
+
+  @Get(':id/ai-suggestions')
+  aiSuggestionHistory(@Param('id') id: string) {
+    return this.aiSuggestions.latest(id);
   }
 
   @Get(':id/preview')
