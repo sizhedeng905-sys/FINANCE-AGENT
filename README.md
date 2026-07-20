@@ -37,6 +37,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
 - PR #4 仍为 open Draft，`main <- agent/b8-stable-hardening`，69 commits，mergeable；未执行 merge、Ready、rebase、force push 或关闭旧 PR。
 - 指定人工文件 [`docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md`](docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md) 已建立为签字模板，但全部条目仍为 `Pending`，没有决策人、业务样例或签字；空白 `人工复核.md` 也不构成批准，H01-H16 全部保持未决。
+- 项目负责人可先填写 [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md)。问卷只询问功能口径、权限和风险处理，不要求判断代码；Codex 会在收到答案后回填 H01-H16、实现条件和验收用例。在正式映射和签字前，相关门禁仍保持 `Pending`。
 - R1 红灯证明了相对 `/api` 解析、隐式 Mock、镜像模式和浏览器 smoke 缺口；现已强制显式 `api` 构建、产物清单核验、同源 URL 约束、CSP 和真实浏览器写读清理。
 - 本机隔离的 18 服务栈已真实启动并通过 TLS、readiness、四角色登录、错误登录、Metrics 和浏览器 CSP/API smoke；合成项目经 API 软归档，测试容器和卷已删除。该证据不替代 H13/H14 指定的目标环境与恢复演练。
 - R2 已将网关日志从完整 `$request` 改为 `$request_method + $uri`，保留状态/上游状态/耗时/requestId/traceId；应用日志与 trace 的伪签名、Token、Cookie 和换行注入回归通过。
