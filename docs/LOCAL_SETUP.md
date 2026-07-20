@@ -1,6 +1,6 @@
 # 本地开发环境
 
-更新日期：2026-07-20
+更新日期：2026-07-21
 
 本项目使用两个独立 PostgreSQL 数据库：
 
@@ -53,6 +53,7 @@ cp backend/.env.test.example backend/.env.test
 - 生产环境必须显式配置精确的 `CORS_ORIGINS`。
 - `AI_INGESTION_MODE`、`AI_REPORT_MODE` 缺失时默认 `disabled`，只允许 `disabled|suggest`；不要添加自动批准或自动入账模式。
 - `AI_GLOBAL_KILL_SWITCH=true` 会阻止所有新 AI 调用；`AI_EXTERNAL_PROVIDER_MODE=disabled` 在 H12 批准前不得放宽真实数据外发。
+- 开发默认可使用 `memory`；production 必须把 `REQUEST_RATE_LIMIT_STORE`、`LOGIN_RATE_LIMIT_STORE`、`UPLOAD_ADMISSION_STORE` 和 `MODEL_EXECUTION_GATE_STORE` 全部设为 `redis`，并提供带认证的 `REDIS_URL`。Redis 不可用时这些边界失败关闭。
 
 真实 `.env`、密码、API key、上传文件、模型目录和真实样本不得提交到 Git。
 
@@ -144,7 +145,7 @@ npm run check:hygiene
 
 `test:integration` 和 `test:e2e` 会对专用测试库执行 generate、`migrate deploy`、seed 和精确测试数据清理。脚本检测到非 `_test` 数据库会立即终止。
 
-当前 M8 收口证据：前端/后端 build 通过，后端 47/47 suites、410/410 tests，PostgreSQL 10/10 suites、97/97 tests，Playwright 17/17，Prompt 漂移 4/4 unit + 3/3 PostgreSQL，41 条 migration 空库与 40→41 升级通过。
+当前 R11 候选证据：前端 runtime 4/4、前端/后端 build、后端 47/47 suites 与 428/428 tests、强制 Redis 的 PostgreSQL 集成 13/13 suites 与 114/114 tests、Playwright 17/17、41 条 migration 空库与 40→41 升级、Staging 配置/日志/备份/SBOM 脚本和两套生产依赖审计均通过。
 
 ## 模型与 OCR
 

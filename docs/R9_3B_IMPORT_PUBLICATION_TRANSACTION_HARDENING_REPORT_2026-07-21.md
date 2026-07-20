@@ -36,7 +36,7 @@ No database schema or migration changed.
 | Backend unit regression | passed | 47 suites, 428 tests, 0 failures, Jest 23.279 s |
 | Finalization `P2028` injection | passed | Integrity ran outside the publication transaction twice; lease recovery committed 1,001 records once; one terminal batch ledger event |
 | Capacity regression | passed | 2 tests, 30,196 and 49,999 rows, total Jest time 110.318 s |
-| Full local PostgreSQL integration | passed with configured skips | 10 active suites / 100 tests passed; 3 shared-service suites / 14 tests skipped by local environment; 0 failures; 187.968 s |
+| Full local PostgreSQL/Redis integration | passed | Redis required; 13 suites / 114 tests passed; 0 skips; 0 failures; 198.807 s |
 | Diff hygiene | passed | `git diff --check`, exit 0 |
 
 Capacity samples from the isolated run:
@@ -46,11 +46,11 @@ Capacity samples from the isolated run:
 | 30,196 | 2.836 s | 25.069 s | 406.38 MiB | 6 |
 | 49,999 | 5.948 s | 43.300 s | 418.83 MiB | 7 |
 
-The full integration run repeated the confirmation times at 24.809 s and 43.074 s. Both cases verified record/value counts, unique source linkage, Decimal totals, confirmed row state, audit events, ledger summaries, and report visibility.
+The full integration run with all Redis suites required repeated the confirmation times at 25.502 s and 42.954 s. Both cases verified record/value counts, unique source linkage, Decimal totals, confirmed row state, audit events, ledger summaries, and report visibility. Its temporary fixed-digest Redis container was healthy and was removed after the run; the resident Qwen and Paddle containers were not changed.
 
 ## Remaining gates
 
-1. The GitHub PostgreSQL/Redis job must rerun this commit and pass all 13 suites; until then the remote status remains `remote_ci_pending`.
+1. Local commit `cc033d4` must be pushed and the GitHub PostgreSQL/Redis job must pass all 13 suites. Two bounded push attempts failed at `github.com:443`, so the current remote status is `blocked_external / remote_ci_pending`.
 2. H13 target-host testing remains required for storage latency, WAL/checkpoint behavior, p95/p99 latency, and concurrent workload capacity. Local and CI evidence is not a production sizing result.
 3. Automatic recovery remains bounded by `IMPORT_CONFIRM_MAX_ATTEMPTS`; exhaustion fails closed for manual investigation.
 4. The atomic final update still writes every staged row. If target-host evidence exceeds the publication budget, a separate reviewed design for an atomic batch-visibility marker is required. Timeout inflation alone is not an accepted remedy.

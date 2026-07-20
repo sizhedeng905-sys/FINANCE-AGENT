@@ -17,7 +17,7 @@
 | 出口网络与外部 AI | | | |
 | 预算与扩容阈值 | | | |
 
-安全确认：数据库/Redis/MinIO/ClamAV 不暴露公网；生产 secret 进入批准的 secret manager；管理员和审计员职责分离。当前登录、上传和模型闸门是进程内控制，批准多副本前必须先完成共享化与故障测试。
+安全确认：数据库/Redis/MinIO/ClamAV 不暴露公网；生产 secret 进入批准的 secret manager；管理员和审计员职责分离。登录、上传和模型闸门已具备 Redis 共享原子控制；批准多副本前仍必须在本表指定的目标环境完成 release、断连、租约恢复、容量、备份和回退测试。
 
 结论：`approved / conditional / rejected`
 

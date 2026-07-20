@@ -11,7 +11,7 @@ Phase 0 through phase 10 backend for the logistics AI finance operations system.
 - JWT
 - class-validator/class-transformer
 - Swagger/OpenAPI
-- Helmet, CORS allowlist, Redis-backed global request limiting, bounded login/upload/model guards, requestId/traceId logging
+- Helmet, CORS allowlist, Redis-backed global/login/upload/model controls, requestId/traceId logging
 - S3-compatible private object storage, ClamAV, Prometheus metrics, OTLP traces
 - Split API/Worker production runtime with PostgreSQL durable task leases
 
@@ -26,7 +26,7 @@ copy .env.example .env
 npm run prisma:generate
 ```
 
-Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis shared limiting, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. Then initialize the database:
+Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis, `REQUEST_RATE_LIMIT_STORE=redis`, `LOGIN_RATE_LIMIT_STORE=redis`, `UPLOAD_ADMISSION_STORE=redis`, `MODEL_EXECUTION_GATE_STORE=redis`, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. Then initialize the database:
 
 ```bash
 npm run prisma:migrate
@@ -84,15 +84,15 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-20, M8 engineering handoff):
+Current verification baseline (2026-07-21, R11 candidate):
 
 - Backend build and Prisma validation pass. Migration-path verification installs all 41 migrations on an empty database and upgrades the 40-migration predecessor to the current schema.
-- Jest: 47/47 suites and 410/410 tests.
-- Full PostgreSQL integration passes 10/10 suites and 97/97 tests, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, and 30,196/49,999-row accounting closure.
+- Jest: 47/47 suites and 428/428 tests.
+- Full PostgreSQL integration with Redis required passes 13/13 suites and 114/114 tests, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
 - Root Playwright acceptance: 17/17 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
-- M8 re-ran frontend runtime 4/4, both production builds, the 41-migration empty and 40-to-41 upgrade paths, repository hygiene for 708 tracked/candidate files, and both production dependency audits. Prompt manifest/guard drift checks pass 4/4 unit tests and 3/3 PostgreSQL tests after an empty-database migration/seed.
+- R11 re-ran frontend runtime 4/4, both production builds, Playwright 17/17, the 41-migration empty and 40-to-41 upgrade paths, repository hygiene for 720 tracked/candidate files, and both production dependency audits. Prompt manifest/guard drift checks remain covered by the complete unit/PostgreSQL suites.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
@@ -103,7 +103,9 @@ Current verification baseline (2026-07-20, M8 engineering handoff):
 - M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
 - M5.2 makes Excel posting whole-batch fail-closed. Each valid detail row creates one record; ordinary invalid detail rows cannot be excluded, summary candidates require a reasoned finance decision, and every review invalidates the old validation snapshot. A second active finance user submits exact versions/hashes/warnings and an idempotency key; staged records remain report-invisible until one final transaction rechecks identity, source, template, row-set and output hashes and publishes the complete batch.
 - M6 freezes confirmed actual report facts under PostgreSQL repeatable-read, uses Decimal and separate currency totals, stores immutable source/version hashes, and reuses a content-addressed canonical snapshot. Report AI uses the independent report policy and may only copy exact server-generated Claim catalog entries; invented entities, causes, comparisons, predictions, numbers, modified values, and hidden warnings are rejected. H06/H08 business truth and signoff remain external.
-- M7 adds bounded retry for concurrent identical ReportSnapshot transactions and verifies one immutable snapshot under six concurrent requests. Report narrative concurrency makes at most one Provider call; missing auth, wrong role, kill switch, timeout, truncated JSON, modified values, and hidden warnings fail closed without creating a narrative. The 49,999-row path remains under its 180-second test budget but has material runtime variance that must be re-profiled on the H13 target infrastructure.
+- M7 adds bounded retry for concurrent identical ReportSnapshot transactions and verifies one immutable snapshot under six concurrent requests. Report narrative concurrency makes at most one Provider call; missing auth, wrong role, kill switch, timeout, truncated JSON, modified values, and hidden warnings fail closed without creating a narrative. R9.3B keeps deterministic integrity preflight outside the atomic publication transaction under a lease/version fence; the latest 30,196/49,999-row run completed in 25.502/42.954 seconds, but H13 target infrastructure must still establish p95/p99 and WAL/checkpoint capacity.
+- R9 moves login throttling, upload admission, and AI/OCR execution queues to Redis Lua controls with server-time leases, bounded FIFO waiting, crash recovery, and fail-closed behavior. The supplied Compose remains one API and one Worker until H13/H14 target-environment multi-instance release and recovery are exercised.
+- R10 L0 verifies all four local model asset sets, authenticated Qwen/Paddle synthetic inference, unauthorized 401 behavior, hardened deployment configuration, and the complete Paddle adapter contract. L1 business accuracy remains blocked on H04-H13 and H15/H16.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -216,7 +218,7 @@ The repository root exposes `staging:init`, `staging:check`, `staging:backup-int
 
 `FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with the selected storage adapter. Development can use `LocalFileStorageService`; production requires the private S3-compatible adapter. Real ClamAV, object-storage backup, encryption/retention policy, and restore evidence remain deployment responsibilities.
 
-The production global request limiter uses Redis. Login throttling, upload admission, and model concurrency gates remain process-local in B8-09, so the supplied Staging topology intentionally runs one API and one Worker. Do not scale either role horizontally until those controls are made distributed and their failover behavior is tested.
+Production global request limiting, login throttling, upload admission, and model concurrency/queueing all use authenticated Redis shared controls and fail closed when Redis is unavailable. The supplied Staging topology intentionally remains one API and one Worker until H13/H14 provide a target topology and that environment passes multi-instance release, outage, recovery, and rollback tests.
 
 ## Authentication Boundary
 

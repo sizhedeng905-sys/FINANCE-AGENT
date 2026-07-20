@@ -1,6 +1,6 @@
 # PR #4 独立审查指南
 
-更新日期：2026-07-20
+更新日期：2026-07-21
 
 审查对象：[Draft PR #4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)，分支 `agent/b8-stable-hardening`。本指南帮助 reviewer 按风险顺序审查，不代表独立 Review 已完成。
 
@@ -22,14 +22,14 @@
 | 财务记录 | `records/`, `reports/`, `record-value.ts` | 金额不经 JS float；每个有效明细行独立记录；只聚合 confirmed actual；来源/批准/报告快照不可漂移 | `reports-record-generation`, `finance-uat`, PostgreSQL golden cases |
 | Migration | `backend/prisma/migrations/`, `schema.prisma`, `runtime-grants.sql` | 41 条可从空库执行；40→41 可升级；runtime 不可修改 audit/ledger/report evidence | `db:migration-paths`, `db:verify` |
 | 认证权限 | `auth/`, `users/`, guards、前端 auth/store reset | role/userId 只信 token；停用/角色/密码变化撤销旧 token；owner 隔离 | `auth-security`, `app`, `auth-and-errors` |
-| 状态机 | `import-tasks/`, `ocr/`, `work-orders/`, `idempotency/` | 客户端只发命令；人工修改使旧 validation 失效；自审批拒绝；同 key 同响应、改体 409；旧 lease 不可迟到提交 | PostgreSQL integration、`work-orders`, `ocr` |
+| 状态机 | `import-tasks/`, `ocr/`, `work-orders/`, `idempotency/` | 客户端只发命令；人工修改使旧 validation 失效；自审批拒绝；同 key 同响应、改体 409；旧 lease 不可迟到提交；Excel 全量哈希预检受 lease/version 围栏保护，最终事务仍重验权限和批准事实 | PostgreSQL integration、`work-orders`, `ocr`、30,196/49,999 行与 finalization P2028 恢复 |
 | Worker | `worker/`, recovery services | durable queue 是事实源；shutdown 等待当前和恢复任务；失败不永久 processing | `worker-shutdown`, integration recovery cases |
 | 文件 | `files/`, `file-security/`, storage adapters | 路径/对象键受控；扫描 fail-closed；未知竞态对象不误删；下载再鉴权 | `file-security`, `s3-storage`, upload resource tests |
 | AI | `ai/`, `ai-policy/`, `ai-prompt-registry*`, report grounding | AI 只建议；Prompt/Schema/hash 不漂移；Claim 绑定事实路径；kill switch 优先；失败转人工；会话 owner 隔离 | Prompt/Schema/grounding unit、AI ingestion/report PostgreSQL |
 | 模型 | `model-runtime/`, model scripts、Paddle adapter | 健康与执行使用同一部署快照；ready 认证；GPU 切换互斥并恢复文本 | `model-runtime`, lock test、真实 model resilience |
 | 前端 | `src/api/`, stores、角色首页 | API 失败不回退 Mock；会话切换无旧缓存；Decimal 不转 Number；大数据只取服务端页；统计/报告依据来自服务端 | 17 项 Playwright、frontend build |
 | Staging | `deploy/staging/`, Dockerfiles、entrypoint | 仅 TLS gateway 暴露；三 DB 账号；secret 不入镜像；恢复需显式确认 | `staging-deployment`, config check、shell syntax |
-| 可观测性 | `observability/`, Redis infrastructure | trace queue 有界；shutdown 尽量排空；Redis 健康后短断可恢复 | `observability`, `http-security` |
+| 可观测性/共享控制 | `observability/`, Redis infrastructure、login/upload/model gates | trace queue 有界；shutdown 尽量排空；生产共享控制必须使用 Redis 并在断连时失败关闭；身份/部署键只存摘要；租约崩溃可回收 | `observability`, `http-security`、三套 `*-redis.integration-spec.ts` |
 
 ## 3. Migration 人工检查
 
@@ -49,6 +49,7 @@
 - Provider 不可用、返回错 scope/period/value 时是否会被误呈现为真实答案？
 - AI 模块能否直接导入/调用 `BusinessRecord` 写服务，或把 `APPROVED/COMMITTED` 当作模型输出？
 - Excel 任一阻断错误是否仍可能部分发布，上传者是否可能自审批，人工修改后能否跳过重新校验？
+- Excel 完整性预检与最终发布之间是否有 task version、lease token、approval hash、当前权限和数据库计数围栏；P2028 恢复是否只发布一次？
 - ReportSnapshot 六路并发是否复用同一快照，Narrative 并发是否最多调用一次 Provider？
 - 退出、401、账号切换和多标签页是否能看到前一个账号数据？
 - shutdown 是否等待正在执行的任务，同时有上限避免无限挂起？
@@ -68,10 +69,12 @@ npm run check:hygiene
 npm run staging:check
 ```
 
+完整共享控制回归必须提供隔离 Redis，并设置 `TEST_REDIS_URL` 与 `REQUIRE_REDIS_INTEGRATION=true`；否则三套 Redis suite 会按本地兼容策略跳过，不能记作 13/13 全量证据。
+
 目标 Staging 还必须执行 `npm run staging:release`，并保留 smoke、restore drill、RPO/RTO、告警送达和 rollback 证据；R8.6 的本机证据不能替代 H13 指定目标环境和 H14 正式策略。
 
 ## 6. PR 关系与签字
 
-PR #4 是当前聚合 Draft，分支为 `agent/b8-stable-hardening`，包含此前阶段历史。其他 PR 的实时状态以 GitHub 为准；不要在未决定合并顺序时机械合并。独立 reviewer 应把意见写入 PR #4，P0/P1 必须有复现、修复提交和防回归测试后才能关闭。M0-INPUT-001 的人类 Prompt Catalog 仍为 0 字节，不能把运行时 manifest 通过写成目录逐字核对完成。
+PR #4 是当前聚合 Draft，分支为 `agent/b8-stable-hardening`，包含此前阶段历史。其他 PR 的实时状态以 GitHub 为准；不要在未决定合并顺序时机械合并。独立 reviewer 应把意见写入 PR #4，P0/P1 必须有复现、修复提交和防回归测试后才能关闭。远端 run `29768468874` 的大批量发布超时由本地提交 `cc033d4` 修复，但两次推送网络失败；在新 head CI 通过前仍按红灯审查。M0-INPUT-001 的人类 Prompt Catalog 仍为 0 字节，不能把运行时 manifest 通过写成目录逐字核对完成。
 
 需要的最终签字：代码 owner、安全负责人、财务负责人、业务负责人和老板。Codex 自动化结果不能代签。

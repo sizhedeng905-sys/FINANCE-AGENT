@@ -89,7 +89,7 @@ confirmed + actual records -> fixed Decimal query -> canonical ReportSnapshot
 
 ## 导入与 OCR
 
-Excel 导入保存任务、Sheet、列、原始行、映射决定、稳定单元格证据和逐行错误。AI 只对列摘要做模板/字段建议，不逐行调用模型。每个通过校验的有效明细行生成一条记录；普通错误明细不可被排除后部分发布，疑似汇总行必须由财务明确处置。人工修改产生新 revision 并使旧 ValidationSnapshot 失效；另一名有效财务重新校验后批准。后台确认先写 report-invisible staging，最终事务重验身份、来源、模板、行集合和输出 hash 后整批原子发布。PostgreSQL lease、行 hash 和幂等键阻止恢复或重放造成重复入账。
+Excel 导入保存任务、Sheet、列、原始行、映射决定、稳定单元格证据和逐行错误。AI 只对列摘要做模板/字段建议，不逐行调用模型。每个通过校验的有效明细行生成一条记录；普通错误明细不可被排除后部分发布，疑似汇总行必须由财务明确处置。人工修改产生新 revision 并使旧 ValidationSnapshot 失效；另一名有效财务重新校验后批准。后台确认先写 report-invisible staging；全量行集合和输出 hash 在带租约心跳的有界预检中重算，最终事务再锁定任务/项目并重验当前身份、权限、来源、模板、任务版本、数量和批准快照 hash 后整批原子发布。PostgreSQL lease、版本围栏、确定性记录 ID 和幂等键阻止接管或重放造成重复入账。
 
 OCR 先保存原文件与任务，再由 Provider 返回版本化 page/block/token/bbox 证据。AI 只能在项目启用模板、字段和 evidence ref 白名单内建议。人工纠正必须保存 `MANUAL_OVERRIDE` revision 和理由，并使旧 ValidationSnapshot 失效；上传者不能自审批。最终事务重新读取账号、角色、文件安全状态、模板、候选证据和当前 hash，冻结 approval snapshot 后最多生成一条记录。确认前不会产生经营记录。Mock Provider 用于确定性验收，Local Paddle 适配器只接受内部 JSON Schema 契约。
 

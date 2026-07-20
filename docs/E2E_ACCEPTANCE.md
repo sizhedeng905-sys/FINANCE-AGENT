@@ -1,6 +1,6 @@
 # E2E 验收说明
 
-更新日期：2026-07-20
+更新日期：2026-07-21
 
 ## 目标
 
@@ -46,7 +46,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 
 ## 自动化覆盖
 
-后端真实 PostgreSQL 集成测试为 10/10 suites、97/97 tests，覆盖：
+后端真实 PostgreSQL/Redis 集成测试为 13/13 suites、114/114 tests，覆盖：
 
 - 四角色权限、员工资源归属、finance/boss 管理边界；
 - 无 Token、伪造 Token、过期 Token、旧 `tokenVersion`、停用和登出失效；
@@ -59,6 +59,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 - 合成 PDF、OCR IR/page/token/bbox、AI evidence mapping、人工 override、旧 ValidationSnapshot 失效、自审批拒绝、权限撤销、失败重试和并发批准；
 - 模型 deployment/route/prompt/version vector 只暴露安全元数据，外部真实数据失败关闭，kill switch、超时、截断 JSON 和注入输出不生成正式记录或 Narrative；
 - 文件大小上限减一/恰好/超一字节、低磁盘 507、隔离区/对象残留、幂等重放、通知 outbox 和 retention dry-run。
+- 两实例共享登录限流、上传准入、模型 FIFO 执行门，以及 Redis 断连、超时、崩溃租约回收和导入确认 P2028/P2034 有界恢复。
 
 Playwright 共 17 条，覆盖：
 
@@ -79,12 +80,12 @@ Playwright 共 17 条，覆盖：
 
 ## 当前证据
 
-2026-07-20 M7 全量与 M8 收口验收结果：
+2026-07-21 R11 候选验收结果：
 
 - 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：47 suites，410 tests，失败 0；
-- PostgreSQL 集成：10 suites，97 tests，失败 0；
+- 后端单测：47 suites，428 tests，失败 0；
+- PostgreSQL/Redis 集成：13 suites，114 tests，失败 0；
 - Playwright：17 tests，失败 0；
 - E2E teardown：测试数据库和 `backend/test-uploads/e2e` 均为 0 残留；
 - Prisma：41 个 migration，空库和 40→41 升级通过，222 个索引、89 个外键；
