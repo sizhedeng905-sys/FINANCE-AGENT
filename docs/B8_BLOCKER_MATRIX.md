@@ -192,6 +192,8 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | M2-STRICT-SCHEMA-001 | P0 | 严格 JSON/白名单/恶意结构 | verified | M2 |
 | M2-AI-MODE-001 | P0 | ingestion/report mode 与 kill switch | verified | M2 |
 | M3-PROFILE-001 | P1 | Mapping Profile 指纹/范围/失效 | verified | M3.1 |
+| M3-AI-SUGGESTION-001 | P0 | Excel 列级分类/映射建议、白名单与失败关闭 | verified | M3.2 |
+| M3-AI-LEASE-001 | P0 | AI 调用幂等、租约接管、旧响应竞争与重试耗尽 | verified | M3.2 |
 | M4-OCR-REVIEW-001 | P1 | OCR evidence review revision | open | M4 |
 | M5-SELF-APPROVAL-001 | P0 | 上传者自审批与最终重鉴权 | open | M5 |
 | M5-PARTIAL-COMMIT-001 | P0 | 错误行存在时部分正式入账 | open | M5 |
