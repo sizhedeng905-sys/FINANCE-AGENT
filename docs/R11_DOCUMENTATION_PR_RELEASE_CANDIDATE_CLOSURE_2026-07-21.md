@@ -9,7 +9,7 @@
 
 - R11 开始时本地/远端共同 HEAD：`dded264`（R10 L0）。
 - 远端 run `29768468874` 的 PostgreSQL/E2E job 在 30,196 行最终发布处超时；CodeQL 和应用镜像 job 通过。
-- R9.3B 本地修复提交：`cc033d4`。两次正常 push 均因 `github.com:443` 网络失败，未 force push、未 rebase、未改写历史。
+- R9.3B 修复提交 `cc033d4` 与 R11 文档提交 `9e889bb` 已正常推送；此前两次网络失败后先完成独立本地工作，仅在 443 探针恢复后重试。未 force push、未 rebase、未改写历史。
 - PR #4 保持 Draft，不标记 Ready、不合并。3/3 历史 CodeQL threads 已 resolved/outdated，但不替代新 head 检查。
 - 用户未跟踪文档、本地模型、真实数据、`.env`、IDE 配置和下载脚本均未纳入提交。
 
@@ -62,13 +62,14 @@
 | 项目 | 状态 | 说明 |
 | --- | --- | --- |
 | Local R9.3B commit | `passed` | `cc033d4`，3 个文件，staged hygiene 通过 |
-| Push | `blocked_external` | 两次 HTTPS 连接失败；按任务书停止继续重试 |
+| Push | `passed` | 远端分支 head 为 `9e889bb` |
 | Draft PR #4 | `open_draft` | 不 merge、不 Ready |
 | Last remote CodeQL | `passed` | run `29768468872`，只覆盖远端 `dded264` |
 | Last remote application image | `passed` | run `29768468874` application job，只覆盖远端 `dded264` |
-| Last remote PostgreSQL/E2E | `failed` | run `29768468874`，30,196 行终态超时；本地修复待推送复跑 |
+| Previous remote PostgreSQL/E2E | `failed` | run `29768468874`，30,196 行终态超时；保留为 R9.3B 红灯证据 |
+| New head checks | `in_progress` | Build `29771646166`、CodeQL `29771646143`，覆盖 head `9e889bb` |
 
-网络恢复后的顺序固定为：push `cc033d4` 和 R11 文档提交，确认 PR head，等待 Build/CodeQL 全部结束，核对 review threads，再更新本报告。旧 run 不能作为新 head 的绿色证据。
+下一顺序固定为：等待 Build/CodeQL 全部结束，核对 job 日志和 review threads，再更新本报告。旧 run 不能作为新 head 的绿色证据。
 
 ## 6. H01-H16 发布影响
 
@@ -85,8 +86,8 @@
 
 - 文档事实一致性：`engineering_verified_locally`。
 - 当前 commit 全部适用本地门禁：`passed`。
-- GitHub 新 head 门禁：`blocked_external / not_run`，原因是两次网络失败。
+- GitHub 新 head 门禁：`in_progress`，尚不能记作通过。
 - H15 独立复核：`blocked_external`。
 - H16 五方 UAT/Go-Live：`awaiting_human_signoff`。
 
-因此 R11 的本地工程与文档部分可以提交，但“最终发布候选完成”的总条件尚未满足。下一动作是网络恢复后推送、等待新 head CI，然后由外部 reviewer 和负责人完成 H15/H16；在此之前保持 Draft。
+因此 R11 的本地工程与文档部分已提交并推送，但“最终发布候选完成”的总条件尚未满足。下一动作是等待新 head CI，再由外部 reviewer 和负责人完成 H15/H16；在此之前保持 Draft。
