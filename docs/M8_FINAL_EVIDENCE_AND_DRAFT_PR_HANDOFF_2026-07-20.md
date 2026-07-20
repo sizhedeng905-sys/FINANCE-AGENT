@@ -149,8 +149,8 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 数据库 migration：无；复用空库 41 与 40→41 证据
 攻击性测试：Prompt 漂移 4/4 unit + 3/3 PostgreSQL；M7 全量证据保持有效
 提交 SHA：本报告所在提交，以 Git 元数据为准
-剩余风险：Prompt Catalog 为空、M8.1 远端 CI 复验、H01-H16 未全部关闭
-下一动作：推送 M8.1 并观察远端 Build/CodeQL；不 merge、不标记 Ready
+剩余风险：Prompt Catalog 为空、GitHub Actions Node 20 弃用提醒、H01-H16 未全部关闭
+下一动作：处理真实人工/目标环境门禁；不 merge、不标记 Ready
 ```
 
 ## 3. 测试证据
@@ -279,5 +279,5 @@ cd backend && npm audit --omit=dev --audit-level=high -> 0 vulnerabilities
 
 - M0-M7 已形成小步提交；M8 只收口文档和最终证据，不改变业务代码。
 - M8 提交 `30c6ead` 已正常推送；Build run `29752263099` 的业务门禁通过并由供应链门禁暴露旧 Nginx Critical，后续见 `M8_1_NGINX_CI_SECURITY_REFRESH_2026-07-20.md`。
-- 推送 M8.1 后更新 PR #4 描述，附本报告、M8.1、M5.2/M6/M7、41 条 migration、测试矩阵和 H 阻塞。
+- PR #4 描述应持续包含本报告、M8.1、M5.2/M6/M7、41 条 migration、测试矩阵和 H 阻塞。
 - PR 必须保持 Draft。只有 H15 独立审查和 H16 最终签字完成后，才可另行决定是否 Ready 或 merge。

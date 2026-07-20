@@ -1,7 +1,7 @@
 # M8.1 Nginx CI 安全基线刷新报告
 
 > 日期：2026-07-20
-> 状态：`engineering_verified_locally / awaiting_remote_ci`
+> 状态：`verified_ci / blocked_external(H13,H14,H15,H16)`
 > 范围：前端运行镜像、Staging 网关、R5 供应链夹具和 Nginx 上传边界
 > 禁止解读：目标 Staging 通过、生产风险清零或 production-ready
 
@@ -71,8 +71,10 @@ libexpat    2.8.2-r0
 
 ## 5. 远端与剩余风险
 
-- 本报告所在提交推送前，远端 M8.1 Build/CodeQL 状态为 `not_run`，不得写成通过。
-- 推送后必须观察新的 GitHub run；若仍有可修复 Critical，继续失败关闭并按实际包/CVE 修复。
+- M8.1 提交：`118a5ee2e2956327e0ed0622a7681824d416a3a1`，已推送到 Draft PR #4。
+- Build and acceptance run `29755386892`：`success`。应用镜像供应链 job 用时 2m37s；PostgreSQL/E2E/R5 job 用时 12m30s；前端和 R5 的 Grype Critical 门禁均通过。
+- CodeQL run `29755387035`：`success`。
+- GitHub 注释提示部分固定 Actions 仍以 Node 20 为声明运行时并由平台强制迁移到 Node 24；本次执行成功，但应作为后续依赖升级维护项，不能等待平台停止兼容后再处理。
 - Nginx 1.28 到 1.30 的兼容性已经覆盖静态配置、非 root 启动、上传边界、统一 JSON 错误和真实前端镜像构建，但不替代 H13 目标 Linux 的完整 release/restore/rollback。
 - 其他 High/Medium/Low 漏洞继续由现有供应链报告和风险台账跟踪；本阶段只关闭导致 CI 失败的可修复 Critical。
 - PR #4 保持 Draft，不 merge、不标记 Ready。H01-H16、Prompt Catalog 和目标环境门禁不因本修复自动关闭。
