@@ -104,6 +104,52 @@ describe('real PostgreSQL integration', () => {
     throw new Error(`Timed out waiting for import confirmation ${taskId}`);
   };
 
+  type ImportApprovalView = {
+    version: number;
+    reviewRevision: number;
+    validation: null | {
+      snapshotHash: string;
+      snapshot: {
+        normalizedOutputHash: string;
+        valid: boolean;
+        warnings: Array<{ issueId: string }>;
+        blockingErrors: Array<{ issueId: string }>;
+        counts: { total: number; recordCount: number; blockingErrorCount: number };
+      };
+    };
+  };
+
+  const approvalPayloadFromTask = (task: ImportApprovalView) => {
+    if (!task.validation) throw new Error('Import task is missing a validation snapshot');
+    return {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+      expectedValidationSnapshotHash: task.validation.snapshotHash,
+      expectedPayloadHash: task.validation.snapshot.normalizedOutputHash,
+      acknowledgedWarningIds: task.validation.snapshot.warnings.map((warning) => warning.issueId)
+    };
+  };
+
+  const loadImportApproval = async (taskId: string, token: string, revalidate = true) => {
+    const current = await request(app.getHttpServer())
+      .get(`/api/import-tasks/${taskId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    let task = current.body.data as ImportApprovalView;
+    if (revalidate) {
+      const validated = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          expectedVersion: task.version,
+          expectedReviewRevision: task.reviewRevision
+        })
+        .expect(201);
+      task = validated.body.data as ImportApprovalView;
+    }
+    return { task, payload: approvalPayloadFromTask(task) };
+  };
+
   const waitForOcrStatus = async (
     taskId: string,
     statuses: OcrTaskStatus[],
@@ -4126,7 +4172,7 @@ describe('real PostgreSQL integration', () => {
     expect(await prisma.taskModelRoute.count()).toBe(13);
   });
 
-  it('imports a real XLSX with mapping decisions, partial success, idempotency, and report visibility', async () => {
+  it('imports a real XLSX with mapping decisions and rejects partial-row posting', async () => {
     const usernames = ['employee', 'finance', 'boss'] as const;
     const tokens = Object.fromEntries(await Promise.all(usernames.map(async (username) => {
       const response = await request(app.getHttpServer())
@@ -4135,6 +4181,11 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       return [username, response.body.data.accessToken as string] as const;
     }))) as Record<(typeof usernames)[number], string>;
+    const reviewerLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: '\u8d22\u52a1', password: '123456' })
+      .expect(200);
+    const reviewerToken = reviewerLogin.body.data.accessToken as string;
     const suffix = Date.now().toString(36);
     const taskIds: string[] = [];
     const rawFileIds: string[] = [];
@@ -4460,7 +4511,7 @@ describe('real PostgreSQL integration', () => {
       await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/confirm`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .expect(409);
+        .expect(400);
 
       const approved = await request(app.getHttpServer())
         .post(`/api/field-suggestions/${upstairs!.suggestion!.id}/approve`)
@@ -4485,98 +4536,40 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(preview.body.data).toMatchObject({
         unresolvedColumns: [],
-        strategy: 'valid_rows_only',
+        strategy: 'whole_batch_fail_closed',
         summary: { total: 6, valid: 1, errors: 3, duplicates: 1, ignored: 1 }
       });
       expect(preview.body.data.rows.find((row: { rowNumber: number }) => row.rowNumber === 3).errors).toContain('费用金额：数字格式错误');
       expect(preview.body.data.rows.find((row: { rowNumber: number }) => row.rowNumber === 6).errors).toContain('发生日期：日期无效');
 
-      const confirm = () => request(app.getHttpServer())
+      const invalidApproval = await loadImportApproval(taskId, tokens.finance);
+      expect(invalidApproval.task.validation?.snapshot).toMatchObject({
+        valid: false,
+        counts: { total: 6, recordCount: 1, blockingErrorCount: expect.any(Number) }
+      });
+      expect(invalidApproval.task.validation!.snapshot.blockingErrors.length).toBeGreaterThan(0);
+      const rejected = await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${tokens.finance}`)
-        .set('X-Request-Id', `integration-import-confirm-${suffix}`);
-      const [firstConfirm, secondConfirm] = await Promise.all([confirm(), confirm()]);
-      expect([firstConfirm.status, secondConfirm.status]).toEqual([201, 201]);
-      expect(firstConfirm.body.data.recordIds).toEqual(secondConfirm.body.data.recordIds);
-      expect(firstConfirm.body.data).toMatchObject({
-        task: { status: ImportTaskStatus.confirming },
-        recordIds: [],
-        importedRows: 0,
-        alreadyConfirmed: false
-      });
-      expect(await waitForImportConfirmation(taskId)).toMatchObject({
-        status: ImportTaskStatus.confirmed,
-        importedRows: 1,
-        errorRows: 3
-      });
-
-      const records = await prisma.businessRecord.findMany({
-        where: { importTaskId: taskId },
-        include: { values: { include: { field: true } } }
-      });
-      expect(records).toHaveLength(1);
-      recordIds.push(records[0].id);
-      expect(records[0]).toMatchObject({
-        sourceType: RecordSourceType.excel,
-        sourceId: storedRows[0].id,
-        status: BusinessRecordStatus.confirmed,
-        importTaskId: taskId
-      });
-      expect(records[0].templateSnapshot).toMatchObject({
-        templateId: activeTemplateId,
-        version: 2,
-        accountingDirection: AccountingDirection.expense
-      });
-      expect(records[0].sourceSnapshot).toMatchObject({
-        sourceType: RecordSourceType.excel,
-        sourceId: storedRows[0].id,
-        metadata: {
-          importTaskId: taskId,
-          importRowId: storedRows[0].id,
-          rowHash: storedRows[0].rowHash,
-          rawFileId
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `integration-import-confirm-${suffix}`)
+        .send(invalidApproval.payload)
+        .expect(409);
+      expect(rejected.body).toMatchObject({
+        code: 40901,
+        data: {
+          reason: 'IMPORT_VALIDATION_BLOCKING_ERRORS',
+          blockingErrorCount: expect.any(Number),
+          recordCount: 1
         }
       });
-      expect(records[0].confirmationSnapshot).toMatchObject({
-        projectId: project.id,
-        templateId: activeTemplateId,
-        amount: '8200.00',
-        recordDate: '2026-07-01',
-        sourceType: RecordSourceType.excel,
-        sourceId: storedRows[0].id,
-        confirmedBy: 'finance'
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } })).toMatchObject({
+        status: ImportTaskStatus.pending_confirm,
+        importedRows: 0,
+        approvalSnapshotHash: null
       });
-      expect(Number(records[0].amount)).toBe(8200);
-      expect(records[0].values.find((value) => value.fieldId === suggestedFieldId)?.valueNumber?.toNumber()).toBe(300);
-
-      const recordsApi = await request(app.getHttpServer())
-        .get(`/api/records?importTaskId=${taskId}`)
-        .set('Authorization', `Bearer ${tokens.boss}`)
-        .expect(200);
-      expect(recordsApi.body.data).toMatchObject({ total: 1, items: [{ id: records[0].id, sourceType: 'excel' }] });
-      const projectStructure = await request(app.getHttpServer())
-        .get(`/api/projects/${project.id}/structure`)
-        .set('Authorization', `Bearer ${tokens.boss}`)
-        .expect(200);
-      expect(projectStructure.body.data.importTasks).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: taskId, counts: expect.objectContaining({ imported: 1 }) })
-      ]));
-      expect(projectStructure.body.data.fieldUsageStats).toEqual(expect.arrayContaining([
-        expect.objectContaining({ fieldId: suggestedFieldId, usageCount: 1 })
-      ]));
-      expect(projectStructure.body.data.logicalTablesSummary).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tableName: 'import_tasks', relatedCount: 2 }),
-        expect.objectContaining({ tableName: 'import_rows', relatedCount: 7 })
-      ]));
-      const projectReport = await request(app.getHttpServer())
-        .get(`/api/reports/projects/${project.id}/daily?date=2026-07-01`)
-        .set('Authorization', `Bearer ${tokens.finance}`)
-        .expect(200);
-      expect(projectReport.body.data).toMatchObject({ expense: '8200.00', recordCount: 1 });
-
-      expect(await prisma.auditLog.count({ where: { action: 'import_task.confirm', resourceId: taskId } })).toBe(1);
-      expect(await prisma.ledgerEvent.count({ where: { eventType: 'import_task_confirmed', aggregateId: taskId } })).toBe(1);
-      expect(await prisma.ledgerEvent.count({ where: { eventType: 'business_record_created', aggregateId: records[0].id } })).toBe(1);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { action: 'import_task.confirm_scheduled', resourceId: taskId } })).toBe(0);
+      expect(await prisma.ledgerEvent.count({ where: { eventType: 'import_task_confirmed', aggregateId: taskId } })).toBe(0);
 
       const secondCreated = await createTask(`integration-import-${suffix}-two`, '费用导入复用.xlsx').expect(201);
       const secondTaskId = secondCreated.body.data.id as string;
@@ -4632,7 +4625,8 @@ describe('real PostgreSQL integration', () => {
 
   describe('B8-01 import confirmation state hardening', () => {
     let financeToken: string;
-    let financeUserId: string;
+    let reviewerToken: string;
+    let reviewerUserId: string;
     let dateFieldId: string;
     let projectId: string;
     let templateId: string;
@@ -4648,8 +4642,12 @@ describe('real PostgreSQL integration', () => {
         .send({ username: 'finance', password: '123456' })
         .expect(200);
       financeToken = login.body.data.accessToken as string;
-      const finance = await prisma.user.findUniqueOrThrow({ where: { username: 'finance' } });
-      financeUserId = finance.id;
+      const reviewerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: '\u8d22\u52a1', password: '123456' })
+        .expect(200);
+      reviewerToken = reviewerLogin.body.data.accessToken as string;
+      reviewerUserId = reviewerLogin.body.data.user.id as string;
       const [dateField, amountField] = await Promise.all([
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } })
@@ -4807,16 +4805,33 @@ describe('real PostgreSQL integration', () => {
       return [await firstResponse, await secondResponse];
     };
 
-    const confirmRequest = (taskId: string) => request(app.getHttpServer())
+    const confirmRequest = (
+      taskId: string,
+      payload: ReturnType<typeof approvalPayloadFromTask>,
+      key: string
+    ) => request(app.getHttpServer())
       .post(`/api/import-tasks/${taskId}/confirm`)
-      .set('Authorization', `Bearer ${financeToken}`);
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .set('Idempotency-Key', key)
+      .send(payload);
     const cancelRequest = (taskId: string) => request(app.getHttpServer())
       .post(`/api/import-tasks/${taskId}/cancel`)
       .set('Authorization', `Bearer ${financeToken}`);
 
     it('confirms only pending_confirm tasks and keeps cancelled tasks terminal', async () => {
       const pending = await createPendingTask('pending-success');
-      const firstConfirm = await confirmRequest(pending.taskId).expect(201);
+      const pendingApproval = await loadImportApproval(pending.taskId, financeToken);
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${pending.taskId}/confirm`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', `b8-state-${suffix}-self-approval`)
+        .send(pendingApproval.payload)
+        .expect(403)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_SELF_APPROVAL_FORBIDDEN');
+        });
+      const pendingKey = `b8-state-${suffix}-pending-success-confirm`;
+      const firstConfirm = await confirmRequest(pending.taskId, pendingApproval.payload, pendingKey).expect(201);
       expect(firstConfirm.body.data).toMatchObject({
         task: { status: ImportTaskStatus.confirming },
         alreadyConfirmed: false,
@@ -4827,8 +4842,8 @@ describe('real PostgreSQL integration', () => {
         status: ImportTaskStatus.confirmed,
         importedRows: 1
       });
-      const secondConfirm = await confirmRequest(pending.taskId).expect(201);
-      expect(secondConfirm.body.data).toMatchObject({ alreadyConfirmed: true, importedRows: 1, recordIds: [] });
+      const secondConfirm = await confirmRequest(pending.taskId, pendingApproval.payload, pendingKey).expect(201);
+      expect(secondConfirm.body).toEqual(firstConfirm.body);
       expect(await prisma.businessRecord.count({ where: { importTaskId: pending.taskId } })).toBe(1);
       expect(await prisma.auditLog.count({
         where: { action: 'import_task.confirm', resourceId: pending.taskId }
@@ -4860,11 +4875,16 @@ describe('real PostgreSQL integration', () => {
       ];
       for (const status of invalidStatuses) {
         const invalid = await createPendingTask(`invalid-${status}`);
+        const invalidApproval = await loadImportApproval(invalid.taskId, financeToken);
         await prisma.importTask.update({
           where: { id: invalid.taskId },
           data: { status, leaseToken: null, leaseUntil: null }
         });
-        const response = await confirmRequest(invalid.taskId).expect(409);
+        const response = await confirmRequest(
+          invalid.taskId,
+          invalidApproval.payload,
+          `b8-state-${suffix}-invalid-${status}-confirm`
+        ).expect(409);
         expect(response.body).toMatchObject({ code: 40901, data: {} });
         expect(await prisma.importTask.findUniqueOrThrow({ where: { id: invalid.taskId } })).toMatchObject({
           status,
@@ -4876,6 +4896,7 @@ describe('real PostgreSQL integration', () => {
       }
 
       const cancelled = await createPendingTask('cancelled-terminal');
+      const cancelledApproval = await loadImportApproval(cancelled.taskId, financeToken);
       const cancelledColumns = await prisma.importColumn.findMany({
         where: { importTaskId: cancelled.taskId },
         orderBy: { columnIndex: 'asc' }
@@ -4909,7 +4930,11 @@ describe('real PostgreSQL integration', () => {
       suggestionIds.push(mapSuggestion.id, rejectSuggestion.id);
       await cancelRequest(cancelled.taskId).expect(201);
       for (const response of [
-        await confirmRequest(cancelled.taskId),
+        await confirmRequest(
+          cancelled.taskId,
+          cancelledApproval.payload,
+          `b8-state-${suffix}-cancelled-confirm`
+        ),
         await request(app.getHttpServer())
           .post(`/api/import-tasks/${cancelled.taskId}/parse`)
           .set('Authorization', `Bearer ${financeToken}`)
@@ -4954,10 +4979,15 @@ describe('real PostgreSQL integration', () => {
 
     it('serializes cancel and confirm with deterministic lock ordering', async () => {
       const cancelWins = await createPendingTask('race-cancel-wins');
+      const cancelWinsApproval = await loadImportApproval(cancelWins.taskId, financeToken);
       const [cancelFirst, confirmSecond] = await queueBehindTaskLock(
         cancelWins.taskId,
         () => cancelRequest(cancelWins.taskId),
-        () => confirmRequest(cancelWins.taskId)
+        () => confirmRequest(
+          cancelWins.taskId,
+          cancelWinsApproval.payload,
+          `b8-state-${suffix}-race-cancel-wins-confirm`
+        )
       );
       expect([cancelFirst.status, confirmSecond.status]).toEqual([201, 409]);
       expect(confirmSecond.body).toMatchObject({ code: 40901, data: {} });
@@ -4974,9 +5004,14 @@ describe('real PostgreSQL integration', () => {
       })).toBe(1);
 
       const confirmWins = await createPendingTask('race-confirm-wins');
+      const confirmWinsApproval = await loadImportApproval(confirmWins.taskId, financeToken);
       const [confirmFirst, cancelSecond] = await queueBehindTaskLock(
         confirmWins.taskId,
-        () => confirmRequest(confirmWins.taskId),
+        () => confirmRequest(
+          confirmWins.taskId,
+          confirmWinsApproval.payload,
+          `b8-state-${suffix}-race-confirm-wins-confirm`
+        ),
         () => cancelRequest(confirmWins.taskId)
       );
       expect([confirmFirst.status, cancelSecond.status]).toEqual([201, 409]);
@@ -4984,7 +5019,7 @@ describe('real PostgreSQL integration', () => {
       expect(await waitForImportConfirmation(confirmWins.taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: 1,
-        confirmedBy: financeUserId
+        confirmedBy: reviewerUserId
       });
       const confirmedRecords = await prisma.businessRecord.findMany({
         where: { importTaskId: confirmWins.taskId },
@@ -5011,6 +5046,7 @@ describe('real PostgreSQL integration', () => {
 
   describe('B8-02 Excel preview and confirmation consistency', () => {
     let financeToken: string;
+    let reviewerToken: string;
     let projectId: string;
     let templateId: string;
     let dateFieldId: string;
@@ -5031,6 +5067,11 @@ describe('real PostgreSQL integration', () => {
         .send({ username: 'finance', password: '123456' })
         .expect(200);
       financeToken = login.body.data.accessToken as string;
+      const reviewerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: '\u8d22\u52a1', password: '123456' })
+        .expect(200);
+      reviewerToken = reviewerLogin.body.data.accessToken as string;
       const [dateField, amountField, defaultField] = await Promise.all([
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } }),
@@ -5325,34 +5366,174 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(refreshed.body.data.summary).toEqual(preview.body.data.summary);
 
-      const confirmed = await request(app.getHttpServer())
+      const invalidApproval = await loadImportApproval(taskId, financeToken);
+      expect(invalidApproval.task.validation?.snapshot).toMatchObject({
+        valid: false,
+        counts: { total: 5, recordCount: 1, blockingErrorCount: expect.any(Number) }
+      });
+      const rejected = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-invalid-confirm`)
+        .send(invalidApproval.payload)
+        .expect(409);
+      expect(rejected.body).toMatchObject({
+        code: 40901,
+        data: { reason: 'IMPORT_VALIDATION_BLOCKING_ERRORS', recordCount: 1 }
+      });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } })).toMatchObject({
+        status: ImportTaskStatus.pending_confirm,
+        importedRows: 0,
+        approvalSnapshotHash: null
+      });
+    });
+
+    it('posts each valid detail row once and requires explicit exclusion of a summary row', async () => {
+      const { taskId } = await createAndParse(
+        'detail-and-summary',
+        ['date', 'amount'],
+        [
+          ['2026-07-15', 100],
+          ['\u5408\u8ba1', 100]
+        ]
+      );
+      const preview = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${taskId}/preview`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(preview.body.data).toMatchObject({
+        strategy: 'whole_batch_fail_closed',
+        summary: { total: 2, valid: 1, errors: 1, duplicates: 0, ignored: 0 }
+      });
+      const [detailRow, summaryRow] = preview.body.data.rows as Array<{
+        id: string;
+        rowNumber: number;
+        summaryCandidate: boolean;
+      }>;
+      expect(detailRow.summaryCandidate).toBe(false);
+      expect(summaryRow.summaryCandidate).toBe(true);
+
+      const current = preview.body.data.task as ImportApprovalView;
+      const reviewBody = {
+        expectedVersion: current.version,
+        expectedReviewRevision: current.reviewRevision,
+        decision: 'exclude',
+        reason: 'Summary row must not be posted with its detail rows'
+      };
+      await request(app.getHttpServer())
+        .put(`/api/import-tasks/${taskId}/rows/${detailRow.id}/review`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send(reviewBody)
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_ROW_REVIEW_NOT_SUMMARY');
+        });
+
+      await request(app.getHttpServer())
+        .put(`/api/import-tasks/${taskId}/rows/${summaryRow.id}/review`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send(reviewBody)
+        .expect(200);
+      let approval = await loadImportApproval(taskId, financeToken);
+      expect(approval.task.validation?.snapshot).toMatchObject({
+        valid: true,
+        counts: { total: 2, recordCount: 1, blockingErrorCount: 0 }
+      });
+      expect(approval.payload.acknowledgedWarningIds.length).toBeGreaterThan(0);
+
+      await request(app.getHttpServer())
+        .put(`/api/import-tasks/${taskId}/rows/${summaryRow.id}/review`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          expectedVersion: approval.task.version,
+          expectedReviewRevision: approval.task.reviewRevision,
+          decision: 'exclude',
+          reason: 'Finance confirmed the summary exclusion after validation'
+        })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-summary-stale-validation`)
+        .send(approval.payload)
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_APPROVAL_VERSION_CONFLICT');
+        });
+      approval = await loadImportApproval(taskId, financeToken);
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-summary-warning-missing`)
+        .send({ ...approval.payload, acknowledgedWarningIds: [] })
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_WARNING_ACKNOWLEDGEMENT_MISMATCH');
+        });
+      await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/confirm`)
         .set('Authorization', `Bearer ${financeToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-summary-self-approval`)
+        .send(approval.payload)
+        .expect(403)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_SELF_APPROVAL_FORBIDDEN');
+        });
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-summary-confirm`)
+        .send(approval.payload)
         .expect(201);
-      expect(confirmed.body.data).toMatchObject({
-        task: { status: ImportTaskStatus.confirming },
-        importedRows: 0,
-        alreadyConfirmed: false
-      });
       expect(await waitForImportConfirmation(taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: 1,
-        errorRows: 4
+        ignoredRows: 1,
+        errorRows: 0
       });
-      const record = await prisma.businessRecord.findFirstOrThrow({
-        where: { importTaskId: taskId },
-        include: { values: true }
+      const records = await prisma.businessRecord.findMany({ where: { importTaskId: taskId } });
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        sourceId: detailRow.id,
+        sourceType: RecordSourceType.excel,
+        status: BusinessRecordStatus.confirmed
       });
-      expect(record.amount.toFixed(2)).toBe('8765.43');
-      expect(record.values.find((value) => value.fieldId === defaultFieldId)).toMatchObject({
-        valueText: '运输成本'
-      });
-      expect(record.confirmationSnapshot).toMatchObject({
-        amount: '8765.43',
-        recordDate: '2026-07-15',
-        values: expect.arrayContaining([
-          expect.objectContaining({ fieldId: defaultFieldId, value: '运输成本' })
-        ])
+      expect(records[0].amount.toFixed(2)).toBe('100.00');
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_row.review', resourceId: summaryRow.id }
+      })).toBe(2);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'import_task_confirmed', aggregateId: taskId }
+      })).toBe(1);
+    });
+
+    it('rejects approval when the source file security state changes after validation', async () => {
+      const { taskId } = await createAndParse(
+        'source-invalidated-after-validation',
+        ['date', 'amount'],
+        [['2026-07-15', 100]]
+      );
+      const approval = await loadImportApproval(taskId, financeToken);
+      const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+      await prisma.rawFile.update({ where: { id: task.rawFileId }, data: { isVoided: true } });
+
+      await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', `b8-preview-${suffix}-source-invalidated`)
+        .send(approval.payload)
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.data.reason).toBe('IMPORT_SOURCE_SECURITY_STATE_CHANGED');
+        });
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+      expect(await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } })).toMatchObject({
+        status: ImportTaskStatus.pending_confirm,
+        approvalSnapshotHash: null,
+        importedRows: 0
       });
     });
 
@@ -5541,14 +5722,17 @@ describe('real PostgreSQL integration', () => {
         ['date', 'amount'],
         [['2026-07-21', 420]]
       );
+      const firstApproval = await loadImportApproval(firstTask.taskId, financeToken);
+      const secondApproval = await loadImportApproval(secondTask.taskId, financeToken);
       const key = `b8-import-confirm-${suffix}`;
-      const confirm = (taskId: string) => request(app.getHttpServer())
+      const confirm = (taskId: string, payload: ReturnType<typeof approvalPayloadFromTask>) => request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .set('Idempotency-Key', key);
-      const first = await confirm(firstTask.taskId).expect(201);
-      const replay = await confirm(firstTask.taskId).expect(201);
-      const conflict = await confirm(secondTask.taskId).expect(409);
+        .set('Authorization', `Bearer ${reviewerToken}`)
+        .set('Idempotency-Key', key)
+        .send(payload);
+      const first = await confirm(firstTask.taskId, firstApproval.payload).expect(201);
+      const replay = await confirm(firstTask.taskId, firstApproval.payload).expect(201);
+      const conflict = await confirm(secondTask.taskId, secondApproval.payload).expect(409);
       expect(replay.body).toEqual(first.body);
       expect(conflict.body).toMatchObject({ code: 40901, data: {} });
       expect(await waitForImportConfirmation(firstTask.taskId)).toMatchObject({
@@ -5788,6 +5972,8 @@ describe('real PostgreSQL integration', () => {
   describe('B8-03 background Excel confirmation', () => {
     let financeToken: string;
     let financeUserId: string;
+    let reviewerToken: string;
+    let reviewerUserId: string;
     let projectId: string;
     let templateId: string;
     let dateFieldId: string;
@@ -5803,6 +5989,12 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       financeToken = login.body.data.accessToken as string;
       financeUserId = login.body.data.user.id as string;
+      const reviewerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: '\u8d22\u52a1', password: '123456' })
+        .expect(200);
+      reviewerToken = reviewerLogin.body.data.accessToken as string;
+      reviewerUserId = reviewerLogin.body.data.user.id as string;
       const [dateField, amountField] = await Promise.all([
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'date' } }),
         prisma.fieldDefinition.findUniqueOrThrow({ where: { fieldKey: 'amount' } })
@@ -5838,6 +6030,57 @@ describe('real PostgreSQL integration', () => {
         data: { projectId, templateId, recordType: DataRecordType.cost }
       });
     });
+
+    const stopBackgroundConfirmationsForCleanup = async (currentTaskIds: string[]) => {
+      if (currentTaskIds.length === 0) return;
+      const activeTasks = await prisma.importTask.findMany({
+        where: { id: { in: currentTaskIds }, status: ImportTaskStatus.confirming },
+        select: { id: true }
+      });
+      for (const task of activeTasks) {
+        await prisma.importTask.updateMany({
+          where: { id: task.id, status: ImportTaskStatus.confirming },
+          data: {
+            leaseToken: `integration-cleanup:${randomUUID()}`,
+            leaseUntil: new Date(Date.now() + 10 * 60_000)
+          }
+        });
+      }
+      const service = app.get(ImportTasksService) as unknown as {
+        backgroundJobs: Map<string, Promise<void>>;
+      };
+      const taskIdSet = new Set(currentTaskIds);
+      const running = [...service.backgroundJobs.entries()]
+        .filter(([jobKey]) => {
+          const [, taskId] = jobKey.split(':');
+          return taskIdSet.has(taskId);
+        })
+        .map(([, job]) => job);
+      await Promise.allSettled(running);
+    };
+
+    afterEach(async () => {
+      const currentTaskIds = [...taskIds];
+      const currentRawFileIds = [...rawFileIds];
+      await stopBackgroundConfirmationsForCleanup(currentTaskIds);
+      if (currentTaskIds.length > 0) {
+        await prisma.$executeRaw(Prisma.sql`
+          DELETE FROM ledger_events AS event
+          USING business_records AS record
+          WHERE event.aggregate_id = record.id
+            AND record.import_task_id IN (${Prisma.join(currentTaskIds)})
+        `);
+        await prisma.businessRecord.deleteMany({ where: { importTaskId: { in: currentTaskIds } } });
+        await prisma.importTask.deleteMany({ where: { id: { in: currentTaskIds } } });
+        await prisma.auditLog.deleteMany({ where: { resourceId: { in: currentTaskIds } } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: currentTaskIds } } });
+      }
+      if (currentRawFileIds.length > 0) {
+        await prisma.rawFile.deleteMany({ where: { id: { in: currentRawFileIds } } });
+      }
+      taskIds.length = 0;
+      rawFileIds.length = 0;
+    }, 240_000);
 
     afterAll(async () => {
       await prisma.idempotencyKey.deleteMany({ where: { key: { startsWith: `b8-confirm-${suffix}` } } });
@@ -5883,6 +6126,12 @@ describe('real PostgreSQL integration', () => {
           importType: DataRecordType.cost,
           status: ImportTaskStatus.pending_confirm,
           uploadedBy: financeUserId,
+          sourceSha256: rawFile.sha256,
+          parserInputSha256: rawFile.sha256,
+          irSchemaVersion: 'excel-ir/1.0',
+          parserVersion: 'integration-fixture/1.0',
+          irHash: createHash('sha256').update(`${rawFile.sha256}:ir`).digest('hex'),
+          rowEvidenceDigest: createHash('sha256').update(`${rawFile.sha256}:rows`).digest('hex'),
           parsedAt: new Date(),
           processedRows: rowCount,
           totalRows: rowCount,
@@ -5964,6 +6213,30 @@ describe('real PostgreSQL integration', () => {
       return task.id;
     };
 
+    const confirmRequest = (
+      taskId: string,
+      payload: ReturnType<typeof approvalPayloadFromTask>,
+      key: string
+    ) => request(app.getHttpServer())
+      .post(`/api/import-tasks/${taskId}/confirm`)
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .set('Idempotency-Key', key)
+      .send(payload);
+
+    const queueWithoutRunningWorker = async (taskId: string, key: string) => {
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        scheduleBackgroundConfirmation(job: unknown): Promise<void>;
+      };
+      const scheduler = jest.spyOn(service, 'scheduleBackgroundConfirmation').mockResolvedValue();
+      try {
+        await confirmRequest(taskId, approval.payload, key).expect(201);
+      } finally {
+        scheduler.mockRestore();
+      }
+      return approval;
+    };
+
     const waitForTerminalStatus = async (taskId: string, timeoutMs = 120_000) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -5974,7 +6247,27 @@ describe('real PostgreSQL integration', () => {
         ) return task;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      throw new Error(`Timed out waiting for import confirmation ${taskId}`);
+      const [task, recordCount, processedRowCount] = await Promise.all([
+        prisma.importTask.findUnique({
+          where: { id: taskId },
+          select: {
+            status: true,
+            confirmationProcessedRows: true,
+            confirmationSuccessRows: true,
+            confirmationErrorRows: true,
+            confirmationAttempts: true,
+            leaseUntil: true,
+            errorMessage: true
+          }
+        }),
+        prisma.businessRecord.count({ where: { importTaskId: taskId } }),
+        prisma.importRow.count({ where: { importTaskId: taskId, confirmationProcessedAt: { not: null } } })
+      ]);
+      throw new Error(`Timed out waiting for import confirmation ${taskId}: ${JSON.stringify({
+        task,
+        recordCount,
+        processedRowCount
+      })}`);
     };
 
     const waitForConfirmationProgress = async (taskId: string, minimum: number, timeoutMs = 30_000) => {
@@ -6014,12 +6307,13 @@ describe('real PostgreSQL integration', () => {
       expect(deepPreview.body.data.rows[0].rowNumber).toBe(rowCount + 1);
 
       const key = `b8-confirm-${suffix}-${rowCount}`;
+      const approval = await loadImportApproval(taskId, financeToken);
+      expect(approval.task.validation?.snapshot).toMatchObject({
+        valid: true,
+        counts: { total: rowCount, recordCount: rowCount, blockingErrorCount: 0 }
+      });
       const startedAt = Date.now();
-      const queued = await request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .set('Idempotency-Key', key)
-        .expect(201);
+      const queued = await confirmRequest(taskId, approval.payload, key).expect(201);
       expect(Date.now() - startedAt).toBeLessThan(2_000);
       expect(queued.body.data).toMatchObject({
         task: { id: taskId, status: 'confirming' },
@@ -6057,11 +6351,7 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(report.body.data).toMatchObject({ expense: '6151.23', recordCount: rowCount });
 
-      const replay = await request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .set('Idempotency-Key', key)
-        .expect(201);
+      const replay = await confirmRequest(taskId, approval.payload, key).expect(201);
       expect(replay.body).toEqual(queued.body);
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
     });
@@ -6106,6 +6396,13 @@ describe('real PostgreSQL integration', () => {
       [49_999, '2026-07-17']
     ])('confirms %i rows with bounded worker resources and a complete accounting closure', async (rowCount, recordDate) => {
       const taskId = await createTask(rowCount, recordDate);
+      const validationStartedAt = Date.now();
+      const approval = await loadImportApproval(taskId, financeToken);
+      const validationElapsedMs = Date.now() - validationStartedAt;
+      expect(approval.task.validation?.snapshot).toMatchObject({
+        valid: true,
+        counts: { total: rowCount, recordCount: rowCount, blockingErrorCount: 0 }
+      });
       const baselineRss = process.memoryUsage().rss;
       let peakRss = baselineRss;
       let peakConnections = 0;
@@ -6124,20 +6421,28 @@ describe('real PostgreSQL integration', () => {
       };
       const samplingPromise = sampleResources();
       const startedAt = Date.now();
-      const queued = await request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .set('Idempotency-Key', `b8-confirm-${suffix}-${rowCount}`)
-        .expect(201);
-      const apiLatencyMs = Date.now() - startedAt;
-      expect(apiLatencyMs).toBeLessThan(2_000);
-      expect(queued.body.data.task.status).toBe(ImportTaskStatus.confirming);
-      const finished = await waitForTerminalStatus(taskId, 180_000);
-      const elapsedMs = Date.now() - startedAt;
-      sampling = false;
-      await samplingPromise;
+      let apiLatencyMs = 0;
+      let elapsedMs = 0;
+      let finished: Awaited<ReturnType<typeof waitForTerminalStatus>> | undefined;
+      try {
+        const queued = await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-${rowCount}`
+        ).expect(201);
+        apiLatencyMs = Date.now() - startedAt;
+        expect(apiLatencyMs).toBeLessThan(2_000);
+        expect(queued.body.data.task.status).toBe(ImportTaskStatus.confirming);
+        finished = await waitForTerminalStatus(taskId, 180_000);
+        elapsedMs = Date.now() - startedAt;
+      } finally {
+        sampling = false;
+        await samplingPromise;
+      }
+      if (!finished) throw new Error(`Import confirmation ${taskId} did not produce a terminal result`);
       console.info('[B8-03 confirmation profile]', JSON.stringify({
         rowCount,
+        validationElapsedMs,
         apiLatencyMs,
         elapsedMs,
         peakRssDeltaMb: Number(((peakRss - baselineRss) / 1024 / 1024).toFixed(2)),
@@ -6198,6 +6503,7 @@ describe('real PostgreSQL integration', () => {
         recordCount: rowCount
       });
       expect(elapsedMs).toBeLessThan(180_000);
+      expect(validationElapsedMs).toBeLessThan(180_000);
       expect(peakRss - baselineRss).toBeLessThan(1024 * 1024 * 1024);
       expect(peakConnections).toBeGreaterThan(0);
     }, 240_000);
@@ -6205,23 +6511,21 @@ describe('real PostgreSQL integration', () => {
     it('recovers an expired confirmation from persisted database facts', async () => {
       const rowCount = 1_200;
       const taskId = await createTask(rowCount, '2026-07-18');
+      await queueWithoutRunningWorker(taskId, `b8-confirm-${suffix}-expired-recovery`);
       await prisma.importTask.update({
         where: { id: taskId },
         data: {
-          status: ImportTaskStatus.confirming,
           leaseToken: 'expired-worker-token',
           leaseUntil: new Date(Date.now() - 1_000),
-          confirmRequestedBy: financeUserId,
-          confirmationTotalRows: rowCount,
-          confirmationAttempts: 1,
-          confirmationStartedAt: new Date()
+          confirmationAttempts: 1
         }
       });
       expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
       expect(await waitForTerminalStatus(taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: rowCount,
-        confirmationAttempts: 2
+        confirmationAttempts: 2,
+        confirmedBy: reviewerUserId
       });
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
       expect(await prisma.auditLog.count({
@@ -6232,16 +6536,13 @@ describe('real PostgreSQL integration', () => {
     it('claims a normal API-to-worker confirmation handoff without consuming a retry', async () => {
       const rowCount = 100;
       const taskId = await createTask(rowCount, '2026-07-18');
+      await queueWithoutRunningWorker(taskId, `b8-confirm-${suffix}-worker-handoff`);
       await prisma.importTask.update({
         where: { id: taskId },
         data: {
-          status: ImportTaskStatus.confirming,
           leaseToken: 'worker-handoff:integration-confirm-token',
           leaseUntil: new Date(Date.now() - 1_000),
-          confirmRequestedBy: financeUserId,
-          confirmationTotalRows: rowCount,
-          confirmationAttempts: 1,
-          confirmationStartedAt: new Date()
+          confirmationAttempts: 1
         }
       });
       expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
@@ -6258,13 +6559,49 @@ describe('real PostgreSQL integration', () => {
       })).toBe(1);
     });
 
+    it('fails closed when the approving finance account is disabled before final publication', async () => {
+      const rowCount = 100;
+      const taskId = await createTask(rowCount, '2026-07-18');
+      await queueWithoutRunningWorker(taskId, `b8-confirm-${suffix}-approver-disabled`);
+      await prisma.importTask.update({
+        where: { id: taskId },
+        data: {
+          leaseToken: 'worker-handoff:approver-disabled',
+          leaseUntil: new Date(Date.now() - 1_000)
+        }
+      });
+      await prisma.user.update({ where: { id: reviewerUserId }, data: { status: UserStatus.disabled } });
+      try {
+        expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmation_failed,
+          importedRows: 0,
+          confirmedAt: null,
+          confirmedBy: null
+        });
+      } finally {
+        await prisma.user.update({ where: { id: reviewerUserId }, data: { status: UserStatus.active } });
+      }
+      expect(await prisma.businessRecord.count({
+        where: { importTaskId: taskId, status: BusinessRecordStatus.confirmed }
+      })).toBe(0);
+      expect(await prisma.businessRecord.count({
+        where: { importTaskId: taskId, status: BusinessRecordStatus.pending_confirm }
+      })).toBe(rowCount);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+      })).toBe(0);
+    });
+
     it('lets a recovered lease take over while the old worker can no longer commit', async () => {
       const rowCount = 5_001;
       const taskId = await createTask(rowCount, '2026-07-19');
-      await request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .expect(201);
+      const approval = await loadImportApproval(taskId, financeToken);
+      await confirmRequest(
+        taskId,
+        approval.payload,
+        `b8-confirm-${suffix}-lease-takeover`
+      ).expect(201);
       const beforeTakeover = await waitForConfirmationProgress(taskId, 1);
       await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${taskId}, 9))`;
@@ -6296,6 +6633,7 @@ describe('real PostgreSQL integration', () => {
     it('keeps completed batches unpublished when the last batch fails and resumes without duplicates', async () => {
       const rowCount = 1_001;
       const taskId = await createTask(rowCount, '2026-07-20');
+      const approval = await loadImportApproval(taskId, financeToken);
       const service = app.get(ImportTasksService) as unknown as {
         processConfirmationBatch(job: { taskId: string }): Promise<boolean>;
       };
@@ -6308,10 +6646,11 @@ describe('real PostgreSQL integration', () => {
         return original(job);
       });
       try {
-        await request(app.getHttpServer())
-          .post(`/api/import-tasks/${taskId}/confirm`)
-          .set('Authorization', `Bearer ${financeToken}`)
-          .expect(201);
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-batch-failure-first`
+        ).expect(201);
         expect(await waitForTerminalStatus(taskId)).toMatchObject({
           status: ImportTaskStatus.confirmation_failed,
           confirmationProcessedRows: 1_000,
@@ -6333,10 +6672,12 @@ describe('real PostgreSQL integration', () => {
         .set('Authorization', `Bearer ${financeToken}`)
         .expect(409);
 
-      await request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
-        .expect(201);
+      const retryApproval = await loadImportApproval(taskId, financeToken, false);
+      await confirmRequest(
+        taskId,
+        retryApproval.payload,
+        `b8-confirm-${suffix}-batch-failure-retry`
+      ).expect(201);
       expect(await waitForTerminalStatus(taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: rowCount,
@@ -6354,6 +6695,7 @@ describe('real PostgreSQL integration', () => {
     it('recovers after a simulated short PostgreSQL disconnect', async () => {
       const rowCount = 1_001;
       const taskId = await createTask(rowCount, '2026-07-21');
+      const approval = await loadImportApproval(taskId, financeToken);
       const service = app.get(ImportTasksService) as unknown as {
         processConfirmationBatch(job: { taskId: string }): Promise<boolean>;
       };
@@ -6370,10 +6712,11 @@ describe('real PostgreSQL integration', () => {
         return original(job);
       });
       try {
-        await request(app.getHttpServer())
-          .post(`/api/import-tasks/${taskId}/confirm`)
-          .set('Authorization', `Bearer ${financeToken}`)
-          .expect(201);
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-database-disconnect`
+        ).expect(201);
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
@@ -6395,13 +6738,16 @@ describe('real PostgreSQL integration', () => {
     it('serializes concurrent confirmation requests into one background job', async () => {
       const rowCount = 1_001;
       const taskId = await createTask(rowCount, '2026-07-22');
-      const confirm = () => request(app.getHttpServer())
-        .post(`/api/import-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`);
-      const [first, second] = await Promise.all([confirm(), confirm()]);
-      expect([first.status, second.status]).toEqual([201, 201]);
-      expect(first.body.data.task.status).toBe(ImportTaskStatus.confirming);
-      expect(second.body.data.task.status).toBe(ImportTaskStatus.confirming);
+      const approval = await loadImportApproval(taskId, financeToken);
+      const [first, second] = await Promise.all([
+        confirmRequest(taskId, approval.payload, `b8-confirm-${suffix}-concurrent-a`),
+        confirmRequest(taskId, approval.payload, `b8-confirm-${suffix}-concurrent-b`)
+      ]);
+      expect([first.status, second.status].sort()).toEqual([201, 409]);
+      const accepted = first.status === 201 ? first : second;
+      const rejected = first.status === 409 ? first : second;
+      expect(accepted.body.data.task.status).toBe(ImportTaskStatus.confirming);
+      expect(rejected.body.data.reason).toBe('IMPORT_APPROVAL_CONCURRENT_CONFLICT');
       expect(await waitForTerminalStatus(taskId)).toMatchObject({
         status: ImportTaskStatus.confirmed,
         importedRows: rowCount,

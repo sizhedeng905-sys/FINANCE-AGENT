@@ -26,7 +26,10 @@ import { RequireStepUp } from '../step-up/require-step-up.decorator';
 import { StepUpGuard } from '../step-up/step-up.guard';
 import { TempUploadCleanupInterceptor } from '../files/temp-upload-cleanup.interceptor';
 import { UploadAdmissionInterceptor } from '../files/upload-admission.interceptor';
+import { ConfirmImportTaskDto } from './dto/confirm-import-task.dto';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
+import { RevalidateImportTaskDto } from './dto/revalidate-import-task.dto';
+import { ReviewImportRowDto } from './dto/review-import-row.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
@@ -165,15 +168,37 @@ export class ImportTasksController {
     return this.imports.preview(id, query);
   }
 
+  @Put(':id/rows/:rowId/review')
+  reviewRow(
+    @Param('id') id: string,
+    @Param('rowId') rowId: string,
+    @Body() dto: ReviewImportRowDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.imports.reviewRow(id, rowId, dto, user, getRequestContext(request));
+  }
+
+  @Post(':id/revalidate')
+  revalidate(
+    @Param('id') id: string,
+    @Body() dto: RevalidateImportTaskDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.imports.revalidate(id, dto, user, getRequestContext(request));
+  }
+
   @Post(':id/confirm')
   @RequireStepUp({ action: 'import.confirm', resourceType: 'import_task', resourceParam: 'id' })
   confirm(
     @Param('id') id: string,
+    @Body() dto: ConfirmImportTaskDto,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.imports.confirm(id, user, getRequestContext(request), idempotencyKey);
+    return this.imports.confirm(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Post(':id/cancel')

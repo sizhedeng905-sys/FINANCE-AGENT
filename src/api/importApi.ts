@@ -1,6 +1,7 @@
 import { runtimeConfig } from '@/config/runtime';
 import type {
   CreateImportTaskPayload,
+  ConfirmImportTaskPayload,
   FieldSuggestion,
   FieldSuggestionListQuery,
   ImportConfirmResult,
@@ -14,6 +15,8 @@ import type {
   PaginatedFieldSuggestions,
   PaginatedImportRows,
   PaginatedImportTasks,
+  RevalidateImportTaskPayload,
+  ReviewImportRowPayload,
   SaveImportMappingsPayload,
 } from '@/types/dataCenter';
 import { httpClient } from './httpClient';
@@ -33,6 +36,8 @@ import {
   mockMapFieldSuggestion,
   mockParseImportTask,
   mockRejectFieldSuggestion,
+  mockRevalidateImportTask,
+  mockReviewImportRow,
   mockSaveImportMappings,
 } from './mockImportRepository';
 
@@ -117,14 +122,30 @@ export function getImportPreview(id: string, query: ImportPreviewQuery = {}): Pr
     : mockGetImportPreview(id, query);
 }
 
-export function confirmImportTask(id: string): Promise<ImportConfirmResult> {
+export function reviewImportRow(id: string, rowId: string, payload: ReviewImportRowPayload): Promise<ImportTask> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.put<ImportTask>(
+      `/import-tasks/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}/review`,
+      payload,
+    )
+    : mockReviewImportRow(id, rowId, payload);
+}
+
+export function revalidateImportTask(id: string, payload: RevalidateImportTaskPayload): Promise<ImportTask> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<ImportTask>(`/import-tasks/${encodeURIComponent(id)}/revalidate`, payload)
+    : mockRevalidateImportTask(id, payload);
+}
+
+export function confirmImportTask(id: string, payload: ConfirmImportTaskPayload): Promise<ImportConfirmResult> {
+  const approvalKey = `import-confirm-${id}-${payload.expectedReviewRevision}-${payload.expectedValidationSnapshotHash.slice(0, 24)}`;
   return runtimeConfig.dataMode === 'api'
     ? httpClient.post<ImportConfirmResult>(
       `/import-tasks/${encodeURIComponent(id)}/confirm`,
-      undefined,
-      { headers: { 'Idempotency-Key': idempotencyKey() } },
+      payload,
+      { headers: { 'Idempotency-Key': approvalKey } },
     )
-    : mockConfirmImportTask(id);
+    : mockConfirmImportTask(id, payload);
 }
 
 export function cancelImportTask(id: string): Promise<ImportTask> {

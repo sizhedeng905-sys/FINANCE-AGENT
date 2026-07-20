@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   Logger,
@@ -8,11 +9,13 @@ import {
   OnModuleDestroy,
   OnModuleInit,
   PayloadTooLargeException,
+  UnauthorizedException,
   UnprocessableEntityException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   BusinessRecordStatus,
+  FileScanStatus,
   FieldDefinition,
   FieldSuggestionStatus,
   FieldType,
@@ -25,6 +28,8 @@ import {
   RawFileStatus,
   RecordSourceType,
   SemanticType,
+  UserRole,
+  UserStatus,
   WorkOrderStatus
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
@@ -33,18 +38,23 @@ import { extname } from 'node:path';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { canonicalJson, canonicalJsonSha256 } from '../common/utils/canonical-json';
 import { FilesService } from '../files/files.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { financialPolicySnapshot } from '../record-policy/financial-policy-baseline';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
 import { ApproveFieldSuggestionDto, MapFieldSuggestionDto, QueryFieldSuggestionsDto } from './dto/field-suggestion.dto';
+import { ConfirmImportTaskDto } from './dto/confirm-import-task.dto';
 import { CreateImportTaskDto } from './dto/create-import-task.dto';
 import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
 import { QueryMappingProfilesDto } from './dto/query-mapping-profiles.dto';
+import { RevalidateImportTaskDto } from './dto/revalidate-import-task.dto';
+import { ReviewImportRowDto } from './dto/review-import-row.dto';
 import { MappingInputDto, SaveMappingsDto } from './dto/save-mappings.dto';
 import {
   EXCEL_PARSER_VERSION,
@@ -120,6 +130,13 @@ interface PreviewRow {
   errors: string[];
   warnings: string[];
   generatedRecordId?: string;
+  summaryCandidate: boolean;
+  review: {
+    decision?: 'include' | 'exclude';
+    reason?: string;
+    reviewedBy?: string;
+    reviewedAt?: string;
+  };
 }
 
 interface PreviewResult {
@@ -135,6 +152,22 @@ export interface PreviewSummary {
   errors: number;
   duplicates: number;
   ignored: number;
+}
+
+interface ImportValidationIssue {
+  code: string;
+  message: string;
+  count: number;
+  rowDigest: string;
+  sampleRowNumbers: number[];
+}
+
+interface ImportValidationIssueAccumulator {
+  code: string;
+  message: string;
+  count: number;
+  sampleRowNumbers: number[];
+  digest: ReturnType<typeof createHash>;
 }
 
 const AUTOMATIC_MAPPING_TYPES: MappingDecisionType[] = [
@@ -154,6 +187,14 @@ const IMPORT_PREVIEW_MAX_RESPONSE_BYTES = 1024 * 1024;
 const IMPORT_ROW_BATCH_SIZE = 500;
 const IMPORT_MAX_PARSE_ATTEMPTS = 3;
 const WORKER_HANDOFF_LEASE_PREFIX = 'worker-handoff:';
+export const EXCEL_VALIDATION_SCHEMA_VERSION = 'excel-validation/1.0';
+export const EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION = 'excel-deterministic-validation/1.0';
+export const EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'excel-approval/1.0';
+export const EXCEL_APPROVAL_POLICY_VERSION = 'finance-excel-approval/1.0-pending-h10';
+export const EXCEL_APPROVAL_AUTHORIZATION_POLICY_VERSION = 'finance-excel-approval-authz/1.0';
+export const EXCEL_ROW_REVIEW_POLICY_VERSION = 'excel-row-review-h01/1.0';
+const IMPORT_VALIDATION_MAX_ISSUES = 100;
+const SUMMARY_ROW_LABELS = new Set(['小计', '合计', '总计', '本页合计', '累计']);
 
 class ImportParseLeaseLostError extends Error {}
 class ImportParseWorkerStoppingError extends Error {}
@@ -173,6 +214,7 @@ interface BackgroundParseJob {
 interface BackgroundConfirmationJob {
   taskId: string;
   leaseToken: string;
+  approvalSnapshotHash: string;
   actor: CurrentUser;
   context: RequestContext;
   attempt: number;
@@ -584,7 +626,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             rowNumber: row.rowNumber,
             rawData: row.rawData as Prisma.InputJsonObject,
             rowHash: row.rowHash,
+            parserStatus: row.status as ImportRowStatus,
             status: row.status as ImportRowStatus,
+            parserErrors: row.errors,
+            parserWarnings: row.warnings,
             errors: row.errors,
             warnings: row.warnings,
             cellEvidence: row.cellEvidence as unknown as Prisma.InputJsonArray,
@@ -1297,7 +1342,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         totalPages: Math.ceil(summary.total / pageSize),
         hasNext: page * pageSize < summary.total
       },
-      strategy: 'valid_rows_only'
+      strategy: 'whole_batch_fail_closed'
     };
     if (Buffer.byteLength(JSON.stringify(result), 'utf8') > IMPORT_PREVIEW_MAX_RESPONSE_BYTES) {
       throw new PayloadTooLargeException('预览响应超过安全预算，请缩小 pageSize');
@@ -1305,40 +1350,83 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return result;
   }
 
-  async confirm(
+  async reviewRow(
     id: string,
+    rowId: string,
+    dto: ReviewImportRowDto,
     actor: CurrentUser,
-    context: RequestContext,
-    idempotencyKey?: string
+    context: RequestContext
   ) {
-    const scope = this.idempotency.prepare(
-      actor.id,
-      'POST',
-      '/api/import-tasks/:id/confirm',
-      idempotencyKey,
-      { importTaskId: id },
-      false
-    );
-    let claimedJob: BackgroundConfirmationJob | undefined;
-    const result = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
+    await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
-      const current = await tx.importTask.findUnique({ where: { id } });
-      if (!current) throw new NotFoundException('资源不存在');
-      if (current.status === ImportTaskStatus.confirmed) {
-        return this.confirmationResponse(await this.findDetailOrThrow(id, tx), true);
+      const task = await tx.importTask.findUnique({ where: { id } });
+      if (!task) throw new NotFoundException('资源不存在');
+      this.assertTaskMutable(task.status);
+      if (task.version !== dto.expectedVersion || task.reviewRevision !== dto.expectedReviewRevision) {
+        throw new ConflictException('导入审核内容已变化，请刷新后重试');
       }
-      if (current.status === ImportTaskStatus.confirming) {
-        return this.confirmationResponse(await this.findDetailOrThrow(id, tx), false);
+      const row = await tx.importRow.findFirst({ where: { id: rowId, importTaskId: id } });
+      if (!row) throw new NotFoundException('导入行不存在');
+      const summaryCandidate = this.isPotentialSummaryRow(this.jsonObject(row.rawData));
+      if (!summaryCandidate) {
+        throw new ConflictException({
+          message: '逐行审核仅用于处置疑似汇总行，普通明细错误必须修正后重新导入',
+          data: { reason: 'IMPORT_ROW_REVIEW_NOT_SUMMARY', decisionId: 'H01' }
+        });
       }
-      const confirmableStatuses: ImportTaskStatus[] = [
-        ImportTaskStatus.pending_confirm,
-        ImportTaskStatus.confirmation_failed
-      ];
-      if (!confirmableStatuses.includes(current.status)) {
-        throw new ConflictException('仅待确认或确认失败的任务可以确认');
+      if (
+        dto.decision === 'include'
+        && ([ImportRowStatus.ignored, ImportRowStatus.duplicate] as ImportRowStatus[]).includes(row.parserStatus)
+      ) {
+        throw new ConflictException({
+          message: '解析器已将该行标记为空行或重复行，H03 未批准前不能强制纳入',
+          data: { reason: 'IMPORT_ROW_INCLUDE_POLICY_PENDING', decisionRefs: ['H01', 'H03'] }
+        });
       }
 
+      await tx.importRow.update({
+        where: { id: rowId },
+        data: {
+          reviewDecision: dto.decision,
+          reviewReason: dto.reason,
+          reviewedBy: actor.id,
+          reviewedAt: new Date()
+        }
+      });
+      await this.invalidateImportReview(tx, id);
+      await this.auditLogs.write(tx, actor, 'import_row.review', 'import_row', rowId, {
+        importTaskId: id,
+        rowNumber: row.rowNumber,
+        summaryCandidate,
+        decision: dto.decision,
+        reason: dto.reason,
+        policyVersion: EXCEL_ROW_REVIEW_POLICY_VERSION,
+        invalidatedValidationSnapshotHash: task.validationSnapshotHash
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'import_row_reviewed', 'import_row', rowId, {
+        importTaskId: id,
+        rowNumber: row.rowNumber,
+        summaryCandidate,
+        decision: dto.decision,
+        policyVersion: EXCEL_ROW_REVIEW_POLICY_VERSION
+      });
+    });
+    return toImportTask(await this.findDetailOrThrow(id));
+  }
+
+  async revalidate(id: string, dto: RevalidateImportTaskDto, actor: CurrentUser, context: RequestContext) {
+    const task = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const current = await tx.importTask.findUnique({ where: { id }, include: previewTaskInclude });
+      if (!current) throw new NotFoundException('资源不存在');
+      if (current.status !== ImportTaskStatus.pending_confirm) {
+        throw new ConflictException('只有待财务确认的 Excel 任务可以重新校验');
+      }
+      if (current.version !== dto.expectedVersion || current.reviewRevision !== dto.expectedReviewRevision) {
+        throw new ConflictException('导入审核内容已变化，请刷新后重新校验');
+      }
       await acquireProjectWriteLock(tx, current.projectId);
+      this.assertImportSourceEligible(current);
       const template = await this.recordPolicy.getWritableTemplate(
         tx,
         current.projectId,
@@ -1348,58 +1436,418 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (template.version !== current.templateVersion) {
         throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
       }
-      const [columnCount, decisionCount, totalRows, processedRows, successRows, errorRows] = await Promise.all([
+      if (!current.sourceSha256 || !current.irSchemaVersion || !current.parserVersion || !current.irHash) {
+        throw new ConflictException('Excel 任务缺少可重放的来源或 IR 证据');
+      }
+      return current;
+    });
+
+    const unresolvedColumns = task.columns.filter((column) => !column.decision);
+    if (unresolvedColumns.length > 0) throw new ConflictException('所有 Excel 列必须先映射或明确忽略');
+
+    const rowSetDigest = createHash('sha256');
+    const outputDigest = createHash('sha256');
+    const blocking = new Map<string, ImportValidationIssueAccumulator>();
+    const warnings = new Map<string, ImportValidationIssueAccumulator>();
+    const summary: PreviewSummary = { total: 0, valid: 0, errors: 0, duplicates: 0, ignored: 0 };
+    let blockingErrorCount = 0;
+    let warningOccurrenceCount = 0;
+    let lastRowNumber: number | undefined;
+    let lastId: string | undefined;
+
+    while (true) {
+      const current = await this.prisma.importTask.findUnique({
+        where: { id },
+        select: { version: true, reviewRevision: true, status: true }
+      });
+      if (
+        !current
+        || current.version !== dto.expectedVersion
+        || current.reviewRevision !== dto.expectedReviewRevision
+        || current.status !== ImportTaskStatus.pending_confirm
+      ) {
+        throw new ConflictException('导入审核内容在校验期间发生变化，请重新开始');
+      }
+      const rows = await this.prisma.importRow.findMany({
+        where: {
+          importTaskId: id,
+          ...(lastRowNumber === undefined || lastId === undefined
+            ? {}
+            : {
+                OR: [
+                  { rowNumber: { gt: lastRowNumber } },
+                  { rowNumber: lastRowNumber, id: { gt: lastId } }
+                ]
+              })
+        },
+        orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }],
+        take: IMPORT_PREVIEW_SUMMARY_BATCH_SIZE
+      });
+      if (rows.length === 0) break;
+      const preview = this.buildPreviewRows(task, rows);
+      await this.persistValidationRows(id, preview.rows);
+
+      for (const row of preview.rows) {
+        summary.total += 1;
+        if (row.status === ImportRowStatus.mapped) summary.valid += 1;
+        else if (row.status === ImportRowStatus.error) summary.errors += 1;
+        else if (row.status === ImportRowStatus.duplicate) summary.duplicates += 1;
+        else if (row.status === ImportRowStatus.ignored) summary.ignored += 1;
+
+        this.updateCanonicalDigest(rowSetDigest, {
+          rowId: row.id,
+          rowNumber: row.rowNumber,
+          rowHash: row.rowHash,
+          status: row.status,
+          reviewDecision: row.review.decision ?? null,
+          summaryCandidate: row.summaryCandidate
+        });
+        if (row.status === ImportRowStatus.mapped) {
+          this.updateCanonicalDigest(outputDigest, this.normalizedPreviewOutput(row));
+        }
+        for (const message of row.errors) {
+          blockingErrorCount += 1;
+          this.addValidationIssue(blocking, 'ROW_VALIDATION_ERROR', message, row);
+        }
+        for (const message of row.warnings) {
+          warningOccurrenceCount += 1;
+          this.addValidationIssue(warnings, 'ROW_REVIEW_WARNING', message, row);
+        }
+        if (row.status === ImportRowStatus.duplicate) {
+          warningOccurrenceCount += 1;
+          this.addValidationIssue(
+            warnings,
+            'DUPLICATE_ROW_EXCLUDED',
+            '解析器标记的重复行未生成正式记录；H03 正式重复策略仍待人工门禁',
+            row
+          );
+        }
+        if (row.status === ImportRowStatus.ignored && row.review.decision !== 'exclude') {
+          warningOccurrenceCount += 1;
+          this.addValidationIssue(
+            warnings,
+            'PARSER_IGNORED_ROW',
+            '解析器标记的空白行未生成正式记录',
+            row
+          );
+        }
+      }
+
+      const last = rows[rows.length - 1];
+      lastRowNumber = last.rowNumber;
+      lastId = last.id;
+    }
+
+    if (summary.total === 0) {
+      blockingErrorCount += 1;
+      this.addValidationIssueWithoutRow(blocking, 'NO_IMPORT_ROWS', '没有可供财务审核的 Excel 数据行');
+    }
+    if (summary.valid === 0) {
+      blockingErrorCount += 1;
+      this.addValidationIssueWithoutRow(blocking, 'NO_DETAIL_ROWS', '没有可生成正式记录的有效业务明细行');
+    }
+
+    const blockingErrors = this.finalizeValidationIssues('error', blocking);
+    const validationWarnings = this.finalizeValidationIssues('warning', warnings);
+    const normalizedOutputHash = outputDigest.digest('hex');
+    const rowSetHash = rowSetDigest.digest('hex');
+    const mappingPayloadHash = this.importMappingHash(task);
+    const templateContentHash = this.importTemplateContentHash(task);
+    const core = {
+      schemaVersion: EXCEL_VALIDATION_SCHEMA_VERSION,
+      taskId: task.id,
+      projectId: task.projectId,
+      sourceSha256: task.sourceSha256,
+      irSchemaVersion: task.irSchemaVersion,
+      parserVersion: task.parserVersion,
+      irHash: task.irHash,
+      templateId: task.templateId,
+      templateVersion: task.templateVersion,
+      templateContentHash,
+      reviewRevision: task.reviewRevision,
+      mappingPayloadHash,
+      transformRegistryVersion: task.transformRegistryVersion ?? IMPORT_TRANSFORM_REGISTRY_VERSION,
+      validationRuleVersion: EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION,
+      rowSetHash,
+      normalizedOutputHash,
+      counts: {
+        ...summary,
+        recordCount: summary.valid,
+        blockingErrorCount,
+        warningOccurrenceCount
+      },
+      blockingErrors,
+      warnings: validationWarnings,
+      valid: blockingErrorCount === 0,
+      validatedBy: actor.id
+    };
+    const snapshot = { ...core, snapshotHash: canonicalJsonSha256(core) };
+    const validatedAt = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const result = await tx.importTask.updateMany({
+        where: {
+          id,
+          status: ImportTaskStatus.pending_confirm,
+          version: dto.expectedVersion,
+          reviewRevision: dto.expectedReviewRevision
+        },
+        data: {
+          validationRevision: task.reviewRevision,
+          validationSnapshot: this.json(snapshot),
+          validationSnapshotHash: snapshot.snapshotHash,
+          validationRuleVersion: EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION,
+          validatedAt,
+          totalRows: summary.total,
+          validRows: summary.valid,
+          errorRows: summary.errors,
+          duplicateRows: summary.duplicates,
+          ignoredRows: summary.ignored,
+          previewSummaryVersion: task.version + 1,
+          version: { increment: 1 }
+        }
+      });
+      if (result.count !== 1) throw new ConflictException('导入审核内容在校验期间发生变化，请重新开始');
+      await this.auditLogs.write(tx, actor, 'import_task.revalidate', 'import_task', id, {
+        reviewRevision: task.reviewRevision,
+        snapshotHash: snapshot.snapshotHash,
+        normalizedOutputHash,
+        rowSetHash,
+        valid: snapshot.valid,
+        counts: snapshot.counts
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'import_task_revalidated', 'import_task', id, {
+        reviewRevision: task.reviewRevision,
+        snapshotHash: snapshot.snapshotHash,
+        normalizedOutputHash,
+        valid: snapshot.valid
+      });
+      return result;
+    });
+    void updated;
+    return toImportTask(await this.findDetailOrThrow(id));
+  }
+
+  async confirm(
+    id: string,
+    dto: ConfirmImportTaskDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const scope = this.idempotency.prepare(
+      actor.id,
+      'POST',
+      '/api/import-tasks/:id/confirm',
+      idempotencyKey,
+      { importTaskId: id, ...dto }
+    );
+    const persistenceKey = this.idempotency.persistenceKey(scope);
+    if (!persistenceKey) throw new BadRequestException('Excel 财务批准必须提供 Idempotency-Key');
+    const approvalRequestKeyHash = canonicalJsonSha256({ persistenceKey });
+    let claimedJob: BackgroundConfirmationJob | undefined;
+    const result = await this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
+      await this.lockTask(tx, id);
+      const current = await tx.importTask.findUnique({ where: { id }, include: previewTaskInclude });
+      if (!current) throw new NotFoundException('资源不存在');
+      if (current.status === ImportTaskStatus.confirmed) {
+        throw new ConflictException({
+          message: 'Excel 导入任务已完成正式发布',
+          data: { reason: 'IMPORT_TASK_ALREADY_COMMITTED' }
+        });
+      }
+      if (current.status === ImportTaskStatus.confirming) {
+        throw new ConflictException({
+          message: 'Excel 导入任务已由另一批准命令占用',
+          data: { reason: 'IMPORT_APPROVAL_CONCURRENT_CONFLICT' }
+        });
+      }
+      const confirmableStatuses: ImportTaskStatus[] = [
+        ImportTaskStatus.pending_confirm,
+        ImportTaskStatus.confirmation_failed
+      ];
+      if (!confirmableStatuses.includes(current.status)) {
+        throw new ConflictException('仅待确认或确认失败的任务可以确认');
+      }
+      if (current.version !== dto.expectedVersion || current.reviewRevision !== dto.expectedReviewRevision) {
+        throw new ConflictException({
+          message: 'Excel 审核内容已变化，请刷新后批准',
+          data: {
+            reason: 'IMPORT_APPROVAL_VERSION_CONFLICT',
+            version: current.version,
+            reviewRevision: current.reviewRevision
+          }
+        });
+      }
+
+      await acquireProjectWriteLock(tx, current.projectId);
+      this.assertImportSourceEligible(current);
+      const template = await this.recordPolicy.getWritableTemplate(
+        tx,
+        current.projectId,
+        current.templateId,
+        current.importType
+      );
+      if (template.version !== current.templateVersion) {
+        throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
+      }
+      const approver = await this.assertCurrentFinanceApprover(tx, current, actor);
+      const approvedValidation = this.assertImportApprovalValidation(current, dto);
+      const [columnCount, decisionCount, totalRows] = await Promise.all([
         tx.importColumn.count({ where: { importTaskId: id } }),
         tx.mappingDecision.count({ where: { importTaskId: id } }),
-        tx.importRow.count({ where: { importTaskId: id } }),
-        tx.importRow.count({ where: { importTaskId: id, confirmationProcessedAt: { not: null } } }),
-        tx.businessRecord.count({ where: { importTaskId: id } }),
-        tx.importRow.count({
-          where: { importTaskId: id, confirmationProcessedAt: { not: null }, status: ImportRowStatus.error }
-        })
+        tx.importRow.count({ where: { importTaskId: id } })
       ]);
       if (columnCount === 0 || decisionCount !== columnCount) {
         throw new ConflictException('所有未知列必须先映射或明确忽略');
       }
       if (totalRows === 0) throw new UnprocessableEntityException('没有可导入的数据行');
+      if (totalRows !== approvedValidation.counts.total) {
+        throw new ConflictException({
+          message: 'Excel 行集合在重新校验后发生变化',
+          data: { reason: 'IMPORT_ROW_SET_CHANGED' }
+        });
+      }
+      if (current.status === ImportTaskStatus.confirmation_failed) {
+        await this.resetFailedConfirmationStaging(tx, id);
+      }
 
       const attempt = current.confirmationAttempts + 1;
       const leaseToken = randomUUID();
       const now = new Date();
-      await tx.importTask.update({
-        where: { id },
+      const approvalCore = {
+        schemaVersion: EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION,
+        taskId: current.id,
+        taskVersion: current.version,
+        projectId: current.projectId,
+        source: {
+          rawFileId: current.rawFileId,
+          rawFileSha256: current.rawFile.sha256,
+          sourceSha256: current.sourceSha256,
+          parserInputSha256: current.parserInputSha256,
+          irSchemaVersion: current.irSchemaVersion,
+          parserVersion: current.parserVersion,
+          irHash: current.irHash,
+          rowEvidenceDigest: current.rowEvidenceDigest
+        },
+        template: {
+          templateId: current.templateId,
+          templateVersion: current.templateVersion,
+          templateContentHash: approvedValidation.templateContentHash,
+          templateSnapshotHash: canonicalJsonSha256(current.templateSnapshot ?? null)
+        },
+        mapping: {
+          mappingPayloadHash: approvedValidation.mappingPayloadHash,
+          structureFingerprint: current.structureFingerprint,
+          fingerprintVersion: current.fingerprintVersion,
+          profileId: current.mappingProfileId,
+          profileVersion: current.mappingProfileVersion,
+          profileSnapshotHash: current.mappingProfileSnapshotHash
+        },
+        aiSuggestion: {
+          appliedToFormalData: false
+        },
+        review: {
+          reviewRevision: current.reviewRevision,
+          validationSnapshotHash: current.validationSnapshotHash,
+          validationRuleVersion: current.validationRuleVersion,
+          rowSetHash: approvedValidation.rowSetHash,
+          normalizedOutputHash: approvedValidation.normalizedOutputHash,
+          acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds
+        },
+        versions: {
+          transformRegistryVersion: current.transformRegistryVersion ?? IMPORT_TRANSFORM_REGISTRY_VERSION,
+          approvalPolicyVersion: EXCEL_APPROVAL_POLICY_VERSION,
+          authorizationPolicyVersion: EXCEL_APPROVAL_AUTHORIZATION_POLICY_VERSION,
+          rowReviewPolicyVersion: EXCEL_ROW_REVIEW_POLICY_VERSION,
+          financialPolicy: financialPolicySnapshot()
+        },
+        approval: {
+          approvedByUserId: approver.id,
+          approvedByUsername: approver.username,
+          approvedAt: now.toISOString(),
+          selfApproval: false,
+          requestKeyHash: approvalRequestKeyHash
+        },
+        output: {
+          normalizedOutputHash: approvedValidation.normalizedOutputHash,
+          recordCount: approvedValidation.counts.recordCount
+        }
+      };
+      const approvalSnapshot = {
+        ...approvalCore,
+        snapshotHash: canonicalJsonSha256(approvalCore)
+      };
+      const scheduled = await tx.importTask.updateMany({
+        where: {
+          id,
+          status: current.status,
+          version: dto.expectedVersion,
+          reviewRevision: dto.expectedReviewRevision,
+          validationSnapshotHash: dto.expectedValidationSnapshotHash
+        },
         data: {
           status: ImportTaskStatus.confirming,
           leaseToken,
           leaseUntil: new Date(now.getTime() + this.confirmationLeaseMs),
-          confirmRequestedBy: actor.id,
+          confirmRequestedBy: approver.id,
           confirmationTotalRows: totalRows,
-          confirmationProcessedRows: processedRows,
-          confirmationSuccessRows: successRows,
-          confirmationErrorRows: errorRows,
+          confirmationProcessedRows: 0,
+          confirmationSuccessRows: 0,
+          confirmationErrorRows: 0,
           confirmationAttempts: attempt,
-          confirmationStartedAt: current.confirmationStartedAt ?? now,
-          importedRows: successRows,
+          confirmationStartedAt: now,
+          importedRows: 0,
+          approvalSnapshot: this.json(approvalSnapshot),
+          approvalSnapshotHash: approvalSnapshot.snapshotHash,
+          approvalReviewRevision: current.reviewRevision,
+          approvalValidationHash: current.validationSnapshotHash,
+          approvalPolicyVersion: EXCEL_APPROVAL_POLICY_VERSION,
+          approvalRequestKeyHash,
           errorMessage: null,
           version: { increment: 1 }
         }
       });
-      await this.auditLogs.write(tx, actor, 'import_task.confirm_scheduled', 'import_task', id, {
+      if (scheduled.count !== 1) {
+        throw new ConflictException({
+          message: 'Excel 批准命令未赢得并发竞争',
+          data: { reason: 'IMPORT_APPROVAL_CONCURRENT_CONFLICT' }
+        });
+      }
+      await this.auditLogs.write(tx, approver, 'import_task.confirm_scheduled', 'import_task', id, {
         attempt,
         totalRows,
-        processedRows,
-        batchSize: this.confirmationBatchSize
+        recordCount: approvedValidation.counts.recordCount,
+        batchSize: this.confirmationBatchSize,
+        reviewRevision: current.reviewRevision,
+        validationSnapshotHash: current.validationSnapshotHash,
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        normalizedOutputHash: approvedValidation.normalizedOutputHash,
+        acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds,
+        selfApproval: false
       }, context);
       await this.ledgerEvents.write(
         tx,
-        actor,
+        approver,
         'import_task_confirmation_scheduled',
         'import_task',
         id,
-        { attempt, totalRows, processedRows, batchSize: this.confirmationBatchSize },
+        {
+          attempt,
+          totalRows,
+          recordCount: approvedValidation.counts.recordCount,
+          approvalSnapshotHash: approvalSnapshot.snapshotHash
+        },
         `import_task:${id}:confirm_attempt:${attempt}:scheduled`
       );
-      claimedJob = { taskId: id, leaseToken, actor, context, attempt };
+      claimedJob = {
+        taskId: id,
+        leaseToken,
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        actor: approver,
+        context,
+        attempt
+      };
       return this.confirmationResponse(await this.findDetailOrThrow(id, tx), false);
     }));
     if (claimedJob) await this.scheduleBackgroundConfirmation(claimedJob);
@@ -1451,7 +1899,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const requestedUser = task.confirmRequestedBy
         ? await tx.user.findUnique({ where: { id: task.confirmRequestedBy } })
         : undefined;
-      const actor = this.toCurrentUser(requestedUser ?? task.uploader);
+      if (!requestedUser || !task.approvalSnapshotHash) {
+        throw new ConflictException('Excel 确认任务缺少不可变批准快照或批准人');
+      }
+      const actor = this.toCurrentUser(requestedUser);
       const workerHandoff = this.isWorkerHandoffLease(task.leaseToken);
       const attempt = workerHandoff ? task.confirmationAttempts : task.confirmationAttempts + 1;
       const context = {
@@ -1506,7 +1957,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           confirmationSuccessRows: successRows,
           confirmationErrorRows: errorRows,
           confirmationAttempts: attempt,
-          importedRows: successRows,
+          importedRows: 0,
           errorMessage: null,
           version: { increment: 1 }
         }
@@ -1532,7 +1983,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         { attempt, processedRows, totalRows, workerHandoff },
         `import_task:${id}:confirm_attempt:${attempt}:${eventSuffix}`
       );
-      return { taskId: id, leaseToken, actor, context, attempt };
+      return {
+        taskId: id,
+        leaseToken,
+        approvalSnapshotHash: task.approvalSnapshotHash,
+        actor,
+        context,
+        attempt
+      };
     });
   }
 
@@ -1588,6 +2046,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         include: previewTaskInclude
       });
       if (!task) throw new NotFoundException('资源不存在');
+      this.assertImportApprovalSnapshotCurrent(task, job.approvalSnapshotHash);
+      this.assertImportSourceEligible(task);
       const activeTemplate = await this.recordPolicy.getWritableTemplate(
         tx,
         task.projectId,
@@ -1608,6 +2068,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (preview.unresolvedColumns.length > 0) {
         throw new ConflictException('确认期间检测到未处理的映射列');
       }
+      const invalid = preview.rows.find((row) => row.status === ImportRowStatus.error || row.errors.length > 0);
+      if (invalid) {
+        throw new ConflictException({
+          message: `批准后第 ${invalid.rowNumber} 行重新校验失败，整批不会发布`,
+          data: { reason: 'IMPORT_POST_APPROVAL_ROW_INVALID', rowNumber: invalid.rowNumber }
+        });
+      }
       const now = new Date();
       const snapshotTime = task.confirmationStartedAt ?? now;
       const recordData: Prisma.BusinessRecordCreateManyInput[] = [];
@@ -1616,8 +2083,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const recordIdByRow = new Map<string, string>();
 
       for (const row of preview.rows) {
-        if (row.status !== ImportRowStatus.mapped || row.errors.length > 0 || !row.recordDate || row.amount === undefined) {
+        if (([ImportRowStatus.ignored, ImportRowStatus.duplicate] as ImportRowStatus[]).includes(row.status)) {
           continue;
+        }
+        if (row.status !== ImportRowStatus.mapped || !row.recordDate || row.amount === undefined) {
+          throw new ConflictException({
+            message: `批准后的第 ${row.rowNumber} 行不再是可入账明细，整批不会发布`,
+            data: { reason: 'IMPORT_POST_APPROVAL_ROW_STATE_CHANGED', rowNumber: row.rowNumber }
+          });
         }
         const policyValues = row.values.map((value) => ({ fieldId: value.fieldId, value: value.value }));
         const canonical = this.recordPolicy.resolveCanonicalValues(task.template, policyValues, { requireValues: true });
@@ -1640,15 +2113,25 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             rowNumber: row.rowNumber,
             rowHash: row.rowHash,
             rawFileId: task.rawFileId,
-            rawFileSha256: task.rawFile.sha256
+            rawFileSha256: task.rawFile.sha256,
+            approvalSnapshotHash: task.approvalSnapshotHash
           }),
-          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(task.template, canonical, policyValues, {
-            projectId: task.projectId,
-            sourceType: RecordSourceType.excel,
-            sourceId: row.id,
-            confirmedAt: snapshotTime,
-            confirmedBy: job.actor.username,
-            attachments: [task.rawFileId]
+          confirmationSnapshot: this.json({
+            ...this.recordPolicy.toConfirmationSnapshot(task.template, canonical, policyValues, {
+              projectId: task.projectId,
+              sourceType: RecordSourceType.excel,
+              sourceId: row.id,
+              confirmedAt: snapshotTime,
+              confirmedBy: job.actor.username,
+              attachments: [task.rawFileId]
+            }),
+            ingestionApproval: {
+              schemaVersion: EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION,
+              snapshotHash: task.approvalSnapshotHash,
+              validationSnapshotHash: task.validationSnapshotHash,
+              reviewRevision: task.reviewRevision,
+              normalizedOutputHash: this.approvalOutputHash(task)
+            }
           }),
           recordType: task.template.recordType,
           accountingDirection: canonical.accountingDirection,
@@ -1671,19 +2154,20 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           task.template.templateFields
         )));
         ledgerData.push({
-          eventType: 'business_record_created',
+          eventType: 'business_record_staged',
           aggregateType: 'business_record',
           aggregateId: recordId,
           actorUserId: job.actor.id,
           actorUsername: job.actor.username,
-          idempotencyKey: `import_row:${row.id}:business_record_created`,
+          idempotencyKey: `import_row:${row.id}:business_record_staged`,
           payload: {
             sourceType: RecordSourceType.excel,
             importTaskId: job.taskId,
             importRowId: row.id,
             rawFileId: task.rawFileId,
             accountingDirection: task.template.accountingDirection,
-            amount: row.amount
+            amount: row.amount,
+            approvalSnapshotHash: task.approvalSnapshotHash
           }
         });
       }
@@ -1716,7 +2200,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           confirmationProcessedRows: processedRows,
           confirmationSuccessRows: successRows,
           confirmationErrorRows: errorRows,
-          importedRows: successRows,
+          importedRows: 0,
           leaseUntil: new Date(Date.now() + this.confirmationLeaseMs)
         }
       });
@@ -1728,6 +2212,21 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, job.taskId);
       await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
+      const task = await tx.importTask.findUnique({ where: { id: job.taskId }, include: previewTaskInclude });
+      if (!task) throw new NotFoundException('资源不存在');
+      this.assertImportApprovalSnapshotCurrent(task, job.approvalSnapshotHash);
+      await acquireProjectWriteLock(tx, task.projectId);
+      this.assertImportSourceEligible(task);
+      const activeTemplate = await this.recordPolicy.getWritableTemplate(
+        tx,
+        task.projectId,
+        task.templateId,
+        task.importType
+      );
+      if (activeTemplate.version !== task.templateVersion) {
+        throw new ConflictException('Excel 批准后模板版本发生变化，整批不会发布');
+      }
+      const approver = await this.assertCurrentFinanceApprover(tx, task, job.actor);
       const [totalRows, processedRows, successRows, errorRows, duplicateRows, ignoredRows] = await Promise.all([
         tx.importRow.count({ where: { importTaskId: job.taskId } }),
         tx.importRow.count({ where: { importTaskId: job.taskId, confirmationProcessedAt: { not: null } } }),
@@ -1737,45 +2236,24 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         tx.importRow.count({ where: { importTaskId: job.taskId, status: ImportRowStatus.ignored } })
       ]);
       if (processedRows !== totalRows) throw new Error('确认进度与数据库事实不一致');
-      if (successRows === 0) {
-        const reason = '没有可导入的合法行';
-        await tx.importTask.update({
-          where: { id: job.taskId },
-          data: {
-            status: ImportTaskStatus.confirmation_failed,
-            leaseToken: null,
-            leaseUntil: null,
-            confirmationTotalRows: totalRows,
-            confirmationProcessedRows: processedRows,
-            confirmationSuccessRows: 0,
-            confirmationErrorRows: errorRows,
-            importedRows: 0,
-            validRows: 0,
-            errorRows,
-            duplicateRows,
-            ignoredRows,
-            errorMessage: reason,
-            version: { increment: 1 }
-          }
+      if (errorRows !== 0 || successRows === 0) {
+        throw new ConflictException({
+          message: 'Excel 整批存在阻断错误或没有有效明细，正式记录不会发布',
+          data: { reason: 'IMPORT_WHOLE_BATCH_VALIDATION_FAILED', errorRows, successRows }
         });
-        await this.auditLogs.write(tx, job.actor, 'import_task.confirm_failed', 'import_task', job.taskId, {
-          attempt: job.attempt,
-          reason,
-          totalRows,
-          errorRows,
-          duplicateRows,
-          ignoredRows
-        }, job.context);
-        await this.ledgerEvents.write(
-          tx,
-          job.actor,
-          'import_task_confirmation_failed',
-          'import_task',
-          job.taskId,
-          { attempt: job.attempt, reason, totalRows, errorRows, duplicateRows, ignoredRows },
-          `import_task:${job.taskId}:confirm_attempt:${job.attempt}:failed`
-        );
-        return;
+      }
+      const integrity = await this.recomputeApprovalIntegrity(tx, task);
+      const expectedRecordCount = this.approvalRecordCount(task);
+      if (
+        integrity.rowSetHash !== this.approvalRowSetHash(task)
+        || integrity.normalizedOutputHash !== this.approvalOutputHash(task)
+        || integrity.recordCount !== expectedRecordCount
+        || successRows !== expectedRecordCount
+      ) {
+        throw new ConflictException({
+          message: 'Excel staging 与批准快照不一致，整批不会发布',
+          data: { reason: 'IMPORT_APPROVAL_INTEGRITY_MISMATCH' }
+        });
       }
 
       const now = new Date();
@@ -1783,9 +2261,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         UPDATE business_records
         SET status = ${BusinessRecordStatus.confirmed}::"BusinessRecordStatus",
             confirmed_at = ${now},
-            confirmed_by = ${job.actor.username},
+            confirmed_by = ${approver.username},
             confirmation_snapshot = COALESCE(confirmation_snapshot, '{}'::jsonb)
-              || jsonb_build_object('confirmedAt', ${now.toISOString()}, 'confirmedBy', ${job.actor.username}),
+              || jsonb_build_object('confirmedAt', ${now.toISOString()}, 'confirmedBy', ${approver.username}),
             updated_at = ${now}
         WHERE import_task_id = ${job.taskId}
           AND status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
@@ -1794,15 +2272,33 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         where: { importTaskId: job.taskId, generatedRecordId: { not: null } },
         data: { status: ImportRowStatus.confirmed, confirmedAt: now }
       });
+      await tx.$executeRaw`
+        UPDATE ledger_events AS event
+        SET event_type = 'business_record_created',
+            payload = COALESCE(event.payload, '{}'::jsonb)
+              || jsonb_build_object(
+                'committedAt', ${now.toISOString()},
+                'approvalSnapshotHash', ${task.approvalSnapshotHash}
+              )
+        FROM business_records AS record
+        WHERE event.aggregate_id = record.id
+          AND event.event_type = 'business_record_staged'
+          AND record.import_task_id = ${job.taskId}
+      `;
       const summary = { importedRows: successRows, errorRows, duplicateRows, ignoredRows };
-      await tx.importTask.update({
-        where: { id: job.taskId },
+      const published = await tx.importTask.updateMany({
+        where: {
+          id: job.taskId,
+          status: ImportTaskStatus.confirming,
+          leaseToken: job.leaseToken,
+          approvalSnapshotHash: job.approvalSnapshotHash
+        },
         data: {
           status: ImportTaskStatus.confirmed,
           leaseToken: null,
           leaseUntil: null,
           confirmedAt: now,
-          confirmedBy: job.actor.id,
+          confirmedBy: approver.id,
           confirmationTotalRows: totalRows,
           confirmationProcessedRows: processedRows,
           confirmationSuccessRows: successRows,
@@ -1812,30 +2308,566 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           errorRows,
           duplicateRows,
           ignoredRows,
-          errorMessage: errorRows > 0 ? `${errorRows} 行校验失败，已保留未入库` : null,
+          errorMessage: null,
           version: { increment: 1 }
         }
       });
-      await this.auditLogs.write(tx, job.actor, 'import_task.confirm', 'import_task', job.taskId, summary, job.context);
+      if (published.count !== 1) throw new ImportConfirmationLeaseLostError();
+      await this.auditLogs.write(tx, approver, 'import_task.confirm', 'import_task', job.taskId, {
+        ...summary,
+        approvalSnapshotHash: task.approvalSnapshotHash,
+        validationSnapshotHash: task.validationSnapshotHash,
+        normalizedOutputHash: integrity.normalizedOutputHash,
+        selfApproval: false
+      }, job.context);
       await this.auditLogs.write(
         tx,
-        job.actor,
+        approver,
         'import_task.confirm_completed',
         'import_task',
         job.taskId,
-        { attempt: job.attempt, totalRows, ...summary },
+        { attempt: job.attempt, totalRows, ...summary, approvalSnapshotHash: task.approvalSnapshotHash },
         job.context
       );
       await this.ledgerEvents.write(
         tx,
-        job.actor,
+        approver,
         'import_task_confirmed',
         'import_task',
         job.taskId,
-        { attempt: job.attempt, totalRows, ...summary },
+        { attempt: job.attempt, totalRows, ...summary, approvalSnapshotHash: task.approvalSnapshotHash },
         `import_task:${job.taskId}:confirmed`
       );
-    }, { maxWait: 10_000, timeout: 60_000 });
+      await this.ledgerEvents.write(
+        tx,
+        approver,
+        'business_records_batch_committed',
+        'import_task',
+        job.taskId,
+        {
+          recordCount: successRows,
+          approvalSnapshotHash: task.approvalSnapshotHash,
+          normalizedOutputHash: integrity.normalizedOutputHash
+        },
+        `import_task:${job.taskId}:business_records_batch_committed`
+      );
+    }, { maxWait: 10_000, timeout: 120_000 });
+  }
+
+  private async persistValidationRows(taskId: string, rows: PreviewRow[]) {
+    if (rows.length === 0) return;
+    const updates = rows.map((row) => Prisma.sql`(
+      ${row.id}::text,
+      ${JSON.stringify(row.normalizedData)}::jsonb,
+      ${row.status}::"ImportRowStatus",
+      ${JSON.stringify(row.errors)}::jsonb,
+      ${JSON.stringify(row.warnings)}::jsonb
+    )`);
+    await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE import_rows AS target
+      SET normalized_data_json = source.normalized_data,
+          status = source.status,
+          errors = source.errors,
+          warnings = source.warnings
+      FROM (VALUES ${Prisma.join(updates)})
+        AS source(id, normalized_data, status, errors, warnings)
+      WHERE target.id = source.id
+        AND target.import_task_id = ${taskId}
+        AND target.confirmation_processed_at IS NULL
+    `);
+  }
+
+  private normalizedPreviewOutput(row: PreviewRow) {
+    return {
+      rowId: row.id,
+      rowNumber: row.rowNumber,
+      rowHash: row.rowHash,
+      recordDate: row.recordDate,
+      amount: row.amount,
+      category: row.category,
+      subCategory: row.subCategory,
+      values: [...row.values]
+        .map((value) => ({ fieldId: value.fieldId, fieldType: value.fieldType, value: value.value }))
+        .sort((left, right) => left.fieldId.localeCompare(right.fieldId))
+    };
+  }
+
+  private updateCanonicalDigest(digest: ReturnType<typeof createHash>, value: unknown) {
+    const encoded = canonicalJson(value);
+    digest.update(`${Buffer.byteLength(encoded, 'utf8')}:`, 'utf8');
+    digest.update(encoded, 'utf8');
+  }
+
+  private addValidationIssue(
+    target: Map<string, ImportValidationIssueAccumulator>,
+    code: string,
+    message: string,
+    row: PreviewRow
+  ) {
+    let key = `${code}:${message}`;
+    let normalizedCode = code;
+    let normalizedMessage = message;
+    if (!target.has(key) && target.size >= IMPORT_VALIDATION_MAX_ISSUES - 1) {
+      key = 'ADDITIONAL_ISSUE_CATEGORIES';
+      normalizedCode = 'ADDITIONAL_ISSUE_CATEGORIES';
+      normalizedMessage = '其余校验问题类别已聚合，请通过分页错误行查看完整明细';
+    }
+    let issue = target.get(key);
+    if (!issue) {
+      issue = {
+        code: normalizedCode,
+        message: normalizedMessage,
+        count: 0,
+        sampleRowNumbers: [],
+        digest: createHash('sha256')
+      };
+      target.set(key, issue);
+    }
+    issue.count += 1;
+    if (issue.sampleRowNumbers.length < 20) issue.sampleRowNumbers.push(row.rowNumber);
+    this.updateCanonicalDigest(issue.digest, { rowId: row.id, rowNumber: row.rowNumber, rowHash: row.rowHash, message });
+  }
+
+  private addValidationIssueWithoutRow(
+    target: Map<string, ImportValidationIssueAccumulator>,
+    code: string,
+    message: string
+  ) {
+    const issue: ImportValidationIssueAccumulator = {
+      code,
+      message,
+      count: 1,
+      sampleRowNumbers: [],
+      digest: createHash('sha256')
+    };
+    this.updateCanonicalDigest(issue.digest, { code, message });
+    target.set(`${code}:${message}`, issue);
+  }
+
+  private finalizeValidationIssues(
+    kind: 'error' | 'warning',
+    source: Map<string, ImportValidationIssueAccumulator>
+  ) {
+    return [...source.values()]
+      .map((issue): ImportValidationIssue & { issueId: string } => {
+        const value: ImportValidationIssue = {
+          code: issue.code,
+          message: issue.message,
+          count: issue.count,
+          rowDigest: issue.digest.digest('hex'),
+          sampleRowNumbers: issue.sampleRowNumbers
+        };
+        return { ...value, issueId: this.importValidationIssueId(kind, value) };
+      })
+      .sort((left, right) => left.issueId.localeCompare(right.issueId));
+  }
+
+  private importValidationIssueId(kind: 'error' | 'warning', issue: ImportValidationIssue) {
+    return `${kind}:${canonicalJsonSha256({
+      code: issue.code,
+      count: issue.count,
+      rowDigest: issue.rowDigest,
+      sampleRowNumbers: issue.sampleRowNumbers
+    })}`;
+  }
+
+  private importMappingHash(task: PreviewTask) {
+    return canonicalJsonSha256(task.columns.map((column) => ({
+      columnId: column.id,
+      sourceColumnId: column.sourceColumnId,
+      sourceKey: column.sourceKey,
+      sourceName: column.sourceName,
+      targetFieldId: column.decision?.targetFieldId ?? null,
+      mappingType: column.decision?.mappingType ?? null,
+      ignored: column.decision?.ignored ?? false
+    })));
+  }
+
+  private importTemplateContentHash(task: PreviewTask) {
+    return canonicalJsonSha256({
+      templateId: task.templateId,
+      version: task.templateVersion,
+      recordType: task.template.recordType,
+      accountingDirection: task.template.accountingDirection,
+      dataLayer: task.template.dataLayer,
+      primaryAmountFieldId: task.template.primaryAmountFieldId,
+      primaryDateFieldId: task.template.primaryDateFieldId,
+      fields: task.template.templateFields.map((item) => ({
+        fieldId: item.fieldId,
+        fieldKey: item.field.fieldKey,
+        fieldType: item.field.fieldType,
+        required: item.isRequired,
+        visible: item.isVisible,
+        active: item.field.isActive,
+        defaultValue: item.defaultValue
+      }))
+    });
+  }
+
+  private assertImportSourceEligible(task: PreviewTask) {
+    if (
+      task.rawFile.isVoided
+      || task.rawFile.scanStatus !== FileScanStatus.clean
+      || task.rawFile.status === RawFileStatus.failed
+      || task.rawFile.status === RawFileStatus.voided
+      || task.rawFile.relatedProjectId !== task.projectId
+      || task.rawFile.sha256 !== task.sourceSha256
+    ) {
+      throw new ConflictException({
+        message: 'Excel 来源文件不再满足财务审核条件',
+        data: { reason: 'IMPORT_SOURCE_SECURITY_STATE_CHANGED' }
+      });
+    }
+  }
+
+  private async assertCurrentFinanceApprover(
+    tx: Prisma.TransactionClient,
+    task: Pick<PreviewTask, 'uploadedBy'>,
+    actor: CurrentUser
+  ): Promise<CurrentUser> {
+    const current = await tx.user.findUnique({ where: { id: actor.id } });
+    if (
+      !current
+      || current.status !== UserStatus.active
+      || current.tokenVersion !== actor.tokenVersion
+      || current.username !== actor.username
+    ) {
+      throw new UnauthorizedException({
+        message: 'Excel 批准前当前身份已变化',
+        data: { reason: 'IMPORT_APPROVER_IDENTITY_CHANGED' }
+      });
+    }
+    if (current.role !== UserRole.finance || actor.role !== UserRole.finance) {
+      throw new ForbiddenException({
+        message: '当前用户已不具备 Excel 财务批准权限',
+        data: { reason: 'IMPORT_APPROVER_ROLE_REVOKED' }
+      });
+    }
+    if (task.uploadedBy === current.id) {
+      throw new ForbiddenException({
+        message: '上传者不能审批同一 Excel 导入任务',
+        data: {
+          reason: 'IMPORT_SELF_APPROVAL_FORBIDDEN',
+          decisionId: 'H10',
+          policyVersion: EXCEL_APPROVAL_POLICY_VERSION
+        }
+      });
+    }
+    return {
+      ...actor,
+      username: current.username,
+      name: current.name,
+      role: current.role,
+      department: current.department ?? '',
+      phone: current.phone ?? '',
+      status: current.status,
+      tokenVersion: current.tokenVersion
+    };
+  }
+
+  private assertImportApprovalValidation(task: PreviewTask, dto: ConfirmImportTaskDto) {
+    if (
+      task.validationRevision !== task.reviewRevision
+      || task.validationSnapshotHash !== dto.expectedValidationSnapshotHash
+      || task.validationRuleVersion !== EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION
+      || !task.validatedAt
+      || !task.validationSnapshot
+      || typeof task.validationSnapshot !== 'object'
+      || Array.isArray(task.validationSnapshot)
+    ) {
+      throw new ConflictException({
+        message: '当前 Excel 审核修订没有有效的确定性校验快照',
+        data: { reason: 'IMPORT_VALIDATION_SNAPSHOT_STALE' }
+      });
+    }
+
+    const snapshot = task.validationSnapshot as Record<string, Prisma.JsonValue>;
+    const { snapshotHash: embeddedHash, ...snapshotCore } = snapshot;
+    const counts = snapshot.counts;
+    const currentMappingHash = this.importMappingHash(task);
+    const currentTemplateHash = this.importTemplateContentHash(task);
+    const snapshotCounts = counts && typeof counts === 'object' && !Array.isArray(counts)
+      ? counts as Record<string, Prisma.JsonValue>
+      : undefined;
+    const total = snapshotCounts?.total;
+    const recordCount = snapshotCounts?.recordCount;
+    const blockingErrorCount = snapshotCounts?.blockingErrorCount;
+    const rowSetHash = snapshot.rowSetHash;
+    const normalizedOutputHash = snapshot.normalizedOutputHash;
+    const snapshotIsCurrent = (
+      typeof embeddedHash === 'string'
+      && embeddedHash === task.validationSnapshotHash
+      && canonicalJsonSha256(snapshotCore) === task.validationSnapshotHash
+      && snapshot.schemaVersion === EXCEL_VALIDATION_SCHEMA_VERSION
+      && snapshot.taskId === task.id
+      && snapshot.projectId === task.projectId
+      && snapshot.sourceSha256 === task.sourceSha256
+      && snapshot.irSchemaVersion === task.irSchemaVersion
+      && snapshot.parserVersion === task.parserVersion
+      && snapshot.irHash === task.irHash
+      && snapshot.templateId === task.templateId
+      && snapshot.templateVersion === task.templateVersion
+      && snapshot.templateContentHash === currentTemplateHash
+      && snapshot.reviewRevision === task.reviewRevision
+      && snapshot.mappingPayloadHash === currentMappingHash
+      && snapshot.validationRuleVersion === EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION
+      && typeof rowSetHash === 'string'
+      && /^[0-9a-f]{64}$/.test(rowSetHash)
+      && typeof normalizedOutputHash === 'string'
+      && normalizedOutputHash === dto.expectedPayloadHash
+      && /^[0-9a-f]{64}$/.test(normalizedOutputHash)
+      && Number.isInteger(total)
+      && Number.isInteger(recordCount)
+      && Number.isInteger(blockingErrorCount)
+      && Number(total) > 0
+      && Number(recordCount) >= 0
+      && typeof snapshot.valid === 'boolean'
+      && Array.isArray(snapshot.blockingErrors)
+      && Array.isArray(snapshot.warnings)
+    );
+    if (!snapshotIsCurrent) {
+      throw new ConflictException({
+        message: 'Excel 来源、模板、映射、行审核或规范输出在重新校验后发生变化',
+        data: { reason: 'IMPORT_APPROVAL_PAYLOAD_STALE' }
+      });
+    }
+    if (
+      blockingErrorCount !== 0
+      || snapshot.valid !== true
+      || (snapshot.blockingErrors as Prisma.JsonArray).length !== 0
+      || Number(recordCount) === 0
+    ) {
+      throw new ConflictException({
+        message: 'Excel 整批存在阻断错误或没有可入账明细，修正并重新校验后才能批准',
+        data: {
+          reason: 'IMPORT_VALIDATION_BLOCKING_ERRORS',
+          blockingErrorCount: Number(blockingErrorCount),
+          recordCount: Number(recordCount)
+        }
+      });
+    }
+
+    const warningIds = (snapshot.warnings as Prisma.JsonArray).map((warning) => {
+      if (!warning || typeof warning !== 'object' || Array.isArray(warning)) return null;
+      const value = warning as Prisma.JsonObject;
+      const issueId = value.issueId;
+      const code = value.code;
+      const message = value.message;
+      const count = value.count;
+      const rowDigest = value.rowDigest;
+      const sampleRowNumbers = value.sampleRowNumbers;
+      if (
+        typeof issueId !== 'string'
+        || typeof code !== 'string'
+        || typeof message !== 'string'
+        || !Number.isInteger(count)
+        || typeof rowDigest !== 'string'
+        || !Array.isArray(sampleRowNumbers)
+        || !sampleRowNumbers.every((item) => Number.isInteger(item))
+      ) return null;
+      const issue: ImportValidationIssue = {
+        code,
+        message,
+        count: Number(count),
+        rowDigest,
+        sampleRowNumbers: sampleRowNumbers.map(Number)
+      };
+      return issueId === this.importValidationIssueId('warning', issue) ? issueId : null;
+    });
+    if (warningIds.some((issueId) => issueId === null)) {
+      throw new ConflictException({
+        message: 'Excel 校验警告缺少稳定确认 ID',
+        data: { reason: 'IMPORT_WARNING_ID_INVALID' }
+      });
+    }
+    const requiredWarningIds = [...warningIds as string[]].sort();
+    const acknowledgedWarningIds = [...dto.acknowledgedWarningIds].sort();
+    if (
+      requiredWarningIds.length !== acknowledgedWarningIds.length
+      || requiredWarningIds.some((issueId, index) => issueId !== acknowledgedWarningIds[index])
+    ) {
+      throw new ConflictException({
+        message: '必须逐项确认当前 Excel 校验快照的全部警告',
+        data: { reason: 'IMPORT_WARNING_ACKNOWLEDGEMENT_MISMATCH', requiredWarningIds }
+      });
+    }
+
+    return {
+      mappingPayloadHash: currentMappingHash,
+      templateContentHash: currentTemplateHash,
+      rowSetHash: rowSetHash as string,
+      normalizedOutputHash: normalizedOutputHash as string,
+      acknowledgedWarningIds,
+      counts: { total: Number(total), recordCount: Number(recordCount) }
+    };
+  }
+
+  private assertImportApprovalSnapshotCurrent(task: PreviewTask, expectedSnapshotHash: string) {
+    if (
+      task.approvalSnapshotHash !== expectedSnapshotHash
+      || task.approvalReviewRevision !== task.reviewRevision
+      || task.approvalValidationHash !== task.validationSnapshotHash
+      || task.approvalPolicyVersion !== EXCEL_APPROVAL_POLICY_VERSION
+      || !task.approvalSnapshot
+      || typeof task.approvalSnapshot !== 'object'
+      || Array.isArray(task.approvalSnapshot)
+    ) {
+      throw new ConflictException({
+        message: 'Excel Worker 缺少当前不可变批准快照',
+        data: { reason: 'IMPORT_APPROVAL_SNAPSHOT_STALE' }
+      });
+    }
+    const snapshot = task.approvalSnapshot as Record<string, Prisma.JsonValue>;
+    const { snapshotHash: embeddedHash, ...core } = snapshot;
+    if (
+      embeddedHash !== expectedSnapshotHash
+      || canonicalJsonSha256(core) !== expectedSnapshotHash
+      || snapshot.schemaVersion !== EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION
+      || snapshot.taskId !== task.id
+      || snapshot.projectId !== task.projectId
+      || this.approvalOutputHash(task) !== this.validationOutputHash(task)
+      || this.approvalRowSetHash(task) !== this.validationRowSetHash(task)
+    ) {
+      throw new ConflictException({
+        message: 'Excel 批准快照内容或关联校验快照已变化',
+        data: { reason: 'IMPORT_APPROVAL_SNAPSHOT_TAMPERED' }
+      });
+    }
+  }
+
+  private approvalOutputHash(task: PreviewTask) {
+    const output = this.approvalSection(task, 'output');
+    const value = output.normalizedOutputHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 批准快照缺少规范输出哈希');
+    }
+    return value;
+  }
+
+  private approvalRowSetHash(task: PreviewTask) {
+    const review = this.approvalSection(task, 'review');
+    const value = review.rowSetHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 批准快照缺少行集合哈希');
+    }
+    return value;
+  }
+
+  private approvalRecordCount(task: PreviewTask) {
+    const output = this.approvalSection(task, 'output');
+    const value = output.recordCount;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      throw new ConflictException('Excel 批准快照缺少有效记录数');
+    }
+    return value;
+  }
+
+  private approvalSection(task: PreviewTask, key: 'review' | 'output') {
+    if (!task.approvalSnapshot || typeof task.approvalSnapshot !== 'object' || Array.isArray(task.approvalSnapshot)) {
+      throw new ConflictException('Excel 批准快照不存在');
+    }
+    const section = (task.approvalSnapshot as Prisma.JsonObject)[key];
+    if (!section || typeof section !== 'object' || Array.isArray(section)) {
+      throw new ConflictException(`Excel 批准快照缺少 ${key} 区段`);
+    }
+    return section as Prisma.JsonObject;
+  }
+
+  private validationOutputHash(task: PreviewTask) {
+    const snapshot = this.validationSnapshotObject(task);
+    const value = snapshot.normalizedOutputHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 校验快照缺少规范输出哈希');
+    }
+    return value;
+  }
+
+  private validationRowSetHash(task: PreviewTask) {
+    const snapshot = this.validationSnapshotObject(task);
+    const value = snapshot.rowSetHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 校验快照缺少行集合哈希');
+    }
+    return value;
+  }
+
+  private validationSnapshotObject(task: PreviewTask) {
+    if (!task.validationSnapshot || typeof task.validationSnapshot !== 'object' || Array.isArray(task.validationSnapshot)) {
+      throw new ConflictException('Excel 校验快照不存在');
+    }
+    return task.validationSnapshot as Prisma.JsonObject;
+  }
+
+  private async recomputeApprovalIntegrity(tx: Prisma.TransactionClient, task: PreviewTask) {
+    const rowSetDigest = createHash('sha256');
+    const outputDigest = createHash('sha256');
+    let recordCount = 0;
+    let lastRowNumber: number | undefined;
+    let lastId: string | undefined;
+    while (true) {
+      const rows = await tx.importRow.findMany({
+        where: {
+          importTaskId: task.id,
+          ...(lastRowNumber === undefined || lastId === undefined
+            ? {}
+            : {
+                OR: [
+                  { rowNumber: { gt: lastRowNumber } },
+                  { rowNumber: lastRowNumber, id: { gt: lastId } }
+                ]
+              })
+        },
+        orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }],
+        take: IMPORT_PREVIEW_SUMMARY_BATCH_SIZE
+      });
+      if (rows.length === 0) break;
+      const preview = this.buildPreviewRows(task, rows);
+      for (const row of preview.rows) {
+        if (row.status === ImportRowStatus.error || row.errors.length > 0) {
+          throw new ConflictException({
+            message: `最终发布前第 ${row.rowNumber} 行校验失败`,
+            data: { reason: 'IMPORT_FINAL_ROW_VALIDATION_FAILED', rowNumber: row.rowNumber }
+          });
+        }
+        this.updateCanonicalDigest(rowSetDigest, {
+          rowId: row.id,
+          rowNumber: row.rowNumber,
+          rowHash: row.rowHash,
+          status: row.status === ImportRowStatus.confirmed ? ImportRowStatus.mapped : row.status,
+          reviewDecision: row.review.decision ?? null,
+          summaryCandidate: row.summaryCandidate
+        });
+        if (row.status === ImportRowStatus.mapped || row.status === ImportRowStatus.confirmed) {
+          recordCount += 1;
+          this.updateCanonicalDigest(outputDigest, this.normalizedPreviewOutput({ ...row, status: ImportRowStatus.mapped }));
+        }
+      }
+      const last = rows[rows.length - 1];
+      lastRowNumber = last.rowNumber;
+      lastId = last.id;
+    }
+    return {
+      rowSetHash: rowSetDigest.digest('hex'),
+      normalizedOutputHash: outputDigest.digest('hex'),
+      recordCount
+    };
+  }
+
+  private async resetFailedConfirmationStaging(tx: Prisma.TransactionClient, taskId: string) {
+    const recordIds = (await tx.businessRecord.findMany({
+      where: { importTaskId: taskId, status: BusinessRecordStatus.pending_confirm },
+      select: { id: true }
+    })).map((record) => record.id);
+    if (recordIds.length > 0) {
+      await tx.ledgerEvent.deleteMany({ where: { aggregateId: { in: recordIds }, eventType: 'business_record_staged' } });
+      await tx.businessRecord.deleteMany({
+        where: { id: { in: recordIds }, importTaskId: taskId, status: BusinessRecordStatus.pending_confirm }
+      });
+    }
+    await tx.importRow.updateMany({
+      where: { importTaskId: taskId },
+      data: { confirmationProcessedAt: null, generatedRecordId: null, confirmedAt: null }
+    });
   }
 
   private async persistConfirmationRows(
@@ -1890,6 +2922,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           status: ImportTaskStatus.confirmation_failed,
           leaseToken: null,
           leaseUntil: null,
+          importedRows: 0,
           errorMessage: message,
           version: { increment: 1 }
         }
@@ -2388,9 +3421,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const requiredFields = templateFields.filter((item) => item.isRequired);
     const category = task.template.accountingDirection === 'income' ? '收入' : '成本';
     const rows: PreviewRow[] = importRows.map((row) => {
-      const parserErrors = this.stringArray(row.errors);
-      const warnings = this.stringArray(row.warnings);
+      const parserErrors = this.stringArray(row.parserErrors);
+      const warnings = this.stringArray(row.parserWarnings);
       const rawData = this.jsonObject(row.rawData);
+      const summaryCandidate = this.isPotentialSummaryRow(rawData);
       const normalizedData: Record<string, string | string[]> = {};
       const values: PreviewValue[] = [];
       const errors = [...parserErrors];
@@ -2457,16 +3491,22 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         errors.push(this.errorMessage(error));
       }
 
-      let status = row.status;
-      const fixedStatuses: ImportRowStatus[] = [
-        ImportRowStatus.ignored,
-        ImportRowStatus.duplicate,
-        ImportRowStatus.confirmed
-      ];
-      if (!fixedStatuses.includes(status)) {
-        status = errors.length > 0 ? ImportRowStatus.error : ImportRowStatus.mapped;
+      if (summaryCandidate && !row.reviewDecision) {
+        errors.push('疑似汇总行，必须由财务明确按明细纳入或排除');
       }
-      if (row.status === ImportRowStatus.ignored || row.status === ImportRowStatus.duplicate) {
+      if (row.reviewDecision === 'include') {
+        warnings.push(summaryCandidate ? '财务已将疑似汇总行确认为业务明细' : '财务已明确将该行纳入业务明细');
+      }
+
+      let status = row.status === ImportRowStatus.confirmed ? ImportRowStatus.confirmed : row.parserStatus;
+      const parserFixedStatuses: ImportRowStatus[] = [ImportRowStatus.ignored, ImportRowStatus.duplicate];
+      if (row.reviewDecision === 'exclude') {
+        status = ImportRowStatus.ignored;
+        errors.length = 0;
+        warnings.push('财务已明确排除该行，不生成正式记录');
+      } else if (!parserFixedStatuses.includes(status) && status !== ImportRowStatus.confirmed) {
+        status = errors.length > 0 ? ImportRowStatus.error : ImportRowStatus.mapped;
+      } else if (parserFixedStatuses.includes(status)) {
         errors.length = 0;
       }
 
@@ -2487,8 +3527,17 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         })),
         normalizedData,
         errors: [...new Set(errors)],
-        warnings,
-        generatedRecordId: row.generatedRecordId ?? undefined
+        warnings: [...new Set(warnings)],
+        generatedRecordId: row.generatedRecordId ?? undefined,
+        summaryCandidate,
+        review: {
+          decision: row.reviewDecision === 'include' || row.reviewDecision === 'exclude'
+            ? row.reviewDecision
+            : undefined,
+          reason: row.reviewReason ?? undefined,
+          reviewedBy: row.reviewedBy ?? undefined,
+          reviewedAt: row.reviewedAt?.toISOString()
+        }
       };
     });
 
@@ -3036,6 +4085,29 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     throw new ConflictException('无法生成唯一字段识别名');
   }
 
+  private reviewInvalidationData(): Prisma.ImportTaskUpdateInput {
+    return {
+      reviewRevision: { increment: 1 },
+      validationRevision: null,
+      validationSnapshot: Prisma.DbNull,
+      validationSnapshotHash: null,
+      validationRuleVersion: null,
+      validatedAt: null,
+      approvalSnapshot: Prisma.DbNull,
+      approvalSnapshotHash: null,
+      approvalReviewRevision: null,
+      approvalValidationHash: null,
+      approvalPolicyVersion: null,
+      approvalRequestKeyHash: null,
+      previewSummaryVersion: null,
+      version: { increment: 1 }
+    };
+  }
+
+  private async invalidateImportReview(tx: Prisma.TransactionClient, id: string) {
+    await tx.importTask.update({ where: { id }, data: this.reviewInvalidationData() });
+  }
+
   private async refreshTaskMappingStatus(tx: Prisma.TransactionClient, id: string) {
     const [columns, decisions] = await Promise.all([
       tx.importColumn.count({ where: { importTaskId: id } }),
@@ -3045,7 +4117,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       data: {
         status: columns > 0 && columns === decisions ? ImportTaskStatus.pending_confirm : ImportTaskStatus.mapping,
-        version: { increment: 1 }
+        ...this.reviewInvalidationData()
       }
     });
   }
@@ -3238,7 +4310,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       rowNumber: row.rowNumber,
       rawData: row.rawData as Prisma.InputJsonObject,
       rowHash: row.rowHash,
+      parserStatus: row.status as ImportRowStatus,
       status: row.status as ImportRowStatus,
+      parserErrors: row.errors,
+      parserWarnings: row.warnings,
       errors: row.errors,
       warnings: row.warnings,
       cellEvidence: row.cellEvidence as unknown as Prisma.InputJsonArray,
@@ -3415,6 +4490,15 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  private isPotentialSummaryRow(rawData: Record<string, unknown>) {
+    return Object.values(rawData).some((raw) => {
+      const value = this.isFormulaValue(raw) ? raw.result : raw;
+      if (typeof value !== 'string') return false;
+      const label = value.normalize('NFKC').trim().replace(/[\s:：]+/g, '');
+      return SUMMARY_ROW_LABELS.has(label);
+    });
+  }
+
   private safeParseErrorMessage(error: unknown) {
     if (error instanceof HttpException && error.getStatus() < 500) return this.errorMessage(error);
     return 'Excel 后台解析失败，请重试或联系管理员';
@@ -3442,7 +4526,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       mappedData: row.normalizedData,
       errors: row.errors,
       warnings: row.warnings,
-      generatedRecordId: row.generatedRecordId
+      generatedRecordId: row.generatedRecordId,
+      summaryCandidate: row.summaryCandidate,
+      review: row.review
     };
   }
 
@@ -3561,6 +4647,10 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
 
   private async lockTask(tx: Prisma.TransactionClient, id: string) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 9))`;
+  }
+
+  private json(value: unknown): Prisma.InputJsonValue {
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
   }
 
 }

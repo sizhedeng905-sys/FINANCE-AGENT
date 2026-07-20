@@ -35,6 +35,7 @@ describe('project-template lifecycle serialization', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let financeToken: string;
+  let reviewerToken: string;
   let bossToken: string;
   let projectId: string;
   let templateId: string;
@@ -62,13 +63,16 @@ describe('project-template lifecycle serialization', () => {
     await app.init();
     prisma = app.get(PrismaService);
 
-    const [financeLogin, bossLogin] = await Promise.all([
+    const [financeLogin, reviewerLogin, bossLogin] = await Promise.all([
       request(app.getHttpServer()).post('/api/auth/login').send({ username: 'finance', password: '123456' }),
+      request(app.getHttpServer()).post('/api/auth/login').send({ username: '\u8d22\u52a1', password: '123456' }),
       request(app.getHttpServer()).post('/api/auth/login').send({ username: 'boss', password: '123456' })
     ]);
     expect(financeLogin.status).toBe(200);
+    expect(reviewerLogin.status).toBe(200);
     expect(bossLogin.status).toBe(200);
     financeToken = financeLogin.body.data.accessToken as string;
+    reviewerToken = reviewerLogin.body.data.accessToken as string;
     bossToken = bossLogin.body.data.accessToken as string;
 
     const [finance, employee, dateField, amountField] = await Promise.all([
@@ -149,6 +153,12 @@ describe('project-template lifecycle serialization', () => {
         importType: DataRecordType.reimbursement,
         status: ImportTaskStatus.pending_confirm,
         uploadedBy: finance.id,
+        sourceSha256: importFile.sha256,
+        parserInputSha256: importFile.sha256,
+        irSchemaVersion: 'excel-ir/1.0',
+        parserVersion: 'integration-fixture/1.0',
+        irHash: createHash('sha256').update(`${importFile.sha256}:ir`).digest('hex'),
+        rowEvidenceDigest: createHash('sha256').update(`${importFile.sha256}:rows`).digest('hex'),
         parsedAt: new Date(),
         totalRows: 1,
         validRows: 1,
@@ -452,11 +462,33 @@ describe('project-template lifecycle serialization', () => {
   });
 
   it('prevents an Excel confirmation worker from writing after template disable wins the next lock', async () => {
+    const current = await request(app.getHttpServer())
+      .get(`/api/import-tasks/${importTaskId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+    const validated = await request(app.getHttpServer())
+      .post(`/api/import-tasks/${importTaskId}/revalidate`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({
+        expectedVersion: current.body.data.version,
+        expectedReviewRevision: current.body.data.reviewRevision
+      })
+      .expect(201);
+    const validation = validated.body.data.validation;
+    expect(validation.snapshot).toMatchObject({ valid: true, counts: { recordCount: 1 } });
+    const approvalPayload = {
+      expectedVersion: validated.body.data.version,
+      expectedReviewRevision: validated.body.data.reviewRevision,
+      expectedValidationSnapshotHash: validation.snapshotHash,
+      expectedPayloadHash: validation.snapshot.normalizedOutputHash,
+      acknowledgedWarningIds: validation.snapshot.warnings.map((warning: { issueId: string }) => warning.issueId)
+    };
     const [scheduled, disabled] = await runSerialized(
       () => request(app.getHttpServer())
         .post(`/api/import-tasks/${importTaskId}/confirm`)
-        .set('Authorization', `Bearer ${financeToken}`)
+        .set('Authorization', `Bearer ${reviewerToken}`)
         .set('Idempotency-Key', `r6-import-confirm-${suffix}`)
+        .send(approvalPayload)
         .then((response) => response as HttpResult),
       disableTemplate
     );

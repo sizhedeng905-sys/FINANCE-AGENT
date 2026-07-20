@@ -14,11 +14,14 @@ import {
   inspectImportTask,
   mapFieldSuggestion as mapFieldSuggestionRequest,
   parseImportTask,
+  revalidateImportTask,
   rejectFieldSuggestion as rejectFieldSuggestionRequest,
+  reviewImportRow,
   saveImportMappings,
 } from '@/api/importApi';
 import type {
   CreateImportTaskPayload,
+  ConfirmImportTaskPayload,
   FieldSuggestion,
   FieldSuggestionListQuery,
   ImportConfirmResult,
@@ -29,6 +32,8 @@ import type {
   ImportTaskListQuery,
   ImportWorkbookInspection,
   ParseImportTaskPayload,
+  RevalidateImportTaskPayload,
+  ReviewImportRowPayload,
   SaveImportMappingsPayload,
 } from '@/types/dataCenter';
 
@@ -57,7 +62,9 @@ interface ImportState {
   autoMatch: (id: string) => Promise<ImportTask>;
   generateSuggestions: (id: string) => Promise<FieldSuggestion[]>;
   fetchPreview: (id: string, query?: ImportPreviewQuery) => Promise<ImportPreview>;
-  confirmTask: (id: string) => Promise<ImportConfirmResult>;
+  reviewRow: (id: string, rowId: string, payload: ReviewImportRowPayload) => Promise<ImportTask>;
+  revalidateTask: (id: string, payload: RevalidateImportTaskPayload) => Promise<ImportTask>;
+  confirmTask: (id: string, payload: ConfirmImportTaskPayload) => Promise<ImportConfirmResult>;
   cancelTask: (id: string) => Promise<ImportTask>;
   fetchSuggestions: (query?: FieldSuggestionListQuery) => Promise<void>;
   approveSuggestion: (id: string, payload?: { fieldName?: string; fieldType?: FieldSuggestion['suggestedFieldType'] }) => Promise<void>;
@@ -187,10 +194,12 @@ export const useImportStore = create<ImportState>((set, get) => {
         throw error;
       }
     },
-    confirmTask: async (id) => {
+    reviewRow: (id, rowId, payload) => runTask(() => reviewImportRow(id, rowId, payload)),
+    revalidateTask: (id, payload) => runTask(() => revalidateImportTask(id, payload)),
+    confirmTask: async (id, payload) => {
       set({ loading: true, error: null });
       try {
-        const result = await confirmImportTaskRequest(id);
+        const result = await confirmImportTaskRequest(id, payload);
         upsertTask(result.task);
         set({ loading: false });
         return result;

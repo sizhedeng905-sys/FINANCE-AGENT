@@ -302,6 +302,8 @@ export interface ImportTask {
   templateName: string;
   importType: DataRecordType;
   status: 'uploaded' | 'parsing' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirming' | 'confirmed' | 'confirmation_failed' | 'failed' | 'cancelled';
+  version: number;
+  reviewRevision: number;
   uploadedBy: string;
   uploadedById?: string;
   createdAt: string;
@@ -309,6 +311,21 @@ export interface ImportTask {
   confirmedAt?: string;
   confirmedBy?: string;
   errorMessage?: string;
+  validation: null | {
+    reviewRevision: number;
+    ruleVersion: string;
+    snapshotHash: string;
+    validatedAt: string;
+    snapshot: ImportValidationSnapshot;
+  };
+  approval: null | {
+    reviewRevision: number;
+    validationSnapshotHash: string;
+    policyVersion: string;
+    snapshotHash: string;
+    requestKeyHash: string;
+    snapshot: Record<string, unknown>;
+  };
   progress?: {
     executionMode?: 'synchronous' | 'background';
     processingMode?: 'document' | 'streaming';
@@ -425,6 +442,12 @@ export interface ImportRow {
   errors: string[];
   warnings: string[];
   errorMessage?: string;
+  review: {
+    decision?: 'include' | 'exclude';
+    reason?: string;
+    reviewedBy?: string;
+    reviewedAt?: string;
+  };
   generatedRecordId?: string;
   confirmedAt?: string;
 }
@@ -510,6 +533,41 @@ export interface ImportPreviewRow {
   errors: string[];
   warnings: string[];
   generatedRecordId?: string;
+  summaryCandidate: boolean;
+  review: ImportRow['review'];
+}
+
+export interface ImportValidationIssue {
+  issueId: string;
+  code: string;
+  message: string;
+  count: number;
+  rowDigest: string;
+  sampleRowNumbers: number[];
+}
+
+export interface ImportValidationSnapshot {
+  schemaVersion: 'excel-validation/1.0';
+  taskId: string;
+  projectId: string;
+  reviewRevision: number;
+  rowSetHash: string;
+  normalizedOutputHash: string;
+  validationRuleVersion: string;
+  counts: {
+    total: number;
+    valid: number;
+    errors: number;
+    duplicates: number;
+    ignored: number;
+    recordCount: number;
+    blockingErrorCount: number;
+    warningOccurrenceCount: number;
+  };
+  blockingErrors: ImportValidationIssue[];
+  warnings: ImportValidationIssue[];
+  valid: boolean;
+  snapshotHash: string;
 }
 
 export interface ImportPreview {
@@ -524,7 +582,7 @@ export interface ImportPreview {
     totalPages: number;
     hasNext: boolean;
   };
-  strategy: 'valid_rows_only';
+  strategy: 'whole_batch_fail_closed';
 }
 
 export interface CreateImportTaskPayload {
@@ -542,6 +600,26 @@ export interface ImportMappingInput {
 export interface SaveImportMappingsPayload {
   mappings: ImportMappingInput[];
   saveToProfile?: boolean;
+}
+
+export interface ReviewImportRowPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+  decision: 'include' | 'exclude';
+  reason: string;
+}
+
+export interface RevalidateImportTaskPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+}
+
+export interface ConfirmImportTaskPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+  expectedValidationSnapshotHash: string;
+  expectedPayloadHash: string;
+  acknowledgedWarningIds: string[];
 }
 
 export interface ImportConfirmResult {

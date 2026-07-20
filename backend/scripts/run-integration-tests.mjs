@@ -55,6 +55,14 @@ function run(command, args) {
 }
 
 run(process.execPath, [resolve(backendRoot, 'node_modules/prisma/build/index.js'), 'generate']);
+run(process.execPath, [
+  resolve(backendRoot, 'node_modules/prisma/build/index.js'),
+  'migrate',
+  'reset',
+  '--force',
+  '--skip-generate',
+  '--skip-seed'
+]);
 run(process.execPath, [resolve(backendRoot, 'node_modules/prisma/build/index.js'), 'migrate', 'deploy']);
 run(process.execPath, [resolve(backendRoot, 'node_modules/tsx/dist/cli.mjs'), 'prisma/seed.ts']);
 run(process.execPath, [

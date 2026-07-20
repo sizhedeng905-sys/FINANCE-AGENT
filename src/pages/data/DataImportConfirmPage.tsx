@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { CheckOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, App, Button, Card, Col, Empty, Progress, Row, Space, Spin, Statistic, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Checkbox, Col, Empty, Input, Modal, Progress, Row, Space, Spin, Statistic, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
+import { useAuthStore } from '@/store/authStore';
 import { useImportStore } from '@/store/importStore';
 import type { ImportPreviewRow } from '@/types/dataCenter';
 import { formatMoney } from '@/utils/format';
@@ -18,14 +20,24 @@ export default function DataImportConfirmPage() {
   const fetchPreview = useImportStore((state) => state.fetchPreview);
   const fetchTask = useImportStore((state) => state.fetchTask);
   const confirmTask = useImportStore((state) => state.confirmTask);
+  const reviewRow = useImportStore((state) => state.reviewRow);
+  const revalidateTask = useImportStore((state) => state.revalidateTask);
+  const currentUser = useAuthStore((state) => state.user);
   const task = currentTask ?? preview?.task;
   const followConfirmation = useRef(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<{ row: ImportPreviewRow; decision: 'include' | 'exclude' }>();
+  const [reviewReason, setReviewReason] = useState('');
 
   useEffect(() => {
     if (id) void fetchPreview(id, { page, pageSize }).catch(() => undefined);
   }, [fetchPreview, id, page, pageSize]);
+
+  useEffect(() => {
+    setAcknowledged(false);
+  }, [id, task?.reviewRevision]);
 
   useEffect(() => {
     if (!id || task?.status !== 'confirming') return;
@@ -63,7 +75,17 @@ export default function DataImportConfirmPage() {
     }
   }, [message, navigate, task]);
 
-  const columns: ColumnsType<ImportPreviewRow> = [
+  const currentValidation = task && task.validation?.reviewRevision === task.reviewRevision ? task.validation : null;
+  const warnings = currentValidation?.snapshot.warnings ?? [];
+  const isSelfApproval = Boolean(task?.uploadedById && task.uploadedById === currentUser?.id);
+  const canApproveStatus = task?.status === 'pending_confirm' || task?.status === 'confirmation_failed';
+  const canConfirm = canApproveStatus
+    && Boolean(currentValidation?.snapshot.valid)
+    && !isSelfApproval
+    && (warnings.length === 0 || acknowledged);
+  const recordCount = currentValidation?.snapshot.counts.recordCount ?? preview?.summary.valid ?? 0;
+
+  const columns: ColumnsType<ImportPreviewRow> = useMemo(() => [
     { title: '行号', dataIndex: 'rowNumber', width: 80 },
     { title: '日期', dataIndex: 'recordDate', render: (value) => value || '-' },
     { title: '金额', dataIndex: 'amount', render: (value) => value === undefined ? '-' : formatMoney(value) },
@@ -84,14 +106,78 @@ export default function DataImportConfirmPage() {
           {row.status === 'duplicate' ? <Tag>重复行</Tag> : null}
           {row.status === 'ignored' ? <Tag>已忽略</Tag> : null}
           {row.status === 'confirmed' ? <Tag color="success">已入库</Tag> : null}
+          {row.summaryCandidate ? <Tag color="warning">疑似汇总行</Tag> : null}
+          {row.review.decision ? <Tag color="processing">财务已{row.review.decision === 'include' ? '纳入' : '排除'}</Tag> : null}
         </Space>
       ),
     },
-  ];
+    {
+      title: '行级复核',
+      width: 180,
+      render: (_, row) => row.summaryCandidate ? (
+        <Space>
+          <Button
+            size="small"
+            icon={<CheckOutlined />}
+            disabled={task?.status !== 'pending_confirm'}
+            onClick={() => { setReviewTarget({ row, decision: 'include' }); setReviewReason(''); }}
+          >
+            纳入
+          </Button>
+          <Button
+            size="small"
+            danger
+            icon={<StopOutlined />}
+            disabled={task?.status !== 'pending_confirm'}
+            onClick={() => { setReviewTarget({ row, decision: 'exclude' }); setReviewReason(''); }}
+          >
+            排除
+          </Button>
+        </Space>
+      ) : '-',
+    },
+  ], [task?.status]);
+
+  const revalidate = async () => {
+    if (!id || !task) return;
+    const next = await revalidateTask(id, {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+    });
+    await fetchPreview(id, { page, pageSize });
+    setAcknowledged(false);
+    if (next.validation?.snapshot.valid) message.success('整批确定性校验通过');
+    else message.warning(`校验完成，仍有 ${next.validation?.snapshot.counts.blockingErrorCount ?? 0} 个阻断问题`);
+  };
+
+  const submitRowReview = async () => {
+    if (!id || !task || !reviewTarget || reviewReason.trim().length < 2) return;
+    await reviewRow(id, reviewTarget.row.id, {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+      decision: reviewTarget.decision,
+      reason: reviewReason.trim(),
+    });
+    setReviewTarget(undefined);
+    setReviewReason('');
+    setAcknowledged(false);
+    await fetchPreview(id, { page, pageSize });
+    message.success('行级复核已保存，旧校验快照已失效');
+  };
 
   const confirm = async () => {
     if (!id) return;
-    const result = await confirmTask(id);
+    if (!task || !currentValidation || !canConfirm) {
+      message.warning('请先通过当前审核修订的整批校验并处理所有警告');
+      return;
+    }
+    const result = await confirmTask(id, {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+      expectedValidationSnapshotHash: currentValidation.snapshotHash,
+      expectedPayloadHash: currentValidation.snapshot.normalizedOutputHash,
+      acknowledgedWarningIds: acknowledged ? warnings.map((warning) => warning.issueId) : [],
+    });
     if (result.task.status === 'confirmed') {
       message.success('该任务已确认，本次未重复生成记录');
       navigate('/data/records');
@@ -102,7 +188,7 @@ export default function DataImportConfirmPage() {
 
   return (
     <div>
-      <PageHeader title="导入确认" description="合法行入库，错误行保留" />
+      <PageHeader title="导入确认" description="整批校验与财务批准" />
       {error ? <Alert type="error" showIcon message="导入预览失败" description={error} /> : null}
       <Spin spinning={loading && !preview}>
         {!preview && !loading ? <Card><Empty description="暂无导入预览" /></Card> : null}
@@ -114,6 +200,22 @@ export default function DataImportConfirmPage() {
                 showIcon
                 message="仍有未处理列"
                 description={preview.unresolvedColumns.map((item) => item.sourceName).join('、')}
+              />
+            ) : null}
+            {isSelfApproval ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="上传者不能审批同一导入任务"
+                description="请由另一名财务人员复核并执行批准。"
+              />
+            ) : null}
+            {currentValidation && !currentValidation.snapshot.valid ? (
+              <Alert
+                type="error"
+                showIcon
+                message="整批校验未通过"
+                description={`${currentValidation.snapshot.counts.blockingErrorCount} 个阻断问题；正式记录尚未发布。`}
               />
             ) : null}
             {task?.status === 'confirming' ? (
@@ -172,12 +274,25 @@ export default function DataImportConfirmPage() {
                   返回修改映射
                 </Button>
                 <Button
+                  icon={<ReloadOutlined />}
+                  loading={loading && task?.status !== 'confirming'}
+                  disabled={task?.status !== 'pending_confirm' || preview.unresolvedColumns.length > 0}
+                  onClick={() => void revalidate().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '重新校验失败'))}
+                >
+                  重新校验
+                </Button>
+                {warnings.length > 0 ? (
+                  <Checkbox checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}>
+                    已复核当前 {warnings.length} 项警告
+                  </Checkbox>
+                ) : null}
+                <Button
                   type="primary"
                   loading={loading && task?.status !== 'confirming'}
-                  disabled={preview.unresolvedColumns.length > 0 || preview.summary.valid === 0 || task?.status === 'confirmed' || task?.status === 'confirming'}
+                  disabled={!canConfirm || preview.unresolvedColumns.length > 0 || preview.summary.errors > 0}
                   onClick={() => void confirm().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '确认失败'))}
                 >
-                  {task?.status === 'confirmation_failed' ? '重试确认' : '确认导入合法行'}
+                  {task?.status === 'confirmation_failed' ? `重试批准 ${recordCount} 条` : `批准并入库 ${recordCount} 条`}
                 </Button>
                 {task?.status === 'confirmed' ? <Button onClick={() => navigate('/data/records')}>查看数据记录</Button> : null}
               </Space>
@@ -185,6 +300,24 @@ export default function DataImportConfirmPage() {
           </>
         ) : null}
       </Spin>
+      <Modal
+        title={reviewTarget?.decision === 'exclude' ? '排除该行' : '按业务明细纳入'}
+        open={Boolean(reviewTarget)}
+        okText="保存复核"
+        okButtonProps={{ disabled: reviewReason.trim().length < 2 }}
+        confirmLoading={loading}
+        onCancel={() => { setReviewTarget(undefined); setReviewReason(''); }}
+        onOk={() => void submitRowReview().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '行级复核失败'))}
+      >
+        <Input.TextArea
+          value={reviewReason}
+          maxLength={500}
+          showCount
+          rows={4}
+          placeholder="填写财务判断依据"
+          onChange={(event) => setReviewReason(event.target.value)}
+        />
+      </Modal>
     </div>
   );
 }

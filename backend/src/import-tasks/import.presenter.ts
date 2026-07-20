@@ -29,6 +29,8 @@ export function toImportTask(task: ImportTaskDetail) {
     fileName: task.fileName,
     importType: task.importType,
     status: task.status,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
     uploadedBy: task.uploader.name,
     uploadedById: task.uploadedBy,
     createdAt: task.createdAt.toISOString(),
@@ -36,6 +38,21 @@ export function toImportTask(task: ImportTaskDetail) {
     confirmedAt: task.confirmedAt?.toISOString(),
     confirmedBy: task.confirmer?.name,
     errorMessage: task.errorMessage ?? undefined,
+    validation: task.validationSnapshotHash ? {
+      reviewRevision: task.validationRevision,
+      ruleVersion: task.validationRuleVersion,
+      snapshotHash: task.validationSnapshotHash,
+      validatedAt: task.validatedAt?.toISOString(),
+      snapshot: objectValue(task.validationSnapshot)
+    } : null,
+    approval: task.approvalSnapshotHash ? {
+      reviewRevision: task.approvalReviewRevision,
+      validationSnapshotHash: task.approvalValidationHash,
+      policyVersion: task.approvalPolicyVersion,
+      snapshotHash: task.approvalSnapshotHash,
+      requestKeyHash: task.approvalRequestKeyHash,
+      snapshot: objectValue(task.approvalSnapshot)
+    } : null,
     evidence: {
       schemaVersion: task.irSchemaVersion ?? undefined,
       parserVersion: task.parserVersion ?? undefined,
@@ -137,6 +154,10 @@ export function toImportRow(row: {
   status: string;
   errors: Prisma.JsonValue;
   warnings: Prisma.JsonValue;
+  reviewDecision: string | null;
+  reviewReason: string | null;
+  reviewedBy: string | null;
+  reviewedAt: Date | null;
   generatedRecordId: string | null;
   confirmedAt: Date | null;
 }) {
@@ -151,6 +172,12 @@ export function toImportRow(row: {
     errors: stringArray(row.errors),
     warnings: stringArray(row.warnings),
     errorMessage: stringArray(row.errors).join('；') || undefined,
+    review: {
+      decision: row.reviewDecision ?? undefined,
+      reason: row.reviewReason ?? undefined,
+      reviewedBy: row.reviewedBy ?? undefined,
+      reviewedAt: row.reviewedAt?.toISOString()
+    },
     generatedRecordId: row.generatedRecordId ?? undefined,
     confirmedAt: row.confirmedAt?.toISOString()
   };

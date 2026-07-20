@@ -1,10 +1,10 @@
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { moneyToCents } from '../src/utils/money';
 import {
   API_FRONTEND_URL,
   isApiResponse,
   login,
+  logout,
   readEnvelope,
   selectOption
 } from './support/app';
@@ -40,7 +40,7 @@ interface RecordDto {
   status: string;
 }
 
-test('API mode: finance imports a real XLSX with partial-row validation', async ({ page }) => {
+test('API mode: finance cannot partially post an XLSX with blocking row errors', async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E Stage9 标准费用导入.xlsx');
 
@@ -98,46 +98,28 @@ test('API mode: finance imports a real XLSX with partial-row validation', async 
   await expect(page.getByText('重复行').first()).toBeVisible();
   await expect(page.locator('.ant-table-row').filter({ hasText: '可入库' }).first()).toContainText('¥8,765.43');
 
-  const confirmResponse = page.waitForResponse((response) => isApiResponse(
+  const revalidateResponse = page.waitForResponse((response) => isApiResponse(
     response,
     'POST',
-    `/api/import-tasks/${created.data.id}/confirm`
+    `/api/import-tasks/${created.data.id}/revalidate`
   ));
-  const recordsResponse = page.waitForResponse((response) => (
-    response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/records'
-  ));
-  await page.getByRole('button', { name: '确认导入合法行' }).click();
-
-  const confirmed = await readEnvelope<ImportConfirmDto>(await confirmResponse);
-  expect(confirmed.data).toMatchObject({
-    importedRows: 0,
-    duplicateRows: 1,
-    ignoredRows: 1,
-    alreadyConfirmed: false
+  await page.getByRole('button', { name: '重新校验' }).click();
+  const validated = await readEnvelope<ImportTaskDto & {
+    validation: {
+      snapshot: {
+        valid: boolean;
+        counts: { blockingErrorCount: number; recordCount: number };
+      };
+    };
+  }>(await revalidateResponse);
+  expect(validated.data.validation.snapshot).toMatchObject({
+    valid: false,
+    counts: { blockingErrorCount: expect.any(Number), recordCount: 1 }
   });
-  expect(confirmed.data.task.status).toBe('confirming');
-
-  const records = await readEnvelope<{ items: RecordDto[] }>(await recordsResponse);
-  const imported = records.data.items.find((record) => record.importTaskId === created.data.id);
-  expect(imported).toMatchObject({
-    sourceType: 'excel',
-    amount: '8765.43',
-    status: 'confirmed'
-  });
-  expect(imported?.sourceId).toBeTruthy();
-  await expect(page.locator('.ant-table-row').filter({ hasText: '8,765.43' })).toContainText('Excel');
-
-  await page.goto(`${API_FRONTEND_URL}/finance/reports`);
-  const reportResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return response.request().method() === 'GET'
-      && url.pathname === '/api/reports/finance'
-      && url.searchParams.get('period') === 'month';
-  });
-  await page.getByRole('tab', { name: '本月' }).click();
-  const report = await readEnvelope<{ totalExpense: string; confirmedRecords: number }>(await reportResponse);
-  expect(moneyToCents(report.data.totalExpense) >= moneyToCents('8765.43')).toBeTruthy();
-  expect(report.data.confirmedRecords).toBeGreaterThanOrEqual(1);
+  expect(validated.data.validation.snapshot.counts.blockingErrorCount).toBeGreaterThan(0);
+  await expect(page.getByText('整批校验未通过')).toBeVisible();
+  await expect(page.getByText('上传者不能审批同一导入任务')).toBeVisible();
+  await expect(page.getByRole('button', { name: /批准并入库/ })).toBeDisabled();
 });
 
 test('API mode: finance preview fetches only the selected server page', async ({ page }) => {
@@ -186,7 +168,7 @@ test('API mode: finance preview fetches only the selected server page', async ({
   await expect(page.locator('.ant-table-tbody > tr.ant-table-row')).toHaveCount(5);
 });
 
-test('API mode: finance explicitly accepts cached formula results before parsing', async ({ page }) => {
+test('API mode: cached formula evidence is approved by a second finance user', async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E 公式缓存费用导入.xlsx');
 
@@ -216,6 +198,71 @@ test('API mode: finance explicitly accepts cached formula results before parsing
   expect(parsed.data.status).toBe('pending_confirm');
   expect(parsed.data.counts).toMatchObject({ total: 1, valid: 1, errors: 0 });
   await expect(page.getByText('所有列均已有明确处理决定')).toBeVisible();
+
+  const previewResponse = page.waitForResponse((nextResponse) => isApiResponse(
+    nextResponse,
+    'GET',
+    `/api/import-tasks/${created.data.id}/preview`
+  ));
+  await page.getByRole('button', { name: '下一步确认' }).click();
+  await readEnvelope(await previewResponse);
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/confirm$`));
+  await expect(page.getByText('上传者不能审批同一导入任务')).toBeVisible();
+
+  await logout(page);
+  await login(page, '财务', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/import/${created.data.id}/confirm`);
+  await expect(page.getByText('导入确认')).toBeVisible();
+
+  const revalidateResponse = page.waitForResponse((nextResponse) => isApiResponse(
+    nextResponse,
+    'POST',
+    `/api/import-tasks/${created.data.id}/revalidate`
+  ));
+  await page.getByRole('button', { name: '重新校验' }).click();
+  const validated = await readEnvelope<ImportTaskDto & {
+    validation: {
+      snapshot: {
+        valid: boolean;
+        warnings: Array<{ issueId: string }>;
+        counts: { blockingErrorCount: number; recordCount: number };
+      };
+    };
+  }>(await revalidateResponse);
+  expect(validated.data.validation.snapshot).toMatchObject({
+    valid: true,
+    counts: { blockingErrorCount: 0, recordCount: 1 }
+  });
+  expect(validated.data.validation.snapshot.warnings.length).toBeGreaterThan(0);
+  await page.getByRole('checkbox', { name: /已复核当前/ }).check();
+
+  const confirmResponse = page.waitForResponse((nextResponse) => isApiResponse(
+    nextResponse,
+    'POST',
+    `/api/import-tasks/${created.data.id}/confirm`
+  ));
+  const recordsResponse = page.waitForResponse((nextResponse) => (
+    nextResponse.request().method() === 'GET' && new URL(nextResponse.url()).pathname === '/api/records'
+  ));
+  await page.getByRole('button', { name: '批准并入库 1 条' }).click();
+  const confirmed = await readEnvelope<ImportConfirmDto>(await confirmResponse);
+  expect(confirmed.data).toMatchObject({
+    importedRows: 0,
+    errorRows: 0,
+    duplicateRows: 0,
+    ignoredRows: 0,
+    alreadyConfirmed: false,
+    task: { status: 'confirming' }
+  });
+
+  const records = await readEnvelope<{ items: RecordDto[] }>(await recordsResponse);
+  const imported = records.data.items.find((record) => record.importTaskId === created.data.id);
+  expect(imported).toMatchObject({
+    sourceType: 'excel',
+    status: 'confirmed'
+  });
+  expect(imported?.sourceId).toBeTruthy();
+  await expect(page).toHaveURL(new RegExp('/data/records$'));
 });
 
 test('API mode: finance uploads a legacy XLS through the data center', async ({ page }) => {

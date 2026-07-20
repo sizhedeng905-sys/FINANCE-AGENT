@@ -17,7 +17,7 @@ Phase 0 through phase 10 backend for the logistics AI finance operations system.
 
 ## Setup
 
-Use Node.js 22 or newer. Legacy `.xls` conversion relies on the stable Node permission model and refuses to run on older runtimes.
+Use Node.js 24.18.x. The package engine, CI, containers, and legacy `.xls` permission boundary are aligned to Node 24.18.
 
 ```bash
 cd backend
@@ -82,13 +82,13 @@ cd ..
 npm run test:e2e
 ```
 
-The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
+The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-20, M5.1 OCR approval hardening):
+Current verification baseline (2026-07-20, M5.2 Excel approval hardening):
 
-- Backend build and Prisma validation pass. Migration-path verification installs all 36 migrations on an empty database and upgrades the 35-migration predecessor to the current schema.
+- Backend build and Prisma validation pass. Migration-path verification installs all 37 migrations on an empty database and upgrades the 36-migration predecessor to the current schema.
 - Jest: 46/46 suites and 403/403 tests.
-- M5.1 targeted PostgreSQL integration passes the OCR approval/commit scenario and project-template serialization scenario. The previous full PostgreSQL baseline remains 7/7 suites and 92/92 tests; it has not yet been rerun after M5.1.
+- Full PostgreSQL integration passes 9/9 suites and 96/96 tests, including strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, and 30,196/49,999-row accounting closure.
 - Root Playwright acceptance: 17/17 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
@@ -100,6 +100,7 @@ Current verification baseline (2026-07-20, M5.1 OCR approval hardening):
 - B8-09 adds split API/Worker roles, Redis limiting/heartbeat, S3 storage and signed downloads, W3C/OTLP tracing, an 18-service TLS Staging topology, immutable runtime DB grants, linked backups, restore drills, and application/data/model rollback scripts.
 - R4 upgrades linked backups to `backup-manifest/1.0`, streamed per-object SHA-256, database/object reference checks, isolated database/bucket restore, fault injection, and one-time H13/H14 live-restore authorization. Local synthetic object and empty restore paths pass; target Linux restore, formal RPO/RTO, encryption/offsite retention, and live cutover remain `blocked_external`.
 - M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
+- M5.2 makes Excel posting whole-batch fail-closed. Each valid detail row creates one record; ordinary invalid detail rows cannot be excluded, summary candidates require a reasoned finance decision, and every review invalidates the old validation snapshot. A second active finance user submits exact versions/hashes/warnings and an idempotency key; staged records remain report-invisible until one final transaction rechecks identity, source, template, row-set and output hashes and publishes the complete batch.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -139,7 +140,8 @@ Current verification baseline (2026-07-20, M5.1 OCR approval hardening):
 - Auditor-only redacted AI logs: `GET /api/ai/audit/call-logs`, `GET /api/ai/audit/call-logs/:id`
 - Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/inspect`, `POST /api/import-tasks/:id/parse`
 - Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
-- Excel confirmation: `POST /api/import-tasks/:id/confirm`; field suggestions: `/api/field-suggestions`
+- Excel finance review: `PUT /api/import-tasks/:id/rows/:rowId/review`, `POST /api/import-tasks/:id/revalidate`
+- Excel confirmation: `POST /api/import-tasks/:id/confirm`; requires exact task/review/validation/payload versions, all warning IDs, a second active finance user, and `Idempotency-Key`. Any blocking detail error prevents the entire batch from being published. Field suggestions: `/api/field-suggestions`
 - OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
 - OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/revalidate`, `POST /api/ocr-tasks/:id/confirm`. Confirmation requires expected task/review/validation/payload versions, exact warning IDs, and `Idempotency-Key`; the uploader cannot approve their own task.
 - Model runtime metadata: `GET /api/model-runtime/deployments`, `/routes`, `/health`
@@ -304,7 +306,7 @@ Completed:
 - Realization batch B: token revocation, authentication audit/rate limiting, boss account protection, request IDs, and frontend real auth/user APIs.
 - Realization batch C: all ordered frontend domains through the boss AI assistant use explicit Mock/API repositories, with no API-to-Mock fallback.
 - Realization batch D: guarded PostgreSQL test initialization, 21 integration tests, 9 Playwright E2E tests, deterministic cleanup, and a PostgreSQL CI job.
-- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, historical partial-row validation, and idempotent transactional import. M5.2 will replace partial posting with whole-batch fail-closed approval.
+- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, and background import. The historical partial-row policy has been replaced by M5.2 whole-batch fail-closed approval.
 - Phase 10 / realization batch F: provider-neutral OCR tasks, PDF preprocessing checks, field evidence/confidence, human corrections, retry, and idempotent record generation.
 - Realization batch G: model deployment/route registry, provider contracts, JSON Schema validation, health checks, timeout/retry/circuit breaker and bounded concurrency.
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
@@ -315,6 +317,7 @@ Completed:
 - B8-08 engineering preparation: privacy-safe UAT manifests, integer-cent PostgreSQL reconciliation, issue tracking, and non-overwriting human signoff templates; human acceptance remains external.
 - B8-09 engineering implementation: split API/Worker runtime, Redis coordination, private S3 storage, PostgreSQL TLS/least privilege, centralized observability, linked backups, restore drills, and guarded application/data/model rollback; target-environment execution remains external.
 - M5.1 OCR approval hardening: immutable approval snapshots, stable validation issue IDs, exact warning acknowledgement, uploader self-approval rejection, final transaction authorization, optimistic concurrency, and request-body-bound idempotent posting.
+- M5.2 Excel approval hardening: H01 detail-row posting, summary-only review revisions, deterministic whole-batch revalidation, immutable approval snapshots, second-finance authorization, report-invisible staging, and atomic idempotent publication.
 
 Explicitly deferred by the user:
 
@@ -328,11 +331,11 @@ Completed audit follow-up:
 - Strict AI Claim tuples, explicit project/customer and highest/lowest ranking, 3-project/2-customer API-built PostgreSQL golden data, owner-scoped boss logs, and 72-case Mock/local-Qwen benchmarks (B8-05).
 - Owner-scoped AI audit metadata, production Cookie/JWT separation, admin/auditor duties, active-content/resource/DLP gates, and storage reconciliation (B8-06).
 - Immutable model deployment hashes, authenticated identity probes, cross-process GPU state transitions, pinned/hardened model images, SPDX/Grype scanning, and the dynamic 50 MiB Nginx boundary (B8-07).
-- Legacy `.xls` conversion in a Node.js 22+ permission-model child process; no Excel/COM dependency and no converted artifact at rest.
+- Legacy `.xls` conversion in a Node.js 24.18 permission-model child process; no Excel/COM dependency and no converted artifact at rest.
 
 Deployment or data work still required:
 
-- M5.2 must remove Excel `valid_rows_only` posting. Under H01, every valid business detail row creates one formal record, subtotal/total rows are not posted again, and any blocking or ambiguous row prevents the whole batch from becoming formally visible until finance resolves and revalidates it.
+- M6 must add an immutable canonical ReportSnapshot, Decimal/query-version evidence, source digests, and deterministic claim validation before AI report narration can be considered complete.
 - Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
 - GPU container startup, 30-minute residency, OOM/latency observation, text/VL/Embedding switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
 - Object storage, a running ClamAV service, production backup/restore, and retention jobs.

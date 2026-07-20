@@ -11,6 +11,7 @@ import {
 } from '@/mock/mockDataCenter';
 import type {
   CreateImportTaskPayload,
+  ConfirmImportTaskPayload,
   FieldSuggestion,
   FieldSuggestionListQuery,
   ImportColumn,
@@ -26,15 +27,27 @@ import type {
   PaginatedFieldSuggestions,
   PaginatedImportRows,
   PaginatedImportTasks,
+  RevalidateImportTaskPayload,
+  ReviewImportRowPayload,
   SaveImportMappingsPayload,
 } from '@/types/dataCenter';
 
 const delay = (ms = 120) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const emptyCounts = () => ({ total: 0, valid: 0, errors: 0, duplicates: 0, ignored: 0, imported: 0 });
 
+function mockHash(value: unknown) {
+  const source = JSON.stringify(value);
+  return Array.from(source).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
+    .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+}
+
 function detailedTask(task: Omit<ImportTask, 'counts' | 'rawFile' | 'sheets' | 'columns'> & Partial<ImportTask>): ImportTask {
   return {
     ...task,
+    version: task.version ?? 1,
+    reviewRevision: task.reviewRevision ?? 0,
+    validation: task.validation ?? null,
+    approval: task.approval ?? null,
     counts: task.counts ?? emptyCounts(),
     rawFile: task.rawFile ?? {
       id: task.rawFileId,
@@ -54,6 +67,7 @@ let rows = mockImportRows.map((row) => ({
   rowHash: `mock-${row.id}`.padEnd(64, '0'),
   errors: row.errorMessage ? [row.errorMessage] : [],
   warnings: [],
+  review: row.review ?? {},
 }));
 let suggestions = mockFieldSuggestions.map((item) => ({ ...item }));
 const idempotency = new Map<string, string>();
@@ -70,6 +84,13 @@ function findTask(id: string) {
   return task;
 }
 
+function invalidateReview(task: ImportTask) {
+  task.version += 1;
+  task.reviewRevision += 1;
+  task.validation = null;
+  task.approval = null;
+}
+
 function cloneTask(task: ImportTask): ImportTask {
   return {
     ...task,
@@ -82,6 +103,16 @@ function cloneTask(task: ImportTask): ImportTask {
       decision: column.decision ? { ...column.decision } : undefined,
       suggestion: column.suggestion ? { ...column.suggestion, sampleValues: [...column.suggestion.sampleValues] } : undefined,
     })),
+    validation: task.validation ? {
+      ...task.validation,
+      snapshot: {
+        ...task.validation.snapshot,
+        counts: { ...task.validation.snapshot.counts },
+        blockingErrors: task.validation.snapshot.blockingErrors.map((issue) => ({ ...issue, sampleRowNumbers: [...issue.sampleRowNumbers] })),
+        warnings: task.validation.snapshot.warnings.map((issue) => ({ ...issue, sampleRowNumbers: [...issue.sampleRowNumbers] })),
+      },
+    } : null,
+    approval: task.approval ? { ...task.approval, snapshot: { ...task.approval.snapshot } } : null,
   };
 }
 
@@ -130,7 +161,7 @@ function parsedColumns(taskId: string): ImportColumn[] {
 }
 
 export async function mockCreateImportTask(file: File, payload: CreateImportTaskPayload, key: string) {
-  await assertFinance();
+  const uploader = await assertFinance();
   await delay();
   const existingId = idempotency.get(key);
   if (existingId) return cloneTask(findTask(existingId));
@@ -148,7 +179,12 @@ export async function mockCreateImportTask(file: File, payload: CreateImportTask
     templateName: template.name,
     importType: payload.importType,
     status: 'uploaded',
-    uploadedBy: '财务',
+    uploadedBy: uploader.name,
+    uploadedById: uploader.id,
+    version: 1,
+    reviewRevision: 0,
+    validation: null,
+    approval: null,
     createdAt: new Date().toISOString(),
     counts: emptyCounts(),
     rawFile: {
@@ -220,18 +256,19 @@ export async function mockParseImportTask(id: string, _payload: ParseImportTaskP
   task.columns = parsedColumns(id);
   task.sheets = [{ id: `mock-sheet-${id}`, name: 'Sheet1', index: 0, headerRowIndex: 1, rowCount: 2 }];
   task.status = 'mapping';
+  task.version += 1;
   task.parsedAt = new Date().toISOString();
   task.counts = { total: 2, valid: 2, errors: 0, duplicates: 0, ignored: 0, imported: 0 };
   rows = [
     {
       id: `mock-row-${id}-1`, importTaskId: id, rowNumber: 2,
       rawData: { 日期: '2026-07-01', 车牌号: '沪A12345', 司机: '王师傅', 金额: 8200, 夜班补贴: 300, 上楼费: 500 },
-      mappedData: {}, rowHash: `mock-row-${id}-1`.padEnd(64, '0'), status: 'pending' as const, errors: [], warnings: [],
+      mappedData: {}, rowHash: `mock-row-${id}-1`.padEnd(64, '0'), status: 'pending' as const, errors: [], warnings: [], review: {},
     },
     {
       id: `mock-row-${id}-2`, importTaskId: id, rowNumber: 3,
       rawData: { 日期: '2026-07-02', 车牌号: '沪B77889', 司机: '刘师傅', 金额: '错误金额', 夜班补贴: 100, 上楼费: 200 },
-      mappedData: {}, rowHash: `mock-row-${id}-2`.padEnd(64, '0'), status: 'pending' as const, errors: [], warnings: [],
+      mappedData: {}, rowHash: `mock-row-${id}-2`.padEnd(64, '0'), status: 'pending' as const, errors: [], warnings: [], review: {},
     },
     ...rows.filter((row) => row.importTaskId !== id),
   ];
@@ -264,6 +301,7 @@ export async function mockSaveImportMappings(id: string, payload: SaveImportMapp
     };
   }
   task.status = task.columns.every((column) => column.decision) ? 'pending_confirm' : 'mapping';
+  invalidateReview(task);
   return cloneTask(task);
 }
 
@@ -273,6 +311,7 @@ export async function mockAutoMatchImportTask(id: string) {
   const task = findTask(id);
   task.columns.forEach((column) => { if (!column.decision) column.decision = mappingFor(column.sourceName); });
   task.status = task.columns.every((column) => column.decision) ? 'pending_confirm' : 'mapping';
+  invalidateReview(task);
   return cloneTask(task);
 }
 
@@ -288,19 +327,31 @@ function buildMockPreviewRows(task: ImportTask): ImportPreviewRow[] {
   const taskRows = rows.filter((row) => row.importTaskId === task.id);
   return taskRows.map((row) => {
     const amount = Number(row.rawData['金额']);
+    const summaryCandidate = Object.values(row.rawData).some((value) => (
+      typeof value === 'string' && ['小计', '合计', '总计', '本页合计', '累计'].includes(value.trim().replace(/[\s:：]+/g, ''))
+    ));
     const errors = Number.isFinite(amount) ? [] : ['金额：数字格式错误'];
+    const warnings: string[] = [];
+    if (summaryCandidate && !row.review.decision) errors.push('疑似汇总行，必须由财务明确按明细纳入或排除');
+    if (row.review.decision === 'include') warnings.push('财务已将该行确认为业务明细');
+    if (row.review.decision === 'exclude') warnings.push('财务已明确排除该行，不生成正式记录');
+    const status = row.review.decision === 'exclude'
+      ? 'ignored' as const
+      : errors.length ? 'error' as const : row.status === 'confirmed' ? 'confirmed' as const : 'mapped' as const;
     return {
       id: row.id,
       rowNumber: row.rowNumber,
-      status: errors.length ? 'error' as const : 'mapped' as const,
+      status,
       recordDate: String(row.rawData['日期']),
       amount: Number.isFinite(amount) ? amount.toFixed(2) : undefined,
       category: task.importType === 'revenue' ? '收入' : '成本',
       subCategory: task.templateName,
       values: [],
       mappedData: {},
-      errors,
-      warnings: [],
+      errors: row.review.decision === 'exclude' ? [] : errors,
+      warnings,
+      summaryCandidate,
+      review: { ...row.review },
     };
   });
 }
@@ -321,7 +372,13 @@ export async function mockGetImportPreview(id: string, query: ImportPreviewQuery
     task: cloneTask(task),
     unresolvedColumns,
     rows: pageRows,
-    summary: { total: previewRows.length, valid: previewRows.filter((row) => !row.errors.length).length, errors: previewRows.filter((row) => row.errors.length).length, duplicates: 0, ignored: 0 },
+    summary: {
+      total: previewRows.length,
+      valid: previewRows.filter((row) => row.status === 'mapped' || row.status === 'confirmed').length,
+      errors: previewRows.filter((row) => row.status === 'error').length,
+      duplicates: previewRows.filter((row) => row.status === 'duplicate').length,
+      ignored: previewRows.filter((row) => row.status === 'ignored').length,
+    },
     pagination: {
       page,
       pageSize,
@@ -329,37 +386,153 @@ export async function mockGetImportPreview(id: string, query: ImportPreviewQuery
       totalPages: Math.ceil(previewRows.length / pageSize),
       hasNext: page * pageSize < previewRows.length,
     },
-    strategy: 'valid_rows_only',
+    strategy: 'whole_batch_fail_closed',
   };
 }
 
-export async function mockConfirmImportTask(id: string): Promise<ImportConfirmResult> {
-  await assertFinance();
+export async function mockReviewImportRow(id: string, rowId: string, payload: ReviewImportRowPayload) {
+  const reviewer = await assertFinance();
   await delay();
   const task = findTask(id);
-  if (task.status === 'confirmed') {
-    return {
-      task: cloneTask(task),
-      recordIds: [],
-      importedRows: task.counts.imported,
-      errorRows: task.counts.errors,
-      duplicateRows: task.counts.duplicates,
-      ignoredRows: task.counts.ignored,
-      alreadyConfirmed: true,
-    };
+  if (task.status !== 'pending_confirm' && task.status !== 'mapping') throw new Error('当前任务不能修改行级复核');
+  if (task.version !== payload.expectedVersion || task.reviewRevision !== payload.expectedReviewRevision) {
+    throw new Error('导入审核内容已变化，请刷新后重试');
+  }
+  const row = rows.find((item) => item.id === rowId && item.importTaskId === id);
+  if (!row) throw new Error('导入行不存在');
+  const previewRow = buildMockPreviewRows(task).find((item) => item.id === rowId);
+  if (!previewRow?.summaryCandidate) {
+    throw new Error('逐行审核仅用于处置疑似汇总行，普通明细错误必须修正后重新导入');
+  }
+  if (payload.decision === 'include' && (row.status === 'ignored' || row.status === 'duplicate')) {
+    throw new Error('空行或重复行在正式策略批准前不能强制纳入');
+  }
+  row.review = {
+    decision: payload.decision,
+    reason: payload.reason,
+    reviewedBy: reviewer.id,
+    reviewedAt: new Date().toISOString(),
+  };
+  invalidateReview(task);
+  return cloneTask(task);
+}
+
+export async function mockRevalidateImportTask(id: string, payload: RevalidateImportTaskPayload) {
+  const reviewer = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待财务确认任务可以重新校验');
+  if (task.version !== payload.expectedVersion || task.reviewRevision !== payload.expectedReviewRevision) {
+    throw new Error('导入审核内容已变化，请刷新后重新校验');
   }
   const preview = await mockGetImportPreview(id);
   const previewRows = buildMockPreviewRows(task);
   if (preview.unresolvedColumns.length) throw new Error('所有未知列必须先映射或明确忽略');
-  const valid = previewRows.filter((row) => !row.errors.length);
+  const valid = previewRows.filter((row) => row.status === 'mapped');
+  const blockingErrors = previewRows.flatMap((row) => row.errors.map((message) => ({
+    issueId: `error:${mockHash({ rowId: row.id, message })}`,
+    code: 'ROW_VALIDATION_ERROR',
+    message,
+    count: 1,
+    rowDigest: mockHash({ rowId: row.id, rowHash: rows.find((item) => item.id === row.id)?.rowHash }),
+    sampleRowNumbers: [row.rowNumber],
+  })));
+  const warnings = previewRows.flatMap((row) => row.warnings.map((message) => ({
+    issueId: `warning:${mockHash({ rowId: row.id, message })}`,
+    code: 'ROW_REVIEW_WARNING',
+    message,
+    count: 1,
+    rowDigest: mockHash({ rowId: row.id, rowHash: rows.find((item) => item.id === row.id)?.rowHash }),
+    sampleRowNumbers: [row.rowNumber],
+  })));
+  const counts = {
+    ...preview.summary,
+    recordCount: valid.length,
+    blockingErrorCount: blockingErrors.length + (valid.length ? 0 : 1),
+    warningOccurrenceCount: warnings.length,
+  };
+  if (!valid.length) {
+    blockingErrors.push({
+      issueId: `error:${mockHash({ code: 'NO_DETAIL_ROWS' })}`,
+      code: 'NO_DETAIL_ROWS',
+      message: '没有可生成正式记录的有效业务明细行',
+      count: 1,
+      rowDigest: mockHash({ code: 'NO_DETAIL_ROWS' }),
+      sampleRowNumbers: [],
+    });
+  }
+  const core = {
+    schemaVersion: 'excel-validation/1.0' as const,
+    taskId: task.id,
+    projectId: task.projectId,
+    reviewRevision: task.reviewRevision,
+    rowSetHash: mockHash(previewRows.map((row) => ({ id: row.id, status: row.status, review: row.review }))),
+    normalizedOutputHash: mockHash(valid.map((row) => ({ id: row.id, amount: row.amount, recordDate: row.recordDate }))),
+    validationRuleVersion: 'excel-deterministic-validation/1.0',
+    counts,
+    blockingErrors,
+    warnings,
+    valid: blockingErrors.length === 0,
+  };
+  task.version += 1;
+  task.validation = {
+    reviewRevision: task.reviewRevision,
+    ruleVersion: core.validationRuleVersion,
+    snapshotHash: mockHash(core),
+    validatedAt: new Date().toISOString(),
+    snapshot: { ...core, snapshotHash: mockHash(core) },
+  };
+  task.counts = { ...task.counts, ...preview.summary };
+  for (const previewRow of previewRows) {
+    const row = rows.find((item) => item.id === previewRow.id);
+    if (row) Object.assign(row, { status: previewRow.status, errors: previewRow.errors, warnings: previewRow.warnings });
+  }
+  void reviewer;
+  return cloneTask(task);
+}
+
+export async function mockConfirmImportTask(id: string, payload: ConfirmImportTaskPayload): Promise<ImportConfirmResult> {
+  const approver = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待确认任务可以批准');
+  if (task.uploadedById === approver.id) throw new Error('上传者不能审批同一 Excel 导入任务');
+  if (
+    task.version !== payload.expectedVersion
+    || task.reviewRevision !== payload.expectedReviewRevision
+    || !task.validation
+    || task.validation.reviewRevision !== task.reviewRevision
+    || task.validation.snapshotHash !== payload.expectedValidationSnapshotHash
+    || task.validation.snapshot.normalizedOutputHash !== payload.expectedPayloadHash
+    || !task.validation.snapshot.valid
+  ) throw new Error('当前审核修订没有有效的确定性校验快照');
+  const expectedWarnings = task.validation.snapshot.warnings.map((warning) => warning.issueId).sort();
+  const acknowledged = [...payload.acknowledgedWarningIds].sort();
+  if (expectedWarnings.length !== acknowledged.length || expectedWarnings.some((value, index) => value !== acknowledged[index])) {
+    throw new Error('必须逐项确认当前校验快照的全部警告');
+  }
+  const preview = await mockGetImportPreview(id);
+  if (preview.summary.errors > 0) throw new Error('存在阻断错误，整批不会入账');
+  const valid = buildMockPreviewRows(task).filter((row) => row.status === 'mapped');
   task.status = 'confirmed';
+  task.version += 1;
   task.confirmedAt = new Date().toISOString();
-  task.counts = { ...task.counts, valid: valid.length, errors: preview.summary.errors, imported: valid.length };
+  task.confirmedBy = approver.name;
+  task.counts = { ...task.counts, valid: valid.length, errors: 0, imported: valid.length };
+  const approvalHash = mockHash({ id, reviewRevision: task.reviewRevision, approvedBy: approver.id, output: payload.expectedPayloadHash });
+  task.approval = {
+    reviewRevision: task.reviewRevision,
+    validationSnapshotHash: payload.expectedValidationSnapshotHash,
+    policyVersion: 'finance-excel-approval/1.0-pending-h10',
+    snapshotHash: approvalHash,
+    requestKeyHash: mockHash({ id, reviewRevision: task.reviewRevision }),
+    snapshot: { schemaVersion: 'excel-approval/1.0', selfApproval: false, normalizedOutputHash: payload.expectedPayloadHash },
+  };
   return {
     task: cloneTask(task),
     recordIds: valid.map((row) => `mock-record-${row.id}`),
     importedRows: valid.length,
-    errorRows: preview.summary.errors,
+    errorRows: 0,
     duplicateRows: preview.summary.duplicates,
     ignoredRows: preview.summary.ignored,
     alreadyConfirmed: false,
@@ -431,4 +604,5 @@ function resolveMockSuggestion(suggestion: FieldSuggestion, fieldId: string | un
   };
   column.suggestion = { ...suggestion };
   task.status = task.columns.every((item) => item.decision) ? 'pending_confirm' : 'mapping';
+  invalidateReview(task);
 }

@@ -1,6 +1,6 @@
 # FINANCE-AGENT B8 阻断问题矩阵
 
-更新日期：2026-07-18
+更新日期：2026-07-20
 
 ## 冻结基线
 
@@ -70,6 +70,18 @@
 | 性能采样 | 最终全量运行中，30,196/49,999 行 API 24/37 ms，确认到终态 17.551/32.216 s，RSS 增量 200.63/327.44 MiB，连接峰值 11/10 |
 | 完整回归 | 21 migrations；184/184 unit；48/48 PostgreSQL；14/14 Playwright；前后端 build 与 hygiene 通过 |
 | 真实业务文件 | 未读取、未修改；仅使用合成 ImportRow |
+
+### M5.2 Excel 严格批准复验
+
+| 门禁 | 结果 |
+| --- | --- |
+| H01 每行明细 | 每个有效明细行一条记录；精确标签汇总候选必须由财务处置；普通错误明细不能通过排除绕过 |
+| 整批失败关闭 | 任一阻断错误、旧 validation、warning 未完整确认、来源/模板/账号变化或最终 hash 不一致均不发布正式记录 |
+| 批准边界 | 第二名当前有效财务、expected task/review/validation/payload hash、不可变批准快照和 Idempotency-Key |
+| 原子发布 | Worker 只写不可见 staging；最终事务统一发布记录、行、audit 和 ledger；末批失败正式记录为 0 |
+| 容量 | 全量回归 30,196/49,999 行 Worker 到终态 25.473/45.282 s；记录、动态值、金额、来源、audit、ledger 和日报一致 |
+| 完整回归 | 37 migrations；403/403 unit；96/96 PostgreSQL；17/17 Playwright；前后端 build、693-file hygiene 和两端 0 vulnerability |
+| 状态 | 工程 P0 `verified`；真实汇总行样例与 H01/H10 正式签字仍为 `awaiting_human_signoff` |
 
 ## B8-04 验证证据
 
@@ -141,7 +153,7 @@
 | R6-DECIMAL-001 | P1 | Rule threshold precision | 工程执行者 | 红灯：JSON numeric `99999999999999.99` 在构造 Decimal 前已变为 `99999999999999.98`，旧服务仍接受 | 本提交（R6.4） | `financial-threshold/1.0` 规范字符串；旧安全整数弃用告警；unsafe numeric/科学计数法字符串/超精度/越界拒绝；5/5 PostgreSQL suites、73/73 tests；见 `R6_4_FINANCIAL_THRESHOLD_DECIMAL_REPORT_2026-07-18.md` | verified | H01/H02/H06 仍决定正式币种、冲销和舍入政策 |
 | R9-SCALE-001 | P1 条件风险 | Multi-instance login/upload/model gates | 工程执行者 | 登录、上传准入或模型并发仍可能依赖进程内状态；当前只能维持单 API/单 Worker | - | 待共享原子控制与多实例故障测试 | open | H13；未批准扩容前不得横向扩容 |
 | R6-IDEMPOTENCY-001 | P1 | Finance write endpoint inventory | 工程执行者/财务负责人 | 红灯：公共表虽按 actor 隔离，但工单/Import/OCR 全局唯一业务列保存原始 key，两个操作者使用同 key 会错误冲突；编辑与文件上传缺少响应重放 | 本提交（R6.5） | 端点矩阵、`idem-v1` 作用域指纹、请求哈希/响应重放/改体 409/并发单事实/回滚重试；35/35 unit、75/75 PostgreSQL；见 `R6_5_FINANCIAL_WRITE_IDEMPOTENCY_AUDIT_2026-07-18.md` | verified | H01/H02/H03/H07/H14 决定强制范围、跨来源重复和保留；当前 `pending_human_decision` |
-| R6-H-POLICY-001 | P1 | H01/H02/H07 current behavior and decision boundary | 工程执行者/财务/业务 | 红灯：指定决策文件不存在；代码文案把软作废称为冲销，且 pending 决策未进入快照 | 本提交（R6.6） | `financial-policy-baseline/1.0`、唯一 Pending 签字模板、行为/迁移草案矩阵；36/36 unit、75/75 PostgreSQL、17/17 Playwright；见 `R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md` | verified | H01/H02/H07 仍为 `pending_human_decision`；没有固化正式粒度、冲销、关账或附件主从 |
+| R6-H-POLICY-001 | P1 | H01/H02/H07 current behavior and decision boundary | 工程执行者/财务/业务 | 红灯：指定决策文件不存在；代码文案把软作废称为冲销，且 pending 决策未进入快照 | R6.6 + M5.2 | `financial-policy-baseline/1.0`；M5.2 固化 H01 每行明细、汇总人工处置和整批失败关闭；403/403 unit、96/96 PostgreSQL、17/17 Playwright | engineering_verified | H01 真实样例/签字及 H02/H07 执行清单仍未完成；不得宣称正式财务 UAT 通过 |
 | R7-RETENTION-001 | P1 | AI/audit/data retention and deletion | 工程执行者/安全/合规负责人 | 红灯：新增 `AiCallLog` 在读取时脱敏但数据库仍保存完整问题、工具上下文和 Provider 原始响应；真实保留、删除、hold 和备份传播未批准 | 本提交（R7.1） | `ai-call-audit/1.0` 元数据分离；9 类 dry-run、DB 强制零删除、legal hold、双实例 lease/恢复、匿名计数；37/37 unit、78/78 PostgreSQL；见 `R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md` | engineering_verified | H09/H12/H14 仍决定实际天数、删除/hold 释放、备份与 Provider 传播；真实删除保持关闭 |
 | R7-STEPUP-001 | P1 | Step-up/MFA/SoD | 工程执行者/安全/业务负责人 | 红灯：旧令牌只有 `sub/ver/typ`，未绑定 session/action/resource，无接口消费、单次使用或并发防重放 | 本提交（R7.2） | PostgreSQL 单次消费/并发单赢家、错误绑定/过期/伪造用户拒绝、角色/密码/停用/登出撤销；37/37 unit、84/84 PostgreSQL；见 `R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md` | engineering_verified | H10 仍决定 MFA、正式动作/TTL、自审批、跨账号同人、双人复核和 break-glass；默认关闭 |
 | R8-CI-001 | P1 | Layered CI and real deployment gates | 工程执行者 | 红灯：普通 CI 不构建实际应用镜像，Node 22 与部署 Node 24 漂移；本机构建进一步发现前端发送 10.23GB 生成证据上下文 | R8.1 | Node 24.18.0 统一；真实前后端镜像、非 root/revision、SBOM/Grype 本机通过；上下文降至 24.09KB；见 `R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md` | in_progress | R8.2 尚需 scheduled/manual Compose、恢复、回滚、日志泄露和 Python runtime；目标环境仍受 H13/H14 阻断 |
