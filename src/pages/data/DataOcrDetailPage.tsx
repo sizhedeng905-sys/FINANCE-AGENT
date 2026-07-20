@@ -35,6 +35,7 @@ import { requestOCRAiSuggestions } from '@/api/ocrApi';
 import OcrEvidencePreview from '@/components/data/OcrEvidencePreview';
 import PageHeader from '@/components/PageHeader';
 import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
+import { useAuthStore } from '@/store/authStore';
 import { useOCRStore } from '@/store/ocrStore';
 import type {
   OCRAiSuggestionResult,
@@ -75,6 +76,7 @@ export default function DataOcrDetailPage() {
   const [aiSuggestion, setAiSuggestion] = useState<OCRAiSuggestionResult>();
   const [aiLoading, setAiLoading] = useState(false);
   const [form] = Form.useForm<CorrectionForm>();
+  const currentUser = useAuthStore((state) => state.user);
   const task = useOCRStore((state) => state.currentTask?.id === id ? state.currentTask : undefined);
   const loading = useOCRStore((state) => state.loading);
   const error = useOCRStore((state) => state.error);
@@ -128,9 +130,14 @@ export default function DataOcrDetailPage() {
     : null;
   const validationWarnings = currentValidation?.snapshot.warnings ?? [];
   const needsAcknowledgement = unresolved.length > 0 || validationWarnings.length > 0;
+  const isSelfApproval = Boolean(task?.uploadedById && task.uploadedById === currentUser?.id);
   const canConfirm = task?.status === 'pending_confirm'
     && Boolean(currentValidation?.snapshot.valid)
-    && (!needsAcknowledgement || acknowledged);
+    && (!needsAcknowledgement || acknowledged)
+    && !isSelfApproval;
+  const confirmDisabledReason = isSelfApproval
+    ? '上传者不能审批同一 OCR 任务，请由另一名财务人员复核。'
+    : '当前审核修订必须先通过确定性校验，并处理所有阻断问题。';
 
   const availableEvidenceRefs = useMemo(() => {
     if (!candidate) return [];
@@ -204,11 +211,19 @@ export default function DataOcrDetailPage() {
   };
 
   const confirm = async () => {
-    if (!id || !canConfirm) {
+    if (!id || !task || !canConfirm) {
       message.warning('请先完成当前修订版本的确定性校验并处理阻断问题');
       return;
     }
-    const result = await confirmTask(id, acknowledged);
+    const validation = task?.validation;
+    if (!validation) return;
+    const result = await confirmTask(id, {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+      expectedValidationSnapshotHash: validation.snapshotHash,
+      expectedPayloadHash: validation.snapshot.candidatePayloadHash,
+      acknowledgedWarningIds: acknowledged ? validation.snapshot.warnings.map((warning) => warning.issueId) : [],
+    });
     message.success(result.alreadyConfirmed ? '该任务已确认，本次未重复生成记录' : 'OCR结果已确认并生成经营记录');
     navigate('/data/records');
   };
@@ -381,6 +396,15 @@ export default function DataOcrDetailPage() {
                 message={task.validation ? '审核内容已变化，旧校验结果失效' : '当前审核版本尚未执行确定性校验'}
               />
             ) : null}
+            {task.status === 'pending_confirm' && isSelfApproval ? (
+              <Alert
+                className="section-row"
+                type="warning"
+                showIcon
+                message="上传者不能自审批"
+                description="请保存当前审核结果，并由另一名仍处于启用状态的财务账号完成批准入账。"
+              />
+            ) : null}
             {currentValidation ? (
               <Alert
                 className="section-row"
@@ -532,7 +556,7 @@ export default function DataOcrDetailPage() {
                       >
                         重新校验
                       </Button>
-                      <Tooltip title={canConfirm ? undefined : '当前修订版本必须先通过确定性校验，并处理所有阻断问题'}>
+                      <Tooltip title={canConfirm ? undefined : confirmDisabledReason}>
                         <span>
                           <Button
                             type="primary"

@@ -683,9 +683,17 @@ export interface OCRTask {
       schemaVersion: 'ocr-validation/1.0';
       valid: boolean;
       candidatePayloadHash: string;
-      blockingErrors: Array<{ code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
-      warnings: Array<{ code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
+      blockingErrors: Array<{ issueId: string; code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
+      warnings: Array<{ issueId: string; code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
     };
+  };
+  approval: null | {
+    reviewRevision: number;
+    validationSnapshotHash: string;
+    policyVersion: string;
+    snapshotHash: string;
+    requestKeyHash: string;
+    snapshot: Record<string, unknown>;
   };
   createdAt: string;
   updatedAt: string;
@@ -732,6 +740,14 @@ export interface CorrectOCRTaskPayload {
 export interface RevalidateOCRTaskPayload {
   expectedVersion: number;
   expectedReviewRevision: number;
+}
+
+export interface ConfirmOCRTaskPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+  expectedValidationSnapshotHash: string;
+  expectedPayloadHash: string;
+  acknowledgedWarningIds: string[];
 }
 
 export interface OCRAiSuggestionResult {

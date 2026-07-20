@@ -75,6 +75,14 @@ export function toOcrTask(task: OcrTaskDetail) {
       validatedAt: task.validatedAt?.toISOString(),
       snapshot: objectValue(task.validationSnapshot)
     } : null,
+    approval: task.approvalSnapshotHash ? {
+      reviewRevision: task.approvalReviewRevision,
+      validationSnapshotHash: task.approvalValidationHash,
+      policyVersion: task.approvalPolicyVersion,
+      snapshotHash: task.approvalSnapshotHash,
+      requestKeyHash: task.approvalRequestKeyHash,
+      snapshot: objectValue(task.approvalSnapshot)
+    } : null,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     rawFile: {

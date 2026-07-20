@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。R8.9 已在本地用固定版本与固定哈希的 Syft 替换需要 entitlement 的 Docker Scout，并将外部扫描移到业务门禁之后；本地全量测试通过，新的 GitHub run 尚待推送验证。AI 映射补充任务 M0-M4 已完成工程与合成验收：Excel/OCR 均只生成受控建议，OCR 人工修订会使旧校验失效，财务可在本地 PDF.js 证据页查看 bbox 后重新校验；M5-M8 的正式审批事务、报告快照和攻击性总验收仍在推进。目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。R8.9 已在本地用固定版本与固定哈希的 Syft 替换需要 entitlement 的 Docker Scout，并将外部扫描移到业务门禁之后；本地全量测试通过，新的 GitHub run 尚待推送验证。AI 映射补充任务 M0-M4 与 M5.1 OCR 批准子链已完成工程与合成验收：Excel/OCR 均只生成受控建议，OCR 人工修订会使旧校验失效，财务可在本地 PDF.js 证据页查看 bbox 后重新校验；正式批准要求另一名财务、当前校验哈希和不可变批准快照。M5.2-M8 的 Excel 整批失败关闭、报告快照和攻击性总验收仍在推进。目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.7 本机工程门禁完成；R8.9 的 Scout entitlement 修复已本地全量验证、待远端 CI；完整 release 重验仍受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭 |
-| AI 映射补充 M0-M8 | `M0-M4_passed / M5_in_progress` | Excel 列摘要与 OCR 有界证据均只生成建议；OCR 已有 source/evidence 绑定、跨页冲突、review revision、确定性校验快照和 PDF/图片 bbox 人工复核 |
+| AI 映射补充 M0-M8 | `M0-M4_M5.1_passed / M5.2_in_progress` | OCR 已完成 evidence/revision/revalidation、双人批准快照和单事务幂等入账；Excel 错误行部分发布仍为开放 P0 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -103,7 +103,9 @@ M4.1 已复用同一 `AiTask/AiCallAttempt/AiCallLog` 执行链，为 OCR 增加
 
 M4.2 新增第 35 条向后兼容 migration：每次 OCR 人工修正形成新的 `reviewRevision`，保存 `MANUAL_OVERRIDE`、理由和 evidence refs，并原子清除旧 ValidationSnapshot。`POST /api/ocr-tasks/:id/revalidate` 以 expected task/review version 防旧页面覆盖，重新校验来源 IR 哈希、模板字段、类型、必填项、证据归属和跨页冲突，再保存内容寻址快照；重复候选不再静默择一。OCR 定向 PostgreSQL 场景和模型路由场景通过，migration 空库 35/35 与 34→35 升级通过；长 PostgreSQL 回归 65/66 初次通过，唯一失败为新增 4 条模型路由后的旧固定计数，更新为 13 后已定向复验通过。M4 的剩余项是前端 bbox 证据复核和人工 evidence 选择。
 
-M4.3 已完成财务 OCR 证据复核工作台：使用固定 `pdfjs-dist 6.1.200` 和本地 Worker 解析经鉴权预览接口取得的 PDF 字节，不依赖 CDN；图片/PDF 均按原页码叠加 bbox，未知旋转变换保守关闭高亮。界面区分原值、人工 `MANUAL_OVERRIDE`、修订版本、冲突候选、AI 建议与确定性校验，修正原因和 evidence ref 必填，旧校验失效后确认按钮保持禁用。真实 API Playwright 已验证 Mock AI 只建议且创建记录数为 0、PDF 画布/bbox、390px 移动视口、修订、重新校验和确认链；详见 [`docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md`](docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md)。M5 仍须关闭直接确认 API 的最终重鉴权、自审批策略、不可变批准快照和单事务幂等入账。
+M4.3 已完成财务 OCR 证据复核工作台：使用固定 `pdfjs-dist 6.1.200` 和本地 Worker 解析经鉴权预览接口取得的 PDF 字节，不依赖 CDN；图片/PDF 均按原页码叠加 bbox，未知旋转变换保守关闭高亮。界面区分原值、人工 `MANUAL_OVERRIDE`、修订版本、冲突候选、AI 建议与确定性校验，修正原因和 evidence ref 必填，旧校验失效后确认按钮保持禁用。真实 API Playwright 已验证 Mock AI 只建议且创建记录数为 0、PDF 画布/bbox、390px 移动视口、修订、重新校验和确认链；详见 [`docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md`](docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md)。该阶段当时保留的直接确认风险已由下述 M5.1 OCR 子任务关闭。
+
+M5.1 已关闭 OCR 直接确认 API 的工程 P0：批准命令必须携带 expected task/review/validation/payload hash 和逐项 warning ID；最终事务重新读取账号与角色，拒绝上传者自审批，并重验文件安全状态、source/IR、模板、候选值和 evidence。批准快照冻结 Provider/模型、规则/策略、批准人、幂等请求和规范输出哈希，`BusinessRecord/RecordValue`、任务、audit 与 ledger 同事务提交。PostgreSQL 已验证文件作废、账号停用、角色撤销、两名财务并发、同键重放和改体冲突；详见 [`docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md`](docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md)。M5.2 仍须把 Excel 从 `valid_rows_only` 改为任何阻断错误均整批不发布。
 
 ## 已实现闭环
 
@@ -126,7 +128,7 @@ M4.3 已完成财务 OCR 证据复核工作台：使用固定 `pdfjs-dist 6.1.20
 - 正式金额通过固定两位小数字符串传输，数据库和聚合使用 `Prisma.Decimal`，避免 JavaScript 浮点损失。
 - 报表只统计已经确认和正式发布的 `actual` 记录，不统计草稿、处理中、待确认或作废数据。
 - Excel 与 OCR 使用持久化后台任务、lease、heartbeat、重试和取消边界，不依赖超长同步 HTTP 请求。
-- OCR 永远需要人工确认；未经确认的 OCR 任务不会自动生成正式经营记录。
+- OCR 永远需要另一名财务在当前确定性校验快照上批准；未经批准、上传者自审批或快照陈旧时不会生成正式经营记录。
 - AI Provider 只能返回受约束的 Claim；后端验证 metric、entity、period、value 和 sourcePath 后确定性渲染答案。
 - 原始文件先鉴权、隔离和 fail-closed 扫描，再允许预览、下载、Excel 解析或 OCR。
 
@@ -170,14 +172,14 @@ M4.3 已完成财务 OCR 证据复核工作台：使用固定 `pdfjs-dist 6.1.20
 
 | 门禁 | 结果 | 证据摘要 |
 | --- | --- | --- |
-| 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
+| 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,147 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | 本地全量 46/46 suites，401/401 tests |
+| 后端 Jest | `passed` | 本地全量 46/46 suites，403/403 tests |
 | PostgreSQL 集成 | `passed` | 分组全量 9/9 suites，92/92 tests；含 AI 租约/重试/状态变化、step-up 并发防重放、retention lease/legal hold、H02 失败关闭和大表 Worker 恢复 |
 | 浏览器 E2E | `passed` | Playwright 17/17；含真实 API 服务端翻页 20→5 行 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
-| Prisma | `passed` | generate/build 与隔离 `_test` 库 34/34 migrations |
-| Migration 路径 | `passed` | M4.2 已验证空库 35 条及 34→35 升级 |
+| Prisma | `passed` | generate/validate/build 与隔离 `_test` 库 36/36 migrations |
+| Migration 路径 | `passed` | M5.1 已验证空库 36 条及 35→36 升级 |
 | Excel 预览预算 | `passed` | 当前页查询；摘要批次 500；pageSize 1-100；响应上限 1 MiB；50,000 行深页和缓存回访通过 |
 | 项目模板并发 | `passed` | 统一 key 22 事务锁；启用/停用与记录、Excel Worker、OCR、工单终审两种顺序均有 PostgreSQL 断言；锁超时稳定 409 |
 | 重复候选窗口 | `passed` | 0/365 天、UTC、前后边界、跨月/跨年和越界拒绝；结果、异常、audit、ledger 一致，H03 前不自动处置 |
@@ -186,6 +188,7 @@ M4.3 已完成财务 OCR 证据复核工作台：使用固定 `pdfjs-dist 6.1.20
 | H01/H02/H07 保守基线 | `passed` | H01 明确按有效明细行入账且汇总不双计，H02/H07 仍缺执行清单；自动汇总行判断/冲销/附件主数据/OCR 提交仍关闭，零负数和软作废保留有自动断言 |
 | Excel AI 分类/映射 | `engineering_passed` | 项目模板/字段/证据/转换白名单、严格 Schema、kill switch、调用租约、重试耗尽、旧响应竞争和状态变化失败关闭均有自动断言；只生成建议，不批准或入账 |
 | OCR AI 分类/映射 | `engineering_passed` | M4.1-M4.3 已验证受限证据摘要、source/evidence 绑定、跨页冲突、review revision、旧快照失效、重新校验和 PDF/图片 bbox 人工复核；真实准确率仍待 H04/H05 |
+| OCR 财务批准事务 | `engineering_passed` | expected version/hash、稳定 warning ID、最终账号/角色/文件/模板/证据重验、禁止上传者自审批、不可变批准快照和同事务唯一记录；两名财务并发与重放攻击已有 PostgreSQL/Playwright 断言，正式 H10 仍待签字 |
 | Retention dry-run | `engineering_passed` | 新 AI 调用日志只留元数据；9 类盘点、legal hold、双实例 lease、匿名证据和耗尽恢复通过；真实删除由 H12/H14 禁止 |
 | Step-up/SoD 基础设施 | `engineering_passed` | 一次性 action/resource/session grant、并发防重放、身份变化撤销和高风险接口守卫通过；默认关闭，MFA/正式职责分离待 H10 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
@@ -473,7 +476,7 @@ npm run staging:release
 |-- src/                    # React 前端、路由、页面、store、API repository
 |-- backend/
 |   |-- src/                # NestJS API、Worker 和业务模块
-|   |-- prisma/             # Schema、32 条 migration 和 seed
+|   |-- prisma/             # Schema、36 条 migration 和 seed
 |   |-- scripts/            # 集成、数据、模型、UAT 与数据库工具
 |   `-- test/               # 单元和 PostgreSQL 集成测试
 |-- e2e/                    # Playwright 真实 API/Mock 验收
@@ -495,6 +498,7 @@ npm run staging:release
 | [`docs/RELEASE_CANDIDATE_AUDIT.md`](docs/RELEASE_CANDIDATE_AUDIT.md) | RC 问题、修复和发布判断 |
 | [`docs/B8_OVERNIGHT_EXECUTION_REPORT.md`](docs/B8_OVERNIGHT_EXECUTION_REPORT.md) | B8-09 与 RC-00 至 RC-04 执行证据 |
 | [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md) | P0/P1、外部阻断和人工门禁 |
+| [`docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md`](docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md) | OCR 双人批准、不可变快照与事务入账验收 |
 | [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md) | 项目负责人填写的功能、业务与风险决策问卷 |
 | [`docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`](docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md) | R8.9 Scout entitlement 根因、Syft 修复和验收证据 |
 | [`docs/PR4_REVIEW_GUIDE.md`](docs/PR4_REVIEW_GUIDE.md) | 独立 reviewer 检查顺序 |

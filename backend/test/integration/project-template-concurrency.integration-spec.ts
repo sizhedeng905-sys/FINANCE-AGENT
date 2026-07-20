@@ -484,7 +484,13 @@ describe('project-template lifecycle serialization', () => {
         .post(`/api/ocr-tasks/${ocrTaskId}/confirm`)
         .set('Authorization', `Bearer ${financeToken}`)
         .set('Idempotency-Key', `r6-ocr-confirm-${suffix}`)
-        .send({ acknowledgeLowConfidence: true })
+        .send({
+          expectedVersion: 1,
+          expectedReviewRevision: 0,
+          expectedValidationSnapshotHash: '0'.repeat(64),
+          expectedPayloadHash: '0'.repeat(64),
+          acknowledgedWarningIds: []
+        })
         .then((response) => response as HttpResult)
     );
 

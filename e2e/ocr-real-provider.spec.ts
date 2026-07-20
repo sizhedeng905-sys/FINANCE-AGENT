@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { expect, test, type APIResponse } from '@playwright/test';
 
-import { login, readEnvelope, selectOption } from './support/app';
+import { login, logout, readEnvelope, selectOption } from './support/app';
 
 const FRONTEND_URL = 'http://127.0.0.1:4175';
 const API_URL = 'http://127.0.0.1:3102/api';
@@ -19,7 +19,13 @@ interface OcrField {
 interface OcrTask {
   id: string;
   status: string;
+  version: number;
+  reviewRevision: number;
   fields: OcrField[];
+  validation: null | {
+    snapshotHash: string;
+    snapshot: { valid: boolean; blockingErrors: unknown[]; warnings: Array<{ issueId: string }> };
+  };
   attempts: Array<{
     status: string;
     provider: string;
@@ -97,7 +103,24 @@ test('real Paddle provider completes queued UI flow without automatic posting', 
     expect(correction.ok()).toBeTruthy();
   }
 
-  await page.reload();
+  task = (await readApiEnvelope<OcrTask>(
+    await request.get(`${API_URL}/ocr-tasks/${task.id}`, { headers })
+  )).data;
+  task = (await readApiEnvelope<OcrTask>(await request.post(`${API_URL}/ocr-tasks/${task.id}/revalidate`, {
+    headers,
+    data: { expectedVersion: task.version, expectedReviewRevision: task.reviewRevision }
+  }))).data;
+  expect(task.validation).toMatchObject({ snapshot: { valid: true, blockingErrors: [] } });
+
+  const financeUsers = await readApiEnvelope<{ items: Array<{ username: string; status: string }> }>(
+    await request.get(`${API_URL}/users?page=1&pageSize=100&role=finance`, { headers })
+  );
+  const alternateFinance = financeUsers.data.items.find((user) => user.username !== 'finance' && user.status === 'active');
+  expect(alternateFinance, 'a second active finance account is required for separation of duties').toBeTruthy();
+
+  await logout(page);
+  await login(page, alternateFinance!.username, '/finance/home', FRONTEND_URL);
+  await page.goto(`${FRONTEND_URL}/data/ocr/${task.id}`);
   await expect(page.getByRole('button', { name: '确认并生成经营记录' })).toBeVisible({ timeout: 30_000 });
   const acknowledge = page.getByRole('checkbox');
   if (await acknowledge.count()) await acknowledge.check();

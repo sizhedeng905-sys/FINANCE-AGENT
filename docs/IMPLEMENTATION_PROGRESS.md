@@ -3,7 +3,7 @@
 更新日期：2026-07-20
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。负责人问卷 Q01-Q30 已映射到 H01-H16，H01 已后续明确按每行明细，但签名、执行清单和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M4 已完成工程与合成验收，当前进入 M5 财务批准快照和事务入账。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。负责人问卷 Q01-Q30 已映射到 H01-H16，H01 已后续明确按每行明细，但签名、执行清单和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M4 与 M5.1 OCR 批准子链已完成工程与合成验收，当前进入 M5.2 Excel 整批失败关闭、批准快照和事务发布。
 
 ## 完成口径
 
@@ -26,7 +26,7 @@
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
-| M0-M8 AI 分类/映射/审批/快照补充 | M0-M4 完成 / M5 进行中 | Excel/OCR AI 只建议；OCR 已完成 IR/evidence 绑定、冲突保留、人工 revision、重新校验和 PDF/图片 bbox 复核；正式批准事务仍由 M5 关闭 |
+| M0-M8 AI 分类/映射/审批/快照补充 | M0-M4、M5.1 完成 / M5.2 进行中 | Excel/OCR AI 只建议；OCR 已完成 IR/evidence、revision、重新校验、双人批准快照和单事务幂等入账；Excel 仍须禁止错误行部分发布 |
 
 项目负责人已填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`；2026-07-20 已回填 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 0.2-draft。H03/H09/H10 等核心偏好已经记录，H04/H05/H15 的独立证据路径也已选择。
 
@@ -82,6 +82,7 @@ B8-09 已完成的工程证据：
 - R8.9 复现 GitHub Build run `29666837943` 两个 job 均在 Docker Scout SBOM 步骤因 entitlement 失败，且数据库、build、unit 和 E2E 被提前跳过。现移除 Scout Action，固定 Syft `1.44.0` 与 Linux amd64 SHA-256，增加仓库内来源/输出、符号链接、版本、大小、SPDX 结构和原子发布验证，并把业务门禁移到扫描之前。本地 helper 7/7、CI/Staging 契约 18/18、镜像身份 17/17、后端 398/398、PostgreSQL 88/88、Playwright 17/17、前后端 build、661 文件卫生和两套 0 vulnerability 审计通过。Windows 发布包两次有界下载超时，故本机 Syft 二进制扫描未宣称通过；等待推送后的 Linux runner。详见 `docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`。
 - M3.2 将 Excel AI 分类/映射接入现有 `ImportTask`、Prompt Registry、Provider 和 AI 审计链：只发送有预算的列摘要，严格限制当前项目模板、字段、证据与转换，所有输出固定为 `NEEDS_FINANCE_REVIEW`。调用使用内容寻址、UUID 租约、advisory lock、3 次重试预算和发送前策略复核；迟到响应、模板在分类中停用、Profile 哈希篡改、kill switch 与恶意 JSON 均失败关闭且不写正式记录。后端 46/46 suites、401/401 tests，PostgreSQL 分组全量 9/9 suites、92/92 tests，34 条 migration 空库及 33→34 升级、前后端 build、前端 runtime 4/4 和 680 文件卫生通过。真实模型准确率与 M4-M8 仍未宣称完成；详见 `docs/M3_2_EXCEL_AI_SUGGESTION_REPORT_2026-07-20.md`。
 - M4 复用现有 OCR task/attempt/correction、OCR IR 和 AI 调用台账，完成有界分类/映射建议、source/evidence 白名单、跨页冲突保留、人工 `reviewRevision`、内容寻址 ValidationSnapshot 与 bbox 复核 UI。固定本地 PDF.js Worker 从鉴权接口读取原件，响应为 attachment/octet-stream 时仍依据锁定文件元数据解析；未知旋转不画误导框。真实 API Playwright 覆盖 AI 零入账、PDF 画布/bbox、390px 布局、修订使旧校验失效和重新校验后确认；M5 的直接 API 最终重鉴权、自审批和事务批准仍为开放 P0。详见 `docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md`。
+- M5.1 收紧 OCR 正式批准：命令必须携带 expected task/review/validation/payload hash 和逐项 warning ID；最终事务重新读取账号/角色、拒绝上传者自审批、重验来源安全状态/IR/模板/候选/证据，并冻结完整批准快照。两个财务并发只写一次，同键重放返回原结果，改体重放 409；空库 36 条与 35→36 migration、46/46 suites 403/403 tests、PostgreSQL 攻击场景和 Playwright 17/17 通过。Excel 的 partial commit 仍保持 P0 open，详见 `docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md`。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。

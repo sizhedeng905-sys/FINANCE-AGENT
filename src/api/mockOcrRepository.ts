@@ -3,6 +3,7 @@ import { mockMe } from './mockIdentityRepository';
 import { mockDataProjects, mockDataTemplates, mockTemplateFields } from '@/mock/mockDataCenter';
 import type {
   BusinessRecord,
+  ConfirmOCRTaskPayload,
   CorrectOCRTaskPayload,
   CreateOCRTaskPayload,
   OCRConfirmResult,
@@ -18,6 +19,12 @@ import type {
 const delay = (ms = 120) => new Promise((resolve) => window.setTimeout(resolve, ms));
 let tasks: OCRTask[] = [];
 const scenarios = new Map<string, CreateOCRTaskPayload['mockScenario']>();
+
+function mockHash(value: unknown) {
+  const source = JSON.stringify(value);
+  return Array.from(source).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
+    .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+}
 
 async function assertFinance() {
   const user = await mockMe(getAccessToken());
@@ -66,6 +73,7 @@ function clone(task: OCRTask): OCRTask {
         warnings: task.validation.snapshot.warnings.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
       },
     } : null,
+    approval: task.approval ? { ...task.approval, snapshot: { ...task.approval.snapshot } } : null,
   };
 }
 
@@ -141,6 +149,7 @@ export async function mockCreateOCRTask(payload: CreateOCRTaskPayload): Promise<
     uploadedBy: user.name,
     uploadedById: user.id,
     validation: null,
+    approval: null,
     createdAt: now,
     updatedAt: now,
     rawFile: {
@@ -291,15 +300,22 @@ export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTa
       message: `${field.fieldName} 未通过确定性校验`,
       evidenceRefs: [...field.evidenceRefs],
     }));
-  const warnings = task.fields.filter((field) => field.lowConfidence).map((field) => ({
-    code: 'LOW_OCR_CONFIDENCE',
-    fieldId: field.fieldId,
-    message: `${field.fieldName} 需要人工核对`,
-    evidenceRefs: [...field.evidenceRefs],
+  const warnings = task.fields.filter((field) => field.lowConfidence).map((field) => {
+    const issue = {
+      code: 'LOW_OCR_CONFIDENCE',
+      fieldId: field.fieldId,
+      message: `${field.fieldName} 需要人工核对`,
+      evidenceRefs: [...field.evidenceRefs],
+    };
+    return { ...issue, issueId: `warning:${mockHash(issue)}` };
+  });
+  const identifiedBlockingErrors = blockingErrors.map((issue) => ({
+    ...issue,
+    issueId: `error:${mockHash(issue)}`,
   }));
   const hashSource = JSON.stringify({ id, reviewRevision: task.reviewRevision, fields: task.fields, blockingErrors, warnings });
-  const snapshotHash = Array.from(hashSource).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
-    .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+  const snapshotHash = mockHash(hashSource);
+  const candidatePayloadHash = mockHash(task.fields);
   task.validation = {
     reviewRevision: task.reviewRevision,
     ruleVersion: 'ocr-deterministic-validation/1.0',
@@ -308,8 +324,8 @@ export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTa
     snapshot: {
       schemaVersion: 'ocr-validation/1.0',
       valid: blockingErrors.length === 0,
-      candidatePayloadHash: snapshotHash,
-      blockingErrors,
+      candidatePayloadHash,
+      blockingErrors: identifiedBlockingErrors,
       warnings,
     },
   };
@@ -356,7 +372,7 @@ export async function mockRequestOCRAiSuggestions(id: string): Promise<OCRAiSugg
           targetFieldKey: field.fieldKey,
           targetFieldId: field.fieldId,
           targetFieldName: field.fieldName,
-          transformKey: mockTransformKey(field.field.fieldType),
+          transformKey: mockTransformKey(field.fieldType),
           confidence: '1.0',
           evidenceRefs: [...field.evidenceRefs],
         })),
@@ -371,22 +387,39 @@ export async function mockRequestOCRAiSuggestions(id: string): Promise<OCRAiSugg
   };
 }
 
-export async function mockConfirmOCRTask(id: string, acknowledge: boolean): Promise<OCRConfirmResult> {
+export async function mockConfirmOCRTask(id: string, payload: ConfirmOCRTaskPayload): Promise<OCRConfirmResult> {
   const user = await assertFinance();
   await delay();
   const task = findTask(id);
-  if (task.status === 'confirmed' && task.generatedRecordId) return { task: clone(task), record: mockRecord(task, task.generatedRecordId, user.name), alreadyConfirmed: true };
+  if (task.status === 'confirmed') throw new Error('OCR 任务已经入账');
   if (task.status !== 'pending_confirm') throw new Error('OCR 结果尚未进入人工确认状态');
+  if (task.uploadedById === user.id) throw new Error('上传者不能审批同一 OCR 任务');
   if (!task.validation || task.validation.reviewRevision !== task.reviewRevision || !task.validation.snapshot.valid) {
     throw new Error('当前审核版本尚未通过确定性校验');
   }
-  if (task.fields.some((field) => field.lowConfidence) && !acknowledge) throw new Error('存在低置信度字段，必须人工确认');
+  if (
+    payload.expectedVersion !== task.version
+    || payload.expectedReviewRevision !== task.reviewRevision
+    || payload.expectedValidationSnapshotHash !== task.validation.snapshotHash
+    || payload.expectedPayloadHash !== task.validation.snapshot.candidatePayloadHash
+  ) throw new Error('OCR 审核内容或校验快照已经变化');
+  const warningIds = task.validation.snapshot.warnings.map((warning) => warning.issueId).sort();
+  const acknowledgedWarningIds = [...payload.acknowledgedWarningIds].sort();
+  if (JSON.stringify(warningIds) !== JSON.stringify(acknowledgedWarningIds)) throw new Error('必须逐项确认当前校验警告');
   if (task.fields.some((field) => field.isRequired && (field.missing || field.normalizedValue == null))) throw new Error('必填字段缺失');
   const recordId = `mock-ocr-record-${Date.now()}`;
   task.status = 'confirmed';
   task.generatedRecordId = recordId;
   task.confirmedBy = user.name;
   task.confirmedAt = new Date().toISOString();
+  task.approval = {
+    reviewRevision: task.reviewRevision,
+    validationSnapshotHash: task.validation.snapshotHash,
+    policyVersion: 'finance-ocr-approval/1.0-pending-h10',
+    snapshotHash: mockHash({ id, reviewRevision: task.reviewRevision, approvedBy: user.id }),
+    requestKeyHash: mockHash({ id, reviewRevision: task.reviewRevision }),
+    snapshot: { schemaVersion: 'ocr-approval/1.0', selfApproval: false },
+  };
   task.version += 1;
   task.updatedAt = task.confirmedAt;
   return { task: clone(task), record: mockRecord(task, recordId, user.name), alreadyConfirmed: false };

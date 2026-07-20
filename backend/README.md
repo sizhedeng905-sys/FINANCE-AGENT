@@ -84,13 +84,14 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-18, R7.2 engineering implementation):
+Current verification baseline (2026-07-20, M5.1 OCR approval hardening):
 
-- Backend build and Prisma validation pass with 28 applied migrations and no pending migration.
-- Jest: 37/37 suites and 342/342 tests.
-- Real PostgreSQL integration: 7/7 suites and 84/84 tests, including step-up replay resistance, retention lease/legal-hold recovery, API-to-Worker handoff, 30,196/49,999-row final posting, and finance UAT reconciliation.
+- Backend build and Prisma validation pass. Migration-path verification installs all 36 migrations on an empty database and upgrades the 35-migration predecessor to the current schema.
+- Jest: 46/46 suites and 403/403 tests.
+- M5.1 targeted PostgreSQL integration passes the OCR approval/commit scenario and project-template serialization scenario. The previous full PostgreSQL baseline remains 7/7 suites and 92/92 tests; it has not yet been rerun after M5.1.
 - Root Playwright acceptance: 17/17 tests.
-- Root and backend dependency audits: 0 vulnerabilities.
+- Backend and frontend production builds pass.
+- Root and backend production dependency audits report 0 vulnerabilities.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
@@ -98,6 +99,7 @@ Current verification baseline (2026-07-18, R7.2 engineering implementation):
 - B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
 - B8-09 adds split API/Worker roles, Redis limiting/heartbeat, S3 storage and signed downloads, W3C/OTLP tracing, an 18-service TLS Staging topology, immutable runtime DB grants, linked backups, restore drills, and application/data/model rollback scripts.
 - R4 upgrades linked backups to `backup-manifest/1.0`, streamed per-object SHA-256, database/object reference checks, isolated database/bucket restore, fault injection, and one-time H13/H14 live-restore authorization. Local synthetic object and empty restore paths pass; target Linux restore, formal RPO/RTO, encryption/offsite retention, and live cutover remain `blocked_external`.
+- M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -139,7 +141,7 @@ Current verification baseline (2026-07-18, R7.2 engineering implementation):
 - Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
 - Excel confirmation: `POST /api/import-tasks/:id/confirm`; field suggestions: `/api/field-suggestions`
 - OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
-- OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/confirm`
+- OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/revalidate`, `POST /api/ocr-tasks/:id/confirm`. Confirmation requires expected task/review/validation/payload versions, exact warning IDs, and `Idempotency-Key`; the uploader cannot approve their own task.
 - Model runtime metadata: `GET /api/model-runtime/deployments`, `/routes`, `/health`
 - Retention inventory: `GET /api/retention/classes`, `GET/POST /api/retention/runs`, `GET/POST /api/retention/legal-holds`
 - Swagger UI: `/api/docs`
@@ -302,7 +304,7 @@ Completed:
 - Realization batch B: token revocation, authentication audit/rate limiting, boss account protection, request IDs, and frontend real auth/user APIs.
 - Realization batch C: all ordered frontend domains through the boss AI assistant use explicit Mock/API repositories, with no API-to-Mock fallback.
 - Realization batch D: guarded PostgreSQL test initialization, 21 integration tests, 9 Playwright E2E tests, deterministic cleanup, and a PostgreSQL CI job.
-- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, partial-row validation, and idempotent transactional import.
+- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, historical partial-row validation, and idempotent transactional import. M5.2 will replace partial posting with whole-batch fail-closed approval.
 - Phase 10 / realization batch F: provider-neutral OCR tasks, PDF preprocessing checks, field evidence/confidence, human corrections, retry, and idempotent record generation.
 - Realization batch G: model deployment/route registry, provider contracts, JSON Schema validation, health checks, timeout/retry/circuit breaker and bounded concurrency.
 - Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
@@ -312,6 +314,7 @@ Completed:
 - B8-01 to B8-07: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, strict financial Claim grounding, security boundaries, and an authenticated GPU/model control plane.
 - B8-08 engineering preparation: privacy-safe UAT manifests, integer-cent PostgreSQL reconciliation, issue tracking, and non-overwriting human signoff templates; human acceptance remains external.
 - B8-09 engineering implementation: split API/Worker runtime, Redis coordination, private S3 storage, PostgreSQL TLS/least privilege, centralized observability, linked backups, restore drills, and guarded application/data/model rollback; target-environment execution remains external.
+- M5.1 OCR approval hardening: immutable approval snapshots, stable validation issue IDs, exact warning acknowledgement, uploader self-approval rejection, final transaction authorization, optimistic concurrency, and request-body-bound idempotent posting.
 
 Explicitly deferred by the user:
 
@@ -329,6 +332,7 @@ Completed audit follow-up:
 
 Deployment or data work still required:
 
+- M5.2 must remove Excel `valid_rows_only` posting. Under H01, every valid business detail row creates one formal record, subtotal/total rows are not posted again, and any blocking or ambiguous row prevents the whole batch from becoming formally visible until finance resolves and revalidates it.
 - Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
 - GPU container startup, 30-minute residency, OOM/latency observation, text/VL/Embedding switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
 - Object storage, a running ClamAV service, production backup/restore, and retention jobs.

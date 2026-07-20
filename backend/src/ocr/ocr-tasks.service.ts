@@ -2,25 +2,31 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
-  ServiceUnavailableException
+  ServiceUnavailableException,
+  UnauthorizedException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   BusinessRecordStatus,
   FieldDefinition,
+  FileScanStatus,
   FieldType,
   OcrAttemptStatus,
   OcrTaskStatus,
   Prisma,
   ProjectStatus,
   RawFile,
+  RawFileStatus,
   RecordSourceType,
-  SemanticType
+  SemanticType,
+  UserRole,
+  UserStatus
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
@@ -34,6 +40,7 @@ import { IdempotencyService } from '../idempotency/idempotency.service';
 import { LedgerEventsService } from '../ledger-events/ledger-events.service';
 import { ModelExecutionGateService } from '../model-runtime/model-execution-gate.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { financialPolicySnapshot } from '../record-policy/financial-policy-baseline';
 import { RecordPolicyService } from '../record-policy/record-policy.service';
 import { ConfirmOcrTaskDto } from './dto/confirm-ocr-task.dto';
 import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
@@ -74,6 +81,10 @@ type OcrValidationIssue = {
 };
 const MAX_OCR_RESULT_BYTES = 2 * 1024 * 1024;
 export const OCR_DETERMINISTIC_VALIDATION_RULE_VERSION = 'ocr-deterministic-validation/1.0';
+export const OCR_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'ocr-approval/1.0';
+export const OCR_APPROVAL_POLICY_VERSION = 'finance-ocr-approval/1.0-pending-h10';
+export const OCR_APPROVAL_AUTHORIZATION_POLICY_VERSION = 'finance-ocr-approval-authz/1.0';
+export const OCR_FIELD_TRANSFORM_REGISTRY_VERSION = 'ocr-field-normalization/1.0';
 
 @Injectable()
 export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
@@ -930,28 +941,41 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       idempotencyKey,
       { ocrTaskId: id, ...dto }
     );
+    const persistenceKey = this.idempotency.persistenceKey(scope);
+    if (!persistenceKey) throw new BadRequestException('Idempotency-Key is required for OCR approval');
+    const approvalRequestKeyHash = canonicalJsonSha256({ persistenceKey });
     return this.prisma.$transaction((tx) => this.idempotency.execute(tx, scope, 201, async () => {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
       if (task.status === OcrTaskStatus.confirmed && task.generatedRecordId) {
-        return {
-          task: toOcrTask(task),
-          record: toBusinessRecord(await this.findRecordOrThrow(task.generatedRecordId, tx)),
-          alreadyConfirmed: true
-        };
+        throw new ConflictException({
+          message: 'OCR task has already been committed',
+          data: { reason: 'OCR_TASK_ALREADY_COMMITTED', generatedRecordId: task.generatedRecordId }
+        });
       }
       if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('OCR 结果尚未进入人工确认状态');
+      if (dto.expectedVersion !== task.version || dto.expectedReviewRevision !== task.reviewRevision) {
+        throw new ConflictException({
+          message: 'OCR review payload changed; refresh before approval',
+          data: { reason: 'OCR_APPROVAL_VERSION_CONFLICT', version: task.version, reviewRevision: task.reviewRevision }
+        });
+      }
       const actualAttempt = task.attempts.find((attempt) => attempt.status === OcrAttemptStatus.succeeded);
       if (!actualAttempt) throw new ConflictException('OCR 结果缺少可追溯的成功 attempt');
 
       await acquireProjectWriteLock(tx, task.projectId);
-
-      const candidates = this.candidateArray(task.fieldCandidates);
-      const unresolved = candidates.filter((candidate) => candidate.lowConfidence || candidate.missing || candidate.validationError);
-      if (unresolved.length > 0 && dto.acknowledgeLowConfidence !== true) {
-        throw new ConflictException('存在低置信度、缺失或格式异常字段，必须人工确认或纠错');
+      if (
+        task.rawFile.isVoided
+        || task.rawFile.scanStatus !== FileScanStatus.clean
+        || task.rawFile.status === RawFileStatus.failed
+        || task.rawFile.status === RawFileStatus.voided
+        || task.rawFile.relatedProjectId !== task.projectId
+      ) {
+        throw new ConflictException({
+          message: 'OCR source file is no longer eligible for approval',
+          data: { reason: 'OCR_SOURCE_SECURITY_STATE_CHANGED' }
+        });
       }
-      const values = this.validateCandidates(candidates, task.template.templateFields, task.rawFileId);
       const template = await this.recordPolicy.getWritableTemplate(
         tx,
         task.projectId,
@@ -961,6 +985,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       if (template.version !== task.templateVersion) {
         throw new ConflictException('OCR 任务引用的模板版本已变化，请重新创建任务');
       }
+      const approver = await this.assertCurrentFinanceApprover(tx, task, actor);
+      const approvedValidation = this.assertApprovalValidation(task, dto);
+      this.reviewEvidenceIndex(task);
+
+      const candidates = this.candidateArray(task.fieldCandidates);
+      const values = this.validateCandidates(candidates, task.template.templateFields, task.rawFileId);
       const policyValues = values.map((value) => ({ fieldId: value.field.id, value: value.value }));
       const canonical = this.recordPolicy.resolveCanonicalValues(
         template,
@@ -969,6 +999,89 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       );
 
       const now = new Date();
+      const normalizedOutputHash = canonicalJsonSha256({
+        projectId: task.projectId,
+        templateId: task.templateId,
+        templateVersion: task.templateVersion,
+        recordType: task.template.recordType,
+        accountingDirection: canonical.accountingDirection,
+        dataLayer: template.dataLayer,
+        recordDate: canonical.recordDate.toISOString().slice(0, 10),
+        amount: canonical.amount.toFixed(2),
+        category: canonical.category,
+        values: values.map(({ field, value }) => ({ fieldId: field.id, fieldKey: field.fieldKey, value }))
+      });
+      const approvalCore = {
+        schemaVersion: OCR_APPROVAL_SNAPSHOT_SCHEMA_VERSION,
+        taskId: task.id,
+        taskVersion: task.version,
+        projectId: task.projectId,
+        source: {
+          rawFileId: task.rawFileId,
+          rawFileSha256: task.rawFile.sha256,
+          sourceSha256: task.sourceSha256,
+          irSchemaVersion: task.irSchemaVersion,
+          irHash: task.irHash,
+          coordinateVersion: task.coordinateVersion,
+          preprocessingVersion: task.preprocessingVersion
+        },
+        template: {
+          templateId: task.templateId,
+          templateVersion: task.templateVersion,
+          templateContentHash: approvedValidation.templateContentHash,
+          templateSnapshotHash: canonicalJsonSha256(task.templateSnapshot ?? null)
+        },
+        provider: {
+          attemptId: actualAttempt.id,
+          attemptNo: actualAttempt.attemptNo,
+          provider: actualAttempt.provider,
+          modelName: actualAttempt.modelName,
+          modelVersion: actualAttempt.modelVersion ?? null,
+          endpointSnapshot: actualAttempt.endpointSnapshot ?? null,
+          providerConfigHash: actualAttempt.providerConfigHash ?? null
+        },
+        aiSuggestion: {
+          appliedToFormalData: false,
+          promptVersion: null,
+          outputSchemaVersion: null
+        },
+        review: {
+          reviewRevision: task.reviewRevision,
+          validationSnapshotHash: task.validationSnapshotHash,
+          validationRuleVersion: task.validationRuleVersion,
+          candidatePayloadHash: approvedValidation.candidatePayloadHash,
+          acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds
+        },
+        versions: {
+          transformRegistryVersion: OCR_FIELD_TRANSFORM_REGISTRY_VERSION,
+          approvalPolicyVersion: OCR_APPROVAL_POLICY_VERSION,
+          authorizationPolicyVersion: OCR_APPROVAL_AUTHORIZATION_POLICY_VERSION,
+          financialPolicy: financialPolicySnapshot()
+        },
+        approval: {
+          approvedByUserId: approver.id,
+          approvedByUsername: approver.username,
+          approvedAt: now.toISOString(),
+          selfApproval: false,
+          requestKeyHash: approvalRequestKeyHash
+        },
+        output: {
+          normalizedOutputHash,
+          recordCount: 1
+        }
+      };
+      const approvalSnapshot = {
+        ...approvalCore,
+        snapshotHash: canonicalJsonSha256(approvalCore)
+      };
+      const baseConfirmationSnapshot = this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
+        projectId: task.projectId,
+        sourceType: RecordSourceType.ocr,
+        sourceId: task.id,
+        confirmedAt: now,
+        confirmedBy: approver.username,
+        attachments: [task.rawFileId]
+      });
       const record = await tx.businessRecord.create({
         data: {
           projectId: task.projectId,
@@ -987,15 +1100,18 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             providerConfigHash: actualAttempt.providerConfigHash ?? 'unknown',
             secretRef: actualAttempt.secretRef ?? 'none',
             attemptNo: actualAttempt.attemptNo,
-            pageCount: task.pageCount
+            pageCount: task.pageCount,
+            approvalSnapshotHash: approvalSnapshot.snapshotHash
           }),
-          confirmationSnapshot: this.recordPolicy.toConfirmationSnapshot(template, canonical, policyValues, {
-            projectId: task.projectId,
-            sourceType: RecordSourceType.ocr,
-            sourceId: task.id,
-            confirmedAt: now,
-            confirmedBy: actor.username,
-            attachments: [task.rawFileId]
+          confirmationSnapshot: this.json({
+            ...baseConfirmationSnapshot,
+            ingestionApproval: {
+              schemaVersion: OCR_APPROVAL_SNAPSHOT_SCHEMA_VERSION,
+              snapshotHash: approvalSnapshot.snapshotHash,
+              validationSnapshotHash: task.validationSnapshotHash,
+              reviewRevision: task.reviewRevision,
+              normalizedOutputHash
+            }
           }),
           recordType: task.template.recordType,
           accountingDirection: canonical.accountingDirection,
@@ -1009,8 +1125,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           sourceId: task.id,
           status: BusinessRecordStatus.confirmed,
           attachments: [task.rawFileId],
-          createdBy: actor.username,
-          confirmedBy: actor.username,
+          createdBy: approver.username,
+          confirmedBy: approver.username,
           confirmedAt: now,
           values: {
             create: values.map(({ field, value }) => this.buildRecordValue(field, value))
@@ -1022,34 +1138,61 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           values: { include: { field: true }, orderBy: { createdAt: 'asc' } }
         }
       });
-      await tx.ocrTask.update({
-        where: { id },
+      const committed = await tx.ocrTask.updateMany({
+        where: {
+          id,
+          status: OcrTaskStatus.pending_confirm,
+          version: dto.expectedVersion,
+          reviewRevision: dto.expectedReviewRevision,
+          validationSnapshotHash: dto.expectedValidationSnapshotHash
+        },
         data: {
           status: OcrTaskStatus.confirmed,
-          confirmedBy: actor.id,
+          confirmedBy: approver.id,
           confirmedAt: now,
           generatedRecordId: record.id,
-          errorMessage: null
+          approvalSnapshot: this.json(approvalSnapshot),
+          approvalSnapshotHash: approvalSnapshot.snapshotHash,
+          approvalReviewRevision: task.reviewRevision,
+          approvalValidationHash: task.validationSnapshotHash,
+          approvalPolicyVersion: OCR_APPROVAL_POLICY_VERSION,
+          approvalRequestKeyHash,
+          errorMessage: null,
+          version: { increment: 1 }
         }
       });
-      await this.auditLogs.write(tx, actor, 'ocr_task.confirm', 'ocr_task', id, {
+      if (committed.count !== 1) {
+        throw new ConflictException({
+          message: 'OCR approval lost an optimistic concurrency race',
+          data: { reason: 'OCR_APPROVAL_CONCURRENT_CONFLICT' }
+        });
+      }
+      await this.auditLogs.write(tx, approver, 'ocr_task.confirm', 'ocr_task', id, {
         generatedRecordId: record.id,
-        acknowledgedFields: unresolved.map((candidate) => candidate.fieldId)
+        reviewRevision: task.reviewRevision,
+        validationSnapshotHash: task.validationSnapshotHash,
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        normalizedOutputHash,
+        acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds,
+        selfApproval: false
       }, context);
-      await this.auditLogs.write(tx, actor, 'business_record.create_from_ocr', 'business_record', record.id, {
+      await this.auditLogs.write(tx, approver, 'business_record.create_from_ocr', 'business_record', record.id, {
         ocrTaskId: id,
-        rawFileId: task.rawFileId
+        rawFileId: task.rawFileId,
+        approvalSnapshotHash: approvalSnapshot.snapshotHash
       }, context);
-      await this.ledgerEvents.write(tx, actor, 'ocr_task_confirmed', 'ocr_task', id, {
+      await this.ledgerEvents.write(tx, approver, 'ocr_task_confirmed', 'ocr_task', id, {
         generatedRecordId: record.id,
-        rawFileId: task.rawFileId
+        rawFileId: task.rawFileId,
+        approvalSnapshotHash: approvalSnapshot.snapshotHash
       });
-      await this.ledgerEvents.write(tx, actor, 'business_record_created', 'business_record', record.id, {
+      await this.ledgerEvents.write(tx, approver, 'business_record_created', 'business_record', record.id, {
         sourceType: RecordSourceType.ocr,
         ocrTaskId: id,
         rawFileId: task.rawFileId,
         accountingDirection: canonical.accountingDirection,
-        amount: canonical.amount.toFixed(2)
+        amount: canonical.amount.toFixed(2),
+        approvalSnapshotHash: approvalSnapshot.snapshotHash
       }, `ocr_task:${id}:business_record_created`);
       return {
         task: toOcrTask(await this.findDetailOrThrow(id, tx)),
@@ -1312,6 +1455,168 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       .some((name) => this.normalizeName(name) === source));
   }
 
+  private async assertCurrentFinanceApprover(
+    tx: Prisma.TransactionClient,
+    task: OcrTaskDetail,
+    actor: CurrentUser
+  ): Promise<CurrentUser> {
+    const current = await tx.user.findUnique({ where: { id: actor.id } });
+    if (
+      !current
+      || current.status !== UserStatus.active
+      || current.tokenVersion !== actor.tokenVersion
+      || current.username !== actor.username
+    ) {
+      throw new UnauthorizedException({
+        message: 'Current identity changed before OCR approval',
+        data: { reason: 'OCR_APPROVER_IDENTITY_CHANGED' }
+      });
+    }
+    if (current.role !== UserRole.finance || actor.role !== UserRole.finance) {
+      throw new ForbiddenException({
+        message: 'Current user no longer has finance approval permission',
+        data: { reason: 'OCR_APPROVER_ROLE_REVOKED' }
+      });
+    }
+    if (task.uploadedBy === current.id) {
+      throw new ForbiddenException({
+        message: 'The uploader cannot approve the same OCR task',
+        data: {
+          reason: 'OCR_SELF_APPROVAL_FORBIDDEN',
+          decisionId: 'H10',
+          policyVersion: OCR_APPROVAL_POLICY_VERSION
+        }
+      });
+    }
+    return {
+      ...actor,
+      username: current.username,
+      name: current.name,
+      role: current.role,
+      department: current.department ?? '',
+      phone: current.phone ?? '',
+      status: current.status,
+      tokenVersion: current.tokenVersion
+    };
+  }
+
+  private assertApprovalValidation(task: OcrTaskDetail, dto: ConfirmOcrTaskDto) {
+    if (
+      task.validationRevision !== task.reviewRevision
+      || task.validationSnapshotHash !== dto.expectedValidationSnapshotHash
+      || task.validationRuleVersion !== OCR_DETERMINISTIC_VALIDATION_RULE_VERSION
+      || !task.validatedAt
+      || !task.validationSnapshot
+      || typeof task.validationSnapshot !== 'object'
+      || Array.isArray(task.validationSnapshot)
+    ) {
+      throw new ConflictException({
+        message: 'Current OCR review revision has no valid deterministic validation snapshot',
+        data: { reason: 'OCR_VALIDATION_SNAPSHOT_STALE' }
+      });
+    }
+
+    const snapshot = task.validationSnapshot as Record<string, Prisma.JsonValue>;
+    const { snapshotHash: embeddedHash, ...snapshotCore } = snapshot;
+    const currentCandidateHash = canonicalJsonSha256(this.candidateArray(task.fieldCandidates));
+    const currentTemplateContentHash = this.ocrTemplateContentHash(task);
+    const snapshotIsCurrent = (
+      typeof embeddedHash === 'string'
+      && embeddedHash === task.validationSnapshotHash
+      && canonicalJsonSha256(snapshotCore) === task.validationSnapshotHash
+      && snapshot.schemaVersion === 'ocr-validation/1.0'
+      && snapshot.taskId === task.id
+      && snapshot.projectId === task.projectId
+      && snapshot.sourceSha256 === task.sourceSha256
+      && snapshot.irSchemaVersion === task.irSchemaVersion
+      && snapshot.irHash === task.irHash
+      && snapshot.templateId === task.templateId
+      && snapshot.templateVersion === task.templateVersion
+      && snapshot.templateContentHash === currentTemplateContentHash
+      && snapshot.reviewRevision === task.reviewRevision
+      && snapshot.candidatePayloadHash === currentCandidateHash
+      && snapshot.candidatePayloadHash === dto.expectedPayloadHash
+      && snapshot.validationRuleVersion === OCR_DETERMINISTIC_VALIDATION_RULE_VERSION
+      && snapshot.valid === true
+      && Array.isArray(snapshot.blockingErrors)
+      && snapshot.blockingErrors.length === 0
+      && Array.isArray(snapshot.warnings)
+    );
+    if (!snapshotIsCurrent) {
+      throw new ConflictException({
+        message: 'OCR source, template, review values, or validation hash changed after revalidation',
+        data: { reason: 'OCR_APPROVAL_PAYLOAD_STALE' }
+      });
+    }
+
+    const warningIds = (snapshot.warnings as Prisma.JsonArray).map((warning) => {
+      if (!warning || typeof warning !== 'object' || Array.isArray(warning)) return null;
+      const value = warning as Prisma.JsonObject;
+      const issueId = value.issueId;
+      const code = value.code;
+      const fieldId = value.fieldId;
+      const message = value.message;
+      const evidenceRefs = value.evidenceRefs;
+      if (
+        typeof issueId !== 'string'
+        || typeof code !== 'string'
+        || (fieldId !== null && typeof fieldId !== 'string')
+        || typeof message !== 'string'
+        || !Array.isArray(evidenceRefs)
+        || !evidenceRefs.every((item) => typeof item === 'string')
+      ) return null;
+      const expectedIssueId = this.validationIssueId('warning', {
+        code,
+        fieldId: fieldId as string | null,
+        message,
+        evidenceRefs: evidenceRefs as string[]
+      });
+      return issueId === expectedIssueId ? issueId : null;
+    });
+    if (warningIds.some((issueId) => issueId === null)) {
+      throw new ConflictException({
+        message: 'OCR validation warnings do not have stable acknowledgement IDs',
+        data: { reason: 'OCR_WARNING_ID_INVALID' }
+      });
+    }
+    const requiredWarningIds = [...warningIds as string[]].sort();
+    const acknowledgedWarningIds = [...dto.acknowledgedWarningIds].sort();
+    if (
+      requiredWarningIds.length !== acknowledgedWarningIds.length
+      || requiredWarningIds.some((issueId, index) => issueId !== acknowledgedWarningIds[index])
+    ) {
+      throw new ConflictException({
+        message: 'Every current OCR validation warning must be explicitly acknowledged',
+        data: { reason: 'OCR_WARNING_ACKNOWLEDGEMENT_MISMATCH', requiredWarningIds }
+      });
+    }
+
+    return {
+      candidatePayloadHash: currentCandidateHash,
+      templateContentHash: currentTemplateContentHash,
+      acknowledgedWarningIds
+    };
+  }
+
+  private ocrTemplateContentHash(task: OcrTaskDetail) {
+    return canonicalJsonSha256(task.template.templateFields
+      .filter((item) => item.isVisible && item.field.isActive)
+      .map((item) => ({
+        fieldId: item.fieldId,
+        fieldKey: item.field.fieldKey,
+        fieldType: item.field.fieldType,
+        required: item.isRequired
+      })));
+  }
+
+  private validationIssueId(kind: 'error' | 'warning', issue: OcrValidationIssue) {
+    return `${kind}:${canonicalJsonSha256({
+      code: issue.code,
+      fieldId: issue.fieldId,
+      evidenceRefs: [...issue.evidenceRefs].sort()
+    })}`;
+  }
+
   private buildValidationSnapshot(task: OcrTaskDetail, validatedBy: string) {
     const candidates = this.candidateArray(task.fieldCandidates);
     const evidenceIndex = this.reviewEvidenceIndex(task);
@@ -1438,6 +1743,14 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    const identifiedBlockingErrors = blockingErrors.map((issue) => ({
+      ...issue,
+      issueId: this.validationIssueId('error', issue)
+    }));
+    const identifiedWarnings = warnings.map((issue) => ({
+      ...issue,
+      issueId: this.validationIssueId('warning', issue)
+    }));
     const core = {
       schemaVersion: 'ocr-validation/1.0',
       taskId: task.id,
@@ -1447,20 +1760,15 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       irHash: task.irHash,
       templateId: task.templateId,
       templateVersion: task.templateVersion,
-      templateContentHash: canonicalJsonSha256(activeFields.map((item) => ({
-        fieldId: item.fieldId,
-        fieldKey: item.field.fieldKey,
-        fieldType: item.field.fieldType,
-        required: item.isRequired
-      }))),
+      templateContentHash: this.ocrTemplateContentHash(task),
       reviewRevision: task.reviewRevision,
       candidatePayloadHash: canonicalJsonSha256(candidates),
       validationRuleVersion: OCR_DETERMINISTIC_VALIDATION_RULE_VERSION,
       validatedBy,
-      blockingErrors,
-      warnings,
+      blockingErrors: identifiedBlockingErrors,
+      warnings: identifiedWarnings,
       validatedValues,
-      valid: blockingErrors.length === 0
+      valid: identifiedBlockingErrors.length === 0
     };
     return { ...core, snapshotHash: canonicalJsonSha256(core) };
   }

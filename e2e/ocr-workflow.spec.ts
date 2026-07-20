@@ -4,6 +4,7 @@ import {
   API_FRONTEND_URL,
   isApiResponse,
   login,
+  logout,
   readEnvelope,
   selectOption
 } from './support/app';
@@ -24,7 +25,13 @@ interface OcrTaskDto {
   }>;
   validation: null | {
     reviewRevision: number;
-    snapshot: { valid: boolean; blockingErrors: unknown[] };
+    snapshotHash: string;
+    snapshot: {
+      valid: boolean;
+      candidatePayloadHash: string;
+      blockingErrors: unknown[];
+      warnings: Array<{ issueId: string }>;
+    };
   };
 }
 
@@ -125,7 +132,21 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   await page.getByRole('button', { name: '重新校验' }).click();
   const revalidated = await readEnvelope<OcrTaskDto>(await revalidateResponse);
   expect(revalidated.data.validation).toMatchObject({ reviewRevision: 1, snapshot: { valid: true, blockingErrors: [] } });
-  await expect(confirmButton).toBeEnabled();
+  await expect(page.getByText('上传者不能自审批')).toBeVisible();
+  await expect(confirmButton).toBeDisabled();
+
+  const usersResponse = await page.request.get('http://127.0.0.1:3101/api/users?page=1&pageSize=100&role=finance');
+  expect(usersResponse.ok()).toBeTruthy();
+  const usersEnvelope = await usersResponse.json() as {
+    code: number;
+    data: { items: Array<{ username: string; status: string }> };
+  };
+  const alternateFinance = usersEnvelope.data.items.find((user) => user.username !== 'finance' && user.status === 'active');
+  expect(alternateFinance, 'a second active finance account is required for separation of duties').toBeTruthy();
+  await logout(page);
+  await login(page, alternateFinance!.username, '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/ocr/${created.data.id}`);
+  await expect(page.getByRole('button', { name: '确认并生成经营记录' })).toBeEnabled({ timeout: 30_000 });
 
   const confirmResponse = page.waitForResponse((response) => isApiResponse(
     response,

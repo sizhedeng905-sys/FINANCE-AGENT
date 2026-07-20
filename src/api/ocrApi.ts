@@ -1,6 +1,7 @@
 import { runtimeConfig } from '@/config/runtime';
 import type {
   CorrectOCRTaskPayload,
+  ConfirmOCRTaskPayload,
   CreateOCRTaskPayload,
   OCRConfirmResult,
   OCRAiSuggestionResult,
@@ -102,14 +103,15 @@ export function requestOCRAiSuggestions(id: string): Promise<OCRAiSuggestionResu
     : mockRequestOCRAiSuggestions(id);
 }
 
-export function confirmOCRTask(id: string, acknowledgeLowConfidence: boolean): Promise<OCRConfirmResult> {
+export function confirmOCRTask(id: string, payload: ConfirmOCRTaskPayload): Promise<OCRConfirmResult> {
+  const approvalKey = `ocr-confirm-${id}-${payload.expectedReviewRevision}-${payload.expectedValidationSnapshotHash.slice(0, 24)}`;
   return runtimeConfig.dataMode === 'api'
     ? httpClient.post<OCRConfirmResult>(
       `/ocr-tasks/${encodeURIComponent(id)}/confirm`,
-      { acknowledgeLowConfidence },
-      { headers: { 'Idempotency-Key': idempotencyKey('ocr-confirm') } },
+      payload,
+      { headers: { 'Idempotency-Key': approvalKey } },
     )
-    : mockConfirmOCRTask(id, acknowledgeLowConfidence);
+    : mockConfirmOCRTask(id, payload);
 }
 
 export function retryOCRTask(id: string): Promise<OCRTask> {

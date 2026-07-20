@@ -6854,8 +6854,32 @@ describe('real PostgreSQL integration', () => {
         .send({ username, password: '123456' })
         .expect(200);
       return [username, response.body.data.accessToken as string] as const;
-    }))) as Record<(typeof usernames)[number], string>;
+    }))) as Record<string, string>;
     const suffix = Date.now().toString(36);
+    const alternateFinance = await prisma.user.findFirstOrThrow({
+      where: { username: { not: 'finance' }, role: UserRole.finance, status: UserStatus.active },
+      orderBy: { createdAt: 'asc' }
+    });
+    const alternateFinanceLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: alternateFinance.username, password: '123456' })
+      .expect(200);
+    tokens.financeApprover = alternateFinanceLogin.body.data.accessToken as string;
+    const secondApprover = await prisma.user.create({
+      data: {
+        username: `${TEST_USER_PREFIX}ocr_approver_${suffix}`,
+        passwordHash: await bcrypt.hash('123456', 10),
+        name: 'Synthetic OCR second approver',
+        role: UserRole.finance,
+        status: UserStatus.active,
+        department: 'Synthetic finance'
+      }
+    });
+    const secondApproverLogin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ username: secondApprover.username, password: '123456' })
+      .expect(200);
+    tokens.financeApprover2 = secondApproverLogin.body.data.accessToken as string;
     const taskIds: string[] = [];
     const recordIds: string[] = [];
     const rawFileIds: string[] = [];
@@ -7062,16 +7086,23 @@ describe('real PostgreSQL integration', () => {
       });
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(0);
 
+      const unvalidatedApprovalPayload = {
+        expectedVersion: recognized.body.data.version,
+        expectedReviewRevision: 0,
+        expectedValidationSnapshotHash: '0'.repeat(64),
+        expectedPayloadHash: '0'.repeat(64),
+        acknowledgedWarningIds: []
+      };
       await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/confirm`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .send({ acknowledgeLowConfidence: true })
+        .send(unvalidatedApprovalPayload)
         .expect(400);
       await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('Authorization', `Bearer ${tokens.financeApprover}`)
         .set('Idempotency-Key', `integration-ocr-confirm-${suffix}`)
-        .send({ acknowledgeLowConfidence: false })
+        .send(unvalidatedApprovalPayload)
         .expect(409);
 
       const initialValidation = await request(app.getHttpServer())
@@ -7098,6 +7129,23 @@ describe('real PostgreSQL integration', () => {
           }
         }
       });
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${tokens.financeApprover}`)
+        .set('Idempotency-Key', `integration-ocr-warning-ack-${suffix}`)
+        .send({
+          expectedVersion: initialValidation.body.data.version,
+          expectedReviewRevision: 0,
+          expectedValidationSnapshotHash: initialValidation.body.data.validation.snapshotHash,
+          expectedPayloadHash: initialValidation.body.data.validation.snapshot.candidatePayloadHash,
+          acknowledgedWarningIds: []
+        })
+        .expect(409)
+        .expect(({ body }) => expect(body.data).toMatchObject({
+          reason: 'OCR_WARNING_ACKNOWLEDGEMENT_MISMATCH',
+          requiredWarningIds: [expect.stringMatching(/^warning:[a-f0-9]{64}$/)]
+        }));
+      expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(0);
 
       const corrected = await request(app.getHttpServer())
         .put(`/api/ocr-tasks/${taskId}/corrections`)
@@ -7195,27 +7243,91 @@ describe('real PostgreSQL integration', () => {
         })
         .expect(409);
 
-      const confirm = (key: string) => request(app.getHttpServer())
+      const approvalPayload = {
+        expectedVersion: finalValidation.body.data.version,
+        expectedReviewRevision: 1,
+        expectedValidationSnapshotHash: finalValidation.body.data.validation.snapshotHash as string,
+        expectedPayloadHash: finalValidation.body.data.validation.snapshot.candidatePayloadHash as string,
+        acknowledgedWarningIds: (finalValidation.body.data.validation.snapshot.warnings as Array<{ issueId: string }>)
+          .map((warning) => warning.issueId)
+      };
+      await prisma.rawFile.update({
+        where: { id: rawFileId },
+        data: { isVoided: true, status: RawFileStatus.voided, scanStatus: FileScanStatus.failed }
+      });
+      await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/confirm`)
-        .set('Authorization', `Bearer ${tokens.finance}`)
-        .set('Idempotency-Key', key)
-        .send({ acknowledgeLowConfidence: true });
-      const [firstConfirm, secondConfirm] = await Promise.all([
-        confirm(`integration-ocr-confirm-${suffix}-a`),
-        confirm(`integration-ocr-confirm-${suffix}-a`)
-      ]);
-      expect([firstConfirm.status, secondConfirm.status]).toEqual([201, 201]);
-      expect(secondConfirm.body).toEqual(firstConfirm.body);
+        .set('Authorization', `Bearer ${tokens.financeApprover}`)
+        .set('Idempotency-Key', `integration-ocr-voided-source-${suffix}`)
+        .send(approvalPayload)
+        .expect(409)
+        .expect(({ body }) => expect(body.data).toMatchObject({ reason: 'OCR_SOURCE_SECURITY_STATE_CHANGED' }));
+      await prisma.rawFile.update({
+        where: { id: rawFileId },
+        data: { isVoided: false, status: storedFile.status, scanStatus: storedFile.scanStatus }
+      });
       await request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/confirm`)
         .set('Authorization', `Bearer ${tokens.finance}`)
-        .set('Idempotency-Key', `integration-ocr-confirm-${suffix}-a`)
-        .send({ acknowledgeLowConfidence: false })
+        .set('Idempotency-Key', `integration-ocr-self-approval-${suffix}`)
+        .send(approvalPayload)
+        .expect(403)
+        .expect(({ body }) => expect(body.data).toMatchObject({ reason: 'OCR_SELF_APPROVAL_FORBIDDEN' }));
+
+      await prisma.user.update({ where: { id: alternateFinance.id }, data: { status: UserStatus.disabled } });
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${tokens.financeApprover}`)
+        .set('Idempotency-Key', `integration-ocr-disabled-approver-${suffix}`)
+        .send(approvalPayload)
+        .expect(401);
+      await prisma.user.update({ where: { id: alternateFinance.id }, data: { status: UserStatus.active } });
+      await prisma.user.update({ where: { id: secondApprover.id }, data: { role: UserRole.reviewer } });
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${tokens.financeApprover2}`)
+        .set('Idempotency-Key', `integration-ocr-revoked-role-${suffix}`)
+        .send(approvalPayload)
+        .expect(403);
+      await prisma.user.update({ where: { id: secondApprover.id }, data: { role: UserRole.finance } });
+
+      const confirm = (token: string, key: string) => request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', key)
+        .send(approvalPayload);
+      const approvalAttempts = await Promise.all([
+        confirm(tokens.financeApprover, `integration-ocr-confirm-${suffix}-a`),
+        confirm(tokens.financeApprover2, `integration-ocr-confirm-${suffix}-b`)
+      ]);
+      expect(approvalAttempts.map((response) => response.status).sort()).toEqual([201, 409]);
+      const winnerIndex = approvalAttempts.findIndex((response) => response.status === 201);
+      const firstConfirm = approvalAttempts[winnerIndex];
+      const winningApprover = winnerIndex === 0 ? alternateFinance : secondApprover;
+      const winningToken = winnerIndex === 0 ? tokens.financeApprover : tokens.financeApprover2;
+      const winningKey = `integration-ocr-confirm-${suffix}-${winnerIndex === 0 ? 'a' : 'b'}`;
+      const replay = await confirm(winningToken, winningKey).expect(201);
+      expect(replay.body).toEqual(firstConfirm.body);
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${winningToken}`)
+        .set('Idempotency-Key', winningKey)
+        .send({ ...approvalPayload, expectedPayloadHash: 'f'.repeat(64) })
         .expect(409);
       const recordId = firstConfirm.body.data.record.id as string;
       recordIds.push(recordId);
       expect(firstConfirm.body.data).toMatchObject({
-        task: { status: OcrTaskStatus.confirmed, generatedRecordId: recordId },
+        task: {
+          status: OcrTaskStatus.confirmed,
+          generatedRecordId: recordId,
+          approval: {
+            reviewRevision: 1,
+            validationSnapshotHash: approvalPayload.expectedValidationSnapshotHash,
+            policyVersion: 'finance-ocr-approval/1.0-pending-h10',
+            snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            requestKeyHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+          }
+        },
         record: { sourceType: 'ocr', sourceId: taskId, amount: '1299.25', status: 'confirmed' }
       });
       const storedOcrRecord = await prisma.businessRecord.findUniqueOrThrow({ where: { id: recordId } });
@@ -7242,7 +7354,34 @@ describe('real PostgreSQL integration', () => {
         amount: '1299.25',
         sourceType: RecordSourceType.ocr,
         sourceId: taskId,
-        confirmedBy: 'finance'
+        confirmedBy: winningApprover.username,
+        ingestionApproval: {
+          schemaVersion: 'ocr-approval/1.0',
+          snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          validationSnapshotHash: approvalPayload.expectedValidationSnapshotHash,
+          reviewRevision: 1,
+          normalizedOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }
+      });
+      const storedApprovedTask = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      expect(storedApprovedTask).toMatchObject({
+        approvalSnapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        approvalReviewRevision: 1,
+        approvalValidationHash: approvalPayload.expectedValidationSnapshotHash,
+        approvalPolicyVersion: 'finance-ocr-approval/1.0-pending-h10',
+        approvalRequestKeyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        confirmedBy: winningApprover.id
+      });
+      expect(storedApprovedTask.approvalSnapshot).toMatchObject({
+        schemaVersion: 'ocr-approval/1.0',
+        approval: { approvedByUserId: winningApprover.id, selfApproval: false },
+        review: {
+          reviewRevision: 1,
+          validationSnapshotHash: approvalPayload.expectedValidationSnapshotHash,
+          candidatePayloadHash: approvalPayload.expectedPayloadHash
+        },
+        output: { recordCount: 1, normalizedOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+        snapshotHash: storedApprovedTask.approvalSnapshotHash
       });
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { action: 'ocr_task.confirm', resourceId: taskId } })).toBe(1);
