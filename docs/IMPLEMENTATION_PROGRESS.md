@@ -3,7 +3,7 @@
 更新日期：2026-07-20
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。负责人问卷 Q01-Q30 已映射到 H01-H16，但签名、冲突项和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M3.1 已完成，当前继续 M3.2。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。负责人问卷 Q01-Q30 已映射到 H01-H16，H01 已后续明确按每行明细，但签名、执行清单和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M3.1 已完成，当前继续 M3.2。
 
 ## 完成口径
 
@@ -30,7 +30,7 @@
 
 项目负责人已填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`；2026-07-20 已回填 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 0.2-draft。H03/H09/H10 等核心偏好已经记录，H04/H05/H15 的独立证据路径也已选择。
 
-当前仍没有 H 项达到 `Approved`：问卷缺决策人姓名/角色/日期，H01 的勾选与补充文字冲突，H02/H07/H08/H11/H12/H14 缺少执行清单或阈值，H04-H06/H09/H13/H15/H16 缺真实或外部证据。工程实现必须按各项失败关闭行为继续，不能把产品决定写成代码或生产验收已完成。
+当前仍没有 H 项达到 `Approved`：问卷缺决策人姓名/角色/日期；H01 已明确按有效明细行入账，但汇总行样例未给出；H02/H07/H08/H11/H12/H14 缺少执行清单或阈值，H04-H06/H09/H13/H15/H16 缺真实或外部证据。工程实现必须按各项失败关闭行为继续，不能把产品决定写成代码或生产验收已完成。
 
 ## B8 稳定化进度
 

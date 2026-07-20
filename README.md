@@ -37,7 +37,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
 - PR #4 仍为 open Draft，`main <- agent/b8-stable-hardening`，69 commits，mergeable；未执行 merge、Ready、rebase、force push 或关闭旧 PR。
 - 项目负责人已填写 [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md)，Codex 已把 Q01-Q30 映射到 [`docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md`](docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md)。明确决定包括：重复仅提示、逐分分币对账、费用明细为主记录、保守老板回答、四角色边界、本地失败转人工、legal hold 和全门禁后试用。
-- 问卷仍缺决策人姓名/角色/日期，并存在 Q01“整表汇总”与自由文本“按明细入账”的冲突；负数白名单、必填附件模板、对账周期、外部 Provider 清单、目标云资源、RPO/RTO、保留期限和 OCR 阈值也未完整。因此没有 H 项被标记为 `Approved`，相关路径继续失败关闭或要求人工选择。
+- 问卷仍缺决策人姓名/角色/日期；H01 已由项目负责人后续明确为“每个有效明细行一条记录，汇总由程序计算”，但汇总行样例仍缺。负数白名单、必填附件模板、对账周期、外部 Provider 清单、目标云资源、RPO/RTO、保留期限和 OCR 阈值也未完整。因此没有 H 项被标记为 `Approved`，相关路径继续失败关闭或要求人工选择。
 - R1 红灯证明了相对 `/api` 解析、隐式 Mock、镜像模式和浏览器 smoke 缺口；现已强制显式 `api` 构建、产物清单核验、同源 URL 约束、CSP 和真实浏览器写读清理。
 - 本机隔离的 18 服务栈已真实启动并通过 TLS、readiness、四角色登录、错误登录、Metrics 和浏览器 CSP/API smoke；合成项目经 API 软归档，测试容器和卷已删除。该证据不替代 H13/H14 指定的目标环境与恢复演练。
 - R2 已将网关日志从完整 `$request` 改为 `$request_method + $uri`，保留状态/上游状态/耗时/requestId/traceId；应用日志与 trace 的伪签名、Token、Cookie 和换行注入回归通过。
@@ -61,7 +61,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - 正式强制 key 范围、跨来源重复和幂等记录保留仍分别受 H01/H02/H03/H07/H14 约束；工程代码不会把相似业务自动合并或删除。详细矩阵见 [`docs/R6_5_FINANCIAL_WRITE_IDEMPOTENCY_AUDIT_2026-07-18.md`](docs/R6_5_FINANCIAL_WRITE_IDEMPOTENCY_AUDIT_2026-07-18.md)。
 - R6.6 建立 `financial-policy-baseline/1.0`：自动粒度选择、自动冲销/更正、附件主数据和 OCR 自动提交均关闭；新模板/确认快照保存 H01/H02/H07 决策状态，旧记录不回填。2026-07-20 已收到负责人决定草案，但代码基线在冲突、范围和签字关闭前仍保持 `pending_human_decision`。
 - R6.6 保持正式金额只接受正数，但错误明确引用 H02；软作废只改变状态并保留金额、动态值、来源、模板快照和附件，不再把它描述为会计冲销。当前没有更正链、反向分录、关账期或不可变历史 ReportSnapshot。
-- H01 已决定汇总/明细不得双计，但最终粒度答案相互冲突；H02 决定白名单负数、保留历史的财务更正和第一版不关账，但白名单与报表重述仍缺；H07 决定每个费用明细为主记录、多附件、缺必填附件阻断和人工覆盖留痕，但必填模板清单仍缺。实现前继续采用 R6.6 保守行为，详见 [`docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md`](docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md)。
+- H01 已决定每个有效明细行一条记录、汇总由程序计算且汇总/明细不得双计；汇总行真实样例和正式签字仍缺。H02 决定白名单负数、保留历史的财务更正和第一版不关账，但白名单与报表重述仍缺；H07 决定每个费用明细为主记录、多附件、缺必填附件阻断和人工覆盖留痕，但必填模板清单仍缺。实现前继续采用 R6.6 保守行为，详见 [`docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md`](docs/R6_6_H01_H02_H07_BEHAVIOR_MATRIX_2026-07-18.md)。
 - R7.1 修复了新增 `AiCallLog` 在数据库中保存完整问题、工具上下文和原始 Provider 响应的风险；现只保存 `ai-call-audit/1.0` 哈希、大小、工具/字段名、版本和 grounding 计数，完整对话仍留在独立内容区。
 - 新增按 9 类数据盘点的 retention dry-run、PostgreSQL lease/重试/耗尽恢复、active legal hold、匿名证据和 Prometheus queue depth。配置只接受 `disabled|dry-run`，数据库约束强制 `dry_run=true`、`deleted_count=0`；实际天数、删除、hold 释放和备份/Provider 传播继续由 H12/H14 阻断。
 - R7.1 全量门禁为后端 37/37 suites、335/335 tests，PostgreSQL 6/6 suites、78/78 tests，Playwright 17/17，Prisma 空库 26 条和 25→26 升级、前后端 build、615 文件卫生及两套 0 vulnerability 审计。详细证据见 [`docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`](docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md)。
@@ -175,7 +175,7 @@ M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构
 | 重复候选窗口 | `passed` | 0/365 天、UTC、前后边界、跨月/跨年和越界拒绝；结果、异常、audit、ledger 一致，H03 前不自动处置 |
 | 财务阈值 Decimal | `passed` | 规范字符串、按分精确比较、最大值、旧安全整数告警，以及 unsafe numeric/科学计数法字符串/超精度/越界稳定拒绝；全链路不静默舍入 |
 | 财务写入口幂等 | `passed` | 作用域指纹、请求哈希、首次响应重放、改体 409、并发单事实和事务回滚均有单元/PostgreSQL 断言；正式强制范围与保留期仍待 H 门禁 |
-| H01/H02/H07 保守基线 | `passed` | 负责人决定草案已记录，但 H01 有粒度冲突，H02/H07 缺执行清单；自动粒度/冲销/附件主数据/OCR 提交仍关闭，零负数和软作废保留有自动断言 |
+| H01/H02/H07 保守基线 | `passed` | H01 明确按有效明细行入账且汇总不双计，H02/H07 仍缺执行清单；自动汇总行判断/冲销/附件主数据/OCR 提交仍关闭，零负数和软作废保留有自动断言 |
 | Retention dry-run | `engineering_passed` | 新 AI 调用日志只留元数据；9 类盘点、legal hold、双实例 lease、匿名证据和耗尽恢复通过；真实删除由 H12/H14 禁止 |
 | Step-up/SoD 基础设施 | `engineering_passed` | 一次性 action/resource/session grant、并发防重放、身份变化撤销和高风险接口守卫通过；默认关闭，MFA/正式职责分离待 H10 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
@@ -205,7 +205,7 @@ M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构
 | --- | --- | --- | --- |
 | `blocked_external` | 目标服务器、域名、registry、正式 secret 和真实 Staging | 基础设施负责人 | 18 服务固定版本启动，TLS 与 readiness 通过 |
 | `blocked_external` | 真实备份恢复、RPO/RTO 和 rollback | 运维/DBA | release manifest、smoke、恢复和回退记录 |
-| `pending_human_decision` | 入账粒度、负数、冲销、更正、作废和关账 | 财务负责人 | 已签字规则和验收样例 |
+| `pending_human_decision` | 汇总行样例、负数、冲销、更正、作废和关账 | 财务负责人 | 明细粒度已明确；仍需执行清单、已签字规则和验收样例 |
 | `awaiting_human_signoff` | Excel/OCR/手工/工单跨来源重复策略 | 财务与业务负责人 | A-E 信号、前后 3 天、金额逐分一致且仅提示已记录；仍需真实样例和签字 |
 | `pending_human_decision` | MFA、最终权限矩阵、文件下载和外部 AI 数据政策 | 管理层与安全负责人 | 核心偏好已记录；仍缺 MFA 方式、Provider 白名单、资源预算和正式签字 |
 | `awaiting_human_signoff` | 财务逐分对账 | 财务负责人 | 系统与人工汇总差异为 0，或有正式问题单 |
@@ -498,7 +498,7 @@ npm run staging:release
 
 ## 人工最短决策顺序
 
-1. 产品决策问卷和 H01-H16 首轮映射已完成；请先确认 Q01 最终是“每行明细”还是“整表汇总”，并补决策人姓名、角色和日期。
+1. 产品决策问卷和 H01-H16 首轮映射已完成，H01 已明确按每行明细；请补决策人姓名、角色、日期和一两个汇总行样例。
 2. 为关键答案补一两个匿名业务例子，尤其是负数白名单、汇总行、报销必填附件、重复判断和老板指标口径。
 3. 补充外部 Provider 白名单、云资源、RPO/RTO、各类数据保留期和技术资源预算；缺失时系统继续失败关闭或仅 dry-run。
 4. 安排未参与模型调试者完成 17 份 OCR 标注和 5 份盲测，并确定关键字段阈值；安排已选择的外部安全审计服务。
