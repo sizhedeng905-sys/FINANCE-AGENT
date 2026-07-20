@@ -2,11 +2,11 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。AI 映射补充任务 M0-M3.1 已完成复用审计、Excel/OCR 规范 IR、严格输出/白名单、失败关闭、版本化 Prompt Registry、完整调用版本向量，以及项目级精确结构 Mapping Profile；M3.2-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。R8.9 已在本地用固定版本与固定哈希的 Syft 替换需要 entitlement 的 Docker Scout，并将外部扫描移到业务门禁之后；本地全量测试通过，新的 GitHub run 尚待推送验证。AI 映射补充任务 M0-M3.1 已完成复用审计、Excel/OCR 规范 IR、严格输出/白名单、失败关闭、版本化 Prompt Registry、完整调用版本向量，以及项目级精确结构 Mapping Profile；M3.2-M8、目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
-状态快照：2026-07-18
+状态快照：2026-07-20
 
 | 项目 | 当前状态 | 人工判断依据 |
 | --- | --- | --- |
@@ -17,7 +17,7 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.6 本机工程门禁完成；R8.7 最终镜像通过、完整 release 重验受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭；继续不依赖外部镜像的 M0-M8 |
+| R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.7 本机工程门禁完成；R8.9 的 Scout entitlement 修复已本地全量验证、待远端 CI；完整 release 重验仍受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭 |
 | AI 映射补充 M0-M8 | `M0-M3.1_passed / M3.2_next` | M3.1 完成项目/模板/结构/转换/策略精确作用域、Profile 版本/哈希/撤销与跨项目隔离；32 条 migration 空库及 31→32 升级、指纹 8/8 和 PostgreSQL 行为 1/1 通过；Prompt Catalog 空文件仍阻塞逐字目录核对 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -25,13 +25,13 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 - 工作分支：`agent/b8-stable-hardening`
 - Draft PR：[PR #4: B8 stable hardening through model control plane](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
-- Build and acceptance：[run 29634353327](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29634353327)，成功
-- CodeQL：[run 29634353299](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29634353299)，成功
+- 当前 Build and acceptance：[run 29666837943](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29666837943)，因 Docker Scout entitlement 失败；R8.9 修复待推送验证
+- 当前 CodeQL：[run 29666837951](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29666837951)，成功
 - PR 安全 review thread：3/3 已解决且已过期，未解决数量为 0
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境验收和业务签字。
 
-### R0-R8.2 重新审计进展
+### R0-R8.9 重新审计进展
 
 - 已实查分支、HEAD、最近提交、已暂存/未暂存差异、未跟踪资产、Git 忽略边界和 PR #4 状态。
 - 11 个用户未跟踪资产继续保持未暂存、未修改；`.env`、模型、真实数据、上传目录和本地测试输出均被 Git 忽略。
@@ -72,12 +72,13 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R8.2 新增 scheduled/manual Staging release workflow，串联资源预检、完整 release、运行日志泄露检查、同 manifest rollback、API/浏览器 smoke、资源清理和受限证据上传；真实模型另设仅手工触发的 GPU L0 workflow，结束时恢复文本与 OCR 常驻。
 - R8.2 在 Python 3.10.19 隔离容器中完成 OCR 适配器全依赖安装、`pip check` 与 8/8 契约测试；这不代表真实 Paddle 推理或准确率通过。旧 Staging `.env` 的 19 个仓库管理项已安全升级，第二次初始化更新 0 项且不改 secret。完整本地 release 将在干净提交后执行；详见 [`docs/R8_2_CONDITIONAL_ACCEPTANCE_AUTOMATION_REPORT_2026-07-18.md`](docs/R8_2_CONDITIONAL_ACCEPTANCE_AUTOMATION_REPORT_2026-07-18.md)。
 - R8.2 首次完整 release 在构建前暴露 Compose 共享镜像误拉取：`minio-init` 复用本地 backup 镜像却被当作 registry 镜像。现已改为只拉取 5 个固定第三方运行服务，且失败现场无容器/数据写入；该项修复已进入后续重跑验证。
-- R8.2 后续两次构建均被 Docker Hub 的 mutable BuildKit SBOM scanner 认证端点超时阻断，已按纪律标记 `blocked_external` 并停止重试。审计确认该重复产物从未进入发布清单；现保留 BuildKit max provenance，正式 SBOM 统一由逐镜像 Docker Scout SPDX 生成、封存并交给固定 Grype 门禁。
+- R8.2 后续两次构建均被 Docker Hub 的 mutable BuildKit SBOM scanner 认证端点超时阻断，已按纪律标记 `blocked_external` 并停止重试。审计确认该重复产物从未进入发布清单；现保留 BuildKit max provenance，正式 SBOM 由固定版本与固定发布包哈希的 Syft 生成、封存并交给固定 Grype 门禁。
 - R8.5 第三次完整 release 已成功构建、锁定并扫描 18 个镜像，生成 57 份供应链产物和 sealed index；随后真实暴露 PostgreSQL 只监听 `localhost`，本地 socket 健康检查误报就绪，迁移容器以 P1001 失败。现改为监听私有 Compose 网络，并以 migrator 角色、`verify-full` CA 校验和真实 `SELECT 1` 作为健康条件；泛化 host HBA 被移除且非 TLS 明确拒绝。
 - 同次失败栈的日志门禁检出一个 exact secret，但旧证据只含类别，无法在清理后可靠归因。现新增只报告 secret 文件名、服务和次数的安全定位证据；策略单测 4/4，证据不保留值或原日志。失败栈已 `down -v --remove-orphans`，容器、网络和卷残留均为 0；完整 release/restore/rollback 仍待本修复提交后重跑。
 - R8.6 对 R8.5 commit 的 1001.3 秒完整发布已动态证明：18 镜像构建/锁定/扫描、PostgreSQL 远程 TLS、28 条 migration、全部服务健康、API smoke 与浏览器 smoke 均通过；随后因备份进程的 `mc` 默认配置目录不可写，首轮备份失败，restore drill 正确拒绝在没有完整备份时运行。
 - R8.6 干净提交的完整 release 已在 1010.9 秒内通过，sealed manifest 的 config/image identity/SBOM/CVE/migration/smoke/restore drill 七项 gate 全绿；运行日志 718,592 bytes/3,393 行、19 个 secret 为 0 finding。同 manifest rollback 55.6 秒通过保护性备份、四角色登录、readiness/worker、metrics 和二次 smoke，未恢复 live 数据；由于没有更早的合法 manifest，这不冒充跨版本回退。详见 [`docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md`](docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md)。
 - rollback 暴露后端镜像缺少 OpenSSL CLI，Prisma 会猜测旧 binary target。R8.7 新增 build/runtime OpenSSL 3 依赖及 CI 最终镜像探针；本机构建确认 Prisma 6.19.3 选择 `debian-openssl-3.0.x` 且无告警。完整 release 两次均在 node-exporter 获取 Debian security 索引时遇到 502，按规则停止重试并标记 `blocked_external`；未把 migration/rollback 重验写成通过。Compose 清场后本项目容器、网络和卷均为 0。详见 [`docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md`](docs/R8_7_PRISMA_OPENSSL_RUNTIME_REPORT_2026-07-18.md)。
+- R8.9 复现当前 GitHub Build [run 29666837943](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29666837943) 的两个 job 均因 `githubactions not entitled to use Docker Scout` 失败。现移除 Scout Action，固定 Syft `1.44.0` 及 Linux amd64 SHA-256，校验版本、来源、仓库内输出、符号链接边界和 SPDX 结构；业务 build/unit/PostgreSQL/E2E 先于外部扫描执行。本地 SBOM helper 7/7、CI/Staging 契约 18/18、镜像身份 17/17、后端 398/398、PostgreSQL 88/88、Playwright 17/17、前后端 build 与两套 0 vulnerability 审计通过；Syft 本机发布包下载两次超时，新的 Linux CI 实跑仍待推送。详见 [`docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`](docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md)。
 - H10 的 MFA、自审批、跨账号同人、双人复核、break-glass 和正式动作矩阵仍未签字；这些人工门禁不由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md)。R1 工程 P0 已关闭，但剩余 P1、目标 Staging、恢复和人工门禁未完成，仍不进入真实用户试运行。
@@ -157,18 +158,18 @@ M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构
 
 ## 自动化证据
 
-以下是 2026-07-17 至 2026-07-18 的最终工程基线：
+以下是截至 2026-07-20 的最近本地工程基线；远端 R8.9 run 尚未生成：
 
 | 门禁 | 结果 | 证据摘要 |
 | --- | --- | --- |
 | 前端 production build | `passed` | 显式 `api + /api`；Vite 构建 3,144 modules；产物清单复核通过 |
 | 后端 build | `passed` | Prisma Client、NestJS 应用和脚本 TypeScript |
-| 后端 Jest | `passed` | R8.2 本地全量 38/38 suites，349/349 tests |
-| PostgreSQL 集成 | `passed` | R7.2 本地全量 7/7 suites，84/84 tests；含 step-up 并发防重放、retention lease/legal hold、H02 失败关闭和 50,000 行 Worker 恢复 |
+| 后端 Jest | `passed` | 本地全量 45/45 suites，398/398 tests |
+| PostgreSQL 集成 | `passed` | 本地全量 8/8 suites，88/88 tests；含 step-up 并发防重放、retention lease/legal hold、H02 失败关闭和大表 Worker 恢复 |
 | 浏览器 E2E | `passed` | Playwright 17/17；含真实 API 服务端翻页 20→5 行 |
 | 前端运行时配置 | `passed` | 4/4；缺失/非法模式、危险 URL 和路径逃逸均失败关闭 |
-| Prisma | `passed` | 28/28 migrations；44 表、30 enums、184 indexes、80 foreign keys |
-| Migration 路径 | `passed` | 空 `_test` 库 28 条；26→27 grant 表及 27→28 约束升级均通过 |
+| Prisma | `passed` | generate/build 与隔离 `_test` 库 32/32 migrations |
+| Migration 路径 | `passed` | M3.1 已验证空库 32 条及 31→32 升级；本轮没有 migration 变更 |
 | Excel 预览预算 | `passed` | 当前页查询；摘要批次 500；pageSize 1-100；响应上限 1 MiB；50,000 行深页和缓存回访通过 |
 | 项目模板并发 | `passed` | 统一 key 22 事务锁；启用/停用与记录、Excel Worker、OCR、工单终审两种顺序均有 PostgreSQL 断言；锁超时稳定 409 |
 | 重复候选窗口 | `passed` | 0/365 天、UTC、前后边界、跨月/跨年和越界拒绝；结果、异常、audit、ledger 一致，H03 前不自动处置 |
@@ -179,7 +180,7 @@ M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构
 | Step-up/SoD 基础设施 | `engineering_passed` | 一次性 action/resource/session grant、并发防重放、身份变化撤销和高风险接口守卫通过；默认关闭，MFA/正式职责分离待 H10 |
 | 大批量 Excel | `passed` | 30,196 与 49,999 行最终记录、动态值、金额、audit、ledger 和日报闭环 |
 | OCR 并发 | `passed` | 1/3/5 精确并发门禁；最新 GitHub 集成 60/60 |
-| Repository hygiene | `passed` | 638 个 tracked/candidate 文件通过；真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
+| Repository hygiene | `passed` | 661 个 tracked/candidate 文件通过；真实数据、模型、secret、构建产物和本机供应链证据排除；提交前全量与 staged 门禁均执行 |
 | 生产依赖审计 | `passed` | 根目录与后端均为 0 vulnerabilities |
 | Paddle adapter | `passed` | 运行镜像内 8/8；合成 PDF 实际 OCR 接受测试通过 |
 | 模型韧性 | `passed` | 文本重启、VL 切换、文本恢复；432 次 OCR readiness 采样零失败 |
@@ -187,12 +188,13 @@ M3.1 将既有 `MappingProfile` 原地升级为项目级、内容寻址的结构
 | R5 镜像身份与供应链 | `engineering_passed` | 17/17 篡改/漂移测试；22 个锁定镜像、66 份证据、无可修复 Critical；53 High/88 Medium/38 Low 仍在风险台账，签名与目标 registry 待 H13 |
 | R8.1 应用镜像 CI | `engineering_passed_locally` | Node 24.18.0 与部署镜像统一；真实前后端镜像构建、非 root/revision 核验、两份 SBOM 和固定 Grype 门禁通过；当前 commit 的 GitHub run 待 push 后验证 |
 | R8.2-R8.7 条件验收自动化 | `engineering_passed_locally / blocked_external` | R8.6 完整 release、7 项 sealed gate、0 日志泄露和同 manifest rollback 已通过；R8.7 OpenSSL/Prisma 最终镜像探针通过，完整发布重测连续两次受 Debian 502 阻断；GPU L0 workflow 未运行 |
+| R8.9 CI SBOM | `engineering_verified_locally / awaiting_remote_ci` | 固定 Syft 版本与发布包哈希，移除 Scout entitlement；helper 7/7、CI/Staging 契约 18/18、镜像身份 17/17；本机下载超时，Linux runner 实跑待推送 |
 | 本机隔离 Staging smoke | `passed` | 18 服务真实启动；Node/TLS smoke 与浏览器 API/CSP/合成写读软归档通过；容器和卷残留 0 |
 | 日志泄露门禁 | `passed` | 实际 18 服务生成 200/400/503 日志；29 条网关 JSON 可解析，15 个合成敏感标记泄露 0，容器和卷残留 0 |
 | 存储容量真实性 | `engineering_passed` | S3 不再伪报固定容量；79/79 定向测试与 PostgreSQL 跨账号/项目并发通过；MinIO v3 物理指标实测存在；H13/H14 仍待签字 |
 | Shell/Compose | `passed` | 10/10 shell、1/1 PowerShell syntax、两份 Compose config |
-| 最新 GitHub Build | `passed` | 完整 build、263 单测、60 集成、16 E2E，run `29634353327` |
-| 最新 GitHub CodeQL | `passed` | JavaScript/TypeScript 分析成功，无开放 review thread |
+| 最新 GitHub Build | `failed_external / fix_pending_remote` | run `29666837943` 在两个 Docker Scout entitlement 步骤失败；R8.9 已本地修复，尚未把远端 run 写成通过 |
+| 最新 GitHub CodeQL | `passed` | run `29666837951`；JavaScript/TypeScript 分析成功 |
 | 目标 Staging release | `blocked_external` | 本机隔离启动不等于 H13 目标环境；尚未执行目标 Linux release、真实 restore/RPO/RTO 或 rollback drill |
 
 测试数量下降必须解释，不得通过删除测试、放宽安全断言或静默回退 Mock 制造绿色结果。
@@ -461,7 +463,7 @@ npm run staging:release
 |-- src/                    # React 前端、路由、页面、store、API repository
 |-- backend/
 |   |-- src/                # NestJS API、Worker 和业务模块
-|   |-- prisma/             # Schema、25 条 migration 和 seed
+|   |-- prisma/             # Schema、32 条 migration 和 seed
 |   |-- scripts/            # 集成、数据、模型、UAT 与数据库工具
 |   `-- test/               # 单元和 PostgreSQL 集成测试
 |-- e2e/                    # Playwright 真实 API/Mock 验收
@@ -483,6 +485,8 @@ npm run staging:release
 | [`docs/RELEASE_CANDIDATE_AUDIT.md`](docs/RELEASE_CANDIDATE_AUDIT.md) | RC 问题、修复和发布判断 |
 | [`docs/B8_OVERNIGHT_EXECUTION_REPORT.md`](docs/B8_OVERNIGHT_EXECUTION_REPORT.md) | B8-09 与 RC-00 至 RC-04 执行证据 |
 | [`docs/B8_BLOCKER_MATRIX.md`](docs/B8_BLOCKER_MATRIX.md) | P0/P1、外部阻断和人工门禁 |
+| [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md) | 项目负责人填写的功能、业务与风险决策问卷 |
+| [`docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`](docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md) | R8.9 Scout entitlement 根因、Syft 修复和验收证据 |
 | [`docs/PR4_REVIEW_GUIDE.md`](docs/PR4_REVIEW_GUIDE.md) | 独立 reviewer 检查顺序 |
 | [`docs/B8_08_FINANCE_UAT_RUNBOOK.md`](docs/B8_08_FINANCE_UAT_RUNBOOK.md) | 财务八场景 UAT |
 | [`docs/B8_09_STAGING_RUNBOOK.md`](docs/B8_09_STAGING_RUNBOOK.md) | Staging 发布、恢复和回退 |
@@ -494,13 +498,11 @@ npm run staging:release
 
 ## 人工最短决策顺序
 
-1. 基础设施负责人确定服务器、域名、registry、容量和正式 secret。
-2. 运维/DBA 在目标环境完成 release、smoke、backup/restore、RPO/RTO 和 rollback。
-3. 独立 reviewer 按 PR #4 和 Reviewer Guide 完成代码与安全审查。
-4. 财务完成逐分对账、17 份 OCR 标签和 5 份盲测复核。
-5. 财务与业务负责人签署入账粒度、负数/冲销/更正/关账和跨来源重复规则。
-6. 老板或数据负责人签署 AI 标准问题、允许数据范围和外部 AI 政策。
-7. 财务、业务、老板、安全和项目负责人基于全部证据决定是否进入有限试运行。
+1. 你先填写项目负责人产品决策问卷；一人可以兼任项目、业务、财务和老板决策角色。
+2. 为关键答案附一两个匿名业务例子，尤其是入账粒度、冲销/更正、重复判断、报销主从和老板问题。
+3. 确定未来三个月是本机演示、内网 Linux、云端受限访问还是互联网服务，并填写 RPO/RTO 和保留期目标。
+4. Codex 根据答案回填 H01-H16、实现规则和自动化验收，再继续不依赖外部人员的工程工作。
+5. OCR 盲测和代码安全复核若由你自己完成，只记为自测；要关闭“独立验收”门禁，仍需另一个未参与实现的人留下证据。
 
 任何一项未满足时，系统只能用于隔离开发、工程验收或人工辅助，不得用于无人监督的正式财务入账。
 

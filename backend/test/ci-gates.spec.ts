@@ -48,8 +48,25 @@ describe('R8 CI gate contracts', () => {
 
   it('produces SBOMs and gates fixable critical CVEs for both application images', () => {
     const workflow = read('.github', 'workflows', 'ci.yml');
+    const generator = read('deploy', 'staging', 'scripts', 'generate-sbom.mjs');
 
-    expect(workflow.match(/docker\/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b/g)).toHaveLength(3);
+    expect(workflow.match(/SYFT_VERSION: 1\.44\.0/g)).toHaveLength(1);
+    expect(workflow.match(/0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a/g)).toHaveLength(1);
+    expect(workflow).not.toContain('docker/scout-action');
+    expect(workflow).toContain('sha256sum --check --strict');
+    expect(workflow).toContain('npm run staging:sbom:test');
+    expect(workflow.indexOf('Build real backend and frontend images')).toBeLessThan(
+      workflow.indexOf('Install checksum-pinned Syft')
+    );
+    expect(workflow.lastIndexOf('Run browser E2E')).toBeLessThan(
+      workflow.lastIndexOf('Install checksum-pinned Syft')
+    );
+    expect(workflow.lastIndexOf('Install checksum-pinned Syft')).toBeLessThan(
+      workflow.lastIndexOf('Generate R5 fixture image SBOM')
+    );
+    expect(generator).toContain("PINNED_SYFT_VERSION = '1.44.0'");
+    expect(generator).toContain('Syft version mismatch');
+    expect(generator).toContain('Syft output is not a valid SPDX JSON document');
     expect(workflow).toContain('backend.spdx.json');
     expect(workflow).toContain('frontend.spdx.json');
     expect(workflow).toContain('backend.grype.sarif.json');
@@ -65,9 +82,11 @@ describe('R8 CI gate contracts', () => {
     expect(workflow).toContain('node-version: 24.18.0');
     expect(workflow).toContain('npm run staging:release');
     expect(workflow).toContain('npm run staging:logs:check');
-    expect(workflow).toContain('command: sbom');
-    expect(workflow).toContain('image: fs://deploy/staging/scripts');
-    expect(workflow).not.toContain('command: version');
+    expect(workflow).toContain('Install and exercise checksum-pinned Syft');
+    expect(workflow).toContain('sha256sum --check --strict');
+    expect(workflow).toContain('--source dir:deploy/staging/scripts');
+    expect(workflow).toContain('syft-bootstrap.spdx.json');
+    expect(workflow).not.toContain('docker/scout-action');
     expect(workflow).toContain('npm run staging:rollback --');
     expect(workflow).toContain('npm run staging:smoke');
     expect(workflow).toContain("down -v --remove-orphans");

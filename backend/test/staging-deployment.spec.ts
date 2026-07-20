@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 const repositoryRoot = resolve(__dirname, '../..');
 const stagingRoot = join(repositoryRoot, 'deploy', 'staging');
-const read = (...parts: string[]) => readFileSync(join(...parts), 'utf8');
+const read = (...parts: string[]) => readFileSync(join(...parts), 'utf8').replace(/\r\n/g, '\n');
 
 describe('B8-09 staging deployment', () => {
   it('keeps stateful dependencies private and exposes only the TLS gateway', () => {
@@ -185,6 +185,7 @@ describe('B8-09 staging deployment', () => {
     const rollback = read(stagingRoot, 'scripts', 'rollback.mjs');
     const lockImages = read(stagingRoot, 'scripts', 'lock-images.mjs');
     const scanImages = read(stagingRoot, 'scripts', 'scan-image-lock.mjs');
+    const generateSbom = read(stagingRoot, 'scripts', 'generate-sbom.mjs');
     const integrity = read(stagingRoot, 'scripts', 'image-integrity-lib.mjs');
     const postgresDockerfile = read(stagingRoot, 'postgres', 'Dockerfile');
     const backupDockerfile = read(stagingRoot, 'backup', 'Dockerfile');
@@ -240,7 +241,11 @@ describe('B8-09 staging deployment', () => {
     expect(lockImages).toContain("'backup', 'postgres'");
     expect(lockImages).toContain('signed_registry');
     expect(scanImages).toContain('const imageEntries = lock.entries');
-    expect(scanImages).toContain("sbomSource: 'docker_scout_spdx_sealed'");
+    expect(scanImages).toContain("sbomSource: 'syft_spdx_sealed'");
+    expect(scanImages).toContain("'generate-sbom.mjs'");
+    expect(generateSbom).toContain("PINNED_SYFT_VERSION = '1.44.0'");
+    expect(generateSbom).toContain("SYFT_CHECK_FOR_APP_UPDATE: 'false'");
+    expect(generateSbom).toContain('validateSpdxDocument(document)');
     expect(integrity).toContain('Mutable image tag drift detected');
     expect(integrity).toContain('Database migration set is not exactly compatible');
     expect(read(stagingRoot, 'scripts', 'verify-config.mjs')).toContain(
@@ -250,7 +255,10 @@ describe('B8-09 staging deployment', () => {
       'must use the repository-built'
     );
     expect(packageJson).toContain('staging:image-integrity:test');
-    expect(workflow).toContain('docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b');
+    expect(workflow).toContain('SYFT_VERSION: 1.44.0');
+    expect(workflow).toContain('0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a');
+    expect(workflow).toContain('generate-sbom.mjs');
+    expect(workflow).not.toContain('docker/scout-action');
     expect(workflow).toContain('r5-image-identity-evidence');
     expect(compose).toContain('image: ${POSTGRES_IMAGE:-finance-agent/staging-postgres:b8-09}');
     expect(compose).toContain('image: ${MINIO_IMAGE:-finance-agent/staging-minio:b8-09}');

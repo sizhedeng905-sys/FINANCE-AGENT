@@ -282,7 +282,7 @@ try {
 
 async function finalizeCiEvidence() {
   if (process.env.R5_CRITICAL_GATE_PASSED !== 'true') {
-    throw new Error('R5_CRITICAL_GATE_PASSED=true is required after the Docker Scout critical gate');
+    throw new Error('R5_CRITICAL_GATE_PASSED=true is required after the Syft and Grype supply-chain gate');
   }
   const context = JSON.parse(await readFile(contextPath, 'utf8'));
   validateContext(context);

@@ -63,6 +63,9 @@ jobs:
     env:
       GRYPE_ALLOW_NETWORK_UPDATE: "true"
       IMAGE_SCAN_TIMEOUT_MS: "1800000"
+      SYFT_VERSION: 1.44.0
+      SYFT_EXPECTED_VERSION: 1.44.0
+      SYFT_LINUX_AMD64_SHA256: 0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a
     steps:
       - name: Checkout without deleting operator assets
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -88,6 +91,9 @@ jobs:
           docker info >/dev/null 2>&1 || fail_blocked "Docker daemon unavailable"
           docker compose version >/dev/null 2>&1 || fail_blocked "Docker Compose unavailable"
           command -v openssl >/dev/null 2>&1 || fail_blocked "OpenSSL unavailable"
+          command -v curl >/dev/null 2>&1 || fail_blocked "curl unavailable"
+          command -v sha256sum >/dev/null 2>&1 || fail_blocked "sha256sum unavailable"
+          command -v tar >/dev/null 2>&1 || fail_blocked "tar unavailable"
           available_kb="$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')"
           memory_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
           test "$available_kb" -ge 50331648 || fail_blocked "less than 48 GiB free disk"
@@ -101,19 +107,23 @@ jobs:
           mkdir -p deploy/staging/.evidence/r8-staging-acceptance
           npx playwright install --with-deps chromium
 
-      - name: Install and exercise Docker Scout CLI
-        env:
-          DOCKER_SCOUT_CACHE_DIR: ${{ runner.temp }}/finance-agent-staging-scout
-          DOCKER_SCOUT_NO_CACHE: "true"
-          DOCKER_SCOUT_OFFLINE: "true"
-        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
-        with:
-          command: sbom
-          image: fs://deploy/staging/scripts
-          format: spdx
-          output: deploy/staging/.evidence/r8-staging-acceptance/scout-bootstrap.spdx.json
-          summary: false
-          write-comment: false
+      - name: Install and exercise checksum-pinned Syft
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          install_dir="$RUNNER_TEMP/finance-agent-syft"
+          curl --fail --location --retry 1 --connect-timeout 15 --max-time 180 \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$SYFT_LINUX_AMD64_SHA256" "$archive" | sha256sum --check --strict
+          mkdir -p "$install_dir" deploy/staging/.evidence/r8-staging-acceptance
+          tar --extract --gzip --file "$archive" --directory "$install_dir" syft
+          "$install_dir/syft" version
+          SYFT_BIN="$install_dir/syft" node deploy/staging/scripts/generate-sbom.mjs \
+            --source dir:deploy/staging/scripts \
+            --output deploy/staging/.evidence/r8-staging-acceptance/syft-bootstrap.spdx.json
+          printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
 
       - name: Initialize isolated staging configuration
         run: |

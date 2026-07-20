@@ -1,8 +1,6 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { rmSync } from 'node:fs';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   IMAGE_LOCK_SCHEMA,
@@ -20,36 +18,28 @@ const outputRoot = resolve(stagingRoot, requiredOption(arguments_, '--output'));
 const { document: lock, fileSha256: lockFileSha256 } = await readSealedJson(lockPath, IMAGE_LOCK_SCHEMA);
 verifyImageLock(lock);
 await mkdir(outputRoot, { recursive: true, mode: 0o700 });
-const scoutCacheRoot = join(outputRoot, '.scout-cache');
-await mkdir(scoutCacheRoot, { recursive: true, mode: 0o700 });
-process.env.DOCKER_SCOUT_CACHE_DIR = scoutCacheRoot;
-process.env.DOCKER_SCOUT_OFFLINE = 'true';
 const imageScanTimeoutMs = boundedInteger(
   process.env.IMAGE_SCAN_TIMEOUT_MS ?? '1800000',
   60_000,
   3_600_000,
   'IMAGE_SCAN_TIMEOUT_MS'
 );
-process.once('exit', () => {
-  try {
-    rmSync(scoutCacheRoot, { recursive: true, force: true });
-  } catch {
-    // The awaited cleanup below is authoritative; this is only a final best-effort fallback.
-  }
-});
-
-try {
+const syftBinary = process.env.SYFT_BIN || 'syft';
 const imageEntries = lock.entries;
 const artifacts = [];
-const scannerVersion = capture('docker', ['scout', 'version']).slice(0, 2_000);
+const scannerVersion = capture(syftBinary, ['version']).slice(0, 2_000);
 for (const entry of imageEntries) {
   const stem = `${safeStem(entry.requestedReference)}-${entry.imageId.slice(7, 19)}`;
   const sbomPath = join(outputRoot, `${stem}.spdx.json`);
   const cvePath = join(outputRoot, `${stem}.grype.sarif.json`);
   const criticalPath = join(outputRoot, `${stem}.critical-fixed.txt`);
   run(
-    'docker',
-    ['scout', 'sbom', '--format', 'spdx', '--output', sbomPath, `local://${entry.immutableReference}`],
+    'node',
+    [
+      join(stagingRoot, 'scripts', 'generate-sbom.mjs'),
+      '--source', `docker:${entry.immutableReference}`,
+      '--output', sbomPath
+    ],
     imageScanTimeoutMs
   );
   run('node', [
@@ -80,7 +70,7 @@ const written = await writeSealedJson(indexPath, {
     contentSha256: lock.integrity.contentSha256
   },
   scanner: {
-    name: 'docker-scout-sbom-and-pinned-grype',
+    name: 'pinned-syft-spdx-and-pinned-grype',
     versionOutputSha256: sha256(scannerVersion),
     vulnerabilityGate: 'no_fixable_critical'
   },
@@ -89,7 +79,7 @@ const written = await writeSealedJson(indexPath, {
     imageIdentityVerified: true,
     revisionLabelsRecorded: true,
     buildkitProvenanceRequested: true,
-    sbomSource: 'docker_scout_spdx_sealed'
+    sbomSource: 'syft_spdx_sealed'
   },
   signatures: signatureEvidence,
   registryAuthorization: identityPolicy === 'signed_registry' ? 'operator_verified_h13' : 'pending_h13'
@@ -102,9 +92,6 @@ process.stdout.write(JSON.stringify({
   indexSha256: written.fileSha256,
   signatures: signatureEvidence.status
 }, null, 2) + '\n');
-} finally {
-  await removeDirectoryWithRetry(scoutCacheRoot);
-}
 
 async function verifySignedImages(entries, outputDirectory) {
   const publicKey = process.env.COSIGN_PUBLIC_KEY_FILE;
@@ -149,19 +136,6 @@ function requiredOption(arguments_, name) {
   const value = index >= 0 ? arguments_[index + 1] : null;
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`);
   return value;
-}
-
-async function removeDirectoryWithRetry(path) {
-  const retryableCodes = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
-  for (let attempt = 1; attempt <= 8; attempt += 1) {
-    try {
-      await rm(path, { recursive: true, force: true });
-      return;
-    } catch (error) {
-      if (!retryableCodes.has(error?.code) || attempt === 8) throw error;
-      await delay(attempt * 250);
-    }
-  }
 }
 
 function boundedInteger(rawValue, minimum, maximum, name) {

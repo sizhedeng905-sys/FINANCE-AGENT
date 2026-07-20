@@ -1,9 +1,9 @@
 # 财务 Agent 实施进度
 
-更新日期：2026-07-18
+更新日期：2026-07-20
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.6 本机工程门禁已完成，R8.7 最终镜像通过而完整 release 重验因 Debian security 连续两次 502 标记为 `blocked_external`；retention 只允许 dry-run，step-up 默认关闭且正式职责分离仍待 H10；AI 映射补充任务 M0-M1 已完成，下一步 M2
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。retention 只允许 dry-run，step-up 默认关闭且正式职责分离仍待 H10；AI 映射补充任务 M0-M3.1 已完成，下一步 M3.2。
 
 ## 完成口径
 
@@ -22,13 +22,15 @@
 | R3 对象存储容量真实性 | 完成 | S3 物理容量明确 unknown；逻辑配额使用 PostgreSQL 用量和全局事务锁；MinIO 独立物理指标、告警/dashboard 与跨项目并发证据齐全 |
 | R4 备份/恢复完整性 | 完成 | 版本化强哈希清单、DB/对象引用、隔离库/桶恢复、故障注入和一次性 H13/H14 正式恢复门禁已实现；目标环境恢复仍为外部门禁 |
 | R5 镜像身份与供应链 | 完成 | 22 镜像不可变锁、配置/扫描/migration/release 自校验证据链、17/17 篡改测试完成；目标 registry、签名和回退受 H13 阻断 |
-| R6-R8 后端边界、治理、CI | R6-R8.6 本机门禁完成 / R8.7 定向通过且完整重验外部阻塞 | 完整 release、7 项 sealed gate、日志和同 manifest rollback 已通过；OpenSSL 3 最终镜像通过，完整重验连续两次受 Debian security 502 阻断 |
+| R6-R8 后端边界、治理、CI | R6-R8.7 本机门禁完成 / R8.9 本地通过、远端待验 | 完整 release、7 项 sealed gate、日志和同 manifest rollback 已通过；OpenSSL 3 最终镜像通过；Scout entitlement 已以固定 Syft 替换，完整重验仍受 Debian security 502 阻断 |
 | R9 真实 Staging | `blocked_external` | 仅在 H13/H14 有批准目标环境后执行；不得把本地静态配置写成真实部署通过 |
 | R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
-| M0-M8 AI 分类/映射/审批/快照补充 | M0-M1 完成 / M2 待执行 | 复用矩阵、状态命令表与冻结向量完成；Excel/OCR 规范 IR、稳定 evidence ref/hash、29 条 migration 空库/升级、358 单测及 4 条 PostgreSQL 链通过 |
+| M0-M8 AI 分类/映射/审批/快照补充 | M0-M3.1 完成 / M3.2 待继续 | 复用矩阵、Excel/OCR IR、严格 Schema、模式/kill switch、Prompt Registry、完整版本向量和精确作用域 Mapping Profile 完成；32 条 migration 空库及 31→32 升级通过 |
 
 指定人工决策文件 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 已建立为 0.1-draft，但全部 H01-H16 条目均为 `Pending`，没有签字、业务样例或批准证据；空白或非指定文件不构成批准。
+
+项目负责人可先填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`。该文件只询问功能口径、权限和风险处理；收到答案后由 Codex 回填 H01-H16、实现条件和验收测试。正式映射、真实证据和签字完成前，问卷本身不自动关闭门禁。
 
 ## B8 稳定化进度
 
@@ -69,7 +71,7 @@ B8-09 已完成的工程证据：
 - R8.1 红灯确认 CI 只做 Node build、使用 Node 22，而部署镜像使用 Node 24；新增契约后每次 CI 都实际构建后端和 API 前端镜像，核对 `10001:10001`/`101:101` 运行用户与 commit revision，并为两者生成 SBOM、执行固定 Grype 数据库的可修复 Critical 门禁。首次本机构建暴露根上下文 10.23GB，原因是 `deploy/staging/.evidence` 未排除；修复后上下文 24.09KB，缓存构建 7.74 秒。两镜像扫描、38/38 suites、345/345 tests、前后端 build、628 文件卫生和两套 0 vulnerability 审计通过，当前 GitHub commit run 待 push 后验证；详见 `docs/R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md`。
 - R8.2 红灯确认完整 Compose release/restore/rollback、Python 适配器依赖契约和 GPU 模型运行路径没有 GitHub 条件门禁；新增 scheduled/manual Staging workflow 与仅手工 GPU L0 workflow，并加入运行日志泄露检测、资源预检/清理和受限证据上传。actionlint 零告警，Python 3.10.19 全依赖 `pip check` 与 8/8 契约通过，配置算法 3/3、日志策略当前 4/4，18 镜像 Staging scope lock 通过。首次 `staging:check` 又暴露旧 `.env` 配置漂移；现只同步 19 个仓库管理项、保留运维项和 secret，第二次初始化更新 0 项。后端 38/38 suites、349/349 tests、前后端 build、638 文件卫生及两套 0 vulnerability 审计通过；完整 release 与 GPU L0 尚未通过，详见 `docs/R8_2_CONDITIONAL_ACCEPTANCE_AUTOMATION_REPORT_2026-07-18.md`。
 - R8.2 首次完整 release 在构建前失败：Compose `--ignore-buildable` 仍尝试拉取被 `minio-init` 共享的本地 backup 镜像。现场没有启动容器或写入数据；release 现只允许拉取 `redis/clamav/gateway/grafana/loki` 五个固定第三方服务，该项修复已进入后续重跑验证。
-- R8.2 随后两次构建被 Docker Hub BuildKit SBOM scanner 认证端点超时阻断，已标记 `blocked_external` 且不再重试该条件。审计证明 build-time SBOM 未被 release 消费或封存；现移除 mutable scanner 网络耦合，保留 max provenance，并继续以逐镜像 Docker Scout SPDX、固定 Grype、sealed supply-chain index 作为唯一正式 SBOM/CVE 门禁。
+- R8.2 随后两次构建被 Docker Hub BuildKit SBOM scanner 认证端点超时阻断，已标记 `blocked_external` 且不再重试该条件。审计证明 build-time SBOM 未被 release 消费或封存；现移除 mutable scanner 网络耦合，保留 max provenance，并以固定版本/哈希的 Syft SPDX、固定 Grype、sealed supply-chain index 作为正式 SBOM/CVE 门禁。
 - R8.5 第三次完整 release 成功完成 18 镜像构建、锁定与扫描，生成 57 份供应链产物；Compose 启动随后真实暴露 PostgreSQL 只监听 `localhost`，旧 socket `pg_isready` 健康检查误报就绪，migration 以 P1001 失败。现强制监听私网，以 migrator 角色通过 `sslmode=verify-full` 和固定 CA 执行 `SELECT 1` 才算健康；初始化会移除泛化 host HBA 并拒绝所有非 TLS 远程连接。部署/CI 契约 18/18、日志策略 4/4、配置校验和 shell 语法通过，完整运行重试尚未执行。
 - 同次失败栈的运行日志门禁检出 exact secret；旧证据没有来源且栈已安全清理，因此未猜测归因。新证据只保存命中的 secret 文件名、服务和次数，不保存值、原始行或可逆摘要；下次运行将据此修复真实来源。失败现场执行 `down -v --remove-orphans` 后容器、网络、卷残留均为 0。
 - R8.6 对 `a1e9845` 的完整发布运行 1001.3 秒，成功完成 18 镜像供应链封存、远程 TLS、28 条 migration、全部服务健康、API 与浏览器 smoke；restore drill 随后因没有 complete backup 而按预期失败。现场证明 backup loop 以 UID 999 启动时，MinIO `mc` 尝试写不可写的 `/var/lib/postgresql`，首轮备份已经失败。
@@ -77,6 +79,7 @@ B8-09 已完成的工程证据：
 - 安全日志证据把泄露定位到 `minio-init/s3_access_key_id`，实际来源是 policy attach 成功输出。相关命令现只输出固定错误码；R8.6 最终运行日志比对 19 个 secret、718,592 bytes/3,393 行，结果 0 finding。
 - R8.6 干净提交的完整 release 运行 1010.9 秒，sealed manifest `20260718T221820Z-97efc1856f28` 的 config、image identity、SBOM、CVE、migration、smoke、restore drill 七项 gate 全部 passed。升级前/发布后备份均成功，隔离恢复与 fault injection 通过；同 manifest rollback 55.6 秒完成保护性备份、镜像与 migration 复核、四角色登录、readiness/worker、metrics 和二次 smoke，`dataRestored=false`。没有更早合法 manifest，因此跨版本回退仍未验证；详见 `docs/R8_6_BACKUP_RELEASE_GATE_REPORT_2026-07-18.md`。
 - rollback 输出真实暴露后端运行镜像缺少 OpenSSL CLI，Prisma 回退猜测 `openssl-1.1.x`。R8.7 给 Node build/runtime 共享基础层安装固定版本 OpenSSL/CA，CI 在最终 UID 10001 镜像中执行 OpenSSL 与 Prisma 探针并拒绝 detect warning。本地最终镜像实测 OpenSSL 3.0.20、Prisma 6.19.3、`debian-openssl-3.0.x` target 且无告警；完整 release 的两次重验分别运行 247.8 秒和 264.5 秒，均因 node-exporter 获取 Debian security 索引返回 502 失败，按外部故障规则停止重试。清场后本项目容器、网络和卷均为 0。
+- R8.9 复现 GitHub Build run `29666837943` 两个 job 均在 Docker Scout SBOM 步骤因 entitlement 失败，且数据库、build、unit 和 E2E 被提前跳过。现移除 Scout Action，固定 Syft `1.44.0` 与 Linux amd64 SHA-256，增加仓库内来源/输出、符号链接、版本、大小、SPDX 结构和原子发布验证，并把业务门禁移到扫描之前。本地 helper 7/7、CI/Staging 契约 18/18、镜像身份 17/17、后端 398/398、PostgreSQL 88/88、Playwright 17/17、前后端 build、661 文件卫生和两套 0 vulnerability 审计通过。Windows 发布包两次有界下载超时，故本机 Syft 二进制扫描未宣称通过；等待推送后的 Linux runner。详见 `docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`。
 - 生产全局请求限流已由 Redis 共享；登录、上传准入和模型并发闸门仍为进程内状态，所以 B8-09 Compose 固定单 API、单 Worker。横向扩容前必须共享化并完成多实例故障测试。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。
