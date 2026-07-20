@@ -73,6 +73,22 @@ describe('B8-09 staging deployment', () => {
     expect(browserSmoke).toContain("response.url().includes('/api/')");
   });
 
+  it('keeps every Nginx consumer on the same patched immutable image', () => {
+    const digest = '97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46';
+    const image = `nginx:1.30.4-alpine3.24@sha256:${digest}`;
+    const expectedReferences = [
+      [read(repositoryRoot, 'Dockerfile.frontend'), `ARG NGINX_IMAGE=${image}`],
+      [read(stagingRoot, '.env.example'), `NGINX_IMAGE=${image}`],
+      [read(stagingRoot, 'compose.yaml'), image],
+      [read(stagingRoot, 'scripts', 'test-image-integrity.mjs'), `FROM ${image}`],
+      [read(repositoryRoot, 'backend', 'scripts', 'test-nginx-upload-boundary.mjs'), `nginx@sha256:${digest}`]
+    ];
+
+    for (const [source, expected] of expectedReferences) {
+      expect(source).toContain(expected);
+    }
+  });
+
   it('keeps gateway access logs free of query strings and credentials', () => {
     const gateway = read(stagingRoot, 'gateway', 'nginx.conf');
     const accessFormat = gateway.match(/log_format\s+json_combined\s+escape=json\s+'\{'[\s\S]*?'\}';/)?.[0];

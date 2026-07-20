@@ -15,7 +15,7 @@ M8 内容基线：a457a9a34e0f42dd59fe4f5e95c88e39bf5f5e0b
 结束 HEAD：本报告所在 M8 提交，以 Git 元数据为准
 Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 工作区剩余改动：提交后仅允许受保护的用户未跟踪资产
-远端：本地已知分支领先 14 个提交；此前两次 github.com:443 失败
+远端：M8 提交 30c6ead 已推送至 Draft PR #4；后续 CI 状态见 M8.1 补充报告
 ```
 
 受保护未跟踪资产包括本地模型/下载脚本、用户提示词与需求文档、IDE 配置和 `人工复核.md`。本轮未读取 `.env` 内容，未移动、删除、修改或暂存上述资产。两个任务输入文件当前均为 0 字节：
@@ -143,14 +143,14 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 
 ```text
 阶段：M8 文档、迁移证据与 Draft PR 收口
-状态：engineering_passed / blocked_external(push, M0-INPUT-001) / awaiting_human_signoff
+状态：engineering_passed / blocked_external(M0-INPUT-001) / awaiting_human_signoff
 实际实现：更新架构、API、E2E、本地运行、PR review/准备、README、状态矩阵和本报告；复核 41 条 migration 双路径及 Prompt manifest/seed/Schema/hash 漂移门禁。
 关键文件：docs/ARCHITECTURE.md；docs/API_MIGRATION_MATRIX.md；docs/E2E_ACCEPTANCE.md；docs/LOCAL_SETUP.md；docs/PR4_REVIEW_GUIDE.md；docs/PR_PREPARATION.md；本报告
 数据库 migration：无；复用空库 41 与 40→41 证据
 攻击性测试：Prompt 漂移 4/4 unit + 3/3 PostgreSQL；M7 全量证据保持有效
 提交 SHA：本报告所在提交，以 Git 元数据为准
-剩余风险：Prompt Catalog 为空、GitHub 网络/远端 CI、H01-H16 未全部关闭
-下一动作：网络恢复后正常 push 并更新 Draft PR；不 merge、不标记 Ready
+剩余风险：Prompt Catalog 为空、M8.1 远端 CI 复验、H01-H16 未全部关闭
+下一动作：推送 M8.1 并观察远端 Build/CodeQL；不 merge、不标记 Ready
 ```
 
 ## 3. 测试证据
@@ -278,6 +278,6 @@ cd backend && npm audit --omit=dev --audit-level=high -> 0 vulnerabilities
 ## 6. Draft PR 交接
 
 - M0-M7 已形成小步提交；M8 只收口文档和最终证据，不改变业务代码。
-- 网络恢复后先确认 `gh auth status` 和 `github.com:443`，再正常 push 当前分支；失败最多两次，不 force push。
-- push 成功后更新 PR #4 描述，附本报告、M5.2/M6/M7、41 条 migration、测试矩阵和 H 阻塞。
+- M8 提交 `30c6ead` 已正常推送；Build run `29752263099` 的业务门禁通过并由供应链门禁暴露旧 Nginx Critical，后续见 `M8_1_NGINX_CI_SECURITY_REFRESH_2026-07-20.md`。
+- 推送 M8.1 后更新 PR #4 描述，附本报告、M8.1、M5.2/M6/M7、41 条 migration、测试矩阵和 H 阻塞。
 - PR 必须保持 Draft。只有 H15 独立审查和 H16 最终签字完成后，才可另行决定是否 Ready 或 merge。

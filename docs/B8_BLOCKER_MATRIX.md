@@ -157,7 +157,8 @@
 | R7-RETENTION-001 | P1 | AI/audit/data retention and deletion | 工程执行者/安全/合规负责人 | 红灯：新增 `AiCallLog` 在读取时脱敏但数据库仍保存完整问题、工具上下文和 Provider 原始响应；真实保留、删除、hold 和备份传播未批准 | 本提交（R7.1） | `ai-call-audit/1.0` 元数据分离；9 类 dry-run、DB 强制零删除、legal hold、双实例 lease/恢复、匿名计数；37/37 unit、78/78 PostgreSQL；见 `R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md` | engineering_verified | H09/H12/H14 仍决定实际天数、删除/hold 释放、备份与 Provider 传播；真实删除保持关闭 |
 | R7-STEPUP-001 | P1 | Step-up/MFA/SoD | 工程执行者/安全/业务负责人 | 红灯：旧令牌只有 `sub/ver/typ`，未绑定 session/action/resource，无接口消费、单次使用或并发防重放 | 本提交（R7.2） | PostgreSQL 单次消费/并发单赢家、错误绑定/过期/伪造用户拒绝、角色/密码/停用/登出撤销；37/37 unit、84/84 PostgreSQL；见 `R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md` | engineering_verified | H10 仍决定 MFA、正式动作/TTL、自审批、跨账号同人、双人复核和 break-glass；默认关闭 |
 | R8-CI-001 | P1 | Layered CI and real deployment gates | 工程执行者 | 红灯：普通 CI 不构建实际应用镜像，Node 22 与部署 Node 24 漂移；本机构建进一步发现前端发送 10.23GB 生成证据上下文 | R8.1 | Node 24.18.0 统一；真实前后端镜像、非 root/revision、SBOM/Grype 本机通过；上下文降至 24.09KB；见 `R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md` | in_progress | R8.2 尚需 scheduled/manual Compose、恢复、回滚、日志泄露和 Python runtime；目标环境仍受 H13/H14 阻断 |
-| R8-CI-SBOM-001 | P1 | GitHub CI SBOM entitlement and gate ordering | 工程执行者 | run `29666837943` 两个 job 均因 `githubactions not entitled to use Docker Scout` 失败；数据库/build/unit/E2E 被提前跳过 | R8.9 | 固定 Syft 1.44.0/发布包 SHA-256、严格 SPDX helper、业务门禁先行；本地 45/45 unit suites、88/88 PostgreSQL、17/17 E2E、17/17 镜像身份；见 `R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md` | fixed | 等待推送后的 GitHub Linux runner；本机 Syft 下载两次超时，未伪报实扫通过 |
+| R8-CI-SBOM-001 | P1 | GitHub CI SBOM entitlement and gate ordering | 工程执行者 | run `29666837943` 两个 job 均因 Docker Scout entitlement 失败并提前跳过业务门禁 | R8.9 | run `29752263099` 已真实完成固定 Syft SPDX、固定 Grype 和全部业务门禁；扫描随后按设计阻断旧 Nginx 漏洞 | verified | 无；具体镜像漏洞由 M8-NGINX-CVE-001 跟踪 |
+| M8-NGINX-CVE-001 | P1 | Frontend/R5 Nginx runtime supply chain | 工程执行者 | run `29752263099` 的 frontend 与 R5 SBOM 均包含旧 Alpine/OpenSSL 可修复 Critical；`1.28.3-alpine` 本地复扫仍失败 | M8.1 | 固定 `1.30.4-alpine3.24` digest；真实前端/R5 各 72 包且 fixable Critical 0；供应链攻击 17/17、上传边界、部署/CI 契约和 build 通过 | fixed | 等待推送后的 GitHub Build 复验；不降低 Critical 门槛 |
 | R10-ACCURACY-001 | 发布门禁 | Real models and real business truth | 授权标注/财务/老板 | 合成 L0 证据不能替代 OCR 标签、L3 分币对账或老板标准答案 | - | 待冻结 L1 数据集和人工签字 | awaiting_human_signoff | H04-H09/H12/H16 |
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
@@ -213,10 +214,10 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | M6-REPORT-SNAPSHOT-001 | P0 | canonical ReportSnapshot/Claim | engineering_verified | M6 |
 | M7-REPORT-CONCURRENCY-001 | P1 | 相同报告快照并发请求偶发 409 | verified | M7 |
 | M7-ATTACK-BUDGET-001 | P1 | 攻击、资源和降级门禁 | engineering_verified | M7 |
-| M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | engineering_verified | M8；远端 push/CI blocked_external |
+| M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | engineering_verified | M8 已推送；M8.1 远端 CI 待提交后复验 |
 
 M6 关闭证据见 `docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`：固定 confirmed actual 查询、repeatable-read 水位、Decimal 分币种、来源版本/hash、不可变数据库行、精确 Claim 白名单、独立 report kill switch、Provider 失败关闭及真实 API 浏览器链均已通过。H06/H08 的真实对账、正式指标口径、标准答案和签字仍为人工门禁，不因工程 P0 关闭而自动通过。
 
 M7 关闭证据见 `docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`：六路 Snapshot/Narrative 并发、权限、kill switch、Provider 超时/截断、秘密脱敏、4,999 至 50,001 行、文件字节边界、Worker 恢复、模型健康、迁移双路径和 Staging 静态门禁均有自动断言。目标 Linux、外部 Provider、真实准确率、正式性能 p95、独立审查和最终 UAT 继续引用 H04-H16，不因工程门禁通过而关闭。
 
-M8 收口证据见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`：Prompt manifest/guard 4/4 unit 与空库 41 migration 后 registry/seed/Schema/hash 3/3 PostgreSQL、前后端 build、runtime 4/4、迁移双路径、708 文件卫生和两套 0 vulnerability 审计通过。`M0-INPUT-001`、GitHub push/远端 CI 和 H01-H16 不因 M8 工程收口而关闭。
+M8 收口证据见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`：Prompt manifest/guard 4/4 unit 与空库 41 migration 后 registry/seed/Schema/hash 3/3 PostgreSQL、前后端 build、runtime 4/4、迁移双路径、708 文件卫生和两套 0 vulnerability 审计通过。提交 `30c6ead` 已推送，CodeQL 通过；Build 首次真实暴露的 Nginx Critical 由 `docs/M8_1_NGINX_CI_SECURITY_REFRESH_2026-07-20.md` 跟踪。`M0-INPUT-001` 和 H01-H16 不因工程收口而关闭。

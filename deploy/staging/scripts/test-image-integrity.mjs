@@ -52,7 +52,7 @@ let fixtureImageId = null;
 await mkdir(evidenceRoot, { recursive: true, mode: 0o700 });
 try {
   await writeFile(join(temporaryRoot, 'Dockerfile'), [
-    'FROM nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284',
+    'FROM nginx:1.30.4-alpine3.24@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46',
     'ARG FIXTURE_VERSION',
     'ENV R5_FIXTURE_VERSION=${FIXTURE_VERSION}',
     'LABEL org.opencontainers.image.revision="r5-${FIXTURE_VERSION}"',

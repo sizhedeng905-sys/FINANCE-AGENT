@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const MiB = 1024 * 1024;
 const applicationLimit = 50 * MiB;
-const nginxImage = 'nginx@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284';
+const nginxImage = 'nginx@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46';
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '..', '..');
 const sourcePath = path.join(repositoryRoot, 'deploy', 'nginx.conf.example');
