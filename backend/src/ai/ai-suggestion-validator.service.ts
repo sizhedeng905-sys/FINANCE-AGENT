@@ -30,6 +30,8 @@ export interface MappingAllowlist extends ClassificationAllowlist {
   sourceRefs?: ReadonlySet<string>;
   requiredFieldKeys?: ReadonlySet<string>;
   transformKeysByField?: ReadonlyMap<string, ReadonlySet<string>>;
+  evidenceRefsBySource?: ReadonlyMap<string, ReadonlySet<string>>;
+  blockedSourceRefs?: ReadonlySet<string>;
   requireSourceEvidence?: boolean;
 }
 
@@ -63,11 +65,18 @@ export class AiSuggestionValidatorService {
     const targetFieldKeys = new Set<string>();
     for (const mapping of output.mappings) {
       this.assertAllowed(mapping.sourceRef, allowedSourceRefs, 'source reference');
+      if (allowlist.blockedSourceRefs?.has(mapping.sourceRef)) {
+        throw this.invalid(`blocked source reference cannot be mapped: ${mapping.sourceRef}`);
+      }
       this.assertAllowed(mapping.targetFieldKey, allowlist.fieldKeys, 'target field');
       this.assertAllowed(mapping.transformKey, this.transformKeys, 'transform');
       const allowedTransforms = allowlist.transformKeysByField?.get(mapping.targetFieldKey);
       if (allowedTransforms) this.assertAllowed(mapping.transformKey, allowedTransforms, 'field transform');
       this.assertAllowedMany(mapping.evidenceRefs, allowlist.evidenceRefs, 'evidence reference');
+      const sourceEvidence = allowlist.evidenceRefsBySource?.get(mapping.sourceRef);
+      if (sourceEvidence) {
+        this.assertAllowedMany(mapping.evidenceRefs, sourceEvidence, 'source-bound evidence reference');
+      }
       if (allowlist.requireSourceEvidence && !mapping.evidenceRefs.includes(mapping.sourceRef)) {
         throw this.invalid(`source evidence is missing for: ${mapping.sourceRef}`);
       }

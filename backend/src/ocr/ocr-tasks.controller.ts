@@ -31,6 +31,7 @@ import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
 import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
+import { OcrAiSuggestionService } from './ocr-ai-suggestion.service';
 import { OcrTasksService } from './ocr-tasks.service';
 
 @ApiTags('ocr-tasks')
@@ -38,7 +39,10 @@ import { OcrTasksService } from './ocr-tasks.service';
 @Controller(['ocr-tasks', 'ocr/tasks'])
 @UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 export class OcrTasksController {
-  constructor(private readonly tasks: OcrTasksService) {}
+  constructor(
+    private readonly tasks: OcrTasksService,
+    private readonly aiSuggestions: OcrAiSuggestionService
+  ) {}
 
   @Post()
   @Roles(UserRole.finance)
@@ -74,6 +78,22 @@ export class OcrTasksController {
   @Roles(UserRole.finance, UserRole.boss)
   findOne(@Param('id') id: string) {
     return this.tasks.findOne(id);
+  }
+
+  @Post(':id/ai-suggestions')
+  @Roles(UserRole.finance)
+  aiSuggest(
+    @Param('id') id: string,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.aiSuggestions.suggest(id, user, getRequestContext(request));
+  }
+
+  @Get(':id/ai-suggestions')
+  @Roles(UserRole.finance)
+  aiSuggestionHistory(@Param('id') id: string) {
+    return this.aiSuggestions.latest(id);
   }
 
   @Post(':id/run')

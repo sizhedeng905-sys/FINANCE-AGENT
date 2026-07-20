@@ -179,6 +179,45 @@ describe('AI suggestion output contracts', () => {
     }), strictAllowlist)).toThrow('source evidence is missing');
   });
 
+  it('binds OCR evidence to its source candidate and blocks conflicted candidates', () => {
+    const allowlist = {
+      templateVersionIds,
+      evidenceRefs: new Set(['p1-b1', 'p2-b1']),
+      sourceRefs: new Set(['candidate:amount']),
+      fieldKeys,
+      requiredFieldKeys: new Set(['amount']),
+      transformKeysByField: new Map([['amount', new Set(['DECIMAL_CANONICAL_V1'])]]),
+      evidenceRefsBySource: new Map([['candidate:amount', new Set(['p1-b1'])]])
+    };
+    const output = {
+      schemaVersion: 'mapping/1.0',
+      templateVersionId: 'template-expense:v3',
+      mappings: [{
+        sourceRef: 'candidate:amount',
+        targetFieldKey: 'amount',
+        transformKey: 'DECIMAL_CANONICAL_V1',
+        confidence: '0.9',
+        evidenceRefs: ['p1-b1']
+      }],
+      unmappedSourceRefs: [],
+      unresolvedRequiredFields: [],
+      warnings: [],
+      decision: 'NEEDS_FINANCE_REVIEW'
+    };
+
+    expect(service.mapping(JSON.stringify(output), allowlist)).toMatchObject({
+      mappings: [{ sourceRef: 'candidate:amount', evidenceRefs: ['p1-b1'] }]
+    });
+    expect(() => service.mapping(JSON.stringify({
+      ...output,
+      mappings: [{ ...output.mappings[0], evidenceRefs: ['p2-b1'] }]
+    }), allowlist)).toThrow('source-bound evidence');
+    expect(() => service.mapping(JSON.stringify(output), {
+      ...allowlist,
+      blockedSourceRefs: new Set(['candidate:amount'])
+    })).toThrow('blocked source reference');
+  });
+
   it('accepts only a whitelisted report snapshot and review-only narrative', () => {
     const narrative = JSON.stringify({
       schemaVersion: 'report-narrative/1.0',

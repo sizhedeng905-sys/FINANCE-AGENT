@@ -677,7 +677,13 @@ async function main() {
       modelVersion: '1',
       endpoint: null,
       secretRef: null,
-      taskTypes: ['boss_chat', 'excel_template_classification', 'excel_column_mapping'],
+      taskTypes: [
+        'boss_chat',
+        'excel_template_classification',
+        'excel_column_mapping',
+        'ocr_document_classification',
+        'ocr_field_mapping'
+      ],
       maxConcurrency: 4,
       timeoutMs: 5000,
       isLocal: true,
@@ -697,7 +703,9 @@ async function main() {
         'structured_extraction',
         'risk_explanation',
         'excel_template_classification',
-        'excel_column_mapping'
+        'excel_column_mapping',
+        'ocr_document_classification',
+        'ocr_field_mapping'
       ],
       maxConcurrency: 1,
       timeoutMs: 60000,
@@ -779,6 +787,10 @@ async function main() {
     ['excel_template_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
     ['excel_column_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
     ['excel_column_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['ocr_document_classification', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['ocr_document_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
+    ['ocr_field_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
+    ['ocr_field_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
     ['ocr_document', 'model-deployment-paddle-ocr', 10, false, 'manual'],
     ['ocr_ambiguity_review', 'model-deployment-qwen-vl', 10, false, 'manual'],
     ['embedding', 'model-deployment-qwen-embedding', 10, false, 'manual']
