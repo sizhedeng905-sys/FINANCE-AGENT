@@ -225,6 +225,54 @@ describe('OCR phase 10 providers and preprocessing', () => {
     expect(() => service.normalizeFieldValue(numberField, '9007199254740993', 'raw-test')).toThrow('超出允许范围');
   });
 
+  it('preserves conflicting OCR candidates instead of silently choosing one value', () => {
+    const service = Object.create(OcrTasksService.prototype) as any;
+    service.lowConfidenceThreshold = 0.8;
+    const templateFields = [{
+      fieldId: 'f-amount',
+      isVisible: true,
+      isRequired: true,
+      field: {
+        id: 'f-amount',
+        fieldKey: 'amount',
+        fieldName: 'Amount',
+        fieldType: FieldType.money,
+        semanticType: SemanticType.amount,
+        aliases: [],
+        isActive: true
+      }
+    }];
+    const providerCandidates = [
+      {
+        targetFieldId: 'f-amount', sourceLabel: 'Amount', rawValue: '125.60', normalizedValue: '125.60',
+        page: 1, confidence: 0.97, evidence: 'page one'
+      },
+      {
+        targetFieldId: 'f-amount', sourceLabel: 'Amount', rawValue: '999.99', normalizedValue: '999.99',
+        page: 2, confidence: 0.96, evidence: 'page two'
+      }
+    ];
+
+    expect(service.canonicalizeCandidates(
+      providerCandidates,
+      templateFields,
+      'raw-test',
+      [['p1-b1'], ['p2-b1']]
+    )).toEqual([expect.objectContaining({
+      normalizedValue: '125.6',
+      evidenceRefs: ['p1-b1'],
+      valueSource: 'OCR_PROVIDER',
+      evidenceConflict: true,
+      lowConfidence: true,
+      validationError: expect.stringContaining('冲突'),
+      alternatives: [expect.objectContaining({
+        page: 2,
+        normalizedValue: '999.99',
+        evidenceRefs: ['p2-b1']
+      })]
+    })]);
+  });
+
   it('reads real PDF pages and rejects page limits, damaged files, and encrypted markers', async () => {
     const preprocessor = new DocumentPreprocessorService(config({ 'ocr.maxPdfPages': 2 }));
     const valid = await PDFDocument.create();

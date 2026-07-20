@@ -4108,6 +4108,8 @@ describe('real PostgreSQL integration', () => {
       .expect(200);
     expect(routes.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({ taskType: 'boss_chat', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
+      expect.objectContaining({ taskType: 'ocr_document_classification', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
+      expect.objectContaining({ taskType: 'ocr_field_mapping', isEnabled: true, deployment: expect.objectContaining({ key: 'mock-text' }) }),
       expect.objectContaining({ taskType: 'ocr_document', isEnabled: false, deployment: expect.objectContaining({ key: 'paddleocr-vl' }) })
     ]));
 
@@ -4121,7 +4123,7 @@ describe('real PostgreSQL integration', () => {
       expect.objectContaining({ key: 'qwen3-14b-awq', enabled: false, healthy: false, status: 'disabled' })
     ]));
     expect(await prisma.modelDeployment.count()).toBe(5);
-    expect(await prisma.taskModelRoute.count()).toBe(9);
+    expect(await prisma.taskModelRoute.count()).toBe(13);
   });
 
   it('imports a real XLSX with mapping decisions, partial success, idempotency, and report visibility', async () => {
@@ -7017,6 +7019,9 @@ describe('real PostgreSQL integration', () => {
         .expect(200);
       expect(recognized.body.data).toMatchObject({
         status: OcrTaskStatus.pending_confirm,
+        version: expect.any(Number),
+        reviewRevision: 0,
+        validation: null,
         extractedText: expect.stringContaining('金额'),
         evidence: {
           schemaVersion: 'ocr-ir/1.0',
@@ -7069,22 +7074,126 @@ describe('real PostgreSQL integration', () => {
         .send({ acknowledgeLowConfidence: false })
         .expect(409);
 
+      const initialValidation = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('X-Request-Id', `integration-ocr-revalidate-initial-${suffix}`)
+        .send({
+          expectedVersion: recognized.body.data.version,
+          expectedReviewRevision: 0
+        })
+        .expect(201);
+      expect(initialValidation.body.data).toMatchObject({
+        reviewRevision: 0,
+        validation: {
+          reviewRevision: 0,
+          ruleVersion: 'ocr-deterministic-validation/1.0',
+          snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          snapshot: {
+            schemaVersion: 'ocr-validation/1.0',
+            reviewRevision: 0,
+            valid: true,
+            blockingErrors: [],
+            warnings: [expect.objectContaining({ code: 'LOW_OCR_CONFIDENCE' })]
+          }
+        }
+      });
+
       const corrected = await request(app.getHttpServer())
         .put(`/api/ocr-tasks/${taskId}/corrections`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', `integration-ocr-correct-${suffix}`)
         .send({
+          expectedVersion: initialValidation.body.data.version,
+          expectedReviewRevision: 0,
           corrections: [
             { fieldId: lowField!.fieldId, correctedValue: '2026-07-01', reason: '人工核对票据日期' },
             { fieldId: amountField!.fieldId, correctedValue: '1299.25', reason: '人工核对票据金额' }
           ]
         })
         .expect(200);
+      expect(corrected.body.data).toMatchObject({
+        reviewRevision: 1,
+        validation: null,
+        version: initialValidation.body.data.version + 1
+      });
       expect(corrected.body.data.corrections).toEqual(expect.arrayContaining([
-        expect.objectContaining({ fieldId: lowField!.fieldId, beforeValue: expect.any(String), afterValue: '2026-07-01' }),
-        expect.objectContaining({ fieldId: amountField!.fieldId, afterValue: '1299.25' })
+        expect.objectContaining({
+          fieldId: lowField!.fieldId,
+          beforeValue: expect.any(String),
+          afterValue: '2026-07-01',
+          reviewRevision: 1,
+          overrideType: 'MANUAL_OVERRIDE',
+          evidenceRefs: expect.any(Array)
+        }),
+        expect.objectContaining({
+          fieldId: amountField!.fieldId,
+          afterValue: '1299.25',
+          reviewRevision: 1,
+          overrideType: 'MANUAL_OVERRIDE'
+        })
       ]));
       expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(2);
+
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/corrections`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          expectedVersion: recognized.body.data.version,
+          expectedReviewRevision: 0,
+          corrections: [{
+            fieldId: amountField!.fieldId,
+            correctedValue: '1300.00',
+            reason: 'stale browser correction must fail'
+          }]
+        })
+        .expect(409);
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/corrections`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          expectedVersion: corrected.body.data.version,
+          expectedReviewRevision: 1,
+          corrections: [{
+            fieldId: amountField!.fieldId,
+            correctedValue: '1300.00',
+            reason: 'invalid cross-source evidence must fail',
+            evidenceRefs: ['p99-b1']
+          }]
+        })
+        .expect(400);
+      expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(2);
+
+      const finalValidation = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .set('X-Request-Id', `integration-ocr-revalidate-final-${suffix}`)
+        .send({
+          expectedVersion: corrected.body.data.version,
+          expectedReviewRevision: 1
+        })
+        .expect(201);
+      expect(finalValidation.body.data).toMatchObject({
+        reviewRevision: 1,
+        validation: {
+          reviewRevision: 1,
+          snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          snapshot: {
+            candidatePayloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            valid: true,
+            blockingErrors: [],
+            warnings: []
+          }
+        }
+      });
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          expectedVersion: corrected.body.data.version,
+          expectedReviewRevision: 1
+        })
+        .expect(409);
 
       const confirm = (key: string) => request(app.getHttpServer())
         .post(`/api/ocr-tasks/${taskId}/confirm`)

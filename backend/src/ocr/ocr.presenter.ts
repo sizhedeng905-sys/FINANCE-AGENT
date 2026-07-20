@@ -35,6 +35,8 @@ export function toOcrTask(task: OcrTaskDetail) {
     templateName: task.template.name,
     recordType: task.template.recordType,
     status: task.status,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
     provider: task.provider,
     modelName: task.modelName,
     modelVersion: task.modelVersion ?? undefined,
@@ -66,6 +68,13 @@ export function toOcrTask(task: OcrTaskDetail) {
     confirmedBy: task.confirmer?.name,
     confirmedAt: task.confirmedAt?.toISOString(),
     generatedRecordId: task.generatedRecordId ?? undefined,
+    validation: task.validationSnapshotHash ? {
+      reviewRevision: task.validationRevision,
+      ruleVersion: task.validationRuleVersion,
+      snapshotHash: task.validationSnapshotHash,
+      validatedAt: task.validatedAt?.toISOString(),
+      snapshot: objectValue(task.validationSnapshot)
+    } : null,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     rawFile: {
@@ -103,7 +112,10 @@ export function toOcrTask(task: OcrTaskDetail) {
       beforeValue: correction.beforeValue ?? undefined,
       afterValue: correction.afterValue,
       originalConfidence: correction.originalConfidence?.toNumber(),
-      reason: correction.reason ?? undefined,
+      reason: correction.reason,
+      reviewRevision: correction.reviewRevision,
+      overrideType: correction.overrideType,
+      evidenceRefs: stringArray(correction.evidenceRefs),
       correctedBy: correction.corrector.name,
       correctedAt: correction.createdAt.toISOString()
     }))
@@ -118,8 +130,12 @@ function arrayValue(value: Prisma.JsonValue): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function objectValue(value: Prisma.JsonValue): Record<string, unknown> {
+function objectValue(value: Prisma.JsonValue | null): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringArray(value: Prisma.JsonValue): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
 function numberObject(value: Prisma.JsonValue): Record<string, number> {

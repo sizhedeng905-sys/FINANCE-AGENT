@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { acquireProjectWriteLock } from '../common/database/project-write-lock';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
+import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import { toBusinessRecord } from '../data-center/data-center.presenter';
 import { FilesService } from '../files/files.service';
 import { IdempotencyService } from '../idempotency/idempotency.service';
@@ -39,6 +40,7 @@ import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
 import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
+import { RevalidateOcrTaskDto } from './dto/revalidate-ocr-task.dto';
 import { DocumentPreprocessorService, OcrPageSelection } from './document-preprocessor.service';
 import {
   normalizeOcrIr,
@@ -64,7 +66,14 @@ type PreparedOcrTask = {
   pageSelection: OcrPageSelection;
   pages: Awaited<ReturnType<DocumentPreprocessorService['inspect']>>;
 };
+type OcrValidationIssue = {
+  code: string;
+  fieldId: string | null;
+  message: string;
+  evidenceRefs: string[];
+};
 const MAX_OCR_RESULT_BYTES = 2 * 1024 * 1024;
+export const OCR_DETERMINISTIC_VALIDATION_RULE_VERSION = 'ocr-deterministic-validation/1.0';
 
 @Injectable()
 export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
@@ -634,6 +643,12 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             textBlocks: this.json(normalizedIr.normalizedTextBlocks),
             tables: this.json(result.tables),
             fieldCandidates: this.json(candidates),
+            reviewRevision: 0,
+            validationRevision: null,
+            validationSnapshot: Prisma.DbNull,
+            validationSnapshotHash: null,
+            validationRuleVersion: null,
+            validatedAt: null,
             sourceSha256: file.sha256,
             irSchemaVersion: OCR_IR_SCHEMA_VERSION,
             irHash: normalizedIr.ir.hash,
@@ -765,8 +780,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
       if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('当前 OCR 状态不能人工纠错');
+      if (dto.expectedVersion !== undefined && dto.expectedVersion !== task.version) {
+        throw new ConflictException('OCR task version changed; refresh before saving corrections');
+      }
+      if (
+        dto.expectedReviewRevision !== undefined
+        && dto.expectedReviewRevision !== task.reviewRevision
+      ) {
+        throw new ConflictException('OCR review revision changed; refresh before saving corrections');
+      }
       const candidates = this.candidateArray(task.fieldCandidates);
       const fields = new Map(task.template.templateFields.map((item) => [item.fieldId, item]));
+      const evidenceIndex = this.reviewEvidenceIndex(task);
+      const nextReviewRevision = task.reviewRevision + 1;
 
       for (const correction of dto.corrections) {
         const templateField = fields.get(correction.fieldId);
@@ -777,12 +803,29 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         if (index < 0) throw new BadRequestException('OCR 字段候选不存在');
         const before = candidates[index];
         const normalized = this.normalizeFieldValue(templateField.field, correction.correctedValue, task.rawFileId);
+        const reason = correction.reason.trim();
+        const previousEvidenceRefs = Array.isArray(before.evidenceRefs) ? before.evidenceRefs : [];
+        const evidenceRefs = correction.evidenceRefs
+          ? [...correction.evidenceRefs]
+          : previousEvidenceRefs.length > 0
+            ? [...previousEvidenceRefs]
+            : [`raw-file:${task.rawFileId}`];
+        for (const evidenceRef of evidenceRefs) {
+          if (!evidenceIndex.has(evidenceRef)) {
+            throw new BadRequestException(`OCR correction evidence is not part of this source: ${evidenceRef}`);
+          }
+        }
         candidates[index] = {
           ...before,
           rawValue: correction.correctedValue,
           normalizedValue: normalized,
           confidence: 1,
-          evidence: correction.reason?.trim() || '财务人工纠错',
+          evidence: reason,
+          evidenceRefs,
+          valueSource: 'MANUAL_OVERRIDE',
+          reviewRevision: nextReviewRevision,
+          evidenceConflict: false,
+          alternatives: [],
           missing: false,
           lowConfidence: false,
           corrected: true,
@@ -796,7 +839,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
             beforeValue: this.displayValue(before.normalizedValue),
             afterValue: this.displayValue(normalized),
             originalConfidence: new Prisma.Decimal(before.confidence),
-            reason: correction.reason?.trim(),
+            reason,
+            reviewRevision: nextReviewRevision,
+            overrideType: 'MANUAL_OVERRIDE',
+            evidenceRefs: this.json(evidenceRefs),
             correctedBy: actor.id
           }
         });
@@ -808,14 +854,63 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           fieldCandidates: this.json(candidates),
           extractedFields: this.json(this.extractedFields(candidates)),
           fieldConfidence: this.json(this.fieldConfidence(candidates)),
-          avgConfidence: new Prisma.Decimal(this.averageConfidence(candidates))
+          avgConfidence: new Prisma.Decimal(this.averageConfidence(candidates)),
+          reviewRevision: nextReviewRevision,
+          validationRevision: null,
+          validationSnapshot: Prisma.DbNull,
+          validationSnapshotHash: null,
+          validationRuleVersion: null,
+          validatedAt: null,
+          version: { increment: 1 }
         }
       });
       await this.auditLogs.write(tx, actor, 'ocr_task.correct', 'ocr_task', id, {
-        fields: dto.corrections.map((correction) => correction.fieldId)
+        fields: dto.corrections.map((correction) => correction.fieldId),
+        reviewRevision: nextReviewRevision,
+        invalidatedValidationSnapshotHash: task.validationSnapshotHash
       }, context);
       await this.ledgerEvents.write(tx, actor, 'ocr_task_corrected', 'ocr_task', id, {
-        fields: dto.corrections.map((correction) => correction.fieldId)
+        fields: dto.corrections.map((correction) => correction.fieldId),
+        reviewRevision: nextReviewRevision
+      });
+    });
+    return toOcrTask(await this.findDetailOrThrow(id));
+  }
+
+  async revalidate(id: string, dto: RevalidateOcrTaskDto, actor: CurrentUser, context: RequestContext) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, id);
+      const task = await this.findDetailOrThrow(id, tx);
+      if (task.status !== OcrTaskStatus.pending_confirm) {
+        throw new ConflictException('Only OCR tasks awaiting finance review can be revalidated');
+      }
+      if (dto.expectedVersion !== task.version || dto.expectedReviewRevision !== task.reviewRevision) {
+        throw new ConflictException('OCR review payload changed; refresh before revalidation');
+      }
+      const snapshot = this.buildValidationSnapshot(task, actor.id);
+      const validatedAt = new Date();
+      await tx.ocrTask.update({
+        where: { id },
+        data: {
+          validationRevision: task.reviewRevision,
+          validationSnapshot: this.json(snapshot),
+          validationSnapshotHash: snapshot.snapshotHash,
+          validationRuleVersion: OCR_DETERMINISTIC_VALIDATION_RULE_VERSION,
+          validatedAt,
+          version: { increment: 1 }
+        }
+      });
+      await this.auditLogs.write(tx, actor, 'ocr_task.revalidate', 'ocr_task', id, {
+        reviewRevision: task.reviewRevision,
+        snapshotHash: snapshot.snapshotHash,
+        valid: snapshot.valid,
+        blockingErrorCount: snapshot.blockingErrors.length,
+        warningCount: snapshot.warnings.length
+      }, context);
+      await this.ledgerEvents.write(tx, actor, 'ocr_task_revalidated', 'ocr_task', id, {
+        reviewRevision: task.reviewRevision,
+        snapshotHash: snapshot.snapshotHash,
+        valid: snapshot.valid
       });
     });
     return toOcrTask(await this.findDetailOrThrow(id));
@@ -1090,18 +1185,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     candidateEvidenceRefs: string[][] = []
   ): CanonicalOcrFieldCandidate[] {
     const activeFields = templateFields.filter((item) => item.isVisible && item.field.isActive);
-    const matched = new Map<string, { candidate: OcrFieldCandidate; index: number }>();
+    const matched = new Map<string, Array<{ candidate: OcrFieldCandidate; index: number }>>();
     for (const [index, candidate] of providerCandidates.entries()) {
       const templateField = this.matchCandidate(candidate, activeFields);
       if (!templateField) throw new BadGatewayException(`OCR Provider 返回未映射字段：${candidate.sourceLabel || '未命名字段'}`);
-      const existing = matched.get(templateField.fieldId);
-      if (!existing || Number(candidate.confidence) > Number(existing.candidate.confidence)) {
-        matched.set(templateField.fieldId, { candidate, index });
-      }
+      const values = matched.get(templateField.fieldId) ?? [];
+      values.push({ candidate, index });
+      matched.set(templateField.fieldId, values);
     }
 
     return activeFields.map((templateField) => {
-      const match = matched.get(templateField.fieldId);
+      const matches = (matched.get(templateField.fieldId) ?? [])
+        .sort((left, right) => Number(right.candidate.confidence) - Number(left.candidate.confidence));
+      const match = matches[0];
       const candidate = match?.candidate;
       if (!candidate && templateField.field.fieldType === FieldType.file) {
         return {
@@ -1118,6 +1214,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           confidence: 1,
           evidence: '系统绑定当前 OCR 原始文件；人工确认前不会入账',
           evidenceRefs: [`raw-file:${rawFileId}`],
+          valueSource: 'SYSTEM_FILE_BINDING' as const,
+          reviewRevision: 0,
+          evidenceConflict: false,
+          alternatives: [],
           missing: false,
           lowConfidence: false,
           corrected: false
@@ -1138,6 +1238,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
           confidence: 0,
           evidence: 'OCR 未识别该模板字段',
           evidenceRefs: [],
+          valueSource: 'OCR_PROVIDER' as const,
+          reviewRevision: 0,
+          evidenceConflict: false,
+          alternatives: [],
           missing: true,
           lowConfidence: true,
           corrected: false,
@@ -1153,6 +1257,18 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         validationError = this.safeErrorMessage(error);
       }
+      const alternatives = matches.slice(1, 21).map((alternative) => ({
+        page: alternative.candidate.page,
+        rawValue: alternative.candidate.rawValue ?? null,
+        normalizedValue: alternative.candidate.normalizedValue ?? null,
+        confidence: Math.max(0, Math.min(1, Number(alternative.candidate.confidence) || 0)),
+        evidenceRefs: candidateEvidenceRefs[alternative.index] ?? [],
+        boundingBox: alternative.candidate.boundingBox
+      }));
+      const evidenceConflict = matches.length > 1 && new Set(
+        matches.map((item) => this.displayValue(item.candidate.normalizedValue))
+      ).size > 1;
+      if (evidenceConflict) validationError = '多个 OCR 候选值冲突，必须由财务选择证据并修正';
       const missing = this.isEmpty(candidate.normalizedValue);
       return {
         fieldId: templateField.fieldId,
@@ -1169,6 +1285,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         confidence,
         evidence: String(candidate.evidence || '').slice(0, 1000),
         evidenceRefs: match ? candidateEvidenceRefs[match.index] ?? [] : [],
+        valueSource: 'OCR_PROVIDER' as const,
+        reviewRevision: 0,
+        evidenceConflict,
+        alternatives,
         missing,
         lowConfidence: missing || confidence < this.lowConfidenceThreshold || Boolean(validationError),
         corrected: false,
@@ -1190,6 +1310,225 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     const source = this.normalizeName(candidate.sourceLabel);
     return fields.find((item) => [item.field.fieldName, ...this.aliases(item.field.aliases)]
       .some((name) => this.normalizeName(name) === source));
+  }
+
+  private buildValidationSnapshot(task: OcrTaskDetail, validatedBy: string) {
+    const candidates = this.candidateArray(task.fieldCandidates);
+    const evidenceIndex = this.reviewEvidenceIndex(task);
+    const activeFields = task.template.templateFields.filter((item) => item.isVisible && item.field.isActive);
+    const activeFieldIds = new Set(activeFields.map((item) => item.fieldId));
+    const candidateByField = new Map<string, CanonicalOcrFieldCandidate>();
+    const blockingErrors: OcrValidationIssue[] = [];
+    const warnings: OcrValidationIssue[] = [];
+
+    for (const candidate of candidates) {
+      if (candidateByField.has(candidate.fieldId)) {
+        blockingErrors.push({
+          code: 'DUPLICATE_FIELD_CANDIDATE',
+          fieldId: candidate.fieldId,
+          message: 'The OCR review payload contains duplicate field candidates',
+          evidenceRefs: Array.isArray(candidate.evidenceRefs) ? candidate.evidenceRefs : []
+        });
+        continue;
+      }
+      candidateByField.set(candidate.fieldId, candidate);
+      if (!activeFieldIds.has(candidate.fieldId)) {
+        blockingErrors.push({
+          code: 'FIELD_OUTSIDE_FROZEN_TEMPLATE',
+          fieldId: candidate.fieldId,
+          message: 'The OCR review payload references a field outside the active frozen template',
+          evidenceRefs: Array.isArray(candidate.evidenceRefs) ? candidate.evidenceRefs : []
+        });
+      }
+    }
+
+    const validatedValues: Array<{
+      fieldId: string;
+      fieldKey: string;
+      value: string | string[];
+      valueSource: string;
+      evidenceRefs: string[];
+    }> = [];
+    for (const templateField of activeFields) {
+      const candidate = candidateByField.get(templateField.fieldId);
+      if (!candidate || this.isEmpty(candidate.normalizedValue)) {
+        if (templateField.isRequired) {
+          blockingErrors.push({
+            code: 'REQUIRED_FIELD_MISSING',
+            fieldId: templateField.fieldId,
+            message: `${templateField.field.fieldName}: required value is missing`,
+            evidenceRefs: []
+          });
+        }
+        continue;
+      }
+
+      const evidenceRefs = Array.isArray(candidate.evidenceRefs) ? [...candidate.evidenceRefs] : [];
+      if (new Set(evidenceRefs).size !== evidenceRefs.length) {
+        blockingErrors.push({
+          code: 'DUPLICATE_EVIDENCE_REF',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: duplicate evidence references are not allowed`,
+          evidenceRefs
+        });
+      }
+      if (evidenceRefs.length === 0) {
+        blockingErrors.push({
+          code: 'EVIDENCE_MISSING',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: every non-empty value requires source evidence`,
+          evidenceRefs: []
+        });
+      }
+      const evidencePages = new Set<number>();
+      for (const evidenceRef of evidenceRefs) {
+        const source = evidenceIndex.get(evidenceRef);
+        if (!source) {
+          blockingErrors.push({
+            code: 'EVIDENCE_REF_INVALID',
+            fieldId: candidate.fieldId,
+            message: `${candidate.fieldName}: evidence does not belong to this OCR source`,
+            evidenceRefs: [evidenceRef]
+          });
+        } else if (source.page !== null) {
+          evidencePages.add(source.page);
+        }
+      }
+      if (candidate.evidenceConflict || evidencePages.size > 1) {
+        blockingErrors.push({
+          code: 'CROSS_PAGE_EVIDENCE_CONFLICT',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: conflicting evidence must be reduced to the finance-selected source`,
+          evidenceRefs
+        });
+      }
+      if (candidate.validationError) {
+        blockingErrors.push({
+          code: 'FIELD_VALIDATION_ERROR',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: ${candidate.validationError}`,
+          evidenceRefs
+        });
+      }
+      if (candidate.lowConfidence) {
+        warnings.push({
+          code: 'LOW_OCR_CONFIDENCE',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: OCR confidence requires explicit finance review`,
+          evidenceRefs
+        });
+      }
+
+      try {
+        const value = this.normalizeFieldValue(templateField.field, candidate.normalizedValue, task.rawFileId);
+        validatedValues.push({
+          fieldId: templateField.fieldId,
+          fieldKey: templateField.field.fieldKey,
+          value,
+          valueSource: candidate.valueSource ?? 'OCR_PROVIDER',
+          evidenceRefs
+        });
+      } catch (error) {
+        blockingErrors.push({
+          code: 'FIELD_TYPE_INVALID',
+          fieldId: candidate.fieldId,
+          message: `${candidate.fieldName}: ${this.safeErrorMessage(error)}`,
+          evidenceRefs
+        });
+      }
+    }
+
+    const core = {
+      schemaVersion: 'ocr-validation/1.0',
+      taskId: task.id,
+      projectId: task.projectId,
+      sourceSha256: task.sourceSha256,
+      irSchemaVersion: task.irSchemaVersion,
+      irHash: task.irHash,
+      templateId: task.templateId,
+      templateVersion: task.templateVersion,
+      templateContentHash: canonicalJsonSha256(activeFields.map((item) => ({
+        fieldId: item.fieldId,
+        fieldKey: item.field.fieldKey,
+        fieldType: item.field.fieldType,
+        required: item.isRequired
+      }))),
+      reviewRevision: task.reviewRevision,
+      candidatePayloadHash: canonicalJsonSha256(candidates),
+      validationRuleVersion: OCR_DETERMINISTIC_VALIDATION_RULE_VERSION,
+      validatedBy,
+      blockingErrors,
+      warnings,
+      validatedValues,
+      valid: blockingErrors.length === 0
+    };
+    return { ...core, snapshotHash: canonicalJsonSha256(core) };
+  }
+
+  private reviewEvidenceIndex(task: OcrTaskDetail) {
+    if (!task.normalizedIr || typeof task.normalizedIr !== 'object' || Array.isArray(task.normalizedIr)) {
+      throw new ConflictException('OCR evidence IR is missing');
+    }
+    const ir = task.normalizedIr as Record<string, Prisma.JsonValue>;
+    const pages = Array.isArray(ir.pages) ? ir.pages : undefined;
+    const core = {
+      schemaVersion: ir.schemaVersion,
+      sourceSha256: ir.sourceSha256,
+      providerVersion: ir.providerVersion,
+      coordinateVersion: ir.coordinateVersion,
+      pages: ir.pages
+    };
+    if (
+      !pages
+      || ir.sourceId !== task.id
+      || ir.sourceSha256 !== task.sourceSha256
+      || ir.hash !== task.irHash
+      || canonicalJsonSha256(core) !== task.irHash
+      || task.sourceSha256 !== task.rawFile.sha256
+    ) throw new ConflictException('OCR evidence IR is stale or fails its content hash');
+
+    const index = new Map<string, { page: number | null }>();
+    const add = (ref: unknown, page: number | null) => {
+      if (typeof ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,255}$/.test(ref)) {
+        throw new ConflictException('OCR evidence IR contains an invalid reference');
+      }
+      if (index.has(ref)) throw new ConflictException('OCR evidence IR contains duplicate references');
+      index.set(ref, { page });
+    };
+    add(`raw-file:${task.rawFileId}`, null);
+    for (const rawPage of pages) {
+      if (!rawPage || typeof rawPage !== 'object' || Array.isArray(rawPage)) {
+        throw new ConflictException('OCR evidence IR contains an invalid page');
+      }
+      const page = rawPage as Record<string, Prisma.JsonValue>;
+      if (!Number.isInteger(page.page) || Number(page.page) < 1) {
+        throw new ConflictException('OCR evidence IR contains an invalid page number');
+      }
+      const pageNumber = Number(page.page);
+      const blocks = Array.isArray(page.blocks) ? page.blocks : [];
+      for (const rawBlock of blocks) {
+        if (!rawBlock || typeof rawBlock !== 'object' || Array.isArray(rawBlock)) {
+          throw new ConflictException('OCR evidence IR contains an invalid block');
+        }
+        const block = rawBlock as Record<string, Prisma.JsonValue>;
+        add(block.blockId, pageNumber);
+        const tokens = Array.isArray(block.tokens) ? block.tokens : [];
+        for (const rawToken of tokens) {
+          if (!rawToken || typeof rawToken !== 'object' || Array.isArray(rawToken)) {
+            throw new ConflictException('OCR evidence IR contains an invalid token');
+          }
+          add((rawToken as Record<string, Prisma.JsonValue>).tokenId, pageNumber);
+        }
+      }
+      const candidates = Array.isArray(page.candidateEvidence) ? page.candidateEvidence : [];
+      for (const rawCandidate of candidates) {
+        if (!rawCandidate || typeof rawCandidate !== 'object' || Array.isArray(rawCandidate)) {
+          throw new ConflictException('OCR evidence IR contains invalid candidate evidence');
+        }
+        add((rawCandidate as Record<string, Prisma.JsonValue>).evidenceId, pageNumber);
+      }
+    }
+    return index;
   }
 
   private validateCandidates(

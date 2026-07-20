@@ -31,6 +31,7 @@ import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
 import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
+import { RevalidateOcrTaskDto } from './dto/revalidate-ocr-task.dto';
 import { OcrAiSuggestionService } from './ocr-ai-suggestion.service';
 import { OcrTasksService } from './ocr-tasks.service';
 
@@ -139,6 +140,17 @@ export class OcrTasksController {
     @Req() request: AuthenticatedRequest
   ) {
     return this.tasks.correct(id, dto, user, getRequestContext(request));
+  }
+
+  @Post(':id/revalidate')
+  @Roles(UserRole.finance)
+  revalidate(
+    @Param('id') id: string,
+    @Body() dto: RevalidateOcrTaskDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.tasks.revalidate(id, dto, user, getRequestContext(request));
   }
 
   @Post(':id/confirm')
