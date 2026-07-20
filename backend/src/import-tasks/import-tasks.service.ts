@@ -220,6 +220,13 @@ interface BackgroundConfirmationJob {
   attempt: number;
 }
 
+interface PreparedConfirmationIntegrity {
+  taskVersion: number;
+  rowSetHash: string;
+  normalizedOutputHash: string;
+  recordCount: number;
+}
+
 interface PreparedWorkbook {
   buffer: Buffer;
   sourceFormat: 'xls' | 'xlsx';
@@ -2015,7 +2022,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         if (this.stopping) throw new ImportConfirmationWorkerStoppingError();
         const processedBatch = await this.processConfirmationBatch(job);
         if (processedBatch) continue;
-        await this.completeBackgroundConfirmation(job);
+        const integrity = await this.prepareBackgroundConfirmationCompletion(job);
+        await this.completeBackgroundConfirmation(job, integrity);
         return;
       }
     } catch (error) {
@@ -2183,38 +2191,73 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       }
       await this.persistConfirmationRows(tx, job.taskId, preview.rows, recordIdByRow, now);
 
-      const [processedRows, successRows, errorRows] = await Promise.all([
-        tx.importRow.count({ where: { importTaskId: job.taskId, confirmationProcessedAt: { not: null } } }),
-        tx.businessRecord.count({ where: { importTaskId: job.taskId } }),
-        tx.importRow.count({
-          where: {
-            importTaskId: job.taskId,
-            confirmationProcessedAt: { not: null },
-            status: ImportRowStatus.error
-          }
-        })
-      ]);
-      await tx.importTask.update({
-        where: { id: job.taskId },
+      const progress = await tx.importTask.updateMany({
+        where: {
+          id: job.taskId,
+          status: ImportTaskStatus.confirming,
+          leaseToken: job.leaseToken,
+          approvalSnapshotHash: job.approvalSnapshotHash
+        },
         data: {
-          confirmationProcessedRows: processedRows,
-          confirmationSuccessRows: successRows,
-          confirmationErrorRows: errorRows,
+          confirmationProcessedRows: { increment: preview.rows.length },
+          confirmationSuccessRows: { increment: recordIdByRow.size },
           importedRows: 0,
           leaseUntil: new Date(Date.now() + this.confirmationLeaseMs)
         }
       });
+      if (progress.count !== 1) throw new ImportConfirmationLeaseLostError();
       return true;
     });
   }
 
-  private async completeBackgroundConfirmation(job: BackgroundConfirmationJob) {
+  private async prepareBackgroundConfirmationCompletion(
+    job: BackgroundConfirmationJob
+  ): Promise<PreparedConfirmationIntegrity> {
+    const task = await this.prisma.$transaction(async (tx) => {
+      await this.lockTask(tx, job.taskId);
+      await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
+      const current = await tx.importTask.findUnique({ where: { id: job.taskId }, include: previewTaskInclude });
+      if (!current) throw new NotFoundException('Import task not found');
+      this.assertImportApprovalSnapshotCurrent(current, job.approvalSnapshotHash);
+      const renewed = await tx.importTask.updateMany({
+        where: {
+          id: job.taskId,
+          status: ImportTaskStatus.confirming,
+          leaseToken: job.leaseToken,
+          approvalSnapshotHash: job.approvalSnapshotHash
+        },
+        data: { leaseUntil: new Date(Date.now() + this.confirmationLeaseMs) }
+      });
+      if (renewed.count !== 1) throw new ImportConfirmationLeaseLostError();
+      return current;
+    }, { maxWait: 10_000, timeout: 30_000 });
+
+    let nextHeartbeatAt = Date.now() + Math.max(100, Math.floor(this.confirmationLeaseMs / 3));
+    const heartbeat = async (force = false) => {
+      if (!force && Date.now() < nextHeartbeatAt) return;
+      await this.renewOwnedConfirmationLease(job);
+      nextHeartbeatAt = Date.now() + Math.max(100, Math.floor(this.confirmationLeaseMs / 3));
+    };
+    const integrity = await this.recomputeApprovalIntegrity(
+      this.prisma,
+      task,
+      () => heartbeat(false)
+    );
+    await heartbeat(true);
+    return { taskVersion: task.version, ...integrity };
+  }
+
+  private async completeBackgroundConfirmation(
+    job: BackgroundConfirmationJob,
+    integrity: PreparedConfirmationIntegrity
+  ) {
     await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, job.taskId);
       await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
       const task = await tx.importTask.findUnique({ where: { id: job.taskId }, include: previewTaskInclude });
       if (!task) throw new NotFoundException('资源不存在');
       this.assertImportApprovalSnapshotCurrent(task, job.approvalSnapshotHash);
+      if (task.version !== integrity.taskVersion) throw new ImportConfirmationLeaseLostError();
       await acquireProjectWriteLock(tx, task.projectId);
       this.assertImportSourceEligible(task);
       const activeTemplate = await this.recordPolicy.getWritableTemplate(
@@ -2242,7 +2285,6 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           data: { reason: 'IMPORT_WHOLE_BATCH_VALIDATION_FAILED', errorRows, successRows }
         });
       }
-      const integrity = await this.recomputeApprovalIntegrity(tx, task);
       const expectedRecordCount = this.approvalRecordCount(task);
       if (
         integrity.rowSetHash !== this.approvalRowSetHash(task)
@@ -2798,14 +2840,19 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return task.validationSnapshot as Prisma.JsonObject;
   }
 
-  private async recomputeApprovalIntegrity(tx: Prisma.TransactionClient, task: PreviewTask) {
+  private async recomputeApprovalIntegrity(
+    prisma: PrismaWriter,
+    task: PreviewTask,
+    heartbeat?: () => Promise<void>
+  ) {
     const rowSetDigest = createHash('sha256');
     const outputDigest = createHash('sha256');
     let recordCount = 0;
     let lastRowNumber: number | undefined;
     let lastId: string | undefined;
     while (true) {
-      const rows = await tx.importRow.findMany({
+      await heartbeat?.();
+      const rows = await prisma.importRow.findMany({
         where: {
           importTaskId: task.id,
           ...(lastRowNumber === undefined || lastId === undefined
@@ -2953,6 +3000,19 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         errorMessage: reason ? `后台确认中断，等待租约恢复：${reason}`.slice(0, 1000) : null
       }
     }).catch(() => undefined);
+  }
+
+  private async renewOwnedConfirmationLease(job: BackgroundConfirmationJob) {
+    const renewed = await this.prisma.importTask.updateMany({
+      where: {
+        id: job.taskId,
+        status: ImportTaskStatus.confirming,
+        leaseToken: job.leaseToken,
+        approvalSnapshotHash: job.approvalSnapshotHash
+      },
+      data: { leaseUntil: new Date(Date.now() + this.confirmationLeaseMs) }
+    });
+    if (renewed.count !== 1) throw new ImportConfirmationLeaseLostError();
   }
 
   private async handoffConfirmationToWorker(id: string, leaseToken: string) {

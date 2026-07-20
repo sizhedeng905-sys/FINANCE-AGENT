@@ -6744,6 +6744,82 @@ describe('real PostgreSQL integration', () => {
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
     });
 
+    it('precomputes integrity outside the publication transaction and recovers a finalization timeout', async () => {
+      const rowCount = 1_001;
+      const taskId = await createTask(rowCount, '2026-07-22');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        recomputeApprovalIntegrity(
+          writer: unknown,
+          task: unknown,
+          heartbeat?: () => Promise<void>
+        ): Promise<{ rowSetHash: string; normalizedOutputHash: string; recordCount: number }>;
+        completeBackgroundConfirmation(job: { taskId: string }, integrity: unknown): Promise<void>;
+      };
+      const originalIntegrity = service.recomputeApprovalIntegrity.bind(service);
+      const integrityWriters: unknown[] = [];
+      const integritySpy = jest.spyOn(service, 'recomputeApprovalIntegrity').mockImplementation(
+        async (writer, task, heartbeat) => {
+          integrityWriters.push(writer);
+          return originalIntegrity(writer, task, heartbeat);
+        }
+      );
+      const originalCompletion = service.completeBackgroundConfirmation.bind(service);
+      let failedOnce = false;
+      const completionFailure = jest.spyOn(service, 'completeBackgroundConfirmation').mockImplementation(
+        async (job, integrity) => {
+          if (job.taskId === taskId && !failedOnce) {
+            failedOnce = true;
+            throw new Prisma.PrismaClientKnownRequestError('simulated final publication timeout', {
+              code: 'P2028',
+              clientVersion: '6.19.3'
+            });
+          }
+          return originalCompletion(job, integrity);
+        }
+      );
+
+      try {
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-publication-timeout`
+        ).expect(201);
+        const deadline = Date.now() + 10_000;
+        let releasedForRecovery = false;
+        while (Date.now() < deadline) {
+          const task = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
+          if (
+            task.status === ImportTaskStatus.confirming
+            && task.leaseUntil
+            && task.leaseUntil < new Date()
+          ) {
+            releasedForRecovery = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(releasedForRecovery).toBe(true);
+        completionFailure.mockRestore();
+
+        expect(await app.get(ImportTasksService).recoverExpiredConfirmations()).toBe(1);
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmed,
+          importedRows: rowCount,
+          confirmationAttempts: 2
+        });
+        expect(integrityWriters.length).toBeGreaterThanOrEqual(2);
+        expect(integrityWriters.every((writer) => writer === prisma)).toBe(true);
+        expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
+        expect(await prisma.ledgerEvent.count({
+          where: { aggregateId: taskId, eventType: 'business_records_batch_committed' }
+        })).toBe(1);
+      } finally {
+        completionFailure.mockRestore();
+        integritySpy.mockRestore();
+      }
+    });
+
     it('serializes concurrent confirmation requests into one background job', async () => {
       const rowCount = 1_001;
       const taskId = await createTask(rowCount, '2026-07-22');
