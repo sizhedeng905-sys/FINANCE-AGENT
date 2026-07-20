@@ -45,7 +45,7 @@ Staging Compose 已固定为 `redis`。CI PostgreSQL/E2E job 增加固定 digest
 
 完整集成耗时 239.6 秒；其中 30,196 行和 49,999 行导入资源场景均通过。测试使用一次性 PostgreSQL/Redis 容器，结束后已确认无 `finance-agent-r9-*` 容器残留。
 
-补充全量回归的第一次运行出现 1 次既有 Excel 嵌入媒体 shared-string 未解析，结果为 46/47 suites、417/418 tests；该用例隔离复跑及随后未改断言/超时的全量复跑均通过。当前没有把重跑绿色当作根因修复，已登记 `R9-XLSX-STREAM-001` 并继续按失败关闭方向处理。
+补充全量回归的第一次运行出现 1 次既有 Excel 嵌入媒体 shared-string 未解析，结果为 46/47 suites、417/418 tests；该用例隔离复跑及随后未改断言/超时的全量复跑均通过。该问题随后由 R9.1A 以确定性预加载和残留 token 失败关闭收口，详见 `R9_1A_XLSX_SHARED_STRING_HARDENING_REPORT_2026-07-21.md`。
 
 ## 仍待完成
 

@@ -36,6 +36,7 @@ export interface XlsxPackageSheet {
 export interface XlsxPackageMetadata extends XlsxArchiveSummary {
   sheets: XlsxPackageSheet[];
   dateSystem: '1900' | '1904';
+  sharedStrings: readonly string[];
 }
 
 interface WorkbookSheetReference {
@@ -90,6 +91,8 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
       let mediaExpandedBytes = 0;
       let dateSystem: XlsxPackageMetadata['dateSystem'] = '1900';
       let workbookSheets: WorkbookSheetReference[] = [];
+      const sharedStrings: string[] = [];
+      const sharedStringReferences: Array<{ address?: string; rawIndex: string }> = [];
       const relationships = new Map<string, string>();
       const worksheetMetadata = new Map<string, WorksheetXmlMetadata>();
 
@@ -140,7 +143,16 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
           reject(new BadRequestException('Excel 工作表关系元数据冲突'));
           return;
         }
-        resolve({ ...summary, sheets, dateSystem });
+        const invalidSharedString = sharedStringReferences.find(({ rawIndex }) => {
+          if (!/^(?:0|[1-9]\d*)$/.test(rawIndex)) return true;
+          const index = Number(rawIndex);
+          return !Number.isSafeInteger(index) || index >= sharedStrings.length;
+        });
+        if (invalidSharedString) {
+          reject(new BadRequestException('Excel 共享字符串引用元数据不合法'));
+          return;
+        }
+        resolve({ ...summary, sheets, dateSystem, sharedStrings });
       };
 
       zip.on('error', finish);
@@ -170,11 +182,29 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
             const sharedFormulaCells: SharedFormulaCell[] = [];
             let formulaCellCount = 0;
             let currentCellAddress: string | undefined;
+            let currentCellUsesSharedString = false;
             let currentFormula: SharedFormulaCell | undefined;
+            let captureSharedStringReference = false;
+            let currentSharedStringReference = '';
+            let currentSharedString = '';
+            let insideSharedString = false;
+            let captureSharedText = false;
+            let insidePhoneticRun = false;
             let parserError: unknown;
             parser.on('error', (error) => { parserError = error; });
             parser.on('opentag', (tag) => {
               const node = tag as unknown as XmlTag;
+              if (entry.fileName === 'xl/sharedStrings.xml') {
+                if (node.name === 'si') {
+                  currentSharedString = '';
+                  insideSharedString = true;
+                } else if (insideSharedString && node.name === 'rPh') {
+                  insidePhoneticRun = true;
+                } else if (insideSharedString && node.name === 't' && !insidePhoneticRun) {
+                  captureSharedText = true;
+                }
+                return;
+              }
               if (entry.fileName === 'xl/workbook.xml' && node.name === 'workbookPr') {
                 const date1904 = attribute(node, 'date1904');
                 dateSystem = date1904 === '1' || date1904?.toLowerCase() === 'true' ? '1904' : '1900';
@@ -207,9 +237,13 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
               if (!isWorksheetXml(entry.fileName)) return;
               if (node.name === 'c') {
                 currentCellAddress = attribute(node, 'r');
+                currentCellUsesSharedString = attribute(node, 't') === 's';
               } else if (node.name === 'mergeCell') {
                 const range = parseCellRange(attribute(node, 'ref'));
                 if (range) mergeRanges.push(range);
+              } else if (node.name === 'v' && currentCellUsesSharedString) {
+                captureSharedStringReference = true;
+                currentSharedStringReference = '';
               } else if (node.name === 'f') {
                 formulaCellCount += 1;
                 const sharedIndex = attribute(node, 'si');
@@ -224,15 +258,38 @@ function walkArchive(buffer: Buffer, includeXml: boolean): Promise<XlsxArchiveSu
               }
             });
             parser.on('text', (value) => {
-              if (currentFormula) currentFormula.formula += value;
+              if (entry.fileName === 'xl/sharedStrings.xml') {
+                if (captureSharedText) currentSharedString += value;
+              } else {
+                if (currentFormula) currentFormula.formula += value;
+                if (captureSharedStringReference) currentSharedStringReference += value;
+              }
             });
             parser.on('closetag', (tag) => {
               const name = (tag as unknown as { name: string }).name;
+              if (entry.fileName === 'xl/sharedStrings.xml') {
+                if (name === 't') captureSharedText = false;
+                else if (name === 'rPh') insidePhoneticRun = false;
+                else if (name === 'si') {
+                  sharedStrings.push(currentSharedString);
+                  currentSharedString = '';
+                  insideSharedString = false;
+                }
+                return;
+              }
               if (name === 'f' && currentFormula) {
                 sharedFormulaCells.push(currentFormula);
                 currentFormula = undefined;
+              } else if (name === 'v' && captureSharedStringReference) {
+                sharedStringReferences.push({
+                  address: currentCellAddress,
+                  rawIndex: currentSharedStringReference.trim()
+                });
+                captureSharedStringReference = false;
+                currentSharedStringReference = '';
               } else if (name === 'c') {
                 currentCellAddress = undefined;
+                currentCellUsesSharedString = false;
               }
             });
             stream.on('data', (chunk: Buffer) => {
@@ -299,6 +356,7 @@ function resolveSharedFormulaOverrides(cells: SharedFormulaCell[]) {
 function isMetadataXml(fileName: string) {
   return fileName === 'xl/workbook.xml'
     || fileName === 'xl/_rels/workbook.xml.rels'
+    || fileName === 'xl/sharedStrings.xml'
     || isWorksheetXml(fileName);
 }
 

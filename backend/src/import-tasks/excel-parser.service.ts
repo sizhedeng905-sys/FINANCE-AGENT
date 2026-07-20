@@ -836,11 +836,20 @@ export class ExcelParserService {
   private streamingWorkbookReader(buffer: Buffer, metadata: XlsxPackageMetadata) {
     const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from(buffer), {
       worksheets: 'emit',
-      sharedStrings: 'cache',
+      sharedStrings: 'ignore',
       hyperlinks: 'ignore',
       styles: 'cache',
       entries: 'ignore'
     });
+    const sharedStrings = new Proxy([...metadata.sharedStrings] as Array<string | { sharedString: number }>, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property) && !Reflect.has(target, property)) {
+          return { sharedString: Number(property) };
+        }
+        return Reflect.get(target, property, receiver);
+      }
+    });
+    (reader as unknown as { sharedStrings: Array<string | { sharedString: number }> }).sharedStrings = sharedStrings;
     // ExcelJS can visit deferred worksheets before its workbook model is stable.
     (reader as unknown as { model: { sheets: Array<Record<string, unknown>> } }).model = {
       sheets: metadata.sheets.map((sheet) => ({
@@ -1406,6 +1415,14 @@ export class ExcelParserService {
     if (typeof value === 'string') return this.normalizeTextCell(value);
     if (typeof value === 'number' || typeof value === 'boolean') {
       return { value, displayValue: value, formula: false };
+    }
+    if ('sharedString' in value) {
+      return {
+        value: null,
+        displayValue: null,
+        formula: false,
+        error: 'Excel 共享字符串未解析，请重试或转人工处理'
+      };
     }
     if ('formula' in value || 'sharedFormula' in value) {
       const formula = formulaOverride

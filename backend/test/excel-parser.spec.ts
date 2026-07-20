@@ -1,7 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 
 import { assertExcelDataRowLimit, ExcelParserService } from '../src/import-tasks/excel-parser.service';
+import { readXlsxPackageMetadata } from '../src/import-tasks/xlsx-package-metadata';
 
 describe('ExcelParserService phase 9', () => {
   const parser = new ExcelParserService();
@@ -248,6 +250,23 @@ describe('ExcelParserService phase 9', () => {
     expect(normalizeCell(cell)).toMatchObject({ formula: true, error: '公式来源不可用' });
   });
 
+  it('fails closed instead of stringifying an unresolved shared-string token', () => {
+    const normalizeCell = (parser as unknown as {
+      normalizeCell(target: ExcelJS.Cell): { value: unknown; displayValue: unknown; formula: boolean; error?: string };
+    }).normalizeCell.bind(parser);
+    const unresolved = {
+      value: { sharedString: 7 },
+      text: '{"sharedString":7}'
+    } as unknown as ExcelJS.Cell;
+
+    expect(normalizeCell(unresolved)).toEqual({
+      value: null,
+      displayValue: null,
+      formula: false,
+      error: 'Excel 共享字符串未解析，请重试或转人工处理'
+    });
+  });
+
   it('keeps only data-merge master values and defers importability to mapped-field validation', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Merged data');
@@ -305,6 +324,14 @@ describe('ExcelParserService phase 9', () => {
     archive.state = 'hidden';
     archive.addRows([['Date', 'Amount'], ['2025-01-01', 10]]);
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    const metadata = await readXlsxPackageMetadata(buffer);
+    expect(metadata.sharedStrings).toEqual(expect.arrayContaining([
+      'Cost', 'Date', 'Amount', 'Note', 'manual review', 'second review'
+    ]));
+    const reader = (parser as unknown as {
+      streamingWorkbookReader(input: Buffer, packageMetadata: typeof metadata): { sharedStrings: string[] };
+    }).streamingWorkbookReader(buffer, metadata);
+    expect(reader.sharedStrings).toEqual(metadata.sharedStrings);
 
     const inspection = await parser.inspect(buffer);
     expect(inspection).toMatchObject({
@@ -331,6 +358,24 @@ describe('ExcelParserService phase 9', () => {
       allowCachedFormulaResults: true
     });
     expect(parsed.columns.map((column) => column.sourceName)).toEqual(['Cost / Amount', 'Cost / Note', 'Date']);
+    const repeated = await Promise.all(Array.from({ length: 4 }, () => parser.parse(buffer, {
+      sheetIndex: 0,
+      headerStartRowIndex: 1,
+      headerRowIndex: 2,
+      allowCachedFormulaResults: true
+    })));
+    expect(repeated.every((result) => (
+      result.columns.map((column) => column.sourceName).join('|') === 'Cost / Amount|Cost / Note|Date'
+    ))).toBe(true);
+    const malformedArchive = await JSZip.loadAsync(buffer);
+    malformedArchive.remove('xl/sharedStrings.xml');
+    const malformed = await malformedArchive.generateAsync({ type: 'nodebuffer' });
+    await expect(parser.parse(Buffer.from(malformed), {
+      sheetIndex: 0,
+      headerStartRowIndex: 1,
+      headerRowIndex: 2,
+      allowCachedFormulaResults: true
+    })).rejects.toThrow('共享字符串引用元数据不合法');
     expect(parsed.rows).toHaveLength(2);
     expect(parsed.rows[0]).toMatchObject({
       status: 'pending',
