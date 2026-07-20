@@ -1,6 +1,6 @@
 # 财务 Agent 实施进度
 
-更新日期：2026-07-20
+更新日期：2026-07-21
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
 当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行。M8.1 提交 `118a5ee` 已推送；Build run `29755386892` 与 CodeQL run `29755387035` 全部成功，包含真实应用镜像、410 个单测、97 个 PostgreSQL 集成、17 个 Playwright 及前端/R5 两条 SBOM/Grype 门禁。负责人问卷 Q01-Q30 已映射到 H01-H16，H01 明确按每行明细，但签名、执行清单和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M8 已完成非生产工程与合成验收；受保护 Prompt Catalog、真实口径/准确率、目标 Staging 和人工签字继续按真实状态阻塞。
@@ -24,8 +24,8 @@
 | R5 镜像身份与供应链 | 完成 | 22 镜像不可变锁、配置/扫描/migration/release 自校验证据链、17/17 篡改测试完成；目标 registry、签名和回退受 H13 阻断 |
 | R6-R8 后端边界、治理、CI | R6-R8.7 本机门禁完成 / R8.9 本地通过、远端待验 | 完整 release、7 项 sealed gate、日志和同 manifest rollback 已通过；OpenSSL 3 最终镜像通过；Scout entitlement 已以固定 Syft 替换，完整重验仍受 Debian security 502 阻断 |
 | R9 真实 Staging | `R9.1-R9.3 engineering_verified_locally / blocked_external` | 登录、上传和模型执行门均已共享化并通过本地双实例故障测试；目标环境仍须 H13/H14，不能把本地工程证据写成真实部署通过 |
-| R10 真实模型/业务准确率 | `awaiting_human_signoff` | L0 合成测试可继续；L1 需要 H04-H09/H12/H16 与冻结真值 |
-| R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
+| R10 真实模型/业务准确率 | `L0 engineering_verified / L1 awaiting_human_signoff` | 文本/OCR 连续健康 3 天；四套资产、容器配置、Qwen/Paddle 认证合成推理、401 边界和镜像内 Python contract 8/8 已通过；L1 仍需要 H04-H13/H15/H16 与冻结真值 |
+| R11 最终交接 | 进行中 | 正在交叉检查 README、门禁证据和 Draft PR；当前 commit 的 GitHub Build 尚在执行，不 merge、不转 Ready |
 | M0-M8 AI 分类/映射/审批/快照补充 | 工程与合成验收完成 / 外部和人工门禁未关闭 | Excel/OCR AI 只建议；双人审批、整批原子入账、不可变报告快照、严格 Claim grounding、攻击/并发/资源/降级、Prompt 漂移和最终证据已有自动化证据 |
 
 项目负责人已填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`；2026-07-20 已回填 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 0.2-draft。H03/H09/H10 等核心偏好已经记录，H04/H05/H15 的独立证据路径也已选择。

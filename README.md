@@ -17,7 +17,8 @@
 | B8-08 财务 UAT | `awaiting_human_signoff` | 匿名工具、逐分对账脚本和签字模板已交付，真实结论必须由授权人员填写 |
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
-| R0-R11 修复与再验收 | `engineering_verified / blocked_external` | R8.9 分层 CI 与 M8.1 Nginx Critical 修复已获远端绿色证据；目标 release 仍受 H13/H14 阻断；retention 仅 dry-run、step-up 默认关闭 |
+| R0-R10 修复与再验收 | `engineering_verified / blocked_external` | R8.9 分层 CI、M8.1 Nginx Critical、R9 共享控制和 R10 本地模型 L0 均有工程证据；L1 真值与目标 release 仍受 H04-H16 阻断 |
+| R11 最终交接 | `in_progress` | 正在复核当前 commit 的分层门禁、文档一致性和 Draft PR；不 merge、不转 Ready |
 | AI 映射补充 M0-M8 | `engineering_passed_with_external_and_human_gates` | OCR/Excel 审核入账、canonical ReportSnapshot、严格 Claim grounding、攻击/资源/降级和最终证据已通过；Prompt Catalog、真实口径/准确率、目标 Staging 和签字仍未关闭 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
@@ -460,6 +461,7 @@ npm run model:restore
 - 切换期间 OCR `/ready` 采样 432 次，失败 0 次。
 - 最终文本与 OCR 恢复常驻；VL/Embedding 停止，未观察到 OOM。
 - 文本与 OCR 并发请求均返回 HTTP 200。
+- 2026-07-21 L0 刷新中，文本/OCR 已连续健康 3 天；Qwen 合成推理、Paddle 合成 PDF、未授权 401、镜像内 Python contract 8/8 再次通过，且没有切换或重启服务。
 
 这些结果证明运行时控制和恢复链路，不代表 OCR 字段准确率或老板 AI 业务正确率已经获得人工签字。
 
@@ -531,6 +533,7 @@ npm run staging:release
 | [`docs/R9_2_SHARED_UPLOAD_ADMISSION_REPORT_2026-07-21.md`](docs/R9_2_SHARED_UPLOAD_ADMISSION_REPORT_2026-07-21.md) | 多实例上传并发、在途字节、速率租约和故障关闭证据 |
 | [`docs/R9_3_SHARED_MODEL_EXECUTION_GATE_REPORT_2026-07-21.md`](docs/R9_3_SHARED_MODEL_EXECUTION_GATE_REPORT_2026-07-21.md) | AI/OCR 共享 FIFO 执行门、租约恢复、等待边界和 Provider 中止证据 |
 | [`docs/R9_3A_IMPORT_CONFIRMATION_TRANSIENT_RECOVERY_REPORT_2026-07-21.md`](docs/R9_3A_IMPORT_CONFIRMATION_TRANSIENT_RECOVERY_REPORT_2026-07-21.md) | 大批量确认事务超时、写冲突恢复与单次发布证据 |
+| [`docs/R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md`](docs/R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md) | 本地 Qwen/Paddle 合成推理、鉴权、资产与容器内契约验收 |
 | [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md) | 项目负责人填写的功能、业务与风险决策问卷 |
 | [`docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`](docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md) | R8.9 Scout entitlement 根因、Syft 修复和验收证据 |
 | [`docs/PR4_REVIEW_GUIDE.md`](docs/PR4_REVIEW_GUIDE.md) | 独立 reviewer 检查顺序 |

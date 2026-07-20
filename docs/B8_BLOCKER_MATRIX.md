@@ -161,7 +161,7 @@
 | R8-CI-001 | P1 | Layered CI and real deployment gates | 工程执行者 | 红灯：普通 CI 不构建实际应用镜像，Node 22 与部署 Node 24 漂移；本机构建进一步发现前端发送 10.23GB 生成证据上下文 | R8.1 | Node 24.18.0 统一；真实前后端镜像、非 root/revision、SBOM/Grype 本机通过；上下文降至 24.09KB；见 `R8_1_APPLICATION_CONTAINER_CI_REPORT_2026-07-18.md` | in_progress | R8.2 尚需 scheduled/manual Compose、恢复、回滚、日志泄露和 Python runtime；目标环境仍受 H13/H14 阻断 |
 | R8-CI-SBOM-001 | P1 | GitHub CI SBOM entitlement and gate ordering | 工程执行者 | run `29666837943` 两个 job 均因 Docker Scout entitlement 失败并提前跳过业务门禁 | R8.9 | run `29752263099` 已真实完成固定 Syft SPDX、固定 Grype 和全部业务门禁；扫描随后按设计阻断旧 Nginx 漏洞 | verified | 无；具体镜像漏洞由 M8-NGINX-CVE-001 跟踪 |
 | M8-NGINX-CVE-001 | P1 | Frontend/R5 Nginx runtime supply chain | 工程执行者 | run `29752263099` 的 frontend 与 R5 SBOM 均包含旧 Alpine/OpenSSL 可修复 Critical；`1.28.3-alpine` 本地复扫仍失败 | M8.1 | 固定 `1.30.4-alpine3.24` digest；本地真实前端/R5 各 72 包且 fixable Critical 0；远端 Build `29755386892` 两个 jobs 全绿 | verified | 无；Critical 门槛保持不变，目标环境仍受 H13/H14 阻断 |
-| R10-ACCURACY-001 | 发布门禁 | Real models and real business truth | 授权标注/财务/老板 | 合成 L0 证据不能替代 OCR 标签、L3 分币对账或老板标准答案 | - | 待冻结 L1 数据集和人工签字 | awaiting_human_signoff | H04-H09/H12/H16 |
+| R10-ACCURACY-001 | 发布门禁 | Real models and real business truth | 授权标注/财务/老板 | 合成 L0 证据不能替代 OCR 标签、L3 分币对账或老板标准答案 | R10 L0 已验证四套资产、Qwen/Paddle 认证合成推理、401 边界、容器配置与 Python contract 8/8；见 `R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md` | 冻结 L1 数据集、口径、Provider/资源边界并完成人工签字 | awaiting_human_signoff | H04-H13/H15/H16；L0 工程项已关闭 |
 
 | 编号 | 严重性 | 阶段 | 文件/边界 | 失败复现 | 修复要求 | 验收测试 | 状态 | 人工决策 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # 本地模型部署与接入
 
-更新日期：2026-07-15
+更新日期：2026-07-21
 
 ## 当前结论
 
@@ -19,6 +19,8 @@
 | WSL / Docker | 已可用；文本/OCR 常驻、VL 按需切换和文本恢复均已在 RTX 5090 实测 |
 
 `npm run model:check:all` 已验证文本、OCR、视觉和 Embedding 四套模型的配置、索引及全部分片。真实运行稳定性已经验收，但 OCR 字段准确率仍等待财务人工标签，二者不能混为一项。
+
+2026-07-21 的 R10 L0 刷新验收再次确认文本/OCR 连续健康运行 3 天，Qwen 认证合成推理、Paddle 合成 PDF、未授权 401、完整镜像内 Python contract 8/8、资产和容器安全配置均通过。详细证据见 [`R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md`](R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md)。这些仍只是合成工程证据，L1 真实业务准确率继续受 H04-H13、H15/H16 门禁约束。
 
 真实运行证据：
 
@@ -101,7 +103,7 @@ npm run model:status
 首次运行会构建 OCR 适配器并拉取基础镜像，时间取决于网络。脚本最多等待 `MODEL_START_TIMEOUT_MS`，只有以下两项都真实就绪才返回成功：
 
 - `http://127.0.0.1:8000/v1/models` 返回 `Qwen/Qwen3-14B-AWQ`。
-- `http://127.0.0.1:8868/health` 返回 `status=ok`。
+- 认证访问 `http://127.0.0.1:8868/ready`，并返回匹配的模型、版本和 `ocr_document` 能力。
 
 排查日志：
 
