@@ -83,6 +83,7 @@ describe('ExcelParserService phase 9', () => {
   });
 
   it('enforces the documented column and row limits', async () => {
+    expect(() => assertExcelDataRowLimit(4_999, 5_000)).not.toThrow();
     expect(() => assertExcelDataRowLimit(49_999, 50_000)).not.toThrow();
     expect(() => assertExcelDataRowLimit(50_000, 50_000)).not.toThrow();
     expect(() => assertExcelDataRowLimit(50_001, 50_000)).toThrow('Excel 数据行不能超过 50000');

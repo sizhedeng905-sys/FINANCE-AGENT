@@ -29,6 +29,7 @@ import {
 import { formatChinaDate, reportRange } from './report-period';
 
 const REPORT_TRANSACTION_TIMEOUT_MS = 60_000;
+const REPORT_TRANSACTION_MAX_ATTEMPTS = 3;
 
 const reportRecordSelect = {
   id: true,
@@ -76,7 +77,7 @@ export class ReportSnapshotsService {
     const projectIds = this.normalizeProjectIds(dto.projectIds);
     const range = reportRange(this.reportPeriod(dto.reportType), dto.date);
 
-    return this.prisma.$transaction(async (tx) => {
+    const createSnapshot = async (tx: Prisma.TransactionClient) => {
       await this.assertProjectsExist(tx, projectIds);
       const records = await tx.businessRecord.findMany({
         where: {
@@ -208,11 +209,21 @@ export class ReportSnapshotsService {
         context
       );
       return this.present(created, false);
-    }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
-      maxWait: 5_000,
-      timeout: REPORT_TRANSACTION_TIMEOUT_MS
-    });
+    };
+
+    // Concurrent identical requests can abort repeatable-read or race on snapshotHash.
+    for (let attempt = 1; attempt <= REPORT_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(createSnapshot, {
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+          maxWait: 5_000,
+          timeout: REPORT_TRANSACTION_TIMEOUT_MS
+        });
+      } catch (error) {
+        if (attempt === REPORT_TRANSACTION_MAX_ATTEMPTS || !this.isSnapshotWriteConflict(error)) throw error;
+      }
+    }
+    throw new Error('Report snapshot transaction retry state is inconsistent');
   }
 
   async findOne(id: string) {
@@ -431,5 +442,13 @@ export class ReportSnapshotsService {
 
   private json(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  private isSnapshotWriteConflict(error: unknown) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return error.code === 'P2002' || error.code === 'P2034';
+    }
+    if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+    return ['P2002', 'P2034'].includes(String((error as { code?: unknown }).code));
   }
 }

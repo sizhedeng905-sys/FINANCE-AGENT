@@ -84,7 +84,7 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-20, M6 immutable report snapshots and grounded narratives):
+Current verification baseline (2026-07-20, M7 attack, resource, and Provider degradation acceptance):
 
 - Backend build and Prisma validation pass. Migration-path verification installs all 41 migrations on an empty database and upgrades the 40-migration predecessor to the current schema.
 - Jest: 47/47 suites and 410/410 tests.
@@ -102,6 +102,7 @@ Current verification baseline (2026-07-20, M6 immutable report snapshots and gro
 - M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
 - M5.2 makes Excel posting whole-batch fail-closed. Each valid detail row creates one record; ordinary invalid detail rows cannot be excluded, summary candidates require a reasoned finance decision, and every review invalidates the old validation snapshot. A second active finance user submits exact versions/hashes/warnings and an idempotency key; staged records remain report-invisible until one final transaction rechecks identity, source, template, row-set and output hashes and publishes the complete batch.
 - M6 freezes confirmed actual report facts under PostgreSQL repeatable-read, uses Decimal and separate currency totals, stores immutable source/version hashes, and reuses a content-addressed canonical snapshot. Report AI uses the independent report policy and may only copy exact server-generated Claim catalog entries; invented entities, causes, comparisons, predictions, numbers, modified values, and hidden warnings are rejected. H06/H08 business truth and signoff remain external.
+- M7 adds bounded retry for concurrent identical ReportSnapshot transactions and verifies one immutable snapshot under six concurrent requests. Report narrative concurrency makes at most one Provider call; missing auth, wrong role, kill switch, timeout, truncated JSON, modified values, and hidden warnings fail closed without creating a narrative. The 49,999-row path remains under its 180-second test budget but has material runtime variance that must be re-profiled on the H13 target infrastructure.
 - H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
 
 ## API
@@ -322,6 +323,7 @@ Completed:
 - M5.1 OCR approval hardening: immutable approval snapshots, stable validation issue IDs, exact warning acknowledgement, uploader self-approval rejection, final transaction authorization, optimistic concurrency, and request-body-bound idempotent posting.
 - M5.2 Excel approval hardening: H01 detail-row posting, summary-only review revisions, deterministic whole-batch revalidation, immutable approval snapshots, second-finance authorization, report-invisible staging, and atomic idempotent publication.
 - M6 report evidence: immutable canonical ReportSnapshot/source rows, Decimal and separate-currency metrics, deterministic source/canonical hashes, independent report AI policy, exact Claim catalog grounding, version-preserving narratives, and boss evidence UI.
+- M7 adversarial acceptance: report snapshot/narrative concurrency, authorization, kill switch, Provider timeout and malformed output, secret redaction, row/file resource boundaries, model health, migration paths, and Staging evidence gates.
 
 Explicitly deferred by the user:
 

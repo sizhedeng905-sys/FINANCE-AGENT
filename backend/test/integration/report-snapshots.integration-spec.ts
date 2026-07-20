@@ -192,6 +192,16 @@ describe('ReportSnapshot PostgreSQL integration', () => {
     expect(sources.body.data).toMatchObject({ page: 1, pageSize: 2, total: 3 });
     expect(sources.body.data.items).toHaveLength(2);
     expect(sources.body.data.items.every((item: { recordHash: string }) => /^[a-f0-9]{64}$/.test(item.recordHash))).toBe(true);
+    const remainingSources = await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=2&pageSize=2`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+    expect(remainingSources.body.data).toMatchObject({ page: 2, pageSize: 2, total: 3 });
+    expect(remainingSources.body.data.items).toHaveLength(1);
+    await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=1&pageSize=101`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(400);
 
     const repeated = await request(app.getHttpServer())
       .post('/api/reports/snapshots')
@@ -201,6 +211,56 @@ describe('ReportSnapshot PostgreSQL integration', () => {
     expect(repeated.body.data).toMatchObject({ reused: true, sourceCount: 3 });
     expect(repeated.body.data.snapshot.snapshotId).toBe(result.snapshot.snapshotId);
     expect(repeated.body.data.snapshot.snapshotHash).toBe(result.snapshot.snapshotHash);
+
+    const concurrentDate = new Date('2042-03-16T20:00:00.000Z');
+    await prisma.businessRecord.create({
+      data: {
+        ...base,
+        recordDate: concurrentDate,
+        accountingDirection: AccountingDirection.income,
+        amount: new Prisma.Decimal('12.34'),
+        currency: 'CNY',
+        sourceId: `report-concurrent-${suffix}`,
+        status: BusinessRecordStatus.confirmed,
+        dataLayer: RecordDataLayer.actual,
+        confirmedAt: concurrentDate,
+        confirmedBy: boss.id
+      }
+    });
+    const concurrentRequests = await Promise.all(Array.from({ length: 6 }, () => (
+      request(app.getHttpServer())
+        .post('/api/reports/snapshots')
+        .set('Authorization', `Bearer ${bossToken}`)
+        .send({ reportType: ReportSnapshotType.DAILY, date: '2042-03-17', projectIds: [project.id] })
+    )));
+    expect(concurrentRequests.map((response) => response.status)).toEqual([201, 201, 201, 201, 201, 201]);
+    const concurrentSnapshotIds = concurrentRequests.map((response) => response.body.data.snapshot.snapshotId as string);
+    expect(new Set(concurrentSnapshotIds).size).toBe(1);
+    expect(concurrentRequests.filter((response) => response.body.data.reused === false)).toHaveLength(1);
+    expect(await prisma.reportSnapshot.count({ where: { id: { in: concurrentSnapshotIds } } })).toBe(1);
+    expect(await prisma.reportSnapshotSource.count({ where: { snapshotId: concurrentSnapshotIds[0] } })).toBe(1);
+
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-snapshots/${result.snapshot.snapshotId}/narrative`)
+      .send({})
+      .expect(401);
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-snapshots/${result.snapshot.snapshotId}/narrative`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({})
+      .expect(403);
+
+    config.set('ai.reportMode', 'suggest');
+    config.set('ai.globalKillSwitch', true);
+    const killedProviderSpy = jest.spyOn(provider, 'generate');
+    const killed = await request(app.getHttpServer())
+      .post(`/api/ai/report-snapshots/${result.snapshot.snapshotId}/narrative`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({})
+      .expect(201);
+    expect(killed.body.data).toMatchObject({ status: 'disabled', reasonCode: 'AI_DISABLED' });
+    expect(killedProviderSpy).not.toHaveBeenCalled();
+    killedProviderSpy.mockRestore();
 
     config.set('ai.globalKillSwitch', false);
     config.set('ai.reportMode', 'disabled');
@@ -240,6 +300,60 @@ describe('ReportSnapshot PostgreSQL integration', () => {
       .expect(201);
     expect(generatedAgain.body.data.narrative.id).toBe(generated.body.data.narrative.id);
     expect(await prisma.reportNarrative.count({ where: { snapshotId: result.snapshot.snapshotId } })).toBe(1);
+
+    let releaseConcurrentProvider!: () => void;
+    let markConcurrentProviderEntered!: () => void;
+    const concurrentProviderGate = new Promise<void>((resolve) => { releaseConcurrentProvider = resolve; });
+    const concurrentProviderEntered = new Promise<void>((resolve) => { markConcurrentProviderEntered = resolve; });
+    const concurrentProviderSpy = jest.spyOn(provider, 'generate').mockImplementationOnce(async (providerRequest) => {
+      await providerRequest.beforeProviderRequest?.();
+      markConcurrentProviderEntered();
+      await concurrentProviderGate;
+      return {
+        text: JSON.stringify(providerRequest.mockOutput),
+        inputTokens: 1,
+        outputTokens: 1,
+        raw: { syntheticConcurrent: true }
+      };
+    });
+    const concurrentNarrativePath = `/api/ai/report-snapshots/${concurrentSnapshotIds[0]}/narrative`;
+    const leadingNarrativeRequest = request(app.getHttpServer())
+      .post(concurrentNarrativePath)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({})
+      .then((response) => response);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('Concurrent report Provider did not start within 5 seconds')),
+        5_000
+      );
+      concurrentProviderEntered.then(() => {
+        clearTimeout(timer);
+        resolve();
+      }, reject);
+    });
+    const followerNarrativeRequests = Promise.all(Array.from({ length: 5 }, () => (
+      request(app.getHttpServer())
+        .post(concurrentNarrativePath)
+        .set('Authorization', `Bearer ${bossToken}`)
+        .send({})
+    )));
+    releaseConcurrentProvider();
+    const [leadingNarrative, followerNarratives] = await Promise.all([
+      leadingNarrativeRequest,
+      followerNarrativeRequests
+    ]);
+    expect(concurrentProviderSpy).toHaveBeenCalledTimes(1);
+    concurrentProviderSpy.mockRestore();
+    expect(leadingNarrative.status).toBe(201);
+    expect(leadingNarrative.body.data.status).toBe('needs_finance_review');
+    expect(followerNarratives.map((response) => response.status)).toEqual([201, 201, 201, 201, 201]);
+    expect(followerNarratives.every((response) => (
+      ['in_progress', 'needs_finance_review'].includes(response.body.data.status)
+    ))).toBe(true);
+    expect(await prisma.reportNarrative.count({
+      where: { snapshotId: concurrentSnapshotIds[0] }
+    })).toBe(1);
 
     const firstNarrative = await prisma.reportNarrative.findUniqueOrThrow({
       where: { id: generated.body.data.narrative.id }
@@ -340,5 +454,87 @@ describe('ReportSnapshot PostgreSQL integration', () => {
     providerSpy.mockRestore();
     expect(rejected.body.data).toMatchObject({ status: 'failed', reasonCode: 'AI_SUGGESTION_FAILED' });
     expect(await prisma.reportNarrative.count({ where: { snapshotId: attack.snapshotId } })).toBe(0);
+
+    const providerFailureDate = new Date('2042-03-17T20:00:00.000Z');
+    await prisma.businessRecord.create({
+      data: {
+        ...base,
+        recordDate: providerFailureDate,
+        accountingDirection: AccountingDirection.expense,
+        amount: new Prisma.Decimal('3.21'),
+        currency: 'CNY',
+        sourceId: `report-provider-failure-${suffix}`,
+        status: BusinessRecordStatus.confirmed,
+        dataLayer: RecordDataLayer.actual,
+        confirmedAt: providerFailureDate,
+        confirmedBy: boss.id
+      }
+    });
+    const providerFailureSnapshot = await request(app.getHttpServer())
+      .post('/api/reports/snapshots')
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({ reportType: ReportSnapshotType.DAILY, date: '2042-03-18', projectIds: [project.id] })
+      .expect(201);
+    const providerFailureSnapshotId = providerFailureSnapshot.body.data.snapshot.snapshotId as string;
+    const providerFailureSpy = jest.spyOn(provider, 'generate').mockImplementationOnce(async (providerRequest) => {
+      await providerRequest.beforeProviderRequest?.();
+      throw new Error('synthetic Provider timeout Bearer super-secret-token?token=also-secret');
+    });
+    const providerFailure = await request(app.getHttpServer())
+      .post(`/api/ai/report-snapshots/${providerFailureSnapshotId}/narrative`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({})
+      .expect(201);
+    providerFailureSpy.mockRestore();
+    expect(providerFailure.body.data).toMatchObject({
+      status: 'failed',
+      reasonCode: 'AI_SUGGESTION_FAILED'
+    });
+    expect(await prisma.reportNarrative.count({ where: { snapshotId: providerFailureSnapshotId } })).toBe(0);
+    const failedTask = await prisma.aiTask.findFirstOrThrow({
+      where: { resourceType: 'report_snapshot', resourceId: providerFailureSnapshotId }
+    });
+    expect(failedTask.status).toBe('failed');
+    expect(failedTask.errorMessage).not.toContain('super-secret-token');
+    expect(failedTask.errorMessage).not.toContain('also-secret');
+
+    const truncatedDate = new Date('2042-03-18T20:00:00.000Z');
+    await prisma.businessRecord.create({
+      data: {
+        ...base,
+        recordDate: truncatedDate,
+        accountingDirection: AccountingDirection.income,
+        amount: new Prisma.Decimal('4.56'),
+        currency: 'CNY',
+        sourceId: `report-truncated-${suffix}`,
+        status: BusinessRecordStatus.confirmed,
+        dataLayer: RecordDataLayer.actual,
+        confirmedAt: truncatedDate,
+        confirmedBy: boss.id
+      }
+    });
+    const truncatedSnapshot = await request(app.getHttpServer())
+      .post('/api/reports/snapshots')
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({ reportType: ReportSnapshotType.DAILY, date: '2042-03-19', projectIds: [project.id] })
+      .expect(201);
+    const truncatedSnapshotId = truncatedSnapshot.body.data.snapshot.snapshotId as string;
+    const truncatedProviderSpy = jest.spyOn(provider, 'generate').mockImplementationOnce(async (providerRequest) => {
+      await providerRequest.beforeProviderRequest?.();
+      return {
+        text: '{"schemaVersion":"report-narrative/1.0"',
+        inputTokens: 1,
+        outputTokens: 1,
+        raw: { syntheticTruncated: true }
+      };
+    });
+    const truncated = await request(app.getHttpServer())
+      .post(`/api/ai/report-snapshots/${truncatedSnapshotId}/narrative`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({})
+      .expect(201);
+    truncatedProviderSpy.mockRestore();
+    expect(truncated.body.data).toMatchObject({ status: 'failed', reasonCode: 'AI_SUGGESTION_FAILED' });
+    expect(await prisma.reportNarrative.count({ where: { snapshotId: truncatedSnapshotId } })).toBe(0);
   });
 });

@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。R8.9 已在本地用固定版本与固定哈希的 Syft 替换需要 entitlement 的 Docker Scout，并将外部扫描移到业务门禁之后；本地全量测试通过，新的 GitHub run 尚待推送验证。AI 映射补充任务 M0-M6 已完成工程与合成验收：Excel/OCR 均只生成受控建议，人工修订会使旧校验失效，正式批准要求另一名财务、当前校验哈希和不可变批准快照；Excel 已按 H01 每行明细入账并改为任何阻断错误整批不发布；报告数字由不可变 canonical ReportSnapshot、Decimal 和固定查询生成，AI 只能从服务端 Claim 白名单中逐字选择并保持 `NEEDS_FINANCE_REVIEW`。M7-M8 的攻击性总验收和文档/PR 收口仍在推进。目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。2026-07-18 的 R 系列重新审计登记了 1 个 P0 和 9 个 P1/条件 P1；R1-R7.2 已关闭前端真实性、日志泄露、容量伪装、恢复、镜像身份、财务并发/精度/幂等、数据生命周期和 step-up 工程边界。R8.1-R8.6 已完成本机完整 release、18 镜像供应链、远程 TLS、migration、API/浏览器 smoke、新鲜备份、隔离恢复、运行日志和同 manifest rollback；R8.7 的 Prisma/OpenSSL 最终镜像契约已定向通过，完整 release 重验因 Debian security 镜像连续两次 502 标记为外部阻塞。R8.9 已在本地用固定版本与固定哈希的 Syft 替换需要 entitlement 的 Docker Scout，并将外部扫描移到业务门禁之后；本地全量测试通过，新的 GitHub run 尚待推送验证。AI 映射补充任务 M0-M7 已完成工程与合成验收：Excel/OCR 均只生成受控建议，人工修订会使旧校验失效，正式批准要求另一名财务、当前校验哈希和不可变批准快照；Excel 已按 H01 每行明细入账并改为任何阻断错误整批不发布；报告数字由不可变 canonical ReportSnapshot、Decimal 和固定查询生成，AI 只能从服务端 Claim 白名单中逐字选择并保持 `NEEDS_FINANCE_REVIEW`。M7 又补齐并发报告、Provider 降级、权限、资源、日志与 Staging 静态门禁，并修复相同 ReportSnapshot 并发请求偶发 409。M8 文档、迁移证据和 Draft PR 收口正在推进。目标 Linux Staging、正式职责分离、财务/OCR/AI 真值及人工签字仍未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `engineering_verified_locally / blocked_external` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R11 修复与再验收 | `in_progress / blocked_external` | R0-R8.7 本机工程门禁完成；R8.9 的 Scout entitlement 修复已本地全量验证、待远端 CI；完整 release 重验仍受 Debian 502 阻断；retention 仅 dry-run、step-up 默认关闭 |
-| AI 映射补充 M0-M8 | `M0-M6_engineering_passed / M7-M8_in_progress` | OCR/Excel 审核入账与 canonical ReportSnapshot/严格 Claim grounding 已通过合成验收；真实财务口径和准确率仍待人工 |
+| AI 映射补充 M0-M8 | `M0-M7_engineering_passed / M8_in_progress` | OCR/Excel 审核入账、canonical ReportSnapshot、严格 Claim grounding 及攻击/资源/降级门禁已通过合成验收；真实财务口径和准确率仍待人工 |
 | 发布结论 | `blocked` | 开放 P0/P1、真实 Staging、恢复演练、安全复核、财务/OCR/AI 真值和最终签字均未完成 |
 
 R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
@@ -110,6 +110,8 @@ M5.1 已关闭 OCR 直接确认 API 的工程 P0：批准命令必须携带 expe
 M5.2 已关闭 Excel `valid_rows_only` 部分发布 P0：每个有效明细行独立入账，普通错误明细不可通过排除绕过；疑似汇总行必须财务明确处置，任何修改使旧校验失效。批准要求另一名有效财务、当前版本/hash、完整 warning acknowledgement 与幂等键；Worker 先写不可见 staging，最终事务重验账号/项目/文件/模板/行集合和输出哈希后整批发布。第 37 条 migration、46/46 suites 403/403 tests、PostgreSQL 9/9 suites 96/96 tests、Playwright 17/17、空库及 36→37 升级均通过；详见 [`docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`](docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md)。
 
 M6 已在现有 Reports、`AiPromptVersion/AiTask/AiCallAttempt/AiCallLog` 和 `AiFinancialClaim/sourcePath` 上落地不可变报告证据链。固定查询只读取 `confirmed + actual`，在 PostgreSQL repeatable-read 水位内以 Decimal 分币种计算并冻结来源记录版本/hash；相同事实复用相同核心快照。AI 报告使用独立 `AI_REPORT_MODE`，只能逐字选择服务端生成的 Claim 白名单，不能自由添加客户、原因、比较、预测或数字；Snapshot、Narrative 和 Claim 由数据库触发器防修改。工程与合成验收通过，但 H06/H08 的真实逐分对账、正式指标口径和人工签字仍未完成；详见 [`docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`](docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md)。
+
+M7 完成任务书第 12 节的攻击、资源和 Provider 降级联合回归，并用红灯复现了相同 ReportSnapshot 并发请求偶发 409。修复只对 Prisma `P2002/P2034` 执行最多三次新事务重试；六个并发请求现复用同一不可变快照。报告 AI 并发最多调用一次 Provider，kill switch、无 Token/越权、超时、截断 JSON、值篡改和 warning 隐藏均失败关闭。47/47 后端 suites、10/10 PostgreSQL suites、17/17 Playwright、迁移双路径、构建、依赖审计、模型健康及 Staging 静态门禁通过；49,999 行仍存在约 45-143 秒性能波动并保留风险。详见 [`docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`](docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md)。
 
 ## 已实现闭环
 
@@ -507,6 +509,7 @@ npm run staging:release
 | [`docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md`](docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md) | OCR 双人批准、不可变快照与事务入账验收 |
 | [`docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`](docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md) | Excel 每行明细、整批失败关闭、双人批准与容量验收 |
 | [`docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`](docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md) | 不可变报告快照、分币种 Decimal 与 AI Claim grounding 验收 |
+| [`docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`](docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md) | 攻击、并发、资源预算、Provider 降级与模型健康联合验收 |
 | [`docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md) | 项目负责人填写的功能、业务与风险决策问卷 |
 | [`docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md`](docs/R8_9_CI_SBOM_ENTITLEMENT_HARDENING_REPORT_2026-07-20.md) | R8.9 Scout entitlement 根因、Syft 修复和验收证据 |
 | [`docs/PR4_REVIEW_GUIDE.md`](docs/PR4_REVIEW_GUIDE.md) | 独立 reviewer 检查顺序 |
