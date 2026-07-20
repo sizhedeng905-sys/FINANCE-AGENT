@@ -13,10 +13,12 @@ export default () => ({
   uploadQuarantineDir: process.env.UPLOAD_QUARANTINE_DIR || '.upload-quarantine',
   maxFileSizeMb: Number.parseInt(process.env.MAX_FILE_SIZE_MB ?? '10', 10),
   uploadAdmission: {
+    store: process.env.UPLOAD_ADMISSION_STORE || 'memory',
     maxConcurrentPerUser: Number.parseInt(process.env.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5', 10),
     maxInFlightMbPerUser: Number.parseInt(process.env.UPLOAD_MAX_INFLIGHT_MB_PER_USER ?? '260', 10),
     rateWindowMs: Number.parseInt(process.env.UPLOAD_RATE_WINDOW_MS ?? '60000', 10),
-    rateMaxPerUser: Number.parseInt(process.env.UPLOAD_RATE_MAX_PER_USER ?? '60', 10)
+    rateMaxPerUser: Number.parseInt(process.env.UPLOAD_RATE_MAX_PER_USER ?? '60', 10),
+    leaseMs: Number.parseInt(process.env.UPLOAD_ADMISSION_LEASE_MS ?? '30000', 10)
   },
   uploadQuarantineMaxAgeMs: Number.parseInt(process.env.UPLOAD_QUARANTINE_MAX_AGE_MS ?? '3600000', 10),
   fileQuotas: {
@@ -91,7 +93,8 @@ export default () => ({
     url: process.env.REDIS_URL || '',
     required: process.env.NODE_ENV === 'production'
       || process.env.REQUEST_RATE_LIMIT_STORE === 'redis'
-      || process.env.LOGIN_RATE_LIMIT_STORE === 'redis',
+      || process.env.LOGIN_RATE_LIMIT_STORE === 'redis'
+      || process.env.UPLOAD_ADMISSION_STORE === 'redis',
     keyPrefix: process.env.REDIS_KEY_PREFIX || 'finance-agent',
     connectTimeoutMs: Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10)
   },

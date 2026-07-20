@@ -35,10 +35,12 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const aiGlobalKillSwitch = String(environment.AI_GLOBAL_KILL_SWITCH ?? 'false');
   const aiExternalProviderMode = String(environment.AI_EXTERNAL_PROVIDER_MODE ?? 'disabled');
   const maxFileSizeMb = Number(String(environment.MAX_FILE_SIZE_MB ?? '10'));
+  const uploadAdmissionStore = String(environment.UPLOAD_ADMISSION_STORE ?? 'memory');
   const uploadMaxConcurrentPerUser = Number(String(environment.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5'));
   const uploadMaxInFlightMbPerUser = Number(String(environment.UPLOAD_MAX_INFLIGHT_MB_PER_USER ?? '260'));
   const uploadRateWindowMs = Number(String(environment.UPLOAD_RATE_WINDOW_MS ?? '60000'));
   const uploadRateMaxPerUser = Number(String(environment.UPLOAD_RATE_MAX_PER_USER ?? '60'));
+  const uploadAdmissionLeaseMs = Number(String(environment.UPLOAD_ADMISSION_LEASE_MS ?? '30000'));
   const uploadQuarantineMaxAgeMs = Number(String(environment.UPLOAD_QUARANTINE_MAX_AGE_MS ?? '3600000'));
   const fileUserQuotaMb = Number(String(environment.FILE_USER_QUOTA_MB ?? '500'));
   const fileProjectQuotaMb = Number(String(environment.FILE_PROJECT_QUOTA_MB ?? '5000'));
@@ -194,6 +196,15 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!Number.isInteger(uploadRateMaxPerUser) || uploadRateMaxPerUser < 1 || uploadRateMaxPerUser > 1000) {
     throw new Error('UPLOAD_RATE_MAX_PER_USER must be an integer between 1 and 1000.');
+  }
+  if (!RATE_LIMIT_STORES.has(uploadAdmissionStore)) {
+    throw new Error(`UPLOAD_ADMISSION_STORE must be one of: ${Array.from(RATE_LIMIT_STORES).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && uploadAdmissionStore !== 'redis') {
+    throw new Error('UPLOAD_ADMISSION_STORE must be redis in production.');
+  }
+  if (!Number.isInteger(uploadAdmissionLeaseMs) || uploadAdmissionLeaseMs < 1000 || uploadAdmissionLeaseMs > 300000) {
+    throw new Error('UPLOAD_ADMISSION_LEASE_MS must be an integer between 1000 and 300000.');
   }
   if (!Number.isInteger(uploadQuarantineMaxAgeMs) || uploadQuarantineMaxAgeMs < 60000 || uploadQuarantineMaxAgeMs > 604800000) {
     throw new Error('UPLOAD_QUARANTINE_MAX_AGE_MS must be between 60000 and 604800000.');
@@ -457,7 +468,12 @@ export function validateEnvironment(environment: Record<string, unknown>) {
     if (nodeEnv === 'production' && !parsedRedisUrl.password) {
       throw new Error('Production REDIS_URL must include authentication.');
     }
-  } else if (requestRateLimitStore === 'redis' || loginRateLimitStore === 'redis' || nodeEnv === 'production') {
+  } else if (
+    requestRateLimitStore === 'redis'
+    || loginRateLimitStore === 'redis'
+    || uploadAdmissionStore === 'redis'
+    || nodeEnv === 'production'
+  ) {
     throw new Error('REDIS_URL is required for Redis-backed runtime services.');
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9:_-]{2,63}$/.test(redisKeyPrefix)) {

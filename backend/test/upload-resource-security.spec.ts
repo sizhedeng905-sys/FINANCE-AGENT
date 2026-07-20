@@ -3,6 +3,7 @@ import { FileScanStatus, RawFileStatus } from '@prisma/client';
 import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { lastValueFrom, of } from 'rxjs';
 
 import { FileStorageMaintenanceService } from '../src/files/file-storage-maintenance.service';
 import { UploadAdmissionInterceptor } from '../src/files/upload-admission.interceptor';
@@ -13,30 +14,36 @@ function config(values: Record<string, unknown>) {
 }
 
 describe('upload resource and storage safety', () => {
-  it('limits per-user concurrency, in-flight bytes, and request rate with idempotent release', () => {
+  it('limits per-user concurrency, in-flight bytes, and request rate with idempotent release', async () => {
     const service = new UploadAdmissionService(config({
+      'uploadAdmission.store': 'memory',
       'uploadAdmission.maxConcurrentPerUser': 2,
       'uploadAdmission.maxInFlightMbPerUser': 1,
       'uploadAdmission.rateWindowMs': 60_000,
-      'uploadAdmission.rateMaxPerUser': 3
-    }));
-    const first = service.reserve('finance_1', 400_000);
-    const second = service.reserve('finance_1', 400_000);
-    expect(service.activeFor('finance_1')).toEqual({ count: 2, bytes: 800_000 });
-    expect(() => service.reserve('finance_1', 100_000)).toThrow('Concurrent upload limit exceeded');
-    first();
-    first();
-    expect(service.activeFor('finance_1')).toEqual({ count: 1, bytes: 400_000 });
-    second();
-    expect(service.activeFor('finance_1')).toEqual({ count: 0, bytes: 0 });
-    expect(() => service.reserve('finance_1', 100_000)).toThrow('Upload rate limit exceeded');
-    expect(() => service.reserve('finance_2', 2 * 1024 * 1024)).toThrow('in-flight byte limit');
-    expect(() => service.reserve('finance_3', Number.NaN)).toThrow('Content-Length');
+      'uploadAdmission.rateMaxPerUser': 3,
+      'uploadAdmission.leaseMs': 30_000
+    }), {} as any);
+    const first = await service.reserve('finance_1', 400_000);
+    const second = await service.reserve('finance_1', 400_000);
+    await expect(service.activeFor('finance_1')).resolves.toEqual({ count: 2, bytes: 800_000 });
+    await expect(service.reserve('finance_1', 100_000)).rejects.toThrow('Concurrent upload limit exceeded');
+    await service.release(first);
+    await service.release(first);
+    await expect(service.activeFor('finance_1')).resolves.toEqual({ count: 1, bytes: 400_000 });
+    await service.release(second);
+    await expect(service.activeFor('finance_1')).resolves.toEqual({ count: 0, bytes: 0 });
+    await expect(service.reserve('finance_1', 100_000)).rejects.toThrow('Upload rate limit exceeded');
+    await expect(service.reserve('finance_2', 2 * 1024 * 1024)).rejects.toThrow('in-flight byte limit');
+    await expect(service.reserve('finance_3', Number.NaN)).rejects.toThrow('Content-Length');
   });
 
-  it('releases an upload reservation when a downstream interceptor throws synchronously', () => {
-    const release = jest.fn();
-    const admission = { reserve: jest.fn(() => release) };
+  it('releases an upload reservation when a downstream interceptor throws synchronously', async () => {
+    const reservation = { store: 'memory', token: 'token', userKey: 'finance_1', contentLength: 1024, finished: false };
+    const admission = {
+      reserve: jest.fn(async () => reservation),
+      release: jest.fn(async () => undefined),
+      renewalIntervalMs: jest.fn(() => undefined)
+    };
     const interceptor = new UploadAdmissionInterceptor(admission as any);
     const context = {
       switchToHttp: () => ({
@@ -44,9 +51,41 @@ describe('upload resource and storage safety', () => {
       })
     } as any;
 
-    expect(() => interceptor.intercept(context, { handle: () => { throw new Error('downstream failure'); } } as any))
-      .toThrow('downstream failure');
-    expect(release).toHaveBeenCalledTimes(1);
+    await expect(interceptor.intercept(context, { handle: () => { throw new Error('downstream failure'); } } as any))
+      .rejects.toThrow('downstream failure');
+    expect(admission.release).toHaveBeenCalledTimes(1);
+    expect(admission.release).toHaveBeenCalledWith(reservation);
+  });
+
+  it('waits for a healthy shared release before completing an upload response', async () => {
+    const reservation = { store: 'redis', token: 'token', userKey: 'finance_1', contentLength: 1024, finished: false };
+    let allowRelease!: () => void;
+    const admission = {
+      reserve: jest.fn(async () => reservation),
+      release: jest.fn(() => new Promise<void>((resolve) => {
+        allowRelease = resolve;
+      })),
+      renew: jest.fn(async () => undefined),
+      renewalIntervalMs: jest.fn(() => 30_000)
+    };
+    const interceptor = new UploadAdmissionInterceptor(admission as any);
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => ({ user: { id: 'finance_1' }, headers: { 'content-length': '1024' } })
+      })
+    } as any;
+
+    const stream = await interceptor.intercept(context, { handle: () => of({ uploaded: true }) } as any);
+    let completed = false;
+    const result = lastValueFrom(stream).finally(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(admission.release).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(false);
+    allowRelease();
+    await expect(result).resolves.toEqual({ uploaded: true });
+    expect(completed).toBe(true);
   });
 
   it('removes stale and invalid quarantine files while retaining a fresh server-generated upload', async () => {

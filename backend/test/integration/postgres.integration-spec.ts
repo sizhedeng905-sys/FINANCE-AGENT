@@ -330,13 +330,15 @@ describe('real PostgreSQL integration', () => {
 
   it('keeps liveness responsive while a user has saturated large-upload slots', async () => {
     const admission = app.get(UploadAdmissionService);
-    const releases = Array.from({ length: 5 }, () => admission.reserve('synthetic-load-user', 20 * 1024 * 1024));
+    const reservations = await Promise.all(
+      Array.from({ length: 5 }, () => admission.reserve('synthetic-load-user', 20 * 1024 * 1024))
+    );
     try {
-      expect(() => admission.reserve('synthetic-load-user', 1024)).toThrow('Concurrent upload limit exceeded');
+      await expect(admission.reserve('synthetic-load-user', 1024)).rejects.toThrow('Concurrent upload limit exceeded');
       const health = await request(app.getHttpServer()).get('/api/health/live').expect(200);
       expect(health.body.data).toEqual({ status: 'ok' });
     } finally {
-      for (const release of releases) release();
+      await Promise.all(reservations.map((reservation) => admission.release(reservation)));
     }
   });
 

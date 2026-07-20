@@ -128,7 +128,7 @@ OCR 先保存原文件与任务，再由 Provider 返回版本化 page/block/tok
 ## 当前生产缺口
 
 - B8-09 工程配置已经提供对象存储、ClamAV、Redis、TLS、观测和备份恢复，但尚未在 H-13 指定的目标服务器完成真实容器、RPO/RTO 与回退演练。
-- 生产全局请求限流使用 Redis；登录、上传准入和模型并发闸门当前仍为进程内状态，B8-09 Staging 因此限制为单 API、单 Worker，横向扩容属于 RC 后续工作。
+- 生产全局请求限流、登录限流和上传准入使用 Redis 共享原子控制；模型并发/排队闸门仍为进程内状态，B8-09 Staging 因此继续限制为单 API、单 Worker，横向扩容须先完成 R9.3。
 - R8.6 已有本机 18 服务 release/restore/同 manifest rollback 证据；R8.7 完整重验曾因 Debian security 502 停止，目标 Linux 与新的远端 CI 仍为 `blocked_external`。
 - 真实 OCR/AI 仍需脱敏企业样本、标准答案集和业务人员验收；外部 AI 数据政策待 H-12。
 - RPO/RTO、数据/日志/原件保留、删除和法务留存待 H-14；独立 Review 和最终 UAT 待 H-15/H-16。

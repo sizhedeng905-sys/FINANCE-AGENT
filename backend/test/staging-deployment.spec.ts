@@ -15,6 +15,8 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('S3_ENDPOINT: https://objects.finance-agent.local:9443');
     expect(compose).not.toContain('S3_ENDPOINT: https://objects.finance-agent.local:${STAGING_OBJECT_PORT');
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
+    expect(compose).toContain('LOGIN_RATE_LIMIT_STORE: redis');
+    expect(compose).toContain('UPLOAD_ADMISSION_STORE: redis');
     expect(compose).toContain('FILE_SCAN_MODE: clamav');
     expect(compose).toContain('ssl=on');
     expect(compose).toContain('listen_addresses=*');

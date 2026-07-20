@@ -11,7 +11,7 @@
 ## 2. 已完成工作
 
 - 增加 `PROCESS_ROLE=api|worker|all`。生产拒绝 `all`；API 只提交 PostgreSQL 持久任务，Worker 执行 Excel/OCR lease 恢复和后台处理。
-- 增加 Redis 共享全局固定窗口限流、生产 fail-closed 连接、Worker 心跳和 readiness 依赖。登录、上传准入和模型并发闸门仍为进程内状态，因此本阶段 Compose 固定单 API、单 Worker。
+- 增加 Redis 共享全局固定窗口限流、生产 fail-closed 连接、Worker 心跳和 readiness 依赖；R9.1/R9.2 随后将登录与上传准入升级为 Redis 原子共享控制。模型并发闸门仍为进程内状态，因此 Compose 继续固定单 API、单 Worker。
 - 增加 S3/MinIO 文件适配、私有桶健康检查、路径边界、对象 inventory 和 30-300 秒签名 URL；签发动作写 audit/ledger。
 - 增加 W3C `traceparent`、JSON 日志关联、有限 OTLP 批量导出、Prometheus 请求/队列/Worker/模型/存储/trace 指标。
 - 增加 18 服务 Staging Compose：TLS gateway、前端、API、Worker、migrate、PostgreSQL TLS、Redis、ClamAV、MinIO、备份、Prometheus、Alertmanager、Loki、Alloy、Tempo、Grafana 和 node-exporter。
@@ -62,7 +62,7 @@
 - 未在目标 Linux Staging 验证 Alloy 的 Docker JSON 日志只读挂载、MinIO 生命周期命令、PostgreSQL WAL archive 和完整 restore drill。
 - 未取得真实 RPO/RTO，备份/保留/删除周期不能由 Codex代替管理层决定。
 - 当前对象桶保持 private/versioned，备份加密与正式 KMS/密钥托管方案尚未由 H-14 决定，不能据此声明静态数据已满足生产加密政策。
-- 登录、上传准入和模型并发闸门不是分布式控制；若 H-13 要求 API/Worker 横向扩容，该项必须先修复并通过多实例故障测试。
+- 登录与上传准入已完成多实例共享控制和故障测试；模型并发闸门仍不是分布式控制。若 H-13 要求 API/Worker 横向扩容，必须先完成 R9.3 并通过模型多实例故障测试。
 - Alertmanager 当前只保留本地审查 receiver；短信、邮件或企业 IM 接收人待 H-13/H-14。
 - OCR 真值、财务逐分对账、老板标准答案、跨来源重复和冲销政策仍承接 B8-08 外部门禁。
 - 外部 AI Provider 仍默认关闭；是否允许外发、脱敏、地域和保留待 H-12。

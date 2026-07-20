@@ -64,7 +64,7 @@
 | RC-P2-03 | P2 | 集成存储根误扫 E2E fixture | `bd544fc` | PostgreSQL 60/60 无路径错误 | `passed` |
 | RC-P2-04 | P2 | 401 主动跳转使 Playwright reload 竞态失败 | `769e962` | Playwright 16/16 | `passed` |
 | RC-P2-05 | P2 | 模型监控仍调用废弃匿名 OCR health | `1213ee8` | 真实切换、432 次 OCR 探针 | `passed` |
-| RC-H13-01 | P1 条件风险 | 登录、上传准入和模型闸门是进程内状态，不支持未经验证的横向扩容 | 当前 Compose 锁定单 API/单 Worker | 拓扑静态断言；扩容前需多实例故障测试 | `pending_human_decision` |
+| RC-H13-01 | P1 条件风险 | 登录与上传已共享化；模型闸门仍是进程内状态，不支持未经验证的横向扩容 | 当前 Compose 锁定单 API/单 Worker | R9.1/R9.2 双实例故障测试通过；扩容前仍需 R9.3 模型共享控制 | `in_progress` |
 | RC-EXT-01 | P0 发布门禁 | 本机固定 Node 镜像及 18 服务 smoke 已通过；H13 目标 registry/server 未提供 | 无代码规避 | 目标 registry release/smoke/restore | `blocked_external` |
 
 本段 RC 结论只描述 `4d597721` 当时已经检查的范围，已被 2026-07-18 R 系列重新审计取代。R1 已关闭唯一 P0，R2 已用实际容器日志和攻击标记关闭日志泄露 P1；R3-R6 与 R9 的 8 个 P1/条件 P1 仍未完成。在这些条目关闭前，不得再引用“没有开放代码 P0/P1”。实时状态以 `docs/B8_BLOCKER_MATRIX.md` 为准。

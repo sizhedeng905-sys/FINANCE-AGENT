@@ -18,7 +18,7 @@
 - 生产环境必须显式配置 `CORS_ORIGINS`；未在白名单的 Origin 不获得 CORS 许可。
 - Helmet 启用 CSP、`X-Content-Type-Options` 和 `X-Frame-Options: DENY`；开发环境不伪造 HSTS，生产环境由 Helmet 启用。
 - 全局按 IP 限流，响应包含 RateLimit 与 Retry-After 信息。开发可使用内存，生产强制 Redis 原子固定窗口；Redis 不可用时失败关闭。生产禁止 hop count，只接受明确 `TRUSTED_PROXIES`。
-- 登录限流、上传准入和模型并发闸门当前仍为进程内状态；B8-09 Staging 只允许单 API、单 Worker，横向扩容前必须改为共享原子控制并通过多实例故障测试。
+- 登录限流与上传准入使用 Redis Lua 原子共享控制、摘要身份键、服务器时钟租约和失败关闭；模型并发闸门仍为进程内状态。B8-09 Staging 继续只允许单 API、单 Worker，R9.3 完成前不得横向扩容。
 - Swagger 默认只在非生产环境启用；生产需显式设置 `SWAGGER_ENABLED=true`。
 - DTO 使用 whitelist、forbidNonWhitelisted 和类型转换；成功与错误都使用统一 envelope。
 

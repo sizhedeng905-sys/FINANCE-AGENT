@@ -18,6 +18,7 @@ describe('environment validation', () => {
     S3_LOGICAL_QUOTA_BYTES: '1099511627776',
     REQUEST_RATE_LIMIT_STORE: 'redis',
     LOGIN_RATE_LIMIT_STORE: 'redis',
+    UPLOAD_ADMISSION_STORE: 'redis',
     REDIS_URL: 'rediss://runtime:redis-secret-12345@redis.example.com:6379',
     METRICS_TOKEN: 'metrics-secret-1234567890-ABCDEFGHIJ-klmnop',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://tempo.finance-agent.example.com/v1/traces'
@@ -124,9 +125,11 @@ describe('environment validation', () => {
     [{ ...valid, REQUEST_RATE_LIMIT_WINDOW_MS: '999' }, 'REQUEST_RATE_LIMIT_WINDOW_MS'],
     [{ ...valid, REQUEST_RATE_LIMIT_MAX: '9' }, 'REQUEST_RATE_LIMIT_MAX'],
     [{ ...valid, LOGIN_RATE_LIMIT_STORE: 'database' }, 'LOGIN_RATE_LIMIT_STORE'],
+    [{ ...valid, UPLOAD_ADMISSION_STORE: 'database' }, 'UPLOAD_ADMISSION_STORE'],
     [{ ...valid, LOGIN_RATE_LIMIT_WINDOW_MS: '999' }, 'LOGIN_RATE_LIMIT_WINDOW_MS'],
     [{ ...valid, LOGIN_RATE_LIMIT_BLOCK_MS: '3600001' }, 'LOGIN_RATE_LIMIT_BLOCK_MS'],
-    [{ ...valid, LOGIN_RATE_LIMIT_LEASE_MS: '999' }, 'LOGIN_RATE_LIMIT_LEASE_MS']
+    [{ ...valid, LOGIN_RATE_LIMIT_LEASE_MS: '999' }, 'LOGIN_RATE_LIMIT_LEASE_MS'],
+    [{ ...valid, UPLOAD_ADMISSION_LEASE_MS: '999' }, 'UPLOAD_ADMISSION_LEASE_MS']
   ])('rejects an invalid HTTP security setting', (environment, expectedMessage) => {
     expect(() => validateEnvironment(environment)).toThrow(expectedMessage);
   });
@@ -182,6 +185,7 @@ describe('environment validation', () => {
     })).toThrow('not physical capacity');
     expect(() => validateEnvironment({ ...production, REQUEST_RATE_LIMIT_STORE: 'memory' })).toThrow('REQUEST_RATE_LIMIT_STORE');
     expect(() => validateEnvironment({ ...production, LOGIN_RATE_LIMIT_STORE: 'memory' })).toThrow('LOGIN_RATE_LIMIT_STORE');
+    expect(() => validateEnvironment({ ...production, UPLOAD_ADMISSION_STORE: 'memory' })).toThrow('UPLOAD_ADMISSION_STORE');
     expect(() => validateEnvironment({ ...production, METRICS_TOKEN: '' })).toThrow('METRICS_TOKEN');
   });
 
