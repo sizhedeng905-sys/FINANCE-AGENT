@@ -3,7 +3,7 @@
 更新日期：2026-07-20
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。retention 只允许 dry-run，step-up 默认关闭且正式职责分离仍待 H10；AI 映射补充任务 M0-M3.1 已完成，下一步 M3.2。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计正在执行；R1-R8.7 本机工程门禁已完成，R8.9 已修复 GitHub CI 的 Docker Scout entitlement 依赖并完成本地全量回归，远端 run 待推送验证；完整 release 重验仍因 Debian security 连续两次 502 标记为 `blocked_external`。负责人问卷 Q01-Q30 已映射到 H01-H16，但签名、冲突项和真实证据未关闭；retention 仍只允许 dry-run，step-up 默认关闭。AI 映射补充任务 M0-M3.1 已完成，当前继续 M3.2。
 
 ## 完成口径
 
@@ -28,9 +28,9 @@
 | R11 最终交接 | 排队 | 所有工程项完成后重跑分层门禁并更新 Draft PR；不 merge、不转 Ready |
 | M0-M8 AI 分类/映射/审批/快照补充 | M0-M3.1 完成 / M3.2 待继续 | 复用矩阵、Excel/OCR IR、严格 Schema、模式/kill switch、Prompt Registry、完整版本向量和精确作用域 Mapping Profile 完成；32 条 migration 空库及 31→32 升级通过 |
 
-指定人工决策文件 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 已建立为 0.1-draft，但全部 H01-H16 条目均为 `Pending`，没有签字、业务样例或批准证据；空白或非指定文件不构成批准。
+项目负责人已填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`；2026-07-20 已回填 `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md` 0.2-draft。H03/H09/H10 等核心偏好已经记录，H04/H05/H15 的独立证据路径也已选择。
 
-项目负责人可先填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`。该文件只询问功能口径、权限和风险处理；收到答案后由 Codex 回填 H01-H16、实现条件和验收测试。正式映射、真实证据和签字完成前，问卷本身不自动关闭门禁。
+当前仍没有 H 项达到 `Approved`：问卷缺决策人姓名/角色/日期，H01 的勾选与补充文字冲突，H02/H07/H08/H11/H12/H14 缺少执行清单或阈值，H04-H06/H09/H13/H15/H16 缺真实或外部证据。工程实现必须按各项失败关闭行为继续，不能把产品决定写成代码或生产验收已完成。
 
 ## B8 稳定化进度
 
