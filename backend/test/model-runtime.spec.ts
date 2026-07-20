@@ -48,7 +48,7 @@ describe('model runtime safeguards', () => {
   });
 
   it('queues model work at the configured concurrency and rejects an overflowing queue', async () => {
-    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 1 }));
+    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 1 }), {} as any);
     let release!: () => void;
     const blocker = new Promise<void>((resolve) => { release = resolve; });
     const first = gate.run('gpu', 1, async () => blocker);
@@ -56,14 +56,14 @@ describe('model runtime safeguards', () => {
     const second = gate.run('gpu', 1, async () => 'second');
     await Promise.resolve();
     await expect(gate.run('gpu', 1, async () => 'third')).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(gate.snapshot()).toMatchObject({ gpu: { active: 1, queued: 1 } });
+    expect(Object.values(await gate.snapshot())).toContainEqual(expect.objectContaining({ active: 1, queued: 1 }));
     release();
     await first;
     await expect(second).resolves.toBe('second');
   });
 
   it.each([1, 3, 5])('honors a max concurrency of %i without losing queued work', async (maxConcurrency) => {
-    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }));
+    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }), {} as any);
     let active = 0;
     let peak = 0;
     const completed = await Promise.all(Array.from({ length: 5 }, (_, index) => gate.run(
@@ -80,13 +80,11 @@ describe('model runtime safeguards', () => {
 
     expect(completed).toEqual([0, 1, 2, 3, 4]);
     expect(peak).toBe(maxConcurrency);
-    expect(gate.snapshot()).toMatchObject({
-      [`batch-${maxConcurrency}`]: { active: 0, queued: 0 }
-    });
+    expect(Object.values(await gate.snapshot())).toContainEqual(expect.objectContaining({ active: 0, queued: 0 }));
   });
 
   it('keeps the single-concurrency OCR queue independent from text AI work', async () => {
-    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }));
+    const gate = new ModelExecutionGateService(config({ 'modelRuntime.maxQueue': 10 }), {} as any);
     let releaseOcr!: () => void;
     const ocrBlocker = new Promise<void>((resolve) => { releaseOcr = resolve; });
     const firstOcr = gate.run('ocr', 1, async () => ocrBlocker);
@@ -95,10 +93,10 @@ describe('model runtime safeguards', () => {
     await Promise.resolve();
 
     await expect(gate.run('ai', 1, async () => 'ai-ready')).resolves.toBe('ai-ready');
-    expect(gate.snapshot()).toMatchObject({
-      ocr: { active: 1, queued: 1 },
-      ai: { active: 0, queued: 0 }
-    });
+    expect(Object.values(await gate.snapshot())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ active: 1, queued: 1 }),
+      expect.objectContaining({ active: 0, queued: 0 })
+    ]));
     releaseOcr();
     await firstOcr;
     await expect(secondOcr).resolves.toBe('ocr-second');
@@ -136,6 +134,38 @@ describe('model runtime safeguards', () => {
       maxRetries: 0
     })).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(20);
+  });
+
+  it('aborts provider HTTP without retrying or poisoning the circuit when the shared lease is lost', async () => {
+    const client = new ResilientHttpClientService(config({
+      'modelRuntime.httpMaxRetries': 3,
+      'modelRuntime.circuitFailureThreshold': 2,
+      'modelRuntime.circuitResetMs': 30000
+    }));
+    const started = deferredForTest();
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+      started.resolve();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('lease lost', 'AbortError')),
+          { once: true }
+        );
+      });
+    });
+    const controller = new AbortController();
+    const request = client.request('http://127.0.0.1:65534/inference', { method: 'POST' }, {
+      circuitKey: 'shared-lease-abort',
+      timeoutMs: 5_000,
+      maxRetries: 3,
+      signal: controller.signal
+    });
+    await started.promise;
+    controller.abort(new Error('shared lease lost'));
+
+    await expect(request).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.snapshot()).toMatchObject({ 'shared-lease-abort': { failures: 0, open: false } });
   });
 
   it('uses only allowlisted environment secret names for authenticated health checks', async () => {
@@ -178,10 +208,20 @@ describe('model runtime safeguards', () => {
       }),
       snapshot: jest.fn(() => ({}))
     };
-    const gate: any = { snapshot: jest.fn(() => ({})) };
+    const gate: any = {
+      run: jest.fn(async (_key: string, _limit: number, operation: (signal: AbortSignal) => Promise<unknown>) => (
+        operation(new AbortController().signal)
+      )),
+      snapshot: jest.fn(() => ({}))
+    };
     const runtime = new ModelRuntimeService(prisma, http, gate);
 
     await expect(runtime.health()).resolves.toMatchObject({ status: 'ok' });
+    expect(gate.run).toHaveBeenCalledWith(
+      `ai:${resolveModelDeployment(deployment).configHash}`,
+      1,
+      expect.any(Function)
+    );
     expect(http.request).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/v1/models',
       { method: 'GET', headers: { Authorization: 'Bearer local-test-secret' } },
@@ -273,3 +313,11 @@ describe('model runtime safeguards', () => {
     );
   });
 });
+
+function deferredForTest() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}

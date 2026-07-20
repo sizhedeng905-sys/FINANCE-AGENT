@@ -73,7 +73,8 @@ export class LocalPaddleOcrProvider implements OcrProvider {
         body
       }, {
         circuitKey: `ocr:${endpoint}`,
-        timeoutMs
+        timeoutMs,
+        signal: config?.signal
       });
     } catch {
       throw new BadGatewayException('本地 Paddle OCR 服务不可用');

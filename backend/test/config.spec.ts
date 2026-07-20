@@ -19,6 +19,7 @@ describe('environment validation', () => {
     REQUEST_RATE_LIMIT_STORE: 'redis',
     LOGIN_RATE_LIMIT_STORE: 'redis',
     UPLOAD_ADMISSION_STORE: 'redis',
+    MODEL_EXECUTION_GATE_STORE: 'redis',
     REDIS_URL: 'rediss://runtime:redis-secret-12345@redis.example.com:6379',
     METRICS_TOKEN: 'metrics-secret-1234567890-ABCDEFGHIJ-klmnop',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://tempo.finance-agent.example.com/v1/traces'
@@ -112,6 +113,11 @@ describe('environment validation', () => {
     [{ ...valid, MODEL_CIRCUIT_FAILURE_THRESHOLD: '0' }, 'MODEL_CIRCUIT_FAILURE_THRESHOLD'],
     [{ ...valid, MODEL_CIRCUIT_RESET_MS: '999' }, 'MODEL_CIRCUIT_RESET_MS'],
     [{ ...valid, MODEL_MAX_QUEUE: '0' }, 'MODEL_MAX_QUEUE'],
+    [{ ...valid, MODEL_EXECUTION_GATE_STORE: 'database' }, 'MODEL_EXECUTION_GATE_STORE'],
+    [{ ...valid, MODEL_QUEUE_WAIT_TIMEOUT_MS: '999' }, 'MODEL_QUEUE_WAIT_TIMEOUT_MS'],
+    [{ ...valid, MODEL_EXECUTION_LEASE_MS: '999' }, 'MODEL_EXECUTION_LEASE_MS'],
+    [{ ...valid, MODEL_QUEUE_WAITER_LEASE_MS: '249' }, 'MODEL_QUEUE_WAITER_LEASE_MS'],
+    [{ ...valid, MODEL_QUEUE_POLL_MS: '1000', MODEL_QUEUE_WAITER_LEASE_MS: '1000' }, 'MODEL_QUEUE_POLL_MS'],
     [{ ...valid, AI_MAX_CONCURRENCY: '0' }, 'AI_MAX_CONCURRENCY'],
     [{ ...valid, OCR_MAX_CONCURRENCY: '33' }, 'OCR_MAX_CONCURRENCY']
   ])('rejects an invalid model runtime setting', (environment, expectedMessage) => {
@@ -186,6 +192,7 @@ describe('environment validation', () => {
     expect(() => validateEnvironment({ ...production, REQUEST_RATE_LIMIT_STORE: 'memory' })).toThrow('REQUEST_RATE_LIMIT_STORE');
     expect(() => validateEnvironment({ ...production, LOGIN_RATE_LIMIT_STORE: 'memory' })).toThrow('LOGIN_RATE_LIMIT_STORE');
     expect(() => validateEnvironment({ ...production, UPLOAD_ADMISSION_STORE: 'memory' })).toThrow('UPLOAD_ADMISSION_STORE');
+    expect(() => validateEnvironment({ ...production, MODEL_EXECUTION_GATE_STORE: 'memory' })).toThrow('MODEL_EXECUTION_GATE_STORE');
     expect(() => validateEnvironment({ ...production, METRICS_TOKEN: '' })).toThrow('METRICS_TOKEN');
   });
 

@@ -107,7 +107,7 @@ export class HttpAiProviderService {
     const timeoutMs = request.timeoutMs ?? this.config.get<number>('ai.timeoutMs') ?? 30000;
     const maxConcurrency = request.maxConcurrency ?? this.config.get<number>('modelRuntime.aiMaxConcurrency') ?? 1;
     const gateKey = `ai:${request.configHash ?? new URL(url).origin}`;
-    const response = await this.gate.run(gateKey, maxConcurrency, async () => {
+    const response = await this.gate.run(gateKey, maxConcurrency, async (signal) => {
       await request.beforeProviderRequest?.();
       return this.http.request(url, {
         method: 'POST',
@@ -116,6 +116,7 @@ export class HttpAiProviderService {
       }, {
         circuitKey: `ai:${new URL(url).origin}`,
         timeoutMs,
+        signal,
         maxRetries: request.maxAttempts === undefined ? undefined : Math.max(0, request.maxAttempts - 1)
       });
     });

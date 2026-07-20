@@ -25,7 +25,7 @@
 | 观测 | Prometheus、Alertmanager、Loki、Alloy、Tempo、Grafana、node-exporter | 指标令牌、JSON 日志、W3C trace、OTLP、错误/容量/备份告警；Alloy 只读日志文件且不挂载 Docker socket |
 | 可靠性 | backup | PostgreSQL logical/base/WAL 与对象快照关联；恢复脚本带校验和与显式确认门 |
 
-持久化任务事实仍在 PostgreSQL。Redis 用于全局请求/登录限流、上传准入、Worker 心跳和运行协调，不作为唯一任务事实源。上传活跃槽位只保存短租约运行状态，业务文件事实仍在 PostgreSQL/对象存储。模型并发闸门仍为进程内控制，因此本版本继续只允许单 API、单 Worker；横向扩容前必须完成 R9.3 共享化和多实例故障测试。
+持久化任务事实仍在 PostgreSQL。Redis 用于全局请求/登录限流、上传准入、模型 FIFO 执行门、Worker 心跳和运行协调，不作为唯一任务事实源。上传与模型活跃槽位只保存短租约运行状态，业务文件/任务事实仍在 PostgreSQL/对象存储。R9.3 已完成本地双实例共享化与故障测试，但本版本 Compose 继续只允许单 API、单 Worker；横向扩容前必须在 H13/H14 目标环境完成多实例 release、恢复与回退。
 
 前端镜像必须以 `VITE_APP_DATA_MODE=api`、`VITE_API_BASE_URL=/api` 构建。缺失/非法模式、危险 URL 或非 API Staging 构建均失败；构建后 `runtime-config.json` 必须再次通过 `npm run staging:frontend:check`。浏览器 smoke 会验证实际 API 请求、后端不可用错误、CSP、合成项目写读和软归档，不以首页 HTTP 200 代替可用性证明。中断后脚本会尽力软归档已创建项目；失败时输出项目 ID，要求人工处理。
 

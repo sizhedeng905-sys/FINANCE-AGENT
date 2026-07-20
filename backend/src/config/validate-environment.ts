@@ -69,7 +69,12 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const modelHttpMaxRetries = Number(String(environment.MODEL_HTTP_MAX_RETRIES ?? '1'));
   const modelCircuitFailureThreshold = Number(String(environment.MODEL_CIRCUIT_FAILURE_THRESHOLD ?? '3'));
   const modelCircuitResetMs = Number(String(environment.MODEL_CIRCUIT_RESET_MS ?? '30000'));
+  const modelExecutionGateStore = String(environment.MODEL_EXECUTION_GATE_STORE ?? 'memory');
   const modelMaxQueue = Number(String(environment.MODEL_MAX_QUEUE ?? '20'));
+  const modelQueueWaitTimeoutMs = Number(String(environment.MODEL_QUEUE_WAIT_TIMEOUT_MS ?? '60000'));
+  const modelExecutionLeaseMs = Number(String(environment.MODEL_EXECUTION_LEASE_MS ?? '30000'));
+  const modelQueueWaiterLeaseMs = Number(String(environment.MODEL_QUEUE_WAITER_LEASE_MS ?? '5000'));
+  const modelQueuePollMs = Number(String(environment.MODEL_QUEUE_POLL_MS ?? '100'));
   const aiMaxConcurrency = Number(String(environment.AI_MAX_CONCURRENCY ?? '1'));
   const ocrMaxConcurrency = Number(String(environment.OCR_MAX_CONCURRENCY ?? '1'));
   const nodeEnv = String(environment.NODE_ENV ?? 'development');
@@ -395,6 +400,34 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   if (!Number.isInteger(modelMaxQueue) || modelMaxQueue < 1 || modelMaxQueue > 1000) {
     throw new Error('MODEL_MAX_QUEUE must be an integer between 1 and 1000.');
   }
+  if (!RATE_LIMIT_STORES.has(modelExecutionGateStore)) {
+    throw new Error(`MODEL_EXECUTION_GATE_STORE must be one of: ${Array.from(RATE_LIMIT_STORES).join(', ')}.`);
+  }
+  if (nodeEnv === 'production' && modelExecutionGateStore !== 'redis') {
+    throw new Error('MODEL_EXECUTION_GATE_STORE must be redis in production.');
+  }
+  if (!Number.isInteger(modelQueueWaitTimeoutMs) || modelQueueWaitTimeoutMs < 1000 || modelQueueWaitTimeoutMs > 600000) {
+    throw new Error('MODEL_QUEUE_WAIT_TIMEOUT_MS must be an integer between 1000 and 600000.');
+  }
+  if (!Number.isInteger(modelExecutionLeaseMs) || modelExecutionLeaseMs < 1000 || modelExecutionLeaseMs > 600000) {
+    throw new Error('MODEL_EXECUTION_LEASE_MS must be an integer between 1000 and 600000.');
+  }
+  if (
+    !Number.isInteger(modelQueueWaiterLeaseMs)
+    || modelQueueWaiterLeaseMs < 250
+    || modelQueueWaiterLeaseMs > 60000
+    || modelQueueWaiterLeaseMs > modelQueueWaitTimeoutMs
+  ) {
+    throw new Error('MODEL_QUEUE_WAITER_LEASE_MS must be between 250 and 60000 and not exceed the queue wait timeout.');
+  }
+  if (
+    !Number.isInteger(modelQueuePollMs)
+    || modelQueuePollMs < 25
+    || modelQueuePollMs > 1000
+    || modelQueuePollMs * 2 > modelQueueWaiterLeaseMs
+  ) {
+    throw new Error('MODEL_QUEUE_POLL_MS must be between 25 and 1000 and no more than half the waiter lease.');
+  }
   if (!Number.isInteger(aiMaxConcurrency) || aiMaxConcurrency < 1 || aiMaxConcurrency > 32) {
     throw new Error('AI_MAX_CONCURRENCY must be an integer between 1 and 32.');
   }
@@ -472,6 +505,7 @@ export function validateEnvironment(environment: Record<string, unknown>) {
     requestRateLimitStore === 'redis'
     || loginRateLimitStore === 'redis'
     || uploadAdmissionStore === 'redis'
+    || modelExecutionGateStore === 'redis'
     || nodeEnv === 'production'
   ) {
     throw new Error('REDIS_URL is required for Redis-backed runtime services.');

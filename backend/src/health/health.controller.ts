@@ -126,7 +126,7 @@ export class HealthController {
         where: { status: { in: [AiTaskStatus.queued, AiTaskStatus.running] } }
       })
     ]);
-    const runtime = this.executionGate.readiness();
+    const runtime = await this.executionGate.readiness();
     return {
       status: runtime.status === 'ok' ? 'ok' : 'saturated',
       pending: { imports, ocr, ai },

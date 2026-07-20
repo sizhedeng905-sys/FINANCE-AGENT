@@ -86,6 +86,7 @@ export interface OcrProviderSnapshot {
 
 export interface OcrProviderExecutionConfig extends OcrProviderSnapshot {
   secret?: string;
+  signal?: AbortSignal;
 }
 
 export interface OcrProvider {

@@ -1248,11 +1248,11 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         ? await this.providers.resolve()
         : this.providers.fromSnapshot(frozen.providerConfig, frozen.providerConfigHash);
       const gateKey = `ocr:${resolution.config.configHash ?? resolution.config.provider}`;
-      await this.executionGate.run(gateKey, resolution.config.maxConcurrency, async () => {
+      await this.executionGate.run(gateKey, resolution.config.maxConcurrency, async (signal) => {
         if (this.stopping) return;
         const request = await this.backgroundRequest(id);
         if (!request) return;
-        await this.executeQueuedTask(id, request.actor, request.context, resolution.config);
+        await this.executeQueuedTask(id, request.actor, request.context, { ...resolution.config, signal });
       });
     })().catch((error) => {
       this.logger.warn(`OCR background task ${id} deferred: ${this.safeErrorMessage(error)}`);

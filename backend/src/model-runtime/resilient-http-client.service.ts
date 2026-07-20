@@ -10,6 +10,7 @@ export interface ResilientRequestOptions {
   circuitKey: string;
   timeoutMs: number;
   maxRetries?: number;
+  signal?: AbortSignal;
 }
 
 @Injectable()
@@ -31,10 +32,12 @@ export class ResilientHttpClientService {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      if (options.signal?.aborted) throw new ServiceUnavailableException('模型执行租约已失效');
       try {
+        const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
         const response = await fetch(url, {
           ...init,
-          signal: AbortSignal.timeout(options.timeoutMs)
+          signal: options.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal
         });
         const retryable = response.status === 429 || response.status >= 500;
         if (!retryable) {
@@ -48,12 +51,15 @@ export class ResilientHttpClientService {
         }
       } catch (error) {
         lastError = error;
+        if (options.signal?.aborted) {
+          throw new ServiceUnavailableException('模型执行租约已失效');
+        }
         if (attempt === retries) {
           this.recordFailure(options.circuitKey);
           throw new ServiceUnavailableException('模型服务网络请求失败或超时');
         }
       }
-      await this.delay(Math.min(1000, 100 * 2 ** attempt));
+      await this.delay(Math.min(1000, 100 * 2 ** attempt), options.signal);
     }
 
     this.recordFailure(options.circuitKey);
@@ -99,7 +105,25 @@ export class ResilientHttpClientService {
     return state;
   }
 
-  private delay(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private delay(ms: number, signal?: AbortSignal) {
+    if (!signal) return new Promise<void>((resolve) => setTimeout(resolve, ms));
+    if (signal.aborted) return Promise.reject(new ServiceUnavailableException('模型执行租约已失效'));
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new ServiceUnavailableException('模型执行租约已失效'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
   }
 }

@@ -41,7 +41,7 @@ export class MetricsController {
   @Get()
   async read(@Req() request: Request, @Res() response: Response) {
     this.assertAuthorized(request.headers.authorization);
-    const [importParse, importConfirm, ocr, ai, retention, storedFiles, storageCapacity, heartbeat] = await Promise.all([
+    const [importParse, importConfirm, ocr, ai, retention, storedFiles, storageCapacity, heartbeat, modelGate] = await Promise.all([
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.parsing, executionMode: 'background' } }),
       this.prisma.importTask.count({ where: { status: ImportTaskStatus.confirming } }),
       this.prisma.ocrTask.count({ where: { status: { in: [OcrTaskStatus.queued, OcrTaskStatus.processing] } } }),
@@ -51,7 +51,8 @@ export class MetricsController {
       }),
       this.prisma.rawFile.aggregate({ where: { isVoided: false }, _sum: { fileSize: true } }),
       this.storageCapacity.read(),
-      this.redis.readWorkerHeartbeat()
+      this.redis.readWorkerHeartbeat(),
+      this.modelGate.readiness()
     ]);
     const heartbeatAgeSeconds = heartbeat
       ? Math.max(0, Date.now() - Date.parse(heartbeat.timestamp)) / 1_000
@@ -68,7 +69,7 @@ export class MetricsController {
       storageCapacity,
       workerHeartbeatAgeSeconds: heartbeatAgeSeconds,
       workerHeartbeatHealthy: this.processRole === 'all' || Boolean(heartbeat),
-      modelRuntimeHealthy: this.modelGate.readiness().status === 'ok',
+      modelRuntimeHealthy: modelGate.status === 'ok',
       trace: this.traceExporter.snapshot()
     });
     response.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');

@@ -8,7 +8,7 @@
 
 上传并发数、在途字节和请求速率已从单进程 `Map` 升级为可显式选择的 `memory|redis` 存储。生产配置强制 `UPLOAD_ADMISSION_STORE=redis`；Redis 在启动或运行中不可用时失败关闭，不回退到进程内状态。
 
-本阶段只关闭上传子项。模型并发与等待队列仍为进程内状态，Compose 继续固定为单 API、单 Worker；整个 `R9-SCALE-001` 保持 `in_progress`，不得据此宣称已可横向扩容或 production-ready。
+本阶段只关闭上传子项。后续 R9.3 已关闭模型执行门的本地工程子项；Compose 继续固定为单 API、单 Worker，目标横向部署仍受 H13/H14 阻断，不得据此宣称 production-ready。
 
 ## 实现边界
 
@@ -49,6 +49,6 @@ Staging Compose 已固定 `UPLOAD_ADMISSION_STORE=redis`。CI 的 PostgreSQL/E2E
 
 ## 仍待完成
 
-1. R9.3：模型并发与等待队列改为共享控制，覆盖公平释放、等待超时、实例重启和 Provider 故障。
+1. R9.3 已在后续独立提交完成；证据见 `R9_3_SHARED_MODEL_EXECUTION_GATE_REPORT_2026-07-21.md`。
 2. 本地 R9.1、R9.1A、R9.2 提交仍需成功推送并等待 GitHub Build/CodeQL 真实执行；此前状态只写 `engineering_verified_locally`。
 3. H13/H14 仍决定目标服务器、正式拓扑、容量、恢复和保留政策；本阶段不部署生产、不合并 Draft PR。

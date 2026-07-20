@@ -94,7 +94,8 @@ export default () => ({
     required: process.env.NODE_ENV === 'production'
       || process.env.REQUEST_RATE_LIMIT_STORE === 'redis'
       || process.env.LOGIN_RATE_LIMIT_STORE === 'redis'
-      || process.env.UPLOAD_ADMISSION_STORE === 'redis',
+      || process.env.UPLOAD_ADMISSION_STORE === 'redis'
+      || process.env.MODEL_EXECUTION_GATE_STORE === 'redis',
     keyPrefix: process.env.REDIS_KEY_PREFIX || 'finance-agent',
     connectTimeoutMs: Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10)
   },
@@ -158,10 +159,15 @@ export default () => ({
     maxResponseBytes: Number.parseInt(process.env.OCR_MAX_RESPONSE_BYTES ?? '2097152', 10)
   },
   modelRuntime: {
+    gateStore: process.env.MODEL_EXECUTION_GATE_STORE || 'memory',
     httpMaxRetries: Number.parseInt(process.env.MODEL_HTTP_MAX_RETRIES ?? '1', 10),
     circuitFailureThreshold: Number.parseInt(process.env.MODEL_CIRCUIT_FAILURE_THRESHOLD ?? '3', 10),
     circuitResetMs: Number.parseInt(process.env.MODEL_CIRCUIT_RESET_MS ?? '30000', 10),
     maxQueue: Number.parseInt(process.env.MODEL_MAX_QUEUE ?? '20', 10),
+    queueWaitTimeoutMs: Number.parseInt(process.env.MODEL_QUEUE_WAIT_TIMEOUT_MS ?? '60000', 10),
+    executionLeaseMs: Number.parseInt(process.env.MODEL_EXECUTION_LEASE_MS ?? '30000', 10),
+    waiterLeaseMs: Number.parseInt(process.env.MODEL_QUEUE_WAITER_LEASE_MS ?? '5000', 10),
+    queuePollMs: Number.parseInt(process.env.MODEL_QUEUE_POLL_MS ?? '100', 10),
     aiMaxConcurrency: Number.parseInt(process.env.AI_MAX_CONCURRENCY ?? '1', 10),
     ocrMaxConcurrency: Number.parseInt(process.env.OCR_MAX_CONCURRENCY ?? '1', 10)
   }

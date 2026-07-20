@@ -17,6 +17,7 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('LOGIN_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('UPLOAD_ADMISSION_STORE: redis');
+    expect(compose).toContain('MODEL_EXECUTION_GATE_STORE: redis');
     expect(compose).toContain('FILE_SCAN_MODE: clamav');
     expect(compose).toContain('ssl=on');
     expect(compose).toContain('listen_addresses=*');

@@ -59,7 +59,7 @@ export class ModelRuntimeService {
       checkedAt: new Date().toISOString(),
       deployments: results,
       runtime: {
-        queues: this.gate.snapshot(),
+        queues: await this.gate.snapshot(),
         circuits: this.http.snapshot()
       }
     };
@@ -84,14 +84,20 @@ export class ModelRuntimeService {
 
     const startedAt = Date.now();
     try {
-      const probe = await probeModelDeployment(
-        resolved,
-        this.resolveSecret(resolved.secretRef),
-        (url, init, timeoutMs, operation) => this.http.request(url, init, {
-          circuitKey: `health:${resolved.key}:${operation}`,
-          timeoutMs,
-          maxRetries: 0
-        })
+      const gatePrefix = resolved.provider === 'local_paddle' ? 'ocr' : 'ai';
+      const probe = await this.gate.run(
+        `${gatePrefix}:${resolved.configHash}`,
+        resolved.maxConcurrency,
+        (signal) => probeModelDeployment(
+          resolved,
+          this.resolveSecret(resolved.secretRef),
+          (url, init, timeoutMs, operation) => this.http.request(url, init, {
+            circuitKey: `health:${resolved.key}:${operation}`,
+            timeoutMs,
+            maxRetries: 0,
+            signal
+          })
+        )
       );
       await this.updateHealth(resolved.id, ModelDeploymentStatus.healthy, probe.latencyMs, null);
       return {
