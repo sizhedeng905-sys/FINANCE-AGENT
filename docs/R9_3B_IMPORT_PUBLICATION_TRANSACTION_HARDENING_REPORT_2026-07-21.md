@@ -1,5 +1,7 @@
 # R9.3B Import Publication Transaction Hardening Report
 
+> Historical scope notice (2026-07-21): this report proves the R9.3B performance and transient-recovery change at commit `cc033d4`. It did not test generic records API isolation, direct staged `BusinessRecord`/`RecordValue` tampering, sealed `ImportRow` races, or a database update that affects fewer rows than expected. Those P0 gaps were reopened by CR-002 and closed by CR-003 through CR-005. The current conclusion is in [`P0_EXCEL_STAGING_INTEGRITY_CLOSURE_2026-07-21.md`](P0_EXCEL_STAGING_INTEGRITY_CLOSURE_2026-07-21.md); the historical measurements below are intentionally unchanged.
+
 > Date: 2026-07-21
 > Status: `engineering_verified_locally / remote_ci_required`
 > Issue: `R9-CONFIRM-PUBLICATION-002`

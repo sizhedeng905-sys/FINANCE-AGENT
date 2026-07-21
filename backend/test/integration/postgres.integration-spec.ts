@@ -6975,7 +6975,7 @@ describe('real PostgreSQL integration', () => {
       expect(validationElapsedMs).toBeLessThan(180_000);
       expect(peakRss - baselineRss).toBeLessThan(1024 * 1024 * 1024);
       expect(peakConnections).toBeGreaterThan(0);
-    }, 240_000);
+    }, 360_000);
 
     it('recovers an expired confirmation from persisted database facts', async () => {
       const rowCount = 1_200;
@@ -7207,6 +7207,70 @@ describe('real PostgreSQL integration', () => {
       });
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(rowCount);
     });
+
+    it('keeps a slow but bounded staging batch inside one confirmation attempt', async () => {
+      const taskId = await createTask(101, '2026-07-21');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const dropDelay = async () => {
+        await prisma.$executeRawUnsafe(
+          'DROP TRIGGER IF EXISTS "integration_delay_one_staging_batch" ON "business_records"'
+        );
+        await prisma.$executeRawUnsafe(
+          'DROP FUNCTION IF EXISTS "integration_delay_one_staging_batch"()'
+        );
+        await prisma.$executeRawUnsafe(
+          'DROP TABLE IF EXISTS "integration_staging_delay"'
+        );
+        await prisma.$executeRawUnsafe(
+          'DROP SEQUENCE IF EXISTS "integration_staging_delay_sequence"'
+        );
+      };
+
+      await dropDelay();
+      await prisma.$executeRawUnsafe(
+        'CREATE TABLE "integration_staging_delay" ("task_id" TEXT PRIMARY KEY)'
+      );
+      await prisma.$executeRaw`
+        INSERT INTO "integration_staging_delay" ("task_id") VALUES (${taskId})
+      `;
+      await prisma.$executeRawUnsafe(
+        'CREATE SEQUENCE "integration_staging_delay_sequence" START 1'
+      );
+      await prisma.$executeRawUnsafe(`
+        CREATE FUNCTION "integration_delay_one_staging_batch"() RETURNS trigger AS $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM "integration_staging_delay" AS delay
+            WHERE delay."task_id" = NEW."import_task_id"
+          ) AND nextval('"integration_staging_delay_sequence"') = 1
+          THEN
+            PERFORM pg_sleep(6);
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TRIGGER "integration_delay_one_staging_batch"
+        BEFORE INSERT ON "business_records"
+        FOR EACH ROW EXECUTE FUNCTION "integration_delay_one_staging_batch"()
+      `);
+
+      try {
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-slow-staging-batch`
+        ).expect(201);
+        expect(await waitForTerminalStatus(taskId, 30_000)).toMatchObject({
+          status: ImportTaskStatus.confirmed,
+          importedRows: 101,
+          confirmationAttempts: 1
+        });
+      } finally {
+        await dropDelay();
+      }
+    }, 45_000);
 
     it('precomputes integrity outside the publication transaction and recovers a finalization timeout', async () => {
       const rowCount = 1_001;

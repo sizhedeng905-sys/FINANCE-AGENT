@@ -2301,7 +2301,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       });
       if (progress.count !== 1) throw new ImportConfirmationLeaseLostError();
       return true;
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
   }
 
   private async prepareBackgroundConfirmationCompletion(

@@ -3,7 +3,7 @@
 更新日期：2026-07-21
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计进入 R11 收口。R9.1-R9.3B 已把登录、上传和模型执行控制共享化，补齐大批量确认事务恢复，并将全量完整性预检移出原子发布事务；R10 L0 已用常驻 Qwen/Paddle 完成合成推理与鉴权验收。当前本地候选通过 428 个单测、强制 Redis 的 114 个 PostgreSQL 集成和 17 个 Playwright；负责人问卷 Q01-Q30 已映射到 H01-H16，H01 明确按每行明细，但签名、执行清单和真实证据未关闭。retention 仍只允许 dry-run，step-up 默认关闭；受保护 Prompt Catalog、真实口径/准确率、目标 Staging 和人工签字继续按真实状态阻塞。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计继续收口。R9.1-R9.3B 已把登录、上传和模型执行控制共享化；其后 CR-002 至 CR-005 重新发现并关闭 Excel 未发布记录提前可见/可写、暂存内容篡改、来源竞态、最终少更新一行和慢批次误重试等 P0。当前本地候选通过 428 个单测、强制 Redis 的 119 个 PostgreSQL 集成和 17 个 Playwright；43 条 migration 的空库及 42→43 升级已验证。负责人问卷 Q01-Q30 已映射到 H01-H16，H01 明确按每行明细，但签名、执行清单和真实证据未关闭。retention 仍只允许 dry-run，step-up 默认关闭；受保护 Prompt Catalog、真实口径/准确率、目标 Staging 和人工签字继续按真实状态阻塞。
 
 ## 完成口径
 
@@ -23,7 +23,7 @@
 | R4 备份/恢复完整性 | 完成 | 版本化强哈希清单、DB/对象引用、隔离库/桶恢复、故障注入和一次性 H13/H14 正式恢复门禁已实现；目标环境恢复仍为外部门禁 |
 | R5 镜像身份与供应链 | 完成 | 22 镜像不可变锁、配置/扫描/migration/release 自校验证据链、17/17 篡改测试完成；目标 registry、签名和回退受 H13 阻断 |
 | R6-R8 后端边界、治理、CI | `engineering_verified / blocked_external` | Gate A-C、真实应用镜像、固定 Syft/Grype、OpenSSL 3、日志/备份/同 manifest rollback 与 Python 路径均已实现并有本地/远端证据；目标 self-hosted Staging/恢复仍受 H13/H14 阻断 |
-| R9 真实 Staging | `R9.1-R9.3B engineering_verified_locally / blocked_external` | 登录、上传和模型执行门均已共享化，大批量发布事务已收敛并通过本地故障/容量测试；目标环境与新 head CI 仍未验收，不能把本地工程证据写成真实部署通过 |
+| R9 真实 Staging | `engineering_verified_locally / blocked_external` | 登录、上传和模型执行门已共享化；Excel 发布完整性经 CR-002 至 CR-005 重新攻击并本地收口。目标环境与 live PR checks 仍须独立核验，不能把本地工程证据写成真实部署通过 |
 | R10 真实模型/业务准确率 | `L0 engineering_verified / L1 awaiting_human_signoff` | 文本/OCR 连续健康 3 天；四套资产、容器配置、Qwen/Paddle 认证合成推理、401 边界和镜像内 Python contract 8/8 已通过；L1 仍需要 H04-H13/H15/H16 与冻结真值 |
 | R11 最终交接 | 进行中 | 正在交叉检查 README、门禁证据和 Draft PR；当前 commit 的 GitHub Build 尚在执行，不 merge、不转 Ready |
 | M0-M8 AI 分类/映射/审批/快照补充 | 工程与合成验收完成 / 外部和人工门禁未关闭 | Excel/OCR AI 只建议；双人审批、整批原子入账、不可变报告快照、严格 Claim grounding、攻击/并发/资源/降级、Prompt 漂移和最终证据已有自动化证据 |
@@ -39,7 +39,7 @@
 | B8 基线 | 完成 | 单元测试与 PostgreSQL 集成测试配置隔离，冻结可重复基线 |
 | B8-01 导入终态 | 完成 | 仅 `pending_confirm` 可确认；`confirmed` 重放幂等；取消/确认使用确定性锁顺序 |
 | B8-02 财务确认一致性 | 完成 | 金额可见、默认值落库、预览/确认边界一致，四类资金入口统一持久化幂等 |
-| B8-03 大批量 Excel 确认 | 完成 | 短事务 Worker、lease/恢复、原子发布及 5,001/30,196/49,999 行完整入账门禁通过 |
+| B8-03 大批量 Excel 确认 | 工程完成 / 目标容量待验 | 短事务 Worker、lease/恢复、显式未发布隔离、内容完整性与精确发布围栏通过；5,001/30,196/49,999 行本地闭环通过，目标 p95/p99 仍待 H13 |
 | B8-04 OCR 精度与异步任务 | 完成 | Decimal 字符串、持久化队列、真实执行槽、lease/恢复、实际 attempt 快照及 Mock/真实 UI 门禁通过 |
 | B8-05 AI Claim Grounding | 完成 | 严格 Claim 元组、确定性 renderer、显式项目/客户排行、PostgreSQL 黄金账与本地 Qwen 基准通过 |
 | B8-06 权限、Cookie、文件与数据安全 | 工程完成 | AI 日志所有权、独立 admin/auditor、生产 Cookie/JWT、主动内容、资源上限和 Git/DLP 门禁通过；H-10/H-11 待签字 |
@@ -84,14 +84,14 @@ B8-09 已完成的工程证据：
 - M3.2 将 Excel AI 分类/映射接入现有 `ImportTask`、Prompt Registry、Provider 和 AI 审计链：只发送有预算的列摘要，严格限制当前项目模板、字段、证据与转换，所有输出固定为 `NEEDS_FINANCE_REVIEW`。调用使用内容寻址、UUID 租约、advisory lock、3 次重试预算和发送前策略复核；迟到响应、模板在分类中停用、Profile 哈希篡改、kill switch 与恶意 JSON 均失败关闭且不写正式记录。后端 46/46 suites、401/401 tests，PostgreSQL 分组全量 9/9 suites、92/92 tests，34 条 migration 空库及 33→34 升级、前后端 build、前端 runtime 4/4 和 680 文件卫生通过。真实模型准确率与 M4-M8 仍未宣称完成；详见 `docs/M3_2_EXCEL_AI_SUGGESTION_REPORT_2026-07-20.md`。
 - M4 复用现有 OCR task/attempt/correction、OCR IR 和 AI 调用台账，完成有界分类/映射建议、source/evidence 白名单、跨页冲突保留、人工 `reviewRevision`、内容寻址 ValidationSnapshot 与 bbox 复核 UI。固定本地 PDF.js Worker 从鉴权接口读取原件，响应为 attachment/octet-stream 时仍依据锁定文件元数据解析；未知旋转不画误导框。真实 API Playwright 覆盖 AI 零入账、PDF 画布/bbox、390px 布局、修订使旧校验失效和重新校验后确认；M5 的直接 API 最终重鉴权、自审批和事务批准仍为开放 P0。详见 `docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md`。
 - M5.1 收紧 OCR 正式批准：命令必须携带 expected task/review/validation/payload hash 和逐项 warning ID；最终事务重新读取账号/角色、拒绝上传者自审批、重验来源安全状态/IR/模板/候选/证据，并冻结完整批准快照。两个财务并发只写一次，同键重放返回原结果，改体重放 409；空库 36 条与 35→36 migration、46/46 suites 403/403 tests、PostgreSQL 攻击场景和 Playwright 17/17 通过。Excel 的 partial commit 仍保持 P0 open，详见 `docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md`。
-- M5.2 已按 H01 每行明细关闭 Excel partial commit P0：普通错误明细不可排除，疑似汇总行必须财务处置，任何修改使旧校验失效；另一名有效财务携带当前版本/hash/warning/idempotency key 批准，Worker staging 在最终事务重验后整批发布。403/403 unit、96/96 PostgreSQL、17/17 Playwright 及 36→37 migration 通过，详见 `docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`。
+- M5.2 当时按 H01 每行明细关闭了 Excel partial commit：普通错误明细不可排除，疑似汇总行必须财务处置，任何修改使旧校验失效。该阶段 403 unit、96 PostgreSQL、17 Playwright 及 36→37 migration 是历史证据，不覆盖后来发现的通用 API 暂存隔离与逐记录完整性问题；现行结论见 `docs/P0_EXCEL_STAGING_INTEGRITY_CLOSURE_2026-07-21.md`。
 - M6 完成 canonical ReportSnapshot：固定查询只读取 `confirmed + actual`，使用 repeatable-read、Decimal、分币种和来源版本/hash；AI 只能逐字选择服务端 Claim 白名单，值篡改、额外数字、虚构实体、原因/比较和 warning 遗漏均失败关闭。H06/H08 真实口径和签字仍未完成，详见 `docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`。
 - M7 红测复现六个相同 ReportSnapshot 并发请求出现部分 409，现仅对 `P2002/P2034` 做最多三次新事务重试并复用唯一快照。攻击回归覆盖报告权限、kill switch、并发单 Provider、超时脱敏、截断 JSON、资源边界、Worker 恢复和 Staging 静态门禁；47/47 unit、97/97 PostgreSQL、17/17 Playwright、41 条 migration 双路径、构建和两套 0 vulnerability 审计通过。49,999 行两次全量采样为 46.014 秒和 143.199 秒，仍保留性能抖动风险，详见 `docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`。
 - M8 完成最终证据收口并以 `30c6ead` 推送到 Draft PR #4；Prompt manifest/guard 4/4 unit 与 3/3 PostgreSQL、前后端 build、runtime 4/4、41 条 migration 双路径、708 文件卫生和两套 0 vulnerability 审计通过。受保护 Prompt Catalog 和 H 门禁仍未关闭，详见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`。
-- 生产全局请求限流、登录口令限流、上传准入与模型执行门已由 Redis 共享。R9.1/R9.2 使用原子 Lua、摘要身份键、Redis 时钟租约、续租/崩溃回收和断连失败关闭；R9.3 将 AI、OCR 与推理健康探针统一置于共享 FIFO 并发预算下，租约丢失会中止 Provider 请求且不会污染熔断统计。模型双实例专项 6/6、后端 47 suites / 428 tests、当前 PostgreSQL/Redis 13 suites / 114 tests 与 build 本地通过。代码层子项已关闭，但 B8-09 Compose 继续固定单 API、单 Worker，目标多实例部署、恢复和回退受 H13/H14 阻断；详见 R9.1-R9.3 三份验收报告。
+- 生产全局请求限流、登录口令限流、上传准入与模型执行门已由 Redis 共享。R9.1/R9.2 使用原子 Lua、摘要身份键、Redis 时钟租约、续租/崩溃回收和断连失败关闭；R9.3 将 AI、OCR 与推理健康探针统一置于共享 FIFO 并发预算下，租约丢失会中止 Provider 请求且不会污染熔断统计。模型双实例专项 6/6、后端 47 suites / 428 tests、当前 PostgreSQL/Redis 13 suites / 119 tests 与 build 本地通过。代码层子项已关闭，但 B8-09 Compose 继续固定单 API、单 Worker，目标多实例部署、恢复和回退受 H13/H14 阻断；详见 R9.1-R9.3 三份验收报告。
 - R9.1A 对一次 shared-string 未解析观察实施确定性预加载和残留 token 失败关闭。Excel parser 15/15、连续 10 轮 0 失败、单轮 4 路并发一致、全量 unit 419/419、PostgreSQL 真实 XLSX API 场景与 41 migrations 通过；详见 `docs/R9_1A_XLSX_SHARED_STRING_HARDENING_REPORT_2026-07-21.md`。
 - R9.3A 的全量回归在默认 PostgreSQL 容器上稳定复现 WAL checkpoint 期间最终发布事务 `P2028`：旧实现把已完整暂存的 30,196 行错误标成终态失败。现在 `P2028/P2034` 释放租约并由 reaper 有界接管，仍受最大尝试次数、不可变批准快照、最终重鉴权和幂等发布约束。P1001/P2028/P2034 定向 3/3、最终 PostgreSQL/Redis 13 suites / 113 tests 通过；30,196 行真实恢复为 167.004 秒，H13 仍须验证目标磁盘和 PostgreSQL WAL/checkpoint 余量。
-- R9.3B 根据远端 run `29768468874` 的 30,196 行超时红灯继续收敛根因：批处理进度不再每 500 行执行全任务计数，完整性哈希改在带租约心跳的预检中计算，最终事务保留账号/权限/项目/模板/来源/版本/数量/哈希围栏和原子发布。最终发布 `P2028` 注入恢复与去重通过；强制 Redis 全量 13 suites / 114 tests 通过，30,196/49,999 行为 25.502/42.954 秒。提交 `cc033d4` 与 R11 文档 `9e889bb` 已推送；最新 head/checks 以 Draft PR #4 为准。
+- R9.3B 根据远端 run `29768468874` 的 30,196 行超时红灯收敛了计数与预检事务；当时 114 个测试和 25.502/42.954 秒为历史性能证据，并未覆盖通用 API 暂存隔离、逐记录篡改和实际少更新一行。CR-002 至 CR-005 随后重新打开并关闭这些 P0，当前强制 Redis 全量为 119 tests，完整围栏下 30,196/49,999 行为 60.627/151.716 秒；目标容量仍受 H13 阻断。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。
 - 真实 GPU 再验收覆盖文本重启、VL 按需切换和文本恢复，期间 OCR 432 次 readiness 采样 0 失败；最终文本/OCR常驻，VL/Embedding离线。
