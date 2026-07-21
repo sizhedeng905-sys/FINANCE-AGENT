@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   ImportTaskStatus,
   OcrTaskStatus,
@@ -235,7 +236,8 @@ export class ProjectsService {
     const records = (
       await this.prisma.businessRecord.findMany({
         where: {
-          projectId: id
+          projectId: id,
+          publicationStatus: BusinessRecordPublicationStatus.published
         },
         include: {
           project: true,

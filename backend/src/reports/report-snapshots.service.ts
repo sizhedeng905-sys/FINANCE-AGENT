@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AccountingDirection,
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   Prisma,
   RecordDataLayer,
@@ -82,6 +83,7 @@ export class ReportSnapshotsService {
       const records = await tx.businessRecord.findMany({
         where: {
           projectId: projectIds.length > 0 ? { in: projectIds } : undefined,
+          publicationStatus: BusinessRecordPublicationStatus.published,
           dataLayer: RecordDataLayer.actual,
           status: BusinessRecordStatus.confirmed,
           recordDate: { gte: range.start, lt: range.end }

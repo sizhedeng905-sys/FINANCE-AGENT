@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException, 
 import {
   AccountingDirection,
   AnomalyStatus,
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   NotificationType,
   Prisma,
@@ -487,6 +488,7 @@ export class RiskRulesService {
       const previous = await this.prisma.businessRecord.findMany({
         where: {
           projectId: workOrder.projectId,
+          publicationStatus: BusinessRecordPublicationStatus.published,
           dataLayer: RecordDataLayer.actual,
           status: BusinessRecordStatus.confirmed,
           accountingDirection: AccountingDirection.expense,

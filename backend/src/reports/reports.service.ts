@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AnomalyStatus,
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   Prisma,
   RecordDataLayer,
@@ -61,10 +62,15 @@ export class ReportsService {
       }),
       this.findRecords(range.start, range.end),
       this.prisma.businessRecord.count({
-        where: { dataLayer: RecordDataLayer.actual, createdAt: { gte: range.start, lt: range.end } }
+        where: {
+          publicationStatus: BusinessRecordPublicationStatus.published,
+          dataLayer: RecordDataLayer.actual,
+          createdAt: { gte: range.start, lt: range.end }
+        }
       }),
       this.prisma.businessRecord.count({
         where: {
+          publicationStatus: BusinessRecordPublicationStatus.published,
           dataLayer: RecordDataLayer.actual,
           status: BusinessRecordStatus.confirmed,
           confirmedAt: { gte: range.start, lt: range.end }
@@ -291,7 +297,12 @@ export class ReportsService {
   async projectSummary(projectId: string) {
     const project = await this.findProject(projectId);
     const records = await this.prisma.businessRecord.findMany({
-      where: { projectId, dataLayer: RecordDataLayer.actual, status: BusinessRecordStatus.confirmed },
+      where: {
+        projectId,
+        publicationStatus: BusinessRecordPublicationStatus.published,
+        dataLayer: RecordDataLayer.actual,
+        status: BusinessRecordStatus.confirmed
+      },
       include: { project: true }
     });
     return {
@@ -379,6 +390,7 @@ export class ReportsService {
     return this.prisma.businessRecord.findMany({
       where: {
         projectId,
+        publicationStatus: BusinessRecordPublicationStatus.published,
         dataLayer: RecordDataLayer.actual,
         status: BusinessRecordStatus.confirmed,
         recordDate: { gte: start, lt: end }

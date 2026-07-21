@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   DataRecordType,
   FieldDefinition,
@@ -244,7 +245,12 @@ export class RecordsService {
         );
       }
       const changed = await tx.businessRecord.updateMany({
-        where: { id, status: before.status, version: before.version },
+        where: {
+          id,
+          publicationStatus: BusinessRecordPublicationStatus.published,
+          status: before.status,
+          version: before.version
+        },
         data: {
           templateVersion: template.version,
           templateSnapshot: this.recordPolicy.toSnapshot(template),
@@ -293,7 +299,12 @@ export class RecordsService {
       await this.ensureProjectWritable(before.projectId, tx);
       const now = new Date();
       const changed = await tx.businessRecord.updateMany({
-        where: { id, status: before.status, version: before.version },
+        where: {
+          id,
+          publicationStatus: BusinessRecordPublicationStatus.published,
+          status: before.status,
+          version: before.version
+        },
         data: {
           status: BusinessRecordStatus.rejected,
           confirmedAt: null,
@@ -375,7 +386,12 @@ export class RecordsService {
       await this.validateRecordAttachments(tx, attachmentIds, before.projectId, true);
       const now = new Date();
       const changed = await tx.businessRecord.updateMany({
-        where: { id, status: before.status, version: before.version },
+        where: {
+          id,
+          publicationStatus: BusinessRecordPublicationStatus.published,
+          status: before.status,
+          version: before.version
+        },
         data: {
           status: BusinessRecordStatus.confirmed,
           accountingDirection: canonical.accountingDirection,
@@ -438,6 +454,7 @@ export class RecordsService {
     const dateTo = query.dateTo ? this.toInclusiveDateTo(query.dateTo) : undefined;
     if (dateFrom && dateTo && dateFrom > dateTo) throw new BadRequestException('开始日期不能晚于结束日期');
     return {
+      publicationStatus: BusinessRecordPublicationStatus.published,
       projectId: query.projectId,
       templateId: query.templateId,
       importTaskId: query.importTaskId,
@@ -628,7 +645,10 @@ export class RecordsService {
   }
 
   private async findRecordOrThrow(id: string, prisma: PrismaWriter = this.prisma) {
-    const record = await prisma.businessRecord.findUnique({ where: { id }, include: this.recordInclude() });
+    const record = await prisma.businessRecord.findUnique({
+      where: { id, publicationStatus: BusinessRecordPublicationStatus.published },
+      include: this.recordInclude()
+    });
     if (!record) throw new NotFoundException('资源不存在');
     return record;
   }

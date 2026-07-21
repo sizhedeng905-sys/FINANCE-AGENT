@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   FileScanStatus,
   FieldDefinition,
@@ -2153,6 +2154,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           sourceId: row.id,
           importTaskId: job.taskId,
           status: BusinessRecordStatus.pending_confirm,
+          publicationStatus: BusinessRecordPublicationStatus.unpublished,
           attachments: [task.rawFileId],
           createdBy: job.actor.username
         });
@@ -2302,12 +2304,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       await tx.$executeRaw`
         UPDATE business_records
         SET status = ${BusinessRecordStatus.confirmed}::"BusinessRecordStatus",
+            publication_status = ${BusinessRecordPublicationStatus.published}::"BusinessRecordPublicationStatus",
             confirmed_at = ${now},
             confirmed_by = ${approver.username},
             confirmation_snapshot = COALESCE(confirmation_snapshot, '{}'::jsonb)
               || jsonb_build_object('confirmedAt', ${now.toISOString()}, 'confirmedBy', ${approver.username}),
             updated_at = ${now}
         WHERE import_task_id = ${job.taskId}
+          AND publication_status = ${BusinessRecordPublicationStatus.unpublished}::"BusinessRecordPublicationStatus"
           AND status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
       `;
       await tx.importRow.updateMany({
