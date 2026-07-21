@@ -17,7 +17,7 @@
 - `docs/FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md`：降为 H01-H16 历史索引，移除多角色签字门禁并映射新状态词。
 - `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`：保留原始答案，仅更新 Codex 回填状态与最新第二财务约束。
 - `NEXT_TODO.md`：替换 PR #3/B7 旧清单，记录 CR-002 至 CR-006 证据和 production bootstrap 后续顺序。
-- `README.md`、`docs/IMPLEMENTATION_PROGRESS.md`：同步当前治理、门禁、下一动作和状态术语。
+- `README.md`、`docs/汇报/IMPLEMENTATION_PROGRESS.md`：同步当前治理、门禁、下一动作和状态术语。
 - `docs/commit-reviews/README.md` 与本文：登记 CR-007。
 
 ## 4. 数据与状态机影响

@@ -344,7 +344,7 @@ npm run test:integration
 
 ## B7 工程回归与财务 UAT 交付
 
-2026-07-15 完成 B7 工程交付。新增 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`，将七个财务场景、签字项、自动化证据和降级方案分离。Codex 未填写财务姓名、业务真值或签名；业务状态保持 `awaiting_finance_signoff`，OCR 状态保持 `awaiting_labels`。
+2026-07-15 完成 B7 工程交付。新增 `docs/汇报/B7_FINANCE_UAT_ACCEPTANCE.md`，将七个财务场景、签字项、自动化证据和降级方案分离。Codex 未填写财务姓名、业务真值或签名；业务状态保持 `awaiting_finance_signoff`，OCR 状态保持 `awaiting_labels`。
 
 最终自动化结果：
 

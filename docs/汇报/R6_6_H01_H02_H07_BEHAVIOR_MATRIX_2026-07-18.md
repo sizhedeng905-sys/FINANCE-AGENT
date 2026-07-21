@@ -6,7 +6,7 @@
 
 ## 1. 决策基线
 
-唯一决策文件 [`FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md`](FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md) 已建立，但 H01-H16 全部为 `Pending`，没有决策人、签字、业务样例或批准证据。因此本阶段只做以下工作：
+唯一决策文件 [`FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md`](../FINANCE_AGENT_HUMAN_DECISIONS_UAT_SIGNOFF_2026-07-18.md) 已建立，但 H01-H16 全部为 `Pending`，没有决策人、签字、业务样例或批准证据。因此本阶段只做以下工作：
 
 - 记录当前代码真实行为和隐含假设；
 - 将 H01/H02/H07 的 pending 状态写入版本化基线，并冻结到新模板/确认快照；

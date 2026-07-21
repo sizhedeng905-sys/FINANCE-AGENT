@@ -9,6 +9,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - Excel staging P0 已由 CR-002 至 CR-005 关闭：未发布记录不可见、不可通过通用接口修改，最终发布具备内容、版本、状态、数量和 affected-row 围栏。
 - Prompt 真执行已由 CR-006 关闭：版本化 `userPromptTemplate` 真正进入 Provider，请求与输出的脱敏 provenance 已进入现有 AI 审计链。
 - 单一项目负责人治理由 CR-007 集中到 `docs/owner-input/`；不再等待多角色姓名、日期或签字。
+- 文档信息架构由 CR-008 收口：报告、审计和验收证据集中到 `docs/汇报/`，计划与检查清单集中到 `docs/计划/`，并由 `npm run check:docs` 检查已跟踪 Markdown 本地链接。
 - 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
 - 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
@@ -25,7 +26,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
 ## 自动推进顺序
 
-1. `CR-008`：production-safe AI bootstrap。
+1. `CR-009`：production-safe AI bootstrap。
    - 空白 production-like PostgreSQL 执行 migrate → bootstrap → verify。
    - 只创建系统 Prompt、ModelDeployment 和 TaskModelRoute，不创建演示用户或业务数据。
    - 同版本同 hash 幂等；同版本 hash 漂移失败关闭；配置来自环境并且 secret 只使用 reference。
@@ -54,6 +55,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 ## 每个提交的门禁
 
 - 一个可独立审查主题对应一个 `docs/commit-reviews/CR-XXX_*.md`，并更新索引。
+- 文档移动或新增后运行 `npm run check:docs`，不得提交失效的仓库内链接。
 - 先有失败复现或明确基线，再修改行为；不删断言、不静默回 Mock、不吞错误。
 - 只暂存本提交有意文件，不提交 `.env`、真实数据、模型权重、备份、上传文件或受保护未跟踪资产。
 - 运行受影响单元、真实 PostgreSQL/Redis、API/Playwright、Prisma、build、audit、hygiene 和 `git diff --check`；未运行明确写 `NOT_RUN`。

@@ -33,7 +33,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M0 现状审计与复用设计
 状态：passed
 实际实现：完成 Excel/OCR/Provider/Worker/审批/审计/报告调用链、复用矩阵、状态命令表、最小 migration 与版本向量设计；没有创建平行 ingestion/prompt 系统。
-关键文件：docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md
+关键文件：docs/汇报/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md
 数据库 migration：无
 攻击性测试：设计阶段，后续由 M1-M7 落地
 提交 SHA：5ddb10c
@@ -47,7 +47,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M1 规范化中间模型与取证
 状态：passed
 实际实现：Excel/OCR 版本化 IR、稳定 source/evidence ref、lexical/display/formula/cache、页/token/block/bbox、规范化 hash、大小预算与分页。
-关键文件：docs/M1_INGESTION_IR_EVIDENCE_REPORT_2026-07-18.md
+关键文件：docs/汇报/M1_INGESTION_IR_EVIDENCE_REPORT_2026-07-18.md
 数据库 migration：20260719000000_ingestion_ir_evidence
 攻击性测试：公式、日期系统、隐藏/合并表头、bbox 越界、重复/空 token、恶意文本
 提交 SHA：5ae374e
@@ -61,7 +61,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M2 版本化模板、Prompt Registry 与 Schema 防线
 状态：engineering_passed / blocked_external(M0-INPUT-001)
 实际实现：固定 9 项 prompt manifest、finance_core_guard、严格 JSON/白名单、完整调用版本向量、disabled|suggest、全局 kill switch、外部 Provider 失败关闭。
-关键文件：backend/src/ai/structured-suggestion；backend/src/ai/ai-prompt-registry.service.ts；docs/M2_AI_GUARDRAILS_AND_PROMPT_REGISTRY_REPORT_2026-07-18.md
+关键文件：backend/src/ai/structured-suggestion；backend/src/ai/ai-prompt-registry.service.ts；docs/汇报/M2_AI_GUARDRAILS_AND_PROMPT_REGISTRY_REPORT_2026-07-18.md
 数据库 migration：20260719010000_ai_prompt_registry_contracts
 攻击性测试：Markdown/重复 key/原型污染/深度与大小/未知 ID/Unicode 控制字符/非法状态
 提交 SHA：cd9afa1、ff213b6、b23c351、b5ca204
@@ -75,7 +75,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M3 Excel 分类映射与 Mapping Profile
 状态：passed
 实际实现：结构指纹、项目/模板范围、Profile 失效/撤销、列摘要一次 AI 建议、严格候选白名单、调用租约/恢复、全量确定性转换和服务端分页。
-关键文件：docs/M3_1_MAPPING_PROFILE_STRUCTURE_SCOPE_REPORT_2026-07-18.md；docs/M3_2_EXCEL_AI_SUGGESTION_REPORT_2026-07-20.md
+关键文件：docs/汇报/M3_1_MAPPING_PROFILE_STRUCTURE_SCOPE_REPORT_2026-07-18.md；docs/汇报/M3_2_EXCEL_AI_SUGGESTION_REPORT_2026-07-20.md
 数据库 migration：20260719020000、20260719021000、20260719030000、20260720161500
 攻击性测试：跨项目 Profile、结构/hash 篡改、kill switch、迟到响应、模板中途停用、恶意 JSON
 提交 SHA：2243adf、b5467e6、6b33982、54234c9
@@ -89,7 +89,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M4 OCR 分类映射与证据复核
 状态：engineering_passed / awaiting_human_signoff(H04,H05)
 实际实现：OCR evidence 白名单、分类/映射建议、跨页冲突、review revision、内容寻址 ValidationSnapshot、鉴权 PDF 预览和 bbox 高亮。
-关键文件：docs/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md
+关键文件：docs/汇报/M4_OCR_AI_EVIDENCE_REVIEW_REPORT_2026-07-20.md
 数据库 migration：20260720173000_ocr_review_revisions
 攻击性测试：空文本、坐标越界、无证据、跨页冲突、未知旋转、旧校验重放、390px UI
 提交 SHA：45dc241、a19d892、5518f76
@@ -103,7 +103,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M5 财务审核、事务入库与审计
 状态：engineering_passed / awaiting_human_signoff(H01,H10)
 实际实现：OCR/Excel expected version/hash 命令、人工 revision 使旧校验失效、第二财务、最终事务重鉴权、不可变批准快照、幂等 commit、audit/ledger/outbox；H01 按每个有效明细行一条记录并整批失败关闭。
-关键文件：docs/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md；docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md
+关键文件：docs/汇报/M5_1_OCR_APPROVAL_COMMIT_REPORT_2026-07-20.md；docs/汇报/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md
 数据库 migration：20260720203000_ocr_approval_snapshots；20260720220000_excel_review_validation_snapshots
 攻击性测试：上传者自审批、角色/账号/项目变化、双财务并发、同键重放/改体、取消竞争、旧快照、最终事务故障回滚
 提交 SHA：ae003e9、26412a0
@@ -117,7 +117,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M6 ReportSnapshot 与 AI 叙述
 状态：engineering_passed / pending_human_decision(H06,H08)
 实际实现：repeatable-read canonical Snapshot、confirmed+actual 固定查询、Decimal 分币种、稳定来源 digest/hash、严格 Narrative/Claim validator 和 sourcePath 证据。
-关键文件：docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md
+关键文件：docs/汇报/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md
 数据库 migration：20260720233000、20260720234000、20260720235000、20260720235500
 攻击性测试：数字篡改、额外实体/原因/比较、warning 遗漏、无数据、混合币种、不可变行、Provider 非 JSON/超时
 提交 SHA：2e976c6
@@ -131,7 +131,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M7 攻击性测试、性能预算和 Provider 降级
 状态：engineering_passed / blocked_external(H12,H13,H15,H16)
 实际实现：修复六路相同 Snapshot 并发偶发 409；补齐权限、kill switch、并发单 Provider、超时脱敏、截断 JSON、4,999-50,001 行、文件字节、Worker 恢复和模型健康回归。
-关键文件：backend/src/reports/report-snapshots.service.ts；docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md
+关键文件：backend/src/reports/report-snapshots.service.ts；docs/汇报/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md
 数据库 migration：无
 攻击性测试：47/47 unit suites、10/10 PostgreSQL suites、17/17 Playwright 及 Staging/供应链定向门禁
 提交 SHA：a457a9a
@@ -145,7 +145,7 @@ Draft PR：https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4
 阶段：M8 文档、迁移证据与 Draft PR 收口
 状态：engineering_passed / blocked_external(M0-INPUT-001) / awaiting_human_signoff
 实际实现：更新架构、API、E2E、本地运行、PR review/准备、README、状态矩阵和本报告；复核 41 条 migration 双路径及 Prompt manifest/seed/Schema/hash 漂移门禁。
-关键文件：docs/ARCHITECTURE.md；docs/API_MIGRATION_MATRIX.md；docs/E2E_ACCEPTANCE.md；docs/LOCAL_SETUP.md；docs/PR4_REVIEW_GUIDE.md；docs/PR_PREPARATION.md；本报告
+关键文件：docs/ARCHITECTURE.md；docs/汇报/API_MIGRATION_MATRIX.md；docs/E2E_ACCEPTANCE.md；docs/LOCAL_SETUP.md；docs/PR4_REVIEW_GUIDE.md；docs/计划/PR_PREPARATION.md；本报告
 数据库 migration：无；复用空库 41 与 40→41 证据
 攻击性测试：Prompt 漂移 4/4 unit + 3/3 PostgreSQL；M7 全量证据保持有效
 提交 SHA：本报告所在提交，以 Git 元数据为准

@@ -89,7 +89,7 @@ npm run prisma:migrate:deploy
 
 ## Reviewer 检查顺序
 
-1. 先读 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md` 和 `docs/B8_BLOCKER_MATRIX.md`，确认没有把 H 门禁写成完成。
+1. 先读 `docs/汇报/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md` 和 `docs/汇报/B8_BLOCKER_MATRIX.md`，确认没有把 H 门禁写成完成。
 2. 核对 Excel P0：错误明细不能被排除，未发布记录不能从通用 API 触达，任何记录/值/来源变化使封存失效，最终更新行数必须精确相等。
 3. 核对 M5：最终事务重读账号、角色、项目、来源、模板、证据、版本和 hash，上传者不能自审批。
 4. 核对 M2-M4：AI 仅能引用服务端模板/字段/transform/evidence 白名单，输出不能到达正式记录写服务。

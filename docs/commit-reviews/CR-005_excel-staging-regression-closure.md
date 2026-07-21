@@ -14,9 +14,9 @@
 
 - `backend/src/import-tasks/import-tasks.service.ts`：为分批 staging 事务设置 10 秒等待和 30 秒执行预算。
 - `backend/test/integration/postgres.integration-spec.ts`：增加 6 秒数据库延迟攻击；将大表测试外层 Jest 时限调整为 360 秒，保留全部产品预算断言。
-- `README.md`、`docs/IMPLEMENTATION_PROGRESS.md`、`docs/B8_BLOCKER_MATRIX.md`、`docs/PR_PREPARATION.md`、`docs/API_MIGRATION_MATRIX.md`：同步当前证据和边界。
-- `docs/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`、`docs/R9_3B_IMPORT_PUBLICATION_TRANSACTION_HARDENING_REPORT_2026-07-21.md`：增加历史范围声明，不改写旧测试事实。
-- `docs/P0_EXCEL_STAGING_INTEGRITY_CLOSURE_2026-07-21.md`：汇总 CR-002 至 CR-005 的现行结论。
+- `README.md`、`docs/汇报/IMPLEMENTATION_PROGRESS.md`、`docs/汇报/B8_BLOCKER_MATRIX.md`、`docs/计划/PR_PREPARATION.md`、`docs/汇报/API_MIGRATION_MATRIX.md`：同步当前证据和边界。
+- `docs/汇报/M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`、`docs/汇报/R9_3B_IMPORT_PUBLICATION_TRANSACTION_HARDENING_REPORT_2026-07-21.md`：增加历史范围声明，不改写旧测试事实。
+- `docs/汇报/P0_EXCEL_STAGING_INTEGRITY_CLOSURE_2026-07-21.md`：汇总 CR-002 至 CR-005 的现行结论。
 - `docs/commit-reviews/README.md` 与本文：登记逐提交审查。
 
 ## 4. 数据与状态机影响

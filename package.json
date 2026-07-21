@@ -16,6 +16,7 @@
     "test:e2e": "npm run test:e2e:prepare && playwright test",
     "test:e2e:ocr-real": "npm run test:e2e:prepare && playwright test --config playwright.ocr-real.config.ts",
     "test:e2e:headed": "npm run test:e2e:prepare && playwright test --headed",
+    "check:docs": "node backend/scripts/check-markdown-links.mjs",
     "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
     "check:hygiene:staged": "node backend/scripts/check-repository-hygiene.mjs --staged",
     "realdata:scan": "npm --prefix backend run realdata:scan --",

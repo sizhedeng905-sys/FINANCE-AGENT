@@ -19,7 +19,7 @@
 - `backend/src/ai/http-ai-provider.service.ts`、`backend/src/ai/ai.types.ts`：让渲染后的版本化用户 Prompt 真正进入 Provider 请求，并执行总预算检查。
 - `backend/src/ai/ai-structured-suggestion.service.ts`、`backend/src/ai/ai.service.ts`：Excel/OCR/报告和老板助手使用同一执行入口，向现有 Task/CallLog 写入脱敏 provenance。
 - `backend/test/ai-prompt-input-normalizer.spec.ts` 及相关单元/集成测试：覆盖实际 HTTP body、规范化、Schema 漂移、注入、调用台账和老板助手运行回归。
-- `README.md`、`docs/IMPLEMENTATION_PROGRESS.md`、`docs/commit-reviews/README.md` 与本文：同步当前证据和未决边界。
+- `README.md`、`docs/汇报/IMPLEMENTATION_PROGRESS.md`、`docs/commit-reviews/README.md` 与本文：同步当前证据和未决边界。
 
 ## 4. 数据与状态机影响
 

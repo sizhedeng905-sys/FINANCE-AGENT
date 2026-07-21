@@ -20,7 +20,7 @@
 
 `npm run model:check:all` 已验证文本、OCR、视觉和 Embedding 四套模型的配置、索引及全部分片。真实运行稳定性已经验收，但 OCR 字段准确率仍等待财务人工标签，二者不能混为一项。
 
-2026-07-21 的 R10 L0 刷新验收再次确认文本/OCR 连续健康运行 3 天，Qwen 认证合成推理、Paddle 合成 PDF、未授权 401、完整镜像内 Python contract 8/8、资产和容器安全配置均通过。详细证据见 [`R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md`](R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md)。这些仍只是合成工程证据，L1 真实业务准确率继续受 H04-H13、H15/H16 门禁约束。
+2026-07-21 的 R10 L0 刷新验收再次确认文本/OCR 连续健康运行 3 天，Qwen 认证合成推理、Paddle 合成 PDF、未授权 401、完整镜像内 Python contract 8/8、资产和容器安全配置均通过。详细证据见 [`R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md`](汇报/R10_LOCAL_MODEL_L0_ACCEPTANCE_REPORT_2026-07-21.md)。这些仍只是合成工程证据，L1 真实业务准确率继续受 H04-H13、H15/H16 门禁约束。
 
 真实运行证据：
 

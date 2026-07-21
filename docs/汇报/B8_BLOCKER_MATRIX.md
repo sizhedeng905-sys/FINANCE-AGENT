@@ -197,7 +197,7 @@
 
 ## AI 映射补充任务问题索引
 
-M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md`。以下状态不因旧 B8 测试通过而自动关闭：
+M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/汇报/M0_AI_MAPPING_REUSE_AUDIT_2026-07-18.md`。以下状态不因旧 B8 测试通过而自动关闭：
 
 | 编号 | 严重性 | 边界 | 状态 | 关闭阶段 |
 | --- | --- | --- | --- | --- |
@@ -219,8 +219,8 @@ M0 复用审计、统一状态命令表和最小 migration 设计见 `docs/M0_AI
 | M7-ATTACK-BUDGET-001 | P1 | 攻击、资源和降级门禁 | engineering_verified | M7 |
 | M8-EVIDENCE-001 | P1 | 漂移 CI、迁移与 PR 证据 | verified | M8/M8.1 已推送；Build `29755386892` 与 CodeQL `29755387035` 成功 |
 
-M6 关闭证据见 `docs/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`：固定 confirmed actual 查询、repeatable-read 水位、Decimal 分币种、来源版本/hash、不可变数据库行、精确 Claim 白名单、独立 report kill switch、Provider 失败关闭及真实 API 浏览器链均已通过。H06/H08 的真实对账、正式指标口径、标准答案和签字仍为人工门禁，不因工程 P0 关闭而自动通过。
+M6 关闭证据见 `docs/汇报/M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`：固定 confirmed actual 查询、repeatable-read 水位、Decimal 分币种、来源版本/hash、不可变数据库行、精确 Claim 白名单、独立 report kill switch、Provider 失败关闭及真实 API 浏览器链均已通过。H06/H08 的真实对账、正式指标口径、标准答案和签字仍为人工门禁，不因工程 P0 关闭而自动通过。
 
-M7 关闭证据见 `docs/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`：六路 Snapshot/Narrative 并发、权限、kill switch、Provider 超时/截断、秘密脱敏、4,999 至 50,001 行、文件字节边界、Worker 恢复、模型健康、迁移双路径和 Staging 静态门禁均有自动断言。目标 Linux、外部 Provider、真实准确率、正式性能 p95、独立审查和最终 UAT 继续引用 H04-H16，不因工程门禁通过而关闭。
+M7 关闭证据见 `docs/汇报/M7_ATTACK_RESOURCE_PROVIDER_ACCEPTANCE_2026-07-20.md`：六路 Snapshot/Narrative 并发、权限、kill switch、Provider 超时/截断、秘密脱敏、4,999 至 50,001 行、文件字节边界、Worker 恢复、模型健康、迁移双路径和 Staging 静态门禁均有自动断言。目标 Linux、外部 Provider、真实准确率、正式性能 p95、独立审查和最终 UAT 继续引用 H04-H16，不因工程门禁通过而关闭。
 
-M8 收口证据见 `docs/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`：Prompt manifest/guard 4/4 unit 与空库 41 migration 后 registry/seed/Schema/hash 3/3 PostgreSQL、前后端 build、runtime 4/4、迁移双路径、708 文件卫生和两套 0 vulnerability 审计通过。提交 `30c6ead` 已推送，CodeQL 通过；Build 首次真实暴露的 Nginx Critical 由 `docs/M8_1_NGINX_CI_SECURITY_REFRESH_2026-07-20.md` 跟踪。`M0-INPUT-001` 和 H01-H16 不因工程收口而关闭。
+M8 收口证据见 `docs/汇报/M8_FINAL_EVIDENCE_AND_DRAFT_PR_HANDOFF_2026-07-20.md`：Prompt manifest/guard 4/4 unit 与空库 41 migration 后 registry/seed/Schema/hash 3/3 PostgreSQL、前后端 build、runtime 4/4、迁移双路径、708 文件卫生和两套 0 vulnerability 审计通过。提交 `30c6ead` 已推送，CodeQL 通过；Build 首次真实暴露的 Nginx Critical 由 `docs/汇报/M8_1_NGINX_CI_SECURITY_REFRESH_2026-07-20.md` 跟踪。`M0-INPUT-001` 和 H01-H16 不因工程收口而关闭。

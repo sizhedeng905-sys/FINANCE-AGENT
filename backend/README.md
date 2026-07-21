@@ -106,7 +106,7 @@ Current verification baseline (2026-07-21, R11 candidate):
 - M7 adds bounded retry for concurrent identical ReportSnapshot transactions and verifies one immutable snapshot under six concurrent requests. Report narrative concurrency makes at most one Provider call; missing auth, wrong role, kill switch, timeout, truncated JSON, modified values, and hidden warnings fail closed without creating a narrative. R9.3B keeps deterministic integrity preflight outside the atomic publication transaction under a lease/version fence; the latest 30,196/49,999-row run completed in 25.502/42.954 seconds, but H13 target infrastructure must still establish p95/p99 and WAL/checkpoint capacity.
 - R9 moves login throttling, upload admission, and AI/OCR execution queues to Redis Lua controls with server-time leases, bounded FIFO waiting, crash recovery, and fail-closed behavior. The supplied Compose remains one API and one Worker until H13/H14 target-environment multi-instance release and recovery are exercised.
 - R10 L0 verifies all four local model asset sets, authenticated Qwen/Paddle synthetic inference, unauthorized 401 behavior, hardened deployment configuration, and the complete Paddle adapter contract. L1 business accuracy remains blocked on H04-H13 and H15/H16.
-- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/B8_09_STAGING_REPORT.md`.
+- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/汇报/B8_09_STAGING_REPORT.md`.
 
 ## API
 
@@ -214,7 +214,7 @@ S3 mode requires `S3_LOGICAL_QUOTA_BYTES`; the removed `S3_CAPACITY_BYTES` name 
 
 ## Staging
 
-The repository root exposes `staging:init`, `staging:check`, `staging:backup-integrity:test`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` and `docs/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md` for secret generation, least-privilege restore roles, strong-hash manifests, observability, pilot checks, and rollback safety gates.
+The repository root exposes `staging:init`, `staging:check`, `staging:backup-integrity:test`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` and `docs/汇报/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md` for secret generation, least-privilege restore roles, strong-hash manifests, observability, pilot checks, and rollback safety gates.
 
 `FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with the selected storage adapter. Development can use `LocalFileStorageService`; production requires the private S3-compatible adapter. Real ClamAV, object-storage backup, encryption/retention policy, and restore evidence remain deployment responsibilities.
 
@@ -234,7 +234,7 @@ STEP_UP_TTL_SECONDS=300
 STEP_UP_ENFORCED_ACTIONS=
 ```
 
-`POST /api/auth/step-up` requires the current password plus `action`, `resourceType`, and `resourceId`. The returned token is sent once in `X-Step-Up-Token`; it is bound to the current access-token session and is atomically consumed from PostgreSQL. Role, password, status, delete, and logout changes revoke active grants. Invalid modes, duplicate/unknown actions, and unattached candidates fail application startup. Access tokens issued before the R7.2 `sid` claim require a new login. MFA remains explicitly `reserved/enabled=false`, and self-approval, dual control, break-glass, and formal SoD remain pending H10. See `docs/R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md`.
+`POST /api/auth/step-up` requires the current password plus `action`, `resourceType`, and `resourceId`. The returned token is sent once in `X-Step-Up-Token`; it is bound to the current access-token session and is atomically consumed from PostgreSQL. Role, password, status, delete, and logout changes revoke active grants. Invalid modes, duplicate/unknown actions, and unattached candidates fail application startup. Access tokens issued before the R7.2 `sid` claim require a new login. MFA remains explicitly `reserved/enabled=false`, and self-approval, dual control, break-glass, and formal SoD remain pending H10. See `docs/汇报/R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md`.
 
 ## Retention Boundary
 
@@ -247,7 +247,7 @@ DATA_RETENTION_LEASE_MS=60000
 DATA_RETENTION_MAX_ATTEMPTS=3
 ```
 
-Set `DATA_RETENTION_MODE=dry-run` only in a controlled environment to queue bounded inventory jobs. `execute`, unknown modes, `dryRun=false`, and future cutoffs are rejected. PostgreSQL constraints require every R7.1 run to remain a dry-run with `deletedCount=0`. Admin may create runs and legal holds; auditor has read-only access. Legal-hold release, actual retention days, Provider deletion guarantees, backup propagation, and destructive execution remain disabled pending H12/H14. See `docs/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`.
+Set `DATA_RETENTION_MODE=dry-run` only in a controlled environment to queue bounded inventory jobs. `execute`, unknown modes, `dryRun=false`, and future cutoffs are rejected. PostgreSQL constraints require every R7.1 run to remain a dry-run with `deletedCount=0`. Admin may create runs and legal holds; auditor has read-only access. Legal-hold release, actual retention days, Provider deletion guarantees, backup propagation, and destructive execution remain disabled pending H12/H14. See `docs/汇报/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`.
 
 New AI call logs use `ai-call-audit/1.0` and store only hashes, sizes, tool names/field names, version metadata, claim counts, and fallback status. Full questions, tool values, and raw Provider responses are not copied into new `AiCallLog` records. Conversation content and OCR/import evidence remain in their dedicated content stores and are not deleted by R7.1.
 

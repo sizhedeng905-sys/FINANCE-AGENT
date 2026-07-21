@@ -70,7 +70,7 @@ npm run staging:lock-images
 
 `npm run staging:image-integrity:test` 运行 17 个合成攻击用例。完整 release 会为每个锁定镜像生成 SPDX SBOM、Grype SARIF 和 Critical 修复门禁，并在部署前生成 `staging-release-plan/2.0`。本机证据使用 `local_identity`，只在同一 Docker 主机有效。发布到共享服务器前必须由 H13 指定受控 registry、签名身份和信任根，使用 `repository@sha256:...` 与已验证签名；当前 `pending_h13` 不得视为签名通过。
 
-2026-07-18 本机完整门禁扫描 22 个镜像、生成 66 份证据并通过“无可修复 Critical”。扫描仍有 53 High、88 Medium、38 Low，必须继续升级和评估；详情见 `docs/R5_IMMUTABLE_IMAGE_ROLLBACK_REPORT_2026-07-18.md`。
+2026-07-18 本机完整门禁扫描 22 个镜像、生成 66 份证据并通过“无可修复 Critical”。扫描仍有 53 High、88 Medium、38 Low，必须继续升级和评估；详情见 `docs/汇报/R5_IMMUTABLE_IMAGE_ROLLBACK_REPORT_2026-07-18.md`。
 
 ## 5. 发布
 
@@ -202,6 +202,6 @@ npm run model:restore
 
 - 仅创建少量授权用户和项目；admin/auditor 不开放业务前端；
 - OCR 必须停在 `pending_confirm`，人工确认前 `BusinessRecord` 增量必须为 0；
-- 每日按 `docs/B8_09_PILOT_DAILY_CHECKLIST.md` 核对导入、失败、重复候选、逐分差异、队列、GPU、存储、备份和告警；
+- 每日按 `docs/计划/B8_09_PILOT_DAILY_CHECKLIST.md` 核对导入、失败、重复候选、逐分差异、队列、GPU、存储、备份和告警；
 - 所有问题进入 GitHub Issue，记录匿名 caseId、releaseId、requestId/traceId 和证据路径，不把聊天记录当缺陷台账；
 - 真实数据只允许由授权人员小批量导入，且必须有 H-09/H-16 证据。

@@ -533,7 +533,7 @@ npm run model:status
 | `.realdata-test/inventory.local.json` | 否 | 原始路径、完整哈希、匿名映射 |
 | `.realdata-test/labels.local.jsonl` | 否 | 字段和会计真值 |
 | `.realdata-test/reports/*` | 否 | 单样本错误和模型原始输出 |
-| `docs/REAL_BUSINESS_DATA_TEST_REPORT.md` | 是 | 聚合结果、失败类别、门禁状态 |
+| `docs/汇报/REAL_BUSINESS_DATA_TEST_REPORT.md` | 是 | 聚合结果、失败类别、门禁状态 |
 | 合成回归 fixtures | 是 | 从问题结构重建，不含真实值 |
 | 自动化测试 | 是 | 单元、集成、E2E、性能脚本 |
 | 兼容性策略文档 | 是 | 支持格式、限制、降级和人工步骤 |
@@ -560,8 +560,8 @@ npm run model:status
 你现在是 FINANCE-AGENT 的资深后端、数据工程、测试与本地模型工程师。
 
 请严格阅读并遵守：
-- docs/REAL_BUSINESS_DATA_TEST_PLAN.md
-- docs/IMPLEMENTATION_PROGRESS.md
+- docs/计划/REAL_BUSINESS_DATA_TEST_PLAN.md
+- docs/汇报/IMPLEMENTATION_PROGRESS.md
 - docs/MODEL_DEPLOYMENT.md
 - docs/E2E_ACCEPTANCE.md
 - docs/财务Agent_真实化与阶段9-10推进总提示词.md
@@ -593,7 +593,7 @@ B5 报表、规则和老板 AI 标准问题集；
 B6 性能、故障恢复和 30 分钟长稳；
 B7 财务 UAT 和最终全量回归。
 
-先从 B0 开始。先读代码和现有测试，生成计划并执行，不要一次性修改全部模块。每个批次结束时更新 docs/REAL_BUSINESS_DATA_TEST_REPORT.md，输出聚合结果、问题级别、修改文件、测试证据、未通过门禁和下一步。只有对应门禁通过后才进入下一批次。
+先从 B0 开始。先读代码和现有测试，生成计划并执行，不要一次性修改全部模块。每个批次结束时更新 docs/汇报/REAL_BUSINESS_DATA_TEST_REPORT.md，输出聚合结果、问题级别、修改文件、测试证据、未通过门禁和下一步。只有对应门禁通过后才进入下一批次。
 
 遇到以下情况暂停并告诉用户：
 - 需要安装或修改 WSL2、Docker、GPU 驱动、系统服务；
@@ -607,17 +607,17 @@ B7 财务 UAT 和最终全量回归。
 ### 16.1 B0 清单与基线
 
 ```text
-请执行 docs/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B0。
+请执行 docs/计划/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B0。
 
 只读扫描 `数据文件/`，生成本地匿名 manifest、哈希重复组、Excel/PDF/图片/ZIP/DOCX 结构画像，并让当前文件安全服务、ExcelParserService 和 DocumentPreprocessorService 做 dry-run 兼容判断。不要调用任何确认入库接口，不要启动真实模型，不要修改原始文件。
 
-新增一个可复用但不泄露业务值的扫描器和对应单元测试；原始路径映射与完整结果放 `.realdata-test/`，Git 中只保留聚合报告。把每个样本归为 supported、needs-profile、needs-conversion、manual-only 或 security-rejected。运行 build/test/hygiene，并更新 docs/REAL_BUSINESS_DATA_TEST_REPORT.md。
+新增一个可复用但不泄露业务值的扫描器和对应单元测试；原始路径映射与完整结果放 `.realdata-test/`，Git 中只保留聚合报告。把每个样本归为 supported、needs-profile、needs-conversion、manual-only 或 security-rejected。运行 build/test/hygiene，并更新 docs/汇报/REAL_BUSINESS_DATA_TEST_REPORT.md。
 ```
 
 ### 16.2 B1-B2 文件与 Excel
 
 ```text
-请执行 docs/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B1 和 B2，先用 B0 报告中最高覆盖的数据族推进。
+请执行 docs/计划/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B1 和 B2，先用 B0 报告中最高覆盖的数据族推进。
 
 必须先为多 Sheet、隐藏 Sheet、合并/多行表头、公式缓存、.xls、4999/5000/5001/30196 行、大于 10 MiB、接近/超过 50 MiB、内嵌大量媒体和重复哈希增加失败测试。再按通用能力修复：元数据扫描、人工 Sheet/表头选择、ImportProfile、隔离 .xls 转换或解析、流式分块、lease/恢复、媒体与表格分离、明确限制和统一错误。
 
@@ -627,7 +627,7 @@ B7 财务 UAT 和最终全量回归。
 ### 16.3 B3 OCR 与模型
 
 ```text
-请执行 docs/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B3。
+请执行 docs/计划/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B3。
 
 先确认 WSL2、Docker、NVIDIA 容器和本地模型健康；若需要系统级安装或驱动调整，停止并告诉用户具体操作。文本 Qwen3-14B-AWQ 与 PaddleOCR-VL 常驻，Qwen3-VL 只在低置信度、拍屏或复杂表格样本上按需启动，Embedding 本批不启用。
 
@@ -639,7 +639,7 @@ B7 财务 UAT 和最终全量回归。
 ### 16.4 B4-B7 全链路验收
 
 ```text
-请执行 docs/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B4 至 B7。
+请执行 docs/计划/REAL_BUSINESS_DATA_TEST_PLAN.md 的 B4 至 B7。
 
 选取已经通过兼容和人工标注的数据族，验证 Excel、OCR、手工补录、工单终审进入同一套 BusinessRecord/RecordValue 规则；严格校验项目模板、会计方向、Decimal、来源快照、确认/作废、并发幂等、audit 和 ledger。用派生汇总表做对账，不重复入账。
 
