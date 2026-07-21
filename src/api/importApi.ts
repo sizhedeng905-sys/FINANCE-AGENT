@@ -7,6 +7,7 @@ import type {
   FieldSuggestion,
   FieldSuggestionListQuery,
   ImportConfirmResult,
+  ImportAiReviewDecisionQuery,
   ImportPreview,
   ImportPreviewQuery,
   ImportRowsQuery,
@@ -14,6 +15,7 @@ import type {
   ImportTaskListQuery,
   ImportWorkbookInspection,
   ParseImportTaskPayload,
+  PaginatedImportAiReviewDecisions,
   PaginatedFieldSuggestions,
   PaginatedImportRows,
   PaginatedImportTasks,
@@ -136,6 +138,23 @@ export function getImportAiSuggestionHistory(id: string): Promise<ExcelAiSuggest
   return runtimeConfig.dataMode === 'api'
     ? httpClient.get<ExcelAiSuggestionHistory>(`/import-tasks/${encodeURIComponent(id)}/ai-suggestions`)
     : Promise.resolve({ items: [] });
+}
+
+export function getImportAiReviewDecisions(
+  id: string,
+  query: ImportAiReviewDecisionQuery = {},
+): Promise<PaginatedImportAiReviewDecisions> {
+  if (runtimeConfig.dataMode === 'api') {
+    return httpClient.get<PaginatedImportAiReviewDecisions>(
+      `/import-tasks/${encodeURIComponent(id)}/ai-review-decisions${queryString(query)}`,
+    );
+  }
+  return Promise.resolve({
+    items: [],
+    page: query.page ?? 1,
+    pageSize: query.pageSize ?? 20,
+    total: 0,
+  });
 }
 
 export function getImportPreview(id: string, query: ImportPreviewQuery = {}): Promise<ImportPreview> {

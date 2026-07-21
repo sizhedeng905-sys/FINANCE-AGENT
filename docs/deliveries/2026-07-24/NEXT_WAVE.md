@@ -6,7 +6,7 @@
 
 预期结果：
 
-- CR-011/CR-012 已随 SHA `66749b3` 获得同 SHA Build 与 CodeQL 证据；CR-013 SHA `7d363f6` 的 Build/CodeQL 也已全绿。CR-014 服务端审核 provenance 本地门禁通过，下一步在确认页展示摘要并为新 SHA 逐项验证。
+- CR-011/CR-012 已随 SHA `66749b3` 获得同 SHA Build 与 CodeQL 证据；CR-013 SHA `7d363f6`、CR-014 SHA `5580ce3` 的 Build/CodeQL 也已全绿。CR-015 确认页证据摘要本地 21/21 E2E 通过，等待新 SHA 远端验证。
 - 按 Runbook 连续完成三次人工演练，逐次记录耗时、金额、偏差和清理结果。
 - 前端接入真实 `POST/GET /api/import-tasks/:id/ai-suggestions`，明确显示候选模板、逐列建议、warning、evidence、Prompt/模型/Mock provenance。
 - 采纳 AI 建议只修改当前页面草稿；保存前不发 PUT、不自动重校验、不切换冻结模板、不创建 BusinessRecord。
@@ -17,9 +17,10 @@
 
 预期结果：
 
-- 保存映射时携带 expectedVersion/reviewRevision，旧页面和旧 AI 输出返回可理解的 409。
-- 服务端保存 accept/edit/reject 决策及 `aiTaskId`、output/version-vector hash、sourceRef、建议值、最终值、actor、time、reason；禁止跨任务、跨项目和跨模板篡改。
-- 第二财务确认页能查看 AI 建议、人工修改、确定性校验与最终批准快照的审计摘要。
+- 已完成：保存映射携带 expectedVersion/reviewRevision，旧页面和旧 AI 输出返回可理解的 409。
+- 已完成：服务端保存 accept/edit/reject/ignore 决策及 `aiTaskId`、output/version-vector hash、sourceRef、建议值、最终值、actor、time、reason；禁止跨任务和跨模板篡改。
+- 已完成：第二财务确认页查看 AI 建议、人工决定、最终映射、操作者、确定性校验和 provenance；证据读取失败时不能批准。
+- 下一增量：在提交完成状态只读展示不可变批准快照摘要和正式 BusinessRecord 跳转，继续复用后端事实源。
 
 验收：PostgreSQL 集成覆盖并发编辑、账号停用、角色撤销、过期输出、越权 ID、幂等重放和事务回滚；AI 模块仍不能直接调用正式记录写服务。
 

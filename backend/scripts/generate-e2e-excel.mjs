@@ -54,6 +54,15 @@ formulaSheet.addImage(formulaImageId, { tl: { col: 5, row: 0 }, ext: { width: 1,
 await formulaWorkbook.xlsx.writeFile(formulaFixturePath);
 console.log(`Generated E2E formula Excel fixture: ${formulaFixturePath}`);
 
+const aiReviewFixturePath = resolve(fixtureDirectory, 'E2E AI审核证据费用导入.xlsx');
+const aiReviewWorkbook = new ExcelJS.Workbook();
+const aiReviewSheet = aiReviewWorkbook.addWorksheet('AI审核证据');
+aiReviewSheet.addRow(['发生日期', '费用金额', '车牌', '司机']);
+const aiReviewDataRow = aiReviewSheet.addRow([validDate, null, '粤A65432', 'AI审核测试司机']);
+aiReviewDataRow.getCell(2).value = { formula: 'SUM(8000,765.43)', result: 8765.43 };
+await aiReviewWorkbook.xlsx.writeFile(aiReviewFixturePath);
+console.log(`Generated E2E AI review evidence fixture: ${aiReviewFixturePath}`);
+
 const demoFixturePath = resolve(fixtureDirectory, 'E2E 周五演示费用导入.xlsx');
 const demoWorkbook = new ExcelJS.Workbook();
 const demoSheet = demoWorkbook.addWorksheet('周五演示费用明细');

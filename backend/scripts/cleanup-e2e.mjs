@@ -55,6 +55,7 @@ async function main() {
       where: { fileName: { startsWith: 'E2E ' } },
       select: {
         id: true,
+        mappingProfileId: true,
         rawFile: { select: { id: true, storagePath: true } },
         businessRecords: { select: { id: true } }
       }
@@ -72,6 +73,29 @@ async function main() {
   const workOrderIds = workOrders.map((item) => item.id);
   const importTaskIds = importTasks.map((item) => item.id);
   const ocrTaskIds = ocrTasks.map((item) => item.id);
+  const candidateMappingProfileIds = [...new Set(
+    importTasks.map((item) => item.mappingProfileId).filter((id) => typeof id === 'string')
+  )];
+  const retainedProfileReferences = candidateMappingProfileIds.length > 0
+    ? await prisma.importTask.findMany({
+        where: {
+          mappingProfileId: { in: candidateMappingProfileIds },
+          id: { notIn: importTaskIds }
+        },
+        select: { mappingProfileId: true }
+      })
+    : [];
+  const retainedMappingProfileIds = new Set(
+    retainedProfileReferences.map((item) => item.mappingProfileId).filter((id) => typeof id === 'string')
+  );
+  const mappingProfileIds = candidateMappingProfileIds.filter((id) => !retainedMappingProfileIds.has(id));
+  const importAiTasks = importTaskIds.length > 0
+    ? await prisma.aiTask.findMany({
+        where: { resourceType: 'import_task', resourceId: { in: importTaskIds } },
+        select: { id: true }
+      })
+    : [];
+  const importAiTaskIds = importAiTasks.map((item) => item.id);
   const generatedRecordIds = workOrders
     .map((item) => item.generatedRecordId)
     .filter((id) => typeof id === 'string');
@@ -114,6 +138,8 @@ async function main() {
     ...ocrTaskIds,
     ...recordIds,
     ...rawFileIds,
+    ...mappingProfileIds,
+    ...importAiTaskIds,
     ...reportSnapshotIds,
     ...reportNarrativeIds
   ])];
@@ -132,8 +158,11 @@ async function main() {
     await tx.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
     await tx.businessRecord.deleteMany({ where: { id: { in: recordIds } } });
     await tx.importTask.deleteMany({ where: { id: { in: importTaskIds } } });
+    await tx.aiTask.deleteMany({ where: { id: { in: importAiTaskIds } } });
     await tx.ocrTask.deleteMany({ where: { id: { in: ocrTaskIds } } });
     await tx.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
+    await tx.mappingProfileRule.deleteMany({ where: { mappingProfileId: { in: mappingProfileIds } } });
+    await tx.mappingProfile.deleteMany({ where: { id: { in: mappingProfileIds } } });
     await tx.mappingProfileRule.deleteMany({ where: { normalizedSourceName: { startsWith: 'e2e' } } });
     await tx.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
     await tx.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
@@ -151,7 +180,7 @@ async function main() {
   await rm(uploadRoot, { recursive: true, force: true });
 
   console.log(
-    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${reportSnapshotIds.length} report snapshot(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
+    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${mappingProfileIds.length} mapping profile(s), ${importAiTaskIds.length} import AI task(s), ${reportSnapshotIds.length} report snapshot(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
   );
 }
 

@@ -754,6 +754,52 @@ export interface ExcelAiSuggestionHistory {
   items: ExcelAiSuggestionHistoryItem[];
 }
 
+export type ImportAiReviewDecisionType = 'accept' | 'edit' | 'reject' | 'ignore';
+
+export interface ImportAiReviewDecision {
+  id: string;
+  importTaskId: string;
+  importColumnId: string;
+  aiTaskId: string;
+  outputHash: string;
+  versionVectorHash: string;
+  sourceRef: string;
+  templateVersionId: string;
+  suggested: {
+    targetFieldId: string | null;
+    targetFieldKey: string | null;
+    transformKey: string;
+    confidence: string | null;
+    evidenceRefs: string[];
+  };
+  final: {
+    targetFieldId: string | null;
+    ignored: boolean;
+  };
+  decision: ImportAiReviewDecisionType;
+  reason: string;
+  reviewRevision: number;
+  actor: {
+    id: string;
+    username: string;
+    name: string;
+  };
+  createdAt: string;
+}
+
+export interface ImportAiReviewDecisionQuery {
+  page?: number;
+  pageSize?: number;
+  reviewRevision?: number;
+}
+
+export interface PaginatedImportAiReviewDecisions {
+  items: ImportAiReviewDecision[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface ReviewImportRowPayload {
   expectedVersion: number;
   expectedReviewRevision: number;

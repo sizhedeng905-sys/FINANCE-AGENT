@@ -4,7 +4,7 @@
 
 ## 审查结论
 
-状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING`
+状态：`REMOTE_ENGINEERING_VERIFIED`
 
 ## 变更边界
 
@@ -29,10 +29,12 @@
 - Playwright Excel/AI：6/6 tests。
 - Prisma：44 migrations 空测试库 reset/deploy，0 pending。
 - 双端 production build：PASS。
+- 远端 Build：SHA `5580ce3`，run `29834746500`，两个 job PASS。
+- 远端 CodeQL：SHA `5580ce3`，run `29834746264`，PASS。
 
 ## 剩余风险
 
-- 财务确认页尚未展示该审计摘要，列为下一独立提交。
+- 财务确认页审计摘要已由后续 CR-015 实现并完成本地工程验收。
 - 30,196/49,999 行采样虽通过现有预算，但本轮峰值 RSS 增量分别为 709.84/72.10 MiB，继续保留跨轮次内存波动与目标环境容量风险。
 - 真实模型准确率、真实业务真值、目标 Staging 和 owner UAT 不在本提交证明范围。
-- 提交后的 Build/CodeQL 必须按新 SHA 重新取得证据。
+- CR-014 的同 SHA Build/CodeQL 已取得；CR-015 仍须以自己的新 SHA 重新验证。

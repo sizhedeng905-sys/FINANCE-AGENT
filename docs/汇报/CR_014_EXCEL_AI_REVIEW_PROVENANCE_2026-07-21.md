@@ -2,7 +2,7 @@
 
 日期：2026-07-21
 分支：`agent/b8-stable-hardening`
-状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING`
+状态：`REMOTE_ENGINEERING_VERIFIED`
 
 ## 目标
 
@@ -42,11 +42,13 @@
 | Excel/AI Playwright 专项 | 6 tests，PASS；清理后 0 文件残留 |
 | CR-013 远端 Build | run `29831004356`，全部 job PASS |
 | CR-013 远端 CodeQL | run `29831004341`，PASS |
+| CR-014 远端 Build | SHA `5580ce3`，run `29834746500`，全部 job PASS |
+| CR-014 远端 CodeQL | SHA `5580ce3`，run `29834746264`，PASS |
 
 ## 边界与下一步
 
 - 本提交证明服务端审核证据与并发边界，不证明真实模型准确率。
 - 新 migration 为向后兼容增量，并在数据库层约束哈希格式、正审核修订、证据数组及决定/最终状态一致性；旧应用可忽略新表。生产环境不得通过删除该表做回退，以免损失审计事实。
 - 全量回归的 30,196 行采样为 39.313 秒、峰值 RSS 增量 709.84 MiB、峰值连接 11；49,999 行为 72.591 秒、72.10 MiB、连接 12。均未越过现有自动门禁，但跨轮次内存波动继续作为目标环境容量风险，不把本机通过写成 H13 已关闭。
-- 下一独立提交在第二财务确认页读取分页接口，展示建议、最终值、决定、操作者和哈希摘要，并用 Playwright 证明从 AI 建议保存到确认页的真实链路。
+- 第二财务确认页的分页审计摘要和真实链路已由后续 CR-015 实现，本报告保留为服务端事实层证据。
 - PR 保持 Draft；三次人工演练、真实财务/OCR/AI 真值、目标 Linux Staging 和 owner UAT 仍未关闭。

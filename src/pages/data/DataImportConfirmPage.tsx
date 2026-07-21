@@ -3,11 +3,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, App, Button, Card, Checkbox, Col, Empty, Input, Modal, Progress, Row, Space, Spin, Statistic, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import ExcelAiReviewEvidence from '@/components/data/ExcelAiReviewEvidence';
 import PageHeader from '@/components/PageHeader';
+import { getImportAiReviewDecisions } from '@/api/importApi';
 import { useAuthStore } from '@/store/authStore';
 import { useImportStore } from '@/store/importStore';
-import type { ImportPreviewRow } from '@/types/dataCenter';
+import type { ImportPreviewRow, PaginatedImportAiReviewDecisions } from '@/types/dataCenter';
 import { formatMoney } from '@/utils/format';
+
+interface AiReviewLoadState {
+  requestKey: string;
+  loading: boolean;
+  data?: PaginatedImportAiReviewDecisions;
+  error?: string;
+}
+
+const requestErrorMessage = (error: unknown) => error instanceof Error ? error.message : '请求失败';
 
 export default function DataImportConfirmPage() {
   const { id } = useParams();
@@ -25,8 +36,12 @@ export default function DataImportConfirmPage() {
   const currentUser = useAuthStore((state) => state.user);
   const task = currentTask ?? preview?.task;
   const followConfirmation = useRef(false);
+  const aiReviewRequestEpoch = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [aiReviewPage, setAiReviewPage] = useState(1);
+  const [aiReviewPageSize, setAiReviewPageSize] = useState(20);
+  const [aiReviewState, setAiReviewState] = useState<AiReviewLoadState>();
   const [acknowledged, setAcknowledged] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<{ row: ImportPreviewRow; decision: 'include' | 'exclude' }>();
   const [reviewReason, setReviewReason] = useState('');
@@ -38,6 +53,36 @@ export default function DataImportConfirmPage() {
   useEffect(() => {
     setAcknowledged(false);
   }, [id, task?.reviewRevision]);
+
+  useEffect(() => {
+    setAiReviewPage(1);
+  }, [id, currentUser?.id]);
+
+  const aiReviewRequestKey = id && currentUser?.id
+    ? `${id}:${currentUser.id}:${aiReviewPage}:${aiReviewPageSize}`
+    : undefined;
+
+  useEffect(() => {
+    const epoch = ++aiReviewRequestEpoch.current;
+    if (!id || !currentUser?.id || !aiReviewRequestKey) return;
+    setAiReviewState({ requestKey: aiReviewRequestKey, loading: true });
+    void getImportAiReviewDecisions(id, { page: aiReviewPage, pageSize: aiReviewPageSize })
+      .then((data) => {
+        if (aiReviewRequestEpoch.current !== epoch) return;
+        setAiReviewState({ requestKey: aiReviewRequestKey, loading: false, data });
+      })
+      .catch((nextError) => {
+        if (aiReviewRequestEpoch.current !== epoch) return;
+        setAiReviewState({
+          requestKey: aiReviewRequestKey,
+          loading: false,
+          error: requestErrorMessage(nextError),
+        });
+      });
+    return () => {
+      if (aiReviewRequestEpoch.current === epoch) aiReviewRequestEpoch.current += 1;
+    };
+  }, [aiReviewPage, aiReviewPageSize, aiReviewRequestKey, currentUser?.id, id]);
 
   useEffect(() => {
     if (!id || task?.status !== 'confirming') return;
@@ -78,10 +123,18 @@ export default function DataImportConfirmPage() {
   const currentValidation = task && task.validation?.reviewRevision === task.reviewRevision ? task.validation : null;
   const warnings = currentValidation?.snapshot.warnings ?? [];
   const isSelfApproval = Boolean(task?.uploadedById && task.uploadedById === currentUser?.id);
+  const currentAiReviewState = aiReviewState?.requestKey === aiReviewRequestKey ? aiReviewState : undefined;
+  const aiReviewEvidenceReady = Boolean(
+    aiReviewRequestKey
+    && currentAiReviewState?.data
+    && !currentAiReviewState.loading
+    && !currentAiReviewState.error,
+  );
   const canApproveStatus = task?.status === 'pending_confirm' || task?.status === 'confirmation_failed';
   const canConfirm = canApproveStatus
     && Boolean(currentValidation?.snapshot.valid)
     && !isSelfApproval
+    && aiReviewEvidenceReady
     && (warnings.length === 0 || acknowledged);
   const recordCount = currentValidation?.snapshot.counts.recordCount ?? preview?.summary.valid ?? 0;
 
@@ -239,6 +292,16 @@ export default function DataImportConfirmPage() {
                 description={task.errorMessage || '已保存已处理批次，可从当前进度安全重试'}
               />
             ) : null}
+            <ExcelAiReviewEvidence
+              data={currentAiReviewState?.data}
+              loading={Boolean(aiReviewRequestKey) && (!currentAiReviewState || currentAiReviewState.loading)}
+              error={currentAiReviewState?.error}
+              importColumns={task?.columns ?? []}
+              onPageChange={(nextPage, nextPageSize) => {
+                setAiReviewPage(nextPage);
+                setAiReviewPageSize(nextPageSize);
+              }}
+            />
             <Row gutter={[16, 16]} className="section-row">
               <Col xs={12} md={4}><Card><Statistic title="总行数" value={preview.summary.total} /></Card></Col>
               <Col xs={12} md={4}><Card><Statistic title="可入库" value={preview.summary.valid} valueStyle={{ color: '#16a34a' }} /></Card></Col>

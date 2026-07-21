@@ -60,6 +60,17 @@ interface AiSuggestionDto {
   };
 }
 
+interface AiReviewDecisionDto {
+  id: string;
+  aiTaskId: string;
+  outputHash: string;
+  versionVectorHash: string;
+  sourceRef: string;
+  decision: 'accept' | 'edit' | 'reject' | 'ignore';
+  reviewRevision: number;
+  actor: { id: string; username: string; name: string };
+}
+
 async function createMappingTask(page: Page) {
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E Stage9 标准费用导入.xlsx');
   await login(page, 'finance', '/finance/home');
@@ -173,6 +184,194 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
   await page.goto(`${API_FRONTEND_URL}/data/import/${task.id}/mapping`);
   await expect(page.getByText('尚未获取 AI 映射建议，人工映射仍可正常使用')).toBeVisible();
   await expect(page.getByText(suggestion.data.classification.aiTaskId)).toHaveCount(0);
+});
+
+test('API mode: a second finance user sees verified AI review evidence and approval fails closed when it is unavailable', async ({ page }) => {
+  test.setTimeout(120_000);
+  const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E AI审核证据费用导入.xlsx');
+  await login(page, 'finance', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/import`);
+  await selectOption(page, '项目', '太和中转项目');
+  await selectOption(page, '模板', '运输费用模板');
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+
+  const createdResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/import-tasks'));
+  await page.getByRole('button', { name: '上传并解析' }).click();
+  const created = await readEnvelope<ImportTaskDto>(await createdResponse);
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/mapping$`));
+  await page.getByRole('checkbox', { name: '允许使用公式缓存结果' }).check();
+
+  const parsedResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/import-tasks/${created.data.id}/parse`,
+  ));
+  await page.getByRole('button', { name: '解析所选区域' }).click();
+  const parsed = await readEnvelope<ImportTaskDto>(await parsedResponse);
+  expect(parsed.data.status).toBe('pending_confirm');
+
+  const suggestionResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/import-tasks/${created.data.id}/ai-suggestions`,
+  ));
+  await page.getByRole('button', { name: '获取 AI 映射建议' }).click();
+  const suggestion = await readEnvelope<AiSuggestionDto>(await suggestionResponse);
+  expect(suggestion.data).toMatchObject({
+    status: 'needs_finance_review',
+    mapping: {
+      outputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      versionVectorHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    },
+  });
+  expect(suggestion.data.mapping.output.mappings.length).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '批量采纳到草稿' }).click();
+  await expect(page.getByText('已采纳到草稿')).toHaveCount(suggestion.data.mapping.output.mappings.length);
+
+  const saveResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'PUT',
+    `/api/import-tasks/${created.data.id}/mappings`,
+  ));
+  const previewResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/preview`,
+  ));
+  const evidenceResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/ai-review-decisions`,
+  ));
+  await page.getByRole('button', { name: '下一步确认' }).click();
+  const saved = await readEnvelope<ImportTaskDto>(await saveResponse);
+  expect(saved.data.status).toBe('pending_confirm');
+  await readEnvelope(await previewResponse);
+  const evidence = await readEnvelope<{
+    items: AiReviewDecisionDto[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }>(await evidenceResponse);
+  expect(evidence.data.total).toBe(suggestion.data.mapping.output.mappings.length);
+  expect(evidence.data.items.every((item) => (
+    item.aiTaskId === suggestion.data.mapping.aiTaskId
+    && item.outputHash === suggestion.data.mapping.outputHash
+    && item.versionVectorHash === suggestion.data.mapping.versionVectorHash
+    && item.decision === 'accept'
+    && item.actor.username === 'finance'
+  ))).toBe(true);
+  await expectNoOfficialRecords(page, created.data.id);
+
+  const evidenceCard = page.locator('.ant-card').filter({ hasText: 'AI 映射审核证据' });
+  await expect(evidenceCard).toBeVisible();
+  await expect(evidenceCard.getByText(`共 ${evidence.data.total} 条`).first()).toBeVisible();
+  await expect(evidenceCard.locator('.excel-ai-review-row')).toHaveCount(evidence.data.total);
+  await expect(evidenceCard.locator('.excel-ai-review-row').first()).toContainText('采纳');
+  await expect(evidenceCard.locator('.excel-ai-review-row').first()).toContainText('finance');
+  await evidenceCard.locator('.ant-table-row-expand-icon').first().click();
+  const compactOutputHash = `${suggestion.data.mapping.outputHash.slice(0, 12)}...${suggestion.data.mapping.outputHash.slice(-6)}`;
+  await expect(evidenceCard.getByText(compactOutputHash)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(evidenceCard).toBeVisible();
+  await expect.poll(
+    () => page.locator('.app-sider').evaluate((element) => Math.round(element.getBoundingClientRect().width)),
+    { message: 'responsive sidebar should finish collapsing before mobile overflow is measured' },
+  ).toBeLessThanOrEqual(1);
+  const mobileOverflow = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    compactLayout: window.matchMedia('(max-width: 991px)').matches,
+    layout: [
+      '.app-shell',
+      '.app-sider',
+      '.app-sider .ant-layout-sider-children',
+      '.app-shell > .ant-layout',
+      '.app-content',
+      '.excel-ai-review-table',
+      '.excel-ai-review-table .ant-table-container',
+      '.excel-ai-review-table .ant-table-content',
+    ].map((selector) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element) return { selector, missing: true };
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return {
+        selector,
+        className: element.className,
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        width: Math.round(rect.width),
+        minWidth: style.minWidth,
+        overflowX: style.overflowX,
+      };
+    }),
+    offenders: [...document.querySelectorAll<HTMLElement>('body *')]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          element: `${element.tagName.toLowerCase()}.${[...element.classList].join('.')}`,
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          width: Math.round(rect.width),
+        };
+      })
+      .filter(({ left, right }) => left < -1 || right > window.innerWidth + 1)
+      .sort((left, right) => right.width - left.width)
+      .slice(0, 12),
+  }));
+  expect(
+    mobileOverflow.scrollWidth,
+    `mobile horizontal overflow: ${JSON.stringify(mobileOverflow)}`,
+  ).toBeLessThanOrEqual(mobileOverflow.innerWidth + 1);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  await logout(page);
+  await login(page, '财务', '/finance/home');
+  const secondFinanceEvidenceResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/ai-review-decisions`,
+  ));
+  await page.goto(`${API_FRONTEND_URL}/data/import/${created.data.id}/confirm`);
+  await readEnvelope(await secondFinanceEvidenceResponse);
+  await expect(page.getByText('上传者不能审批同一导入任务')).toHaveCount(0);
+
+  const revalidateResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/import-tasks/${created.data.id}/revalidate`,
+  ));
+  await page.getByRole('button', { name: '重新校验' }).click();
+  const validated = await readEnvelope<ImportTaskDto & {
+    validation: {
+      snapshot: {
+        valid: boolean;
+        warnings: Array<{ issueId: string }>;
+        counts: { blockingErrorCount: number; recordCount: number };
+      };
+    };
+  }>(await revalidateResponse);
+  expect(validated.data.validation.snapshot).toMatchObject({
+    valid: true,
+    counts: { blockingErrorCount: 0, recordCount: 1 },
+  });
+  await page.getByRole('checkbox', { name: /已复核当前/ }).check();
+  const approveButton = page.getByRole('button', { name: '批准并入库 1 条' });
+  await expect(approveButton).toBeEnabled();
+
+  await page.route(`**/api/import-tasks/${created.data.id}/ai-review-decisions*`, async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 50300, message: '审核证据服务暂时不可用', data: {} }),
+    });
+  });
+  await page.reload();
+  await expect(page.getByText('AI 审核证据加载失败，最终批准已暂停')).toBeVisible();
+  await page.getByRole('checkbox', { name: /已复核当前/ }).check();
+  await expect(approveButton).toBeDisabled();
+  await expectNoOfficialRecords(page, created.data.id);
 });
 
 test('API mode: cross-template and unavailable AI responses fail closed without erasing manual work', async ({ page }) => {
