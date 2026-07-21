@@ -34,8 +34,10 @@ import { ParseImportTaskDto } from './dto/parse-import-task.dto';
 import { QueryImportPreviewDto } from './dto/query-import-preview.dto';
 import { QueryImportRowsDto } from './dto/query-import-rows.dto';
 import { QueryImportTasksDto } from './dto/query-import-tasks.dto';
+import { QueryAiReviewDecisionsDto } from './dto/query-ai-review-decisions.dto';
 import { SaveMappingsDto } from './dto/save-mappings.dto';
 import { ExcelAiSuggestionService } from './excel-ai-suggestion.service';
+import { ImportAiReviewService } from './import-ai-review.service';
 import { ImportTasksService } from './import-tasks.service';
 
 @ApiTags('import-tasks')
@@ -46,7 +48,8 @@ import { ImportTasksService } from './import-tasks.service';
 export class ImportTasksController {
   constructor(
     private readonly imports: ImportTasksService,
-    private readonly aiSuggestions: ExcelAiSuggestionService
+    private readonly aiSuggestions: ExcelAiSuggestionService,
+    private readonly aiReviews: ImportAiReviewService
   ) {}
 
   @Post()
@@ -156,6 +159,11 @@ export class ImportTasksController {
   @Get(':id/ai-suggestions')
   aiSuggestionHistory(@Param('id') id: string) {
     return this.aiSuggestions.latest(id);
+  }
+
+  @Get(':id/ai-review-decisions')
+  aiReviewDecisions(@Param('id') id: string, @Query() query: QueryAiReviewDecisionsDto) {
+    return this.aiReviews.findMany(id, query);
   }
 
   @Get(':id/preview')

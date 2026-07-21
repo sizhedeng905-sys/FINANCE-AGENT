@@ -24,12 +24,13 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-010 | [CR-010_runtime-image-package-manager-removal.md](CR-010_runtime-image-package-manager-removal.md) | `P0: remove package managers from backend runtime` | P0 supply chain | ENGINEERING_VERIFIED | CR-009 |
 | CR-011 | [CR-011_friday-excel-report-demo-e2e.md](CR-011_friday-excel-report-demo-e2e.md) | `test: prove Friday Excel report demo` | P1 delivery evidence | REMOTE_ENGINEERING_VERIFIED | CR-010 |
 | CR-012 | [CR-012_repeatable-friday-demo-delivery.md](CR-012_repeatable-friday-demo-delivery.md) | `docs: package repeatable Friday demo` | P1 delivery readiness | REMOTE_ENGINEERING_VERIFIED | CR-011 |
-| CR-013 | [CR-013_excel-ai-advisory-draft-bridge.md](CR-013_excel-ai-advisory-draft-bridge.md) | `feat: bridge Excel AI suggestions into finance draft` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-012 |
+| CR-013 | [CR-013_excel-ai-advisory-draft-bridge.md](CR-013_excel-ai-advisory-draft-bridge.md) | `feat: bridge Excel AI suggestions into finance draft` | P1 AI review integrity | REMOTE_ENGINEERING_VERIFIED | CR-012 |
+| CR-014 | [CR-014_excel-ai-review-provenance.md](CR-014_excel-ai-review-provenance.md) | `feat: persist verified Excel AI review decisions` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-013 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿；下一提交持久化人工审核决定及 provenance。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已在本地完成服务端人工审核决定与 provenance；下一提交在第二财务确认页展示审计摘要。
 - OCR 与报告财务复核：前序 P1 契约稳定后开始。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 

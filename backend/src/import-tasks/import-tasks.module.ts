@@ -11,6 +11,7 @@ import { LedgerEventsModule } from '../ledger-events/ledger-events.module';
 import { RecordPolicyModule } from '../record-policy/record-policy.module';
 import { ExcelParserService } from './excel-parser.service';
 import { ExcelAiSuggestionService } from './excel-ai-suggestion.service';
+import { ImportAiReviewService } from './import-ai-review.service';
 import { FieldSuggestionsController } from './field-suggestions.controller';
 import { ImportTasksController } from './import-tasks.controller';
 import { ImportTasksService } from './import-tasks.service';
@@ -23,6 +24,7 @@ import { XlsConverterService } from './xls-converter.service';
   providers: [
     ImportTasksService,
     ExcelAiSuggestionService,
+    ImportAiReviewService,
     ExcelParserService,
     XlsConverterService,
     TempUploadCleanupInterceptor,

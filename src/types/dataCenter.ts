@@ -598,9 +598,19 @@ export interface ImportMappingInput {
   columnId: string;
   targetFieldId?: string;
   ignore?: boolean;
+  aiReview?: {
+    aiTaskId: string;
+    outputHash: string;
+    versionVectorHash: string;
+    sourceRef: string;
+    decision: 'accept' | 'edit' | 'reject' | 'ignore';
+    reason: string;
+  };
 }
 
 export interface SaveImportMappingsPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
   mappings: ImportMappingInput[];
   saveToProfile?: boolean;
 }

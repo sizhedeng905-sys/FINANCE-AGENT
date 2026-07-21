@@ -6,10 +6,12 @@ import {
   AiTaskStatus,
   DataRecordType,
   FileScanStatus,
+  FieldType,
   ImportTaskStatus,
   OcrTaskStatus,
   Prisma,
   RawFileStatus,
+  SemanticType,
   UserStatus
 } from '@prisma/client';
 import ExcelJS from 'exceljs';
@@ -477,10 +479,13 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         where: { importTaskId: taskId },
         orderBy: { columnIndex: 'asc' }
       });
+      const profileReviewState = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
       await request(app.getHttpServer())
         .put(`/api/import-tasks/${taskId}/mappings`)
         .set('Authorization', `Bearer ${financeToken}`)
         .send({
+          expectedVersion: profileReviewState.version,
+          expectedReviewRevision: profileReviewState.reviewRevision,
           saveToProfile: true,
           mappings: profileColumns.map((column) => ({
             columnId: column.id,
@@ -548,6 +553,359 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         await prisma.ledgerEvent.deleteMany({ where: { aggregateId: { in: resourceIds } } });
       }
       if (storagePath) await storage.remove(storagePath);
+    }
+  });
+
+  it('persists only current, untampered AI mapping review decisions with optimistic concurrency', async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const requestPrefix = `ai-review-${suffix}`;
+    const aiTaskIds: string[] = [];
+    let projectId: string | undefined;
+    let templateId: string | undefined;
+    let taskId: string | undefined;
+    let rawFileId: string | undefined;
+    const fieldIds: string[] = [];
+
+    try {
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: 'finance', password: '123456' })
+        .expect(200);
+      const token = login.body.data.accessToken as string;
+      const finance = await prisma.user.findUniqueOrThrow({ where: { username: 'finance' } });
+      const project = await prisma.project.create({
+        data: {
+          name: `${requestPrefix}-project`,
+          customerName: 'Synthetic customer',
+          ownerName: 'Synthetic owner',
+          createdBy: finance.id
+        }
+      });
+      projectId = project.id;
+      const template = await prisma.template.create({
+        data: { name: `${requestPrefix}-template`, recordType: DataRecordType.cost, createdBy: finance.id }
+      });
+      templateId = template.id;
+      const fields: Array<{ id: string; fieldKey: string }> = [];
+      for (const key of ['a', 'b', 'c', 'd']) {
+        const field = await prisma.fieldDefinition.create({
+          data: {
+            fieldKey: `${requestPrefix}_${key}`,
+            fieldName: `AI review ${key}`,
+            fieldType: FieldType.text,
+            semanticType: SemanticType.remark
+          }
+        });
+        fields.push(field);
+        fieldIds.push(field.id);
+      }
+      await prisma.templateField.createMany({
+        data: fields.map((field, index) => ({
+          templateId: template.id,
+          fieldId: field.id,
+          displayOrder: index + 1
+        }))
+      });
+      await prisma.projectTemplate.create({
+        data: { projectId: project.id, templateId: template.id, recordType: DataRecordType.cost }
+      });
+      const rawFile = await prisma.rawFile.create({
+        data: {
+          fileName: `${requestPrefix}.xlsx`,
+          originalFileName: `${requestPrefix}.xlsx`,
+          fileType: 'xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          fileSize: BigInt(4),
+          storagePath: `integration/${requestPrefix}.xlsx`,
+          sha256: canonicalJsonSha256({ requestPrefix, kind: 'raw-file' }),
+          uploadedBy: finance.id,
+          relatedProjectId: project.id,
+          status: RawFileStatus.parsed,
+          scanStatus: FileScanStatus.clean,
+          previewStatus: 'safe'
+        }
+      });
+      rawFileId = rawFile.id;
+      const task = await prisma.importTask.create({
+        data: {
+          projectId: project.id,
+          templateId: template.id,
+          templateVersion: template.version,
+          rawFileId: rawFile.id,
+          fileName: rawFile.fileName,
+          importType: DataRecordType.cost,
+          status: ImportTaskStatus.mapping,
+          sourceSha256: rawFile.sha256,
+          parserInputSha256: rawFile.sha256,
+          irSchemaVersion: 'excel-ir/1.0',
+          parserVersion: 'integration/1.0',
+          irHash: canonicalJsonSha256({ requestPrefix, kind: 'ir' }),
+          uploadedBy: finance.id
+        }
+      });
+      taskId = task.id;
+      const sheet = await prisma.importSheet.create({
+        data: {
+          importTaskId: task.id,
+          stableId: 'sheet0',
+          sheetName: 'Review',
+          sheetIndex: 0,
+          headerRowIndex: 1
+        }
+      });
+      await prisma.importColumn.createMany({
+        data: fields.map((field, index) => ({
+          importTaskId: task.id,
+          sheetId: sheet.id,
+          columnIndex: index,
+          sourceColumnId: `sheet0:${String.fromCharCode(65 + index)}`,
+          columnLetter: String.fromCharCode(65 + index),
+          sourceKey: `source_${index}`,
+          sourceName: `source_${index}`,
+          normalizedName: `source_${index}`,
+          inferredType: 'text'
+        }))
+      });
+      const columns = await prisma.importColumn.findMany({
+        where: { importTaskId: task.id },
+        orderBy: { columnIndex: 'asc' }
+      });
+      const templateVersionId = `${template.id}:v${template.version}`;
+      const mappingOutput = (label: string, versionId = templateVersionId) => ({
+        schemaVersion: 'mapping/1.0',
+        templateVersionId: versionId,
+        mappings: columns.map((column, index) => ({
+          sourceRef: column.sourceColumnId!,
+          targetFieldKey: fields[index].fieldKey,
+          transformKey: 'TRIM_TEXT_V1',
+          confidence: '0.9',
+          evidenceRefs: [column.sourceColumnId!]
+        })),
+        unmappedSourceRefs: [],
+        unresolvedRequiredFields: [],
+        warnings: [label],
+        decision: 'NEEDS_FINANCE_REVIEW'
+      });
+      let createdOffset = 0;
+      const createAiTask = async (
+        label: string,
+        output: ReturnType<typeof mappingOutput>,
+        resourceId = task.id
+      ) => {
+        createdOffset += 1;
+        const outputHash = canonicalJsonSha256(output);
+        const versionVectorHash = canonicalJsonSha256({ label, resourceId });
+        const createdAt = new Date(Date.now() + createdOffset * 1000);
+        const aiTask = await prisma.aiTask.create({
+          data: {
+            taskType: 'excel_column_mapping',
+            resourceType: 'import_task',
+            resourceId,
+            status: AiTaskStatus.succeeded,
+            requestKey: canonicalJsonSha256({ requestPrefix, label, resourceId }),
+            inputHash: canonicalJsonSha256({ requestPrefix, label, kind: 'input' }),
+            versionVector: { label, resourceId },
+            versionVectorHash,
+            outputPayload: {
+              schemaVersion: 'ai-structured-suggestion-result/1.0',
+              validatedOutput: output,
+              outputHash,
+              completion: {},
+              providerResponseHash: canonicalJsonSha256({ label, kind: 'provider' }),
+              mock: true
+            },
+            outputHash,
+            outputRef: resourceId,
+            correlationId: `${requestPrefix}-${label}`,
+            createdBy: finance.id,
+            completedAt: createdAt,
+            createdAt
+          }
+        });
+        aiTaskIds.push(aiTask.id);
+        return aiTask;
+      };
+      const oldTask = await createAiTask('old', mappingOutput('old'));
+      const currentTask = await createAiTask('current', mappingOutput('current'));
+      const crossTask = await createAiTask('cross-task', mappingOutput('cross-task'), `other-${task.id}`);
+      const currentState = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
+      const reviewPayload = (aiTask: typeof currentTask, overrides: Record<string, unknown> = {}) => ({
+        expectedVersion: currentState.version,
+        expectedReviewRevision: currentState.reviewRevision,
+        saveToProfile: false,
+        mappings: [
+          {
+            columnId: columns[0].id,
+            targetFieldId: fields[0].id,
+            aiReview: {
+              aiTaskId: aiTask.id,
+              outputHash: aiTask.outputHash,
+              versionVectorHash: aiTask.versionVectorHash,
+              sourceRef: columns[0].sourceColumnId,
+              decision: 'accept',
+              reason: '财务采纳 AI 字段映射建议'
+            }
+          },
+          {
+            columnId: columns[1].id,
+            targetFieldId: fields[2].id,
+            aiReview: {
+              aiTaskId: aiTask.id,
+              outputHash: aiTask.outputHash,
+              versionVectorHash: aiTask.versionVectorHash,
+              sourceRef: columns[1].sourceColumnId,
+              decision: 'edit',
+              reason: '财务将 AI 建议修改为其他人工映射'
+            }
+          },
+          {
+            columnId: columns[2].id,
+            targetFieldId: fields[1].id,
+            aiReview: {
+              aiTaskId: aiTask.id,
+              outputHash: aiTask.outputHash,
+              versionVectorHash: aiTask.versionVectorHash,
+              sourceRef: columns[2].sourceColumnId,
+              decision: 'reject',
+              reason: '财务拒绝 AI 字段映射建议'
+            }
+          },
+          {
+            columnId: columns[3].id,
+            ignore: true,
+            aiReview: {
+              aiTaskId: aiTask.id,
+              outputHash: aiTask.outputHash,
+              versionVectorHash: aiTask.versionVectorHash,
+              sourceRef: columns[3].sourceColumnId,
+              decision: 'ignore',
+              reason: '财务明确忽略该来源列'
+            }
+          }
+        ],
+        ...overrides
+      });
+      const putMappings = (payload: Record<string, unknown>) => request(app.getHttpServer())
+        .put(`/api/import-tasks/${task.id}/mappings`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(payload);
+
+      await putMappings({ mappings: reviewPayload(currentTask).mappings }).expect(400);
+      await putMappings(reviewPayload(currentTask, { expectedVersion: currentState.version + 1 })).expect(409);
+      await putMappings(reviewPayload(oldTask)).expect(409);
+      await putMappings(reviewPayload(crossTask)).expect(409);
+      await prisma.projectTemplate.updateMany({
+        where: { projectId: project.id, templateId: template.id },
+        data: { isActive: false }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask)).expect(400);
+      } finally {
+        await prisma.projectTemplate.updateMany({
+          where: { projectId: project.id, templateId: template.id },
+          data: { isActive: true }
+        });
+      }
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { version: template.version + 1 }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask)).expect(409);
+      } finally {
+        await prisma.template.update({
+          where: { id: template.id },
+          data: { version: template.version }
+        });
+      }
+      const tampered = reviewPayload(currentTask);
+      tampered.mappings[0].aiReview.outputHash = 'f'.repeat(64);
+      await putMappings(tampered).expect(409);
+      const tamperedAcceptedField = reviewPayload(currentTask);
+      tamperedAcceptedField.mappings[0].targetFieldId = fields[3].id;
+      await putMappings(tamperedAcceptedField).expect(400);
+      const editedToIgnore = reviewPayload(currentTask);
+      editedToIgnore.mappings[1] = {
+        ...editedToIgnore.mappings[1],
+        targetFieldId: undefined,
+        ignore: true
+      };
+      await putMappings(editedToIgnore).expect(400);
+
+      const crossTemplateTask = await createAiTask(
+        'cross-template',
+        mappingOutput('cross-template', `${template.id}:v${template.version + 1}`)
+      );
+      await putMappings(reviewPayload(crossTemplateTask)).expect(409);
+      const approvedTask = await createAiTask('approved', mappingOutput('approved'));
+      const concurrent = await Promise.all([
+        putMappings(reviewPayload(approvedTask)),
+        putMappings(reviewPayload(approvedTask))
+      ]);
+      expect(concurrent.map((response) => response.status).sort()).toEqual([200, 409]);
+
+      const stored = await prisma.importAiReviewDecision.findMany({
+        where: { importTaskId: task.id },
+        orderBy: { sourceRef: 'asc' }
+      });
+      expect(stored).toHaveLength(4);
+      expect(stored.map((item) => item.decision)).toEqual(['accept', 'edit', 'reject', 'ignore']);
+      expect(stored.every((item) => (
+        item.aiTaskId === approvedTask.id
+        && item.outputHash === approvedTask.outputHash
+        && item.versionVectorHash === approvedTask.versionVectorHash
+        && item.reviewRevision === 1
+        && item.actorId === finance.id
+      ))).toBe(true);
+      expect(stored.map((item) => item.finalTargetFieldId)).toEqual([
+        fields[0].id,
+        fields[2].id,
+        fields[1].id,
+        null
+      ]);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
+      const listed = await request(app.getHttpServer())
+        .get(`/api/import-tasks/${task.id}/ai-review-decisions?page=1&pageSize=2`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(listed.body.data).toMatchObject({ page: 1, pageSize: 2, total: 4 });
+      expect(listed.body.data.items).toHaveLength(2);
+      expect(listed.body.data.items[0]).toMatchObject({
+        aiTaskId: approvedTask.id,
+        reviewRevision: 1,
+        actor: { id: finance.id, username: 'finance' }
+      });
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'import_task.mappings_saved', resourceId: task.id },
+        orderBy: { createdAt: 'desc' }
+      });
+      expect(audit.metadata).toMatchObject({
+        aiReview: {
+          count: 4,
+          aiTaskId: approvedTask.id,
+          outputHash: approvedTask.outputHash,
+          reviewRevision: 1,
+          decisionCounts: { accept: 1, edit: 1, reject: 1, ignore: 1 }
+        }
+      });
+      const afterApproval = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
+      await putMappings(reviewPayload(approvedTask, {
+        expectedVersion: afterApproval.version,
+        expectedReviewRevision: afterApproval.reviewRevision
+      })).expect(409);
+    } finally {
+      if (taskId) await prisma.importTask.deleteMany({ where: { id: taskId } });
+      if (aiTaskIds.length) await prisma.aiTask.deleteMany({ where: { id: { in: aiTaskIds } } });
+      if (rawFileId) await prisma.rawFile.deleteMany({ where: { id: rawFileId } });
+      if (projectId) await prisma.projectTemplate.deleteMany({ where: { projectId } });
+      if (templateId) await prisma.templateField.deleteMany({ where: { templateId } });
+      if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
+      if (fieldIds.length) await prisma.fieldDefinition.deleteMany({ where: { id: { in: fieldIds } } });
+      if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
+      if (taskId) {
+        await prisma.auditLog.deleteMany({ where: { resourceId: taskId } });
+        await prisma.ledgerEvent.deleteMany({ where: { aggregateId: taskId } });
+      }
     }
   });
 

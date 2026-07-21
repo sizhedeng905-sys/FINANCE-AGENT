@@ -318,13 +318,47 @@ export default function DataImportMappingPage() {
     const mappings = task.columns.flatMap((column) => {
       const value = valueFor(column);
       if (!value) return [];
-      return [{ columnId: column.id, ...(value === IGNORE_VALUE ? { ignore: true } : { targetFieldId: value }) }];
+      const aiMapping = aiMappingByColumnId.get(column.id);
+      const aiDecision = aiDraftDecisions[sourceRefForColumn(column)];
+      const mappingExecution = aiSuggestion?.status === 'needs_finance_review'
+        ? aiSuggestion.mapping
+        : null;
+      const aiReview = !templateMismatch && aiMapping?.source === 'ai' && aiDecision && mappingExecution
+        ? {
+            aiTaskId: mappingExecution.aiTaskId,
+            outputHash: mappingExecution.outputHash,
+            versionVectorHash: mappingExecution.versionVectorHash,
+            sourceRef: aiMapping.sourceRef,
+            decision: ({
+              accepted: 'accept',
+              edited: 'edit',
+              rejected: 'reject',
+              ignored: 'ignore',
+            } as const)[aiDecision],
+            reason: ({
+              accepted: '财务采纳 AI 字段映射建议',
+              edited: '财务将 AI 建议修改为其他人工映射',
+              rejected: '财务拒绝 AI 字段映射建议',
+              ignored: '财务明确忽略该来源列',
+            } as const)[aiDecision],
+          }
+        : undefined;
+      return [{
+        columnId: column.id,
+        ...(value === IGNORE_VALUE ? { ignore: true } : { targetFieldId: value }),
+        ...(aiReview ? { aiReview } : {}),
+      }];
     });
     if (mappings.length !== task.columns.length) {
       message.warning('每一列都必须映射或明确忽略');
       return;
     }
-    await saveMappings(task.id, { mappings, saveToProfile: true });
+    await saveMappings(task.id, {
+      expectedVersion: task.version,
+      expectedReviewRevision: task.reviewRevision,
+      mappings,
+      saveToProfile: true,
+    });
     setSelected({});
     setAiDraftDecisions({});
     clearAiSuggestionState(task.id);

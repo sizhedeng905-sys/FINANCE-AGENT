@@ -88,6 +88,7 @@ import {
 } from './import.presenter';
 import { XlsConverterService } from './xls-converter.service';
 import { XlsConversionMetadata } from './xls-sanitizer';
+import { ImportAiReviewService } from './import-ai-review.service';
 
 type PrismaWriter = Prisma.TransactionClient | PrismaService;
 
@@ -317,6 +318,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly ledgerEvents: LedgerEventsService,
     private readonly recordPolicy: RecordPolicyService,
     private readonly idempotency: IdempotencyService,
+    private readonly importAiReviews: ImportAiReviewService,
     config: ConfigService
   ) {
     this.confirmationBatchSize = config.get<number>('importConfirmation.batchSize') ?? 500;
@@ -1267,7 +1269,19 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const task = await tx.importTask.findUnique({ where: { id } });
       if (!task) throw new NotFoundException('资源不存在');
       this.assertTaskMutable(task.status);
+      if (task.version !== dto.expectedVersion || task.reviewRevision !== dto.expectedReviewRevision) {
+        throw new ConflictException('导入映射内容已变化，请刷新后重试');
+      }
       await acquireProjectWriteLock(tx, task.projectId);
+      const writableTemplate = await this.recordPolicy.getWritableTemplate(
+        tx,
+        task.projectId,
+        task.templateId,
+        task.importType
+      );
+      if (writableTemplate.version !== task.templateVersion) {
+        throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
+      }
 
       const columnIds = dto.mappings.map((item) => item.columnId);
       const columns = await tx.importColumn.findMany({ where: { importTaskId: id, id: { in: columnIds } } });
@@ -1281,13 +1295,13 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const templateFields = await tx.templateField.findMany({
         where: {
           templateId: task.templateId,
-          fieldId: { in: targetFieldIds },
           isVisible: true,
           field: { isActive: true }
         },
         include: { field: true }
       });
-      if (templateFields.length !== targetFieldIds.length) {
+      const activeTemplateFieldIds = new Set(templateFields.map((item) => item.fieldId));
+      if (targetFieldIds.some((fieldId) => !activeTemplateFieldIds.has(fieldId))) {
         throw new BadRequestException('目标字段必须属于当前模板且处于启用状态');
       }
 
@@ -1300,6 +1314,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       }
 
       const fields = new Map(templateFields.map((item) => [item.fieldId, item.field]));
+      const aiReview = await this.importAiReviews.verifyAndPersist(
+        tx,
+        task,
+        columns,
+        dto.mappings,
+        templateFields.map((item) => ({ id: item.field.id, fieldKey: item.field.fieldKey })),
+        actor
+      );
       for (const mapping of dto.mappings) {
         const ignored = mapping.ignore === true;
         await tx.mappingDecision.upsert({
@@ -1348,13 +1370,20 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         savedToProfile: Boolean(profile),
         profileId: profile?.id,
         profileVersion: profile?.profileVersion,
-        structureFingerprint: profile?.sourceStructureFingerprint
+        structureFingerprint: profile?.sourceStructureFingerprint,
+        aiReview
       }, context);
       await this.ledgerEvents.write(tx, actor, 'mapping_rules_saved', 'import_task', id, {
         mappingCount: dto.mappings.length,
         savedToProfile: Boolean(profile),
         profileId: profile?.id,
-        profileVersion: profile?.profileVersion
+        profileVersion: profile?.profileVersion,
+        aiReviewCount: aiReview.count,
+        aiReviewRevision: aiReview.reviewRevision,
+        aiTaskId: aiReview.aiTaskId,
+        aiOutputHash: aiReview.outputHash,
+        aiVersionVectorHash: aiReview.versionVectorHash,
+        aiDecisionCounts: aiReview.decisionCounts
       });
     });
     return toImportTask(await this.findDetailOrThrow(id));

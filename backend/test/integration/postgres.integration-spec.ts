@@ -4453,6 +4453,8 @@ describe('real PostgreSQL integration', () => {
         .put(`/api/import-tasks/${multiTaskId}/mappings`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .send({
+          expectedVersion: selectedParse.body.data.version,
+          expectedReviewRevision: selectedParse.body.data.reviewRevision,
           mappings: [
             { columnId: multiDateColumn.id, targetFieldId: dateField.id },
             { columnId: multiAmountColumn.id, targetFieldId: amountField.id },
@@ -4528,12 +4530,18 @@ describe('real PostgreSQL integration', () => {
       suggestedFieldId = approved.body.data.fieldId as string;
       activeTemplateId = approved.body.data.templateId as string;
       expect(activeTemplateId).not.toBe(template.id);
+      const mappingReviewState = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
 
       const mapped = await request(app.getHttpServer())
         .put(`/api/import-tasks/${taskId}/mappings`)
         .set('Authorization', `Bearer ${tokens.finance}`)
         .set('X-Request-Id', `integration-import-mapping-${suffix}`)
-        .send({ mappings: [{ columnId: note!.id, ignore: true }], saveToProfile: true })
+        .send({
+          expectedVersion: mappingReviewState.version,
+          expectedReviewRevision: mappingReviewState.reviewRevision,
+          mappings: [{ columnId: note!.id, ignore: true }],
+          saveToProfile: true
+        })
         .expect(200);
       expect(mapped.body.data.status).toBe(ImportTaskStatus.pending_confirm);
 
@@ -4949,7 +4957,11 @@ describe('real PostgreSQL integration', () => {
         await request(app.getHttpServer())
           .put(`/api/import-tasks/${cancelled.taskId}/mappings`)
           .set('Authorization', `Bearer ${financeToken}`)
-          .send({ mappings: [{ columnId: cancelled.columnId, ignore: true }] }),
+          .send({
+            expectedVersion: cancelledApproval.task.version,
+            expectedReviewRevision: cancelledApproval.task.reviewRevision,
+            mappings: [{ columnId: cancelled.columnId, ignore: true }]
+          }),
         await request(app.getHttpServer())
           .post(`/api/field-suggestions/${mapSuggestion.id}/map`)
           .set('Authorization', `Bearer ${financeToken}`)
@@ -5557,6 +5569,7 @@ describe('real PostgreSQL integration', () => {
       const inactiveColumn = parsed.columns.find((column) => column.sourceName === inactiveKey)!;
       expect(hiddenColumn.decision).toBeUndefined();
       expect(inactiveColumn.decision).toBeUndefined();
+      const fieldBoundaryReviewState = await prisma.importTask.findUniqueOrThrow({ where: { id: taskId } });
 
       for (const [columnId, targetFieldId] of [
         [hiddenColumn.id, hiddenFieldId],
@@ -5566,7 +5579,11 @@ describe('real PostgreSQL integration', () => {
         const response = await request(app.getHttpServer())
           .put(`/api/import-tasks/${taskId}/mappings`)
           .set('Authorization', `Bearer ${financeToken}`)
-          .send({ mappings: [{ columnId, targetFieldId }] })
+          .send({
+            expectedVersion: fieldBoundaryReviewState.version,
+            expectedReviewRevision: fieldBoundaryReviewState.reviewRevision,
+            mappings: [{ columnId, targetFieldId }]
+          })
           .expect(400);
         expect(response.body).toMatchObject({ code: 40001, data: {} });
       }
@@ -5867,12 +5884,17 @@ describe('real PostgreSQL integration', () => {
           return { taskId, data: parsed.body.data };
         };
 
-        const saveMappings = async (taskId: string, columns: Array<{ id: string; sourceName: string }>) => {
+        const saveMappings = async (
+          taskId: string,
+          task: { version: number; reviewRevision: number; columns: Array<{ id: string; sourceName: string }> }
+        ) => {
           await request(app.getHttpServer())
             .put(`/api/import-tasks/${taskId}/mappings`)
             .set('Authorization', `Bearer ${token}`)
             .send({
-              mappings: columns.map((column) => ({
+              expectedVersion: task.version,
+              expectedReviewRevision: task.reviewRevision,
+              mappings: task.columns.map((column) => ({
                 columnId: column.id,
                 targetFieldId: column.sourceName === headers[0] ? dateField.id : amountField.id
               })),
@@ -5883,7 +5905,7 @@ describe('real PostgreSQL integration', () => {
 
         const first = await createAndParse(projects[0].id, headers, 'first');
         expect(first.data.mappingProfile.profileId).toBeUndefined();
-        await saveMappings(first.taskId, first.data.columns);
+        await saveMappings(first.taskId, first.data);
         const firstStored = await prisma.importTask.findUniqueOrThrow({ where: { id: first.taskId } });
         expect(firstStored).toMatchObject({
           mappingProfileId: expect.any(String),
@@ -5921,7 +5943,7 @@ describe('real PostgreSQL integration', () => {
           isActive: false
         });
         expect(await prisma.businessRecord.count({ where: { importTaskId: tampered.taskId } })).toBe(0);
-        await saveMappings(tampered.taskId, tampered.data.columns);
+        await saveMappings(tampered.taskId, tampered.data);
         expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: firstProfileId } })).toMatchObject({
           status: MappingProfileStatus.active,
           isActive: true,
@@ -5937,7 +5959,7 @@ describe('real PostgreSQL integration', () => {
         const changedHeaders = [...headers].reverse();
         const changed = await createAndParse(projects[0].id, changedHeaders, 'changed');
         expect(changed.data.mappingProfile.profileId).toBeUndefined();
-        await saveMappings(changed.taskId, changed.data.columns);
+        await saveMappings(changed.taskId, changed.data);
         expect(await prisma.mappingProfile.findUniqueOrThrow({ where: { id: firstProfileId } })).toMatchObject({
           status: MappingProfileStatus.stale,
           isActive: false

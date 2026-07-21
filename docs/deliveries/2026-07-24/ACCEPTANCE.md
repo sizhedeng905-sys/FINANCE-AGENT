@@ -38,6 +38,7 @@
 | 构建/runtime/docs/hygiene/audit | 双端 build、runtime 4/4、96 docs/167 links、768 candidates、双端 0 vulnerabilities | `PASS` |
 | CR-010 远端 Build/CodeQL | 两项均成功 | `PASS` |
 | CR-011/CR-012 新 SHA 远端 CI | SHA `66749b3`：Build `29828098638`、CodeQL `29828098718` | `PASS` |
+| CR-013 新 SHA 远端 CI | SHA `7d363f6`：Build `29831004356`、CodeQL `29831004341` | `PASS` |
 
 详细 E2E 断言见 [CR-011 提交审查](../../commit-reviews/CR-011_friday-excel-report-demo-e2e.md)。CR-011 与本交付包均已包含在远端 SHA `66749b3`，上表链接是该 SHA 的直接证据。
 
