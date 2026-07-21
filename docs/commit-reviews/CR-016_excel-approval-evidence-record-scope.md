@@ -1,6 +1,6 @@
 # CR-016: Excel Approval Evidence and Record Scope
 
-预计提交标题：`feat: link Excel approval evidence to scoped records`
+提交：`435acce feat: link Excel approval evidence to scoped records`
 
 ## 审查结论
 
@@ -33,4 +33,4 @@
 ## 风险与回退
 
 - 无 migration、无后端写契约变化；回退 UI 不影响已冻结批准事实，但会重新失去任务级可见性，因此不建议作为业务回退方案。
-- GitHub 推送因外部网络阻断尚未完成；本地提交后不得借用 CR-014 的绿色状态。
+- GitHub 推送因外部网络阻断尚未完成；本地提交 `435acce` 不得借用 CR-014 的绿色状态。

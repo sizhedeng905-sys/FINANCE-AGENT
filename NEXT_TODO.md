@@ -16,7 +16,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - CR-013 已把真实 Excel AI 建议接入财务草稿，SHA `7d363f6` 的 Build/CodeQL 双绿；AI 不能自动保存、校验、跳转或入账。
 - CR-014 已由服务端核验并持久化四类人工决定、AI Task、输出/版本向量哈希、证据、最终字段和操作者，SHA `5580ce3` 的 Build/CodeQL 双绿。
 - CR-015 已在第二财务确认页展示服务端审核证据，证据读取失败时批准失败关闭；本地提交 `2a59509` 完成 21/21 E2E，但连续三次无法连接 GitHub，尚未推送。
-- CR-016 已在本地完成不可变批准快照展示、按 `importTaskId` 定位正式记录和双向跳转；同时修复 Store 丢弃 `dataLayer/importTaskId` 查询参数。完整 Playwright 21/21、runtime 4/4 和 build 通过，等待本地提交与网络恢复。
+- CR-016 已在本地完成不可变批准快照展示、按 `importTaskId` 定位正式记录和双向跳转；同时修复 Store 丢弃 `dataLayer/importTaskId` 查询参数。提交 `435acce` 已通过完整 Playwright 21/21、runtime 4/4 和 build，等待网络恢复。
 - 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
 - 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
@@ -34,7 +34,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 ## 自动推进顺序
 
 1. 恢复远端后推送 CR-015/CR-016。
-   - CR-015 本地提交为 `2a59509`；三次正常 push 分别遇到连接重置或无法连接 `github.com:443`。
+   - CR-015/CR-016 本地提交分别为 `2a59509`、`435acce`；三次正常 push 分别遇到连接重置或无法连接 `github.com:443`，随后只读探测确认 `github.com` DNS 仍失败。
    - 网络恢复后正常 push 当前分支，分别按实际新 SHA 检查 Build 与 CodeQL；禁止借用 CR-014 绿色，不 force push。
 2. 完成三次人工周五演练。
    - 按 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](docs/deliveries/2026-07-24/DEMO_RUNBOOK.md) 每次从 reset 开始，如实填写验收表；未执行前保持 `NOT_RUN`。

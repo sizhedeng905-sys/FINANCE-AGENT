@@ -3,7 +3,7 @@
 更新日期：2026-07-21
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计继续收口。CR-002 至 CR-010 已关闭 Excel staging、Prompt provenance、治理、文档、production-safe system registry 和运行镜像供应链问题。CR-011 新增周五演示 E2E，CR-012 建立只允许本机精确测试库的现场交付包，两者已随 SHA `66749b3` 远端双绿。CR-013 把真实 Excel AI 建议接入财务人工草稿，并已随 SHA `7d363f6` 取得 Build/CodeQL 双绿。CR-014 由服务端验证并持久化四类人工决定及完整 provenance，已随 SHA `5580ce3` 取得远端 Build/CodeQL 双绿。CR-015 在第二财务确认页分页展示该事实链；CR-016 将批准完成页定位到本批正式记录并展示不可变批准快照，同时修复 Store 丢弃 `importTaskId/dataLayer`。当前候选通过 50 suites / 464 unit、完整 PostgreSQL/Redis 回归 11 suites / 111 个实际执行测试（另 3 suites / 14 tests 按仓库既有条件跳过）、完整 Playwright 21/21、44 migrations 双路径和双端 build，另有 demo 配置 6/6 与一键故事 1/1。CR-015 本地提交 `2a59509` 连续三次无法连接 GitHub，CR-016 本地工程验收完成；两者尚待正常推送与同 SHA 验证。三次人工演练为 `NOT_RUN`，真实口径/准确率为 `REAL_SAMPLE_NEEDED`，目标 Staging 为 `EXTERNAL_RESOURCE_NEEDED`。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计继续收口。CR-002 至 CR-010 已关闭 Excel staging、Prompt provenance、治理、文档、production-safe system registry 和运行镜像供应链问题。CR-011 新增周五演示 E2E，CR-012 建立只允许本机精确测试库的现场交付包，两者已随 SHA `66749b3` 远端双绿。CR-013 把真实 Excel AI 建议接入财务人工草稿，并已随 SHA `7d363f6` 取得 Build/CodeQL 双绿。CR-014 由服务端验证并持久化四类人工决定及完整 provenance，已随 SHA `5580ce3` 取得远端 Build/CodeQL 双绿。CR-015 在第二财务确认页分页展示该事实链；CR-016 将批准完成页定位到本批正式记录并展示不可变批准快照，同时修复 Store 丢弃 `importTaskId/dataLayer`。当前候选通过 50 suites / 464 unit、完整 PostgreSQL/Redis 回归 11 suites / 111 个实际执行测试（另 3 suites / 14 tests 按仓库既有条件跳过）、完整 Playwright 21/21、44 migrations 双路径和双端 build，另有 demo 配置 6/6 与一键故事 1/1。CR-015/CR-016 本地提交分别为 `2a59509`、`435acce`；三次 push 与随后 DNS 探测均受 GitHub 网络阻断，两者尚待正常推送与同 SHA 验证。三次人工演练为 `NOT_RUN`，真实口径/准确率为 `REAL_SAMPLE_NEEDED`，目标 Staging 为 `EXTERNAL_RESOURCE_NEEDED`。
 
 ## 完成口径
 

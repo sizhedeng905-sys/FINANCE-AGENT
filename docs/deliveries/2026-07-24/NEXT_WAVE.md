@@ -6,7 +6,7 @@
 
 预期结果：
 
-- CR-011/CR-012 已随 SHA `66749b3` 获得同 SHA Build 与 CodeQL 证据；CR-013 SHA `7d363f6`、CR-014 SHA `5580ce3` 的 Build/CodeQL 也已全绿。CR-015 确认页证据摘要和 CR-016 批准快照/批次记录定位均已本地通过 21/21 E2E；GitHub 连接连续三次失败，等待网络恢复后正常推送与同 SHA 远端验证。
+- CR-011/CR-012 已随 SHA `66749b3` 获得同 SHA Build 与 CodeQL 证据；CR-013 SHA `7d363f6`、CR-014 SHA `5580ce3` 的 Build/CodeQL 也已全绿。CR-015 `2a59509` 和 CR-016 `435acce` 均已本地通过 21/21 E2E；GitHub 连接连续三次失败且随后 DNS 探测仍失败，等待网络恢复后正常推送与同 SHA 远端验证。
 - 按 Runbook 连续完成三次人工演练，逐次记录耗时、金额、偏差和清理结果。
 - 前端接入真实 `POST/GET /api/import-tasks/:id/ai-suggestions`，明确显示候选模板、逐列建议、warning、evidence、Prompt/模型/Mock provenance。
 - 采纳 AI 建议只修改当前页面草稿；保存前不发 PUT、不自动重校验、不切换冻结模板、不创建 BusinessRecord。
