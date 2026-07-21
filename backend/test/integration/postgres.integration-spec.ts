@@ -6287,6 +6287,207 @@ describe('real PostgreSQL integration', () => {
       throw new Error(`Timed out waiting for import confirmation progress ${taskId}`);
     };
 
+    it('keeps unpublished staging unreachable through generic record APIs', async () => {
+      const taskId = await createTask(3, '2026-07-18');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        completeBackgroundConfirmation(
+          job: { taskId: string },
+          integrity: unknown
+        ): Promise<void>;
+      };
+      const originalCompletion = service.completeBackgroundConfirmation.bind(service);
+      let signalCompletionEntered!: () => void;
+      let releaseCompletion!: () => void;
+      const completionEntered = new Promise<void>((resolve) => {
+        signalCompletionEntered = resolve;
+      });
+      const completionHold = new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+      const completionSpy = jest
+        .spyOn(service, 'completeBackgroundConfirmation')
+        .mockImplementation(async (job, integrity) => {
+          if (job.taskId !== taskId) return originalCompletion(job, integrity);
+          signalCompletionEntered();
+          await completionHold;
+          throw new Error('integration publication hold released');
+        });
+
+      try {
+        await request(app.getHttpServer())
+          .post(`/api/import-tasks/${taskId}/confirm`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .set('Idempotency-Key', `b8-confirm-${suffix}-staging-self-approval`)
+          .send(approval.payload)
+          .expect(403)
+          .expect(({ body }) => {
+            expect(body.data.reason).toBe('IMPORT_SELF_APPROVAL_FORBIDDEN');
+          });
+        expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-staging-api-boundary`
+        ).expect(201);
+        await Promise.race([
+          completionEntered,
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`Timed out waiting for staged records for ${taskId}`)),
+            30_000
+          ))
+        ]);
+
+        const staged = await prisma.businessRecord.findMany({
+          where: { importTaskId: taskId },
+          orderBy: { id: 'asc' },
+          select: { id: true }
+        });
+        expect(staged).toHaveLength(3);
+
+        const listResponse = await request(app.getHttpServer())
+          .get(`/api/records?importTaskId=${taskId}&page=1&pageSize=20`)
+          .set('Authorization', `Bearer ${financeToken}`);
+        const detailResponse = await request(app.getHttpServer())
+          .get(`/api/records/${staged[0].id}`)
+          .set('Authorization', `Bearer ${financeToken}`);
+        const projectRecordsResponse = await request(app.getHttpServer())
+          .get(`/api/projects/${projectId}/records?importTaskId=${taskId}&page=1&pageSize=20`)
+          .set('Authorization', `Bearer ${financeToken}`);
+        const structureResponse = await request(app.getHttpServer())
+          .get(`/api/projects/${projectId}/structure`)
+          .set('Authorization', `Bearer ${financeToken}`);
+        const patchResponse = await request(app.getHttpServer())
+          .patch(`/api/records/${staged[0].id}`)
+          .set('Authorization', `Bearer ${reviewerToken}`)
+          .set('Idempotency-Key', `b8-confirm-${suffix}-staging-generic-patch`)
+          .send({ description: 'must never mutate unpublished staging' });
+        const confirmResponse = await request(app.getHttpServer())
+          .post(`/api/records/${staged[1].id}/confirm`)
+          .set('Authorization', `Bearer ${reviewerToken}`)
+          .set('Idempotency-Key', `b8-confirm-${suffix}-staging-generic-confirm`);
+        const voidResponse = await request(app.getHttpServer())
+          .delete(`/api/records/${staged[2].id}`)
+          .set('Authorization', `Bearer ${reviewerToken}`);
+        const stored = await prisma.businessRecord.findMany({
+          where: { importTaskId: taskId },
+          orderBy: { id: 'asc' },
+          select: { status: true, version: true, confirmedAt: true, voidedAt: true }
+        });
+
+        expect({
+          listStatus: listResponse.status,
+          listTotal: listResponse.body.data?.total,
+          detailStatus: detailResponse.status,
+          projectRecordsStatus: projectRecordsResponse.status,
+          projectRecordsTotal: projectRecordsResponse.body.data?.total,
+          structureStatus: structureResponse.status,
+          structureContainsStaging: structureResponse.body.data?.records?.some(
+            (record: { id: string }) => staged.some((item) => item.id === record.id)
+          ),
+          patchStatus: patchResponse.status,
+          confirmStatus: confirmResponse.status,
+          voidStatus: voidResponse.status,
+          stored
+        }).toEqual({
+          listStatus: 200,
+          listTotal: 0,
+          detailStatus: 404,
+          projectRecordsStatus: 200,
+          projectRecordsTotal: 0,
+          structureStatus: 200,
+          structureContainsStaging: false,
+          patchStatus: 404,
+          confirmStatus: 404,
+          voidStatus: 404,
+          stored: [
+            { status: BusinessRecordStatus.pending_confirm, version: 1, confirmedAt: null, voidedAt: null },
+            { status: BusinessRecordStatus.pending_confirm, version: 1, confirmedAt: null, voidedAt: null },
+            { status: BusinessRecordStatus.pending_confirm, version: 1, confirmedAt: null, voidedAt: null }
+          ]
+        });
+      } finally {
+        releaseCompletion();
+        completionSpy.mockRestore();
+        await waitForTerminalStatus(taskId);
+      }
+    });
+
+    it('fails publication closed after staged record and value tampering', async () => {
+      const taskId = await createTask(2, '2026-07-19');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        prepareBackgroundConfirmationCompletion(job: { taskId: string }): Promise<unknown>;
+      };
+      const originalPreparation = service.prepareBackgroundConfirmationCompletion.bind(service);
+      let signalPreparationEntered!: () => void;
+      let releasePreparation!: () => void;
+      const preparationEntered = new Promise<void>((resolve) => {
+        signalPreparationEntered = resolve;
+      });
+      const preparationHold = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      const preparationSpy = jest
+        .spyOn(service, 'prepareBackgroundConfirmationCompletion')
+        .mockImplementation(async (job) => {
+          if (job.taskId !== taskId) return originalPreparation(job);
+          signalPreparationEntered();
+          await preparationHold;
+          return originalPreparation(job);
+        });
+
+      try {
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-staging-tamper`
+        ).expect(201);
+        await Promise.race([
+          preparationEntered,
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`Timed out waiting for publication preparation for ${taskId}`)),
+            30_000
+          ))
+        ]);
+
+        const staged = await prisma.businessRecord.findFirstOrThrow({
+          where: { importTaskId: taskId },
+          orderBy: { id: 'asc' }
+        });
+        await prisma.$transaction([
+          prisma.businessRecord.update({
+            where: { id: staged.id },
+            data: {
+              status: BusinessRecordStatus.draft,
+              amount: new Prisma.Decimal('999.99'),
+              version: { increment: 1 }
+            }
+          }),
+          prisma.recordValue.updateMany({
+            where: { recordId: staged.id, fieldId: amountFieldId },
+            data: { valueNumber: new Prisma.Decimal('999.99') }
+          })
+        ]);
+        releasePreparation();
+
+        const terminal = await waitForTerminalStatus(taskId);
+        const visible = await request(app.getHttpServer())
+          .get(`/api/records?importTaskId=${taskId}&page=1&pageSize=20`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .expect(200);
+        expect({ status: terminal.status, visibleTotal: visible.body.data.total }).toEqual({
+          status: ImportTaskStatus.confirmation_failed,
+          visibleTotal: 0
+        });
+      } finally {
+        releasePreparation();
+        preparationSpy.mockRestore();
+        await waitForTerminalStatus(taskId);
+      }
+    });
+
     it('confirms 5,001 rows through a fast asynchronous API and a complete business-data closure', async () => {
       const rowCount = 5_001;
       const taskId = await createTask(rowCount);
