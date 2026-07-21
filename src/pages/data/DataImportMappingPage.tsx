@@ -1,15 +1,43 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PlayCircleOutlined } from '@ant-design/icons';
-import { Alert, App, Button, Card, Checkbox, Descriptions, Empty, InputNumber, Progress, Select, Space, Spin, Table, Tag } from 'antd';
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Checkbox,
+  Descriptions,
+  Empty,
+  InputNumber,
+  Progress,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import ExcelAiSuggestionPanel, {
+  type AiDraftDecision,
+  type DisplayExcelAiMapping,
+} from '@/components/data/ExcelAiSuggestionPanel';
 import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
 import { useImportStore } from '@/store/importStore';
-import type { ImportColumn, ImportMappingType } from '@/types/dataCenter';
+import type {
+  ExcelAiMappingItem,
+  ExcelMappingProfileSuggestionItem,
+  ImportColumn,
+  ImportMappingType,
+} from '@/types/dataCenter';
 import { fieldTypeMap, importStatusMap } from '@/utils/dataCenterMaps';
 
 const IGNORE_VALUE = '__ignore__';
+
+function sourceRefForColumn(column: ImportColumn) {
+  return column.sourceColumnId ?? `column:${column.columnIndex}`;
+}
 
 const mappingTypeLabels: Record<ImportMappingType, string> = {
   profile: '历史人工规则',
@@ -26,7 +54,9 @@ export default function DataImportMappingPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { message } = App.useApp();
+  const pageEpoch = useRef(0);
   const [selected, setSelected] = useState<Record<string, string>>({});
+  const [aiDraftDecisions, setAiDraftDecisions] = useState<Record<string, AiDraftDecision>>({});
   const [sheetIndex, setSheetIndex] = useState<number>();
   const [headerRange, setHeaderRange] = useState<string>();
   const [allowHiddenSheet, setAllowHiddenSheet] = useState(false);
@@ -41,7 +71,14 @@ export default function DataImportMappingPage() {
   const cancelTask = useImportStore((state) => state.cancelTask);
   const saveMappings = useImportStore((state) => state.saveMappings);
   const autoMatch = useImportStore((state) => state.autoMatch);
-  const generateSuggestions = useImportStore((state) => state.generateSuggestions);
+  const generateFieldDefinitionCandidates = useImportStore((state) => state.generateFieldDefinitionCandidates);
+  const aiSuggestion = useImportStore((state) => id ? state.aiSuggestionsByTask[id] : undefined);
+  const aiSuggestionHistory = useImportStore((state) => id ? state.aiSuggestionHistoryByTask[id] : undefined);
+  const aiSuggestionLoading = useImportStore((state) => Boolean(id && state.aiSuggestionLoadingByTask[id]));
+  const aiSuggestionError = useImportStore((state) => id ? state.aiSuggestionErrorByTask[id] : undefined);
+  const requestAiSuggestions = useImportStore((state) => state.requestAiSuggestions);
+  const fetchAiSuggestionHistory = useImportStore((state) => state.fetchAiSuggestionHistory);
+  const clearAiSuggestionState = useImportStore((state) => state.clearAiSuggestionState);
   const fields = useDataCenterStore((state) => state.fields);
   const templateFields = useDataCenterStore((state) => state.templateFields);
   const fetchFields = useDataCenterStore((state) => state.fetchFields);
@@ -53,8 +90,22 @@ export default function DataImportMappingPage() {
   }, [fetchFields, fetchTask, id]);
 
   useEffect(() => {
+    pageEpoch.current += 1;
+    setSelected({});
+    setAiDraftDecisions({});
+    return () => {
+      pageEpoch.current += 1;
+      if (id) clearAiSuggestionState(id);
+    };
+  }, [clearAiSuggestionState, id]);
+
+  useEffect(() => {
     if (task?.templateId) void fetchTemplateFields(task.templateId).catch(() => undefined);
   }, [fetchTemplateFields, task?.templateId]);
+
+  useEffect(() => {
+    if (id && task?.columns.length) void fetchAiSuggestionHistory(id).catch(() => undefined);
+  }, [fetchAiSuggestionHistory, id, task?.columns.length]);
 
   useEffect(() => {
     if (id && task?.status === 'uploaded' && !inspection) void inspectTask(id).catch(() => undefined);
@@ -91,10 +142,124 @@ export default function DataImportMappingPage() {
     [fields, taskFieldIds],
   );
 
+  const frozenTemplateVersionId = task?.templateVersion
+    ? `${task.templateId}:v${task.templateVersion}`
+    : undefined;
+  const suggestedTemplateVersionId = aiSuggestion?.status === 'needs_finance_review'
+    ? aiSuggestion.classification.output.selectedTemplateVersionId
+    : undefined;
+  const mappingTemplateVersionId = aiSuggestion?.status === 'needs_finance_review'
+    ? aiSuggestion.mapping?.output.templateVersionId
+    : undefined;
+  const templateMismatch = Boolean(aiSuggestion && !frozenTemplateVersionId)
+    || Boolean(
+      aiSuggestion?.status === 'needs_finance_review'
+      && (
+        !suggestedTemplateVersionId
+        || suggestedTemplateVersionId !== frozenTemplateVersionId
+        || (mappingTemplateVersionId && mappingTemplateVersionId !== frozenTemplateVersionId)
+        || (mappingTemplateVersionId && mappingTemplateVersionId !== suggestedTemplateVersionId)
+      ),
+    );
+  const columnBySourceRef = useMemo(
+    () => new Map((task?.columns ?? []).map((column) => [sourceRefForColumn(column), column])),
+    [task?.columns],
+  );
+  const aiMappings = useMemo<DisplayExcelAiMapping[]>(() => {
+    if (!aiSuggestion) return [];
+    if (aiSuggestion.status === 'profile_reused') {
+      return aiSuggestion.mappings.map((item: ExcelMappingProfileSuggestionItem) => ({
+        sourceRef: item.sourceRef,
+        sourceName: columnBySourceRef.get(item.sourceRef)?.sourceName ?? item.sourceRef,
+        targetFieldId: item.targetFieldId,
+        targetFieldKey: item.targetFieldKey,
+        targetFieldName: item.ignored
+          ? '明确忽略此列'
+          : fields.find((field) => field.id === item.targetFieldId)?.fieldName ?? item.targetFieldKey ?? '未知字段',
+        transformKey: item.transformKey,
+        evidenceRefs: [item.sourceRef],
+        ignored: item.ignored,
+        source: 'mapping_profile',
+      }));
+    }
+    return (aiSuggestion.mapping?.output.mappings ?? []).map((item: ExcelAiMappingItem) => ({
+      sourceRef: item.sourceRef,
+      sourceName: columnBySourceRef.get(item.sourceRef)?.sourceName ?? item.sourceRef,
+      targetFieldId: item.targetFieldId,
+      targetFieldKey: item.targetFieldKey,
+      targetFieldName: item.targetFieldName,
+      transformKey: item.transformKey,
+      confidence: item.confidence,
+      evidenceRefs: item.evidenceRefs,
+      ignored: false,
+      source: 'ai',
+    }));
+  }, [aiSuggestion, columnBySourceRef, fields]);
+  const aiMappingByColumnId = useMemo(() => new Map(
+    aiMappings.flatMap((mapping) => {
+      const column = columnBySourceRef.get(mapping.sourceRef);
+      return column ? [[column.id, mapping] as const] : [];
+    }),
+  ), [aiMappings, columnBySourceRef]);
+
   const valueFor = (column: ImportColumn) => {
     if (Object.prototype.hasOwnProperty.call(selected, column.id)) return selected[column.id];
     if (column.decision?.ignored) return IGNORE_VALUE;
     return column.decision?.targetFieldId;
+  };
+
+  const updateDraftSelection = (column: ImportColumn, value: string) => {
+    setSelected((state) => ({ ...state, [column.id]: value }));
+    const suggestion = aiMappingByColumnId.get(column.id);
+    if (!suggestion) return;
+    const decision: AiDraftDecision = value === IGNORE_VALUE
+      ? 'ignored'
+      : value === suggestion.targetFieldId
+        ? 'accepted'
+        : 'edited';
+    setAiDraftDecisions((state) => ({ ...state, [sourceRefForColumn(column)]: decision }));
+  };
+
+  const canApplyAiMapping = (mapping: DisplayExcelAiMapping) => {
+    if (templateMismatch || !columnBySourceRef.has(mapping.sourceRef)) return false;
+    return mapping.ignored || Boolean(mapping.targetFieldId && taskFieldIds.has(mapping.targetFieldId));
+  };
+
+  const applyAiMapping = (mapping: DisplayExcelAiMapping) => {
+    const column = columnBySourceRef.get(mapping.sourceRef);
+    if (!column || !canApplyAiMapping(mapping)) return;
+    setSelected((state) => ({
+      ...state,
+      [column.id]: mapping.ignored ? IGNORE_VALUE : mapping.targetFieldId!,
+    }));
+    setAiDraftDecisions((state) => ({
+      ...state,
+      [mapping.sourceRef]: mapping.ignored ? 'ignored' : 'accepted',
+    }));
+  };
+
+  const rejectAiMapping = (mapping: DisplayExcelAiMapping) => {
+    const column = columnBySourceRef.get(mapping.sourceRef);
+    if (!column) return;
+    setSelected((state) => {
+      if (aiDraftDecisions[mapping.sourceRef] !== 'accepted') return state;
+      const next = { ...state };
+      delete next[column.id];
+      return next;
+    });
+    setAiDraftDecisions((state) => ({ ...state, [mapping.sourceRef]: 'rejected' }));
+  };
+
+  const ignoreAiMapping = (mapping: DisplayExcelAiMapping) => {
+    const column = columnBySourceRef.get(mapping.sourceRef);
+    if (!column || templateMismatch) return;
+    setSelected((state) => ({ ...state, [column.id]: IGNORE_VALUE }));
+    setAiDraftDecisions((state) => ({ ...state, [mapping.sourceRef]: 'ignored' }));
+  };
+
+  const applyAllAiMappings = () => {
+    if (templateMismatch) return;
+    aiMappings.forEach(applyAiMapping);
   };
   const unresolved = task?.columns.filter((column) => !valueFor(column)) ?? [];
   const selectedSheet = inspection?.sheets.find((item) => item.sheetIndex === sheetIndex);
@@ -128,7 +293,7 @@ export default function DataImportMappingPage() {
           className="full-width"
           placeholder="请选择字段或忽略"
           value={valueFor(column)}
-          onChange={(value) => setSelected((state) => ({ ...state, [column.id]: value }))}
+          onChange={(value) => updateDraftSelection(column, value)}
           options={[
             { label: '明确忽略此列', value: IGNORE_VALUE },
             ...candidateFields.map((field) => ({ label: `${field.fieldName}（${fieldTypeMap[field.fieldType]}）`, value: field.id })),
@@ -161,7 +326,24 @@ export default function DataImportMappingPage() {
     }
     await saveMappings(task.id, { mappings, saveToProfile: true });
     setSelected({});
+    setAiDraftDecisions({});
+    clearAiSuggestionState(task.id);
     message.success('映射已保存并可供后续同模板复用');
+  };
+
+  const requestAi = async () => {
+    if (!task) return;
+    const requestEpoch = pageEpoch.current;
+    try {
+      const result = await requestAiSuggestions(task.id);
+      if (!result || requestEpoch !== pageEpoch.current) return;
+      if (result.mode === 'manual') message.warning('AI 建议不可用，现有人工映射草稿未改变');
+      else message.success('建议已生成，等待财务人工复核');
+      void fetchAiSuggestionHistory(task.id).catch(() => undefined);
+    } catch {
+      if (requestEpoch !== pageEpoch.current) return;
+      message.warning('AI 建议不可用，已保留当前人工映射草稿');
+    }
   };
 
   const parseSelection = async () => {
@@ -334,13 +516,40 @@ export default function DataImportMappingPage() {
             ) : task.columns.length > 0 ? (
               <Alert className="section-row" type="success" showIcon message="所有列均已有明确处理决定" />
             ) : null}
+            {task.columns.length > 0 ? (
+              <ExcelAiSuggestionPanel
+                suggestion={aiSuggestion}
+                error={aiSuggestionError}
+                loading={aiSuggestionLoading}
+                frozenTemplateVersionId={frozenTemplateVersionId}
+                suggestedTemplateVersionId={suggestedTemplateVersionId}
+                mappingTemplateVersionId={mappingTemplateVersionId}
+                templateMismatch={templateMismatch}
+                mappings={aiMappings}
+                decisions={aiDraftDecisions}
+                historyCount={aiSuggestionHistory?.items?.length ?? 0}
+                canApply={canApplyAiMapping}
+                onRequest={() => void requestAi()}
+                onApply={applyAiMapping}
+                onReject={rejectAiMapping}
+                onIgnore={ignoreAiMapping}
+                onApplyAll={applyAllAiMappings}
+              />
+            ) : null}
             {task.columns.length > 0 ? <Card className="section-row" title="字段映射表">
-              <Table rowKey="id" columns={columns} dataSource={task.columns} pagination={false} scroll={{ x: 1050 }} />
+              <Table
+                rowKey="id"
+                columns={columns}
+                dataSource={task.columns}
+                pagination={false}
+                scroll={{ x: 1050 }}
+                onRow={() => ({ className: 'excel-mapping-row' })}
+              />
               <Space className="form-actions" wrap>
                 <Button loading={loading} onClick={() => void save().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '保存失败'))}>保存映射</Button>
                 <Button loading={loading} onClick={() => void autoMatch(task.id).then(() => message.success('自动匹配已重新执行')).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '匹配失败'))}>重新自动匹配</Button>
-                <Button loading={loading} onClick={() => void generateSuggestions(task.id).then((items) => message.success(`已保留 ${items.length} 条字段建议`)).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '生成失败'))}>生成字段建议</Button>
-                <Button onClick={() => navigate('/data/field-suggestions')}>查看字段建议</Button>
+                <Button loading={loading} onClick={() => void generateFieldDefinitionCandidates(task.id).then((items) => message.success(`已保留 ${items.length} 条新字段定义候选`)).catch((nextError) => message.error(nextError instanceof Error ? nextError.message : '生成失败'))}>生成新字段定义候选</Button>
+                <Button onClick={() => navigate('/data/field-suggestions')}>查看新字段定义候选</Button>
                 <Button
                   type="primary"
                   disabled={unresolved.length > 0}

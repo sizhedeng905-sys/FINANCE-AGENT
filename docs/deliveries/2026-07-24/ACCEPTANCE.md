@@ -37,9 +37,9 @@
 | migration 双路径 | CR-012 最终复验空库 43 条及 42 -> 43 升级 | `PASS` |
 | 构建/runtime/docs/hygiene/audit | 双端 build、runtime 4/4、96 docs/167 links、768 candidates、双端 0 vulnerabilities | `PASS` |
 | CR-010 远端 Build/CodeQL | 两项均成功 | `PASS` |
-| CR-011 新 SHA 远端 CI | 连续三次 push 均遇到连接重置，尚无新 SHA 证据 | `BLOCKED_EXTERNAL` |
+| CR-011/CR-012 新 SHA 远端 CI | SHA `66749b3`：Build `29828098638`、CodeQL `29828098718` | `PASS` |
 
-详细 E2E 断言见 [CR-011 提交审查](../../commit-reviews/CR-011_friday-excel-report-demo-e2e.md)。上表中的全量回归属于 CR-011 当前本地提交；不能用 CR-010 的绿色 CI 代替 CR-011 或本交付包提交的远端证据。
+详细 E2E 断言见 [CR-011 提交审查](../../commit-reviews/CR-011_friday-excel-report-demo-e2e.md)。CR-011 与本交付包均已包含在远端 SHA `66749b3`，上表链接是该 SHA 的直接证据。
 
 ## 三次连续人工演练
 
@@ -61,4 +61,4 @@
 4. 演示只使用合成 fixture、Mock Provider 和非生产账号。
 5. 演示者明确说明 [能力限制](LIMITATIONS.md)，不把工程验证说成真实准确率或生产就绪。
 
-当前结论：`CONDITIONAL_NO_GO`。自动化和本机 smoke 已通过，但三次人工演练为 `NOT_RUN`，CR-011/本交付包的新 SHA 尚无远端 CI 证据。
+当前结论：`CONDITIONAL_NO_GO`。自动化、本机 smoke 和远端 CI 已通过，但三次人工演练仍为 `NOT_RUN`。

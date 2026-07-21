@@ -9,7 +9,7 @@ import {
 } from '@/mock/mockDataCenter';
 import { clearAppStorage } from '@/utils/cache';
 import { useDataCenterStore } from './dataCenterStore';
-import { useImportStore } from './importStore';
+import { resetImportRequestState, useImportStore } from './importStore';
 import { useNotificationStore } from './notificationStore';
 import { useOCRStore } from './ocrStore';
 import { useReportStore } from './reportStore';
@@ -18,6 +18,7 @@ import { resetWorkOrderRequestState, useWorkOrderStore } from './workOrderStore'
 
 export function resetUserScopedState() {
   resetWorkOrderRequestState();
+  resetImportRequestState();
   useWorkOrderStore.setState({
     workOrders: [],
     selectedWorkOrderId: undefined,
@@ -82,6 +83,10 @@ export function resetUserScopedState() {
     rows: [],
     preview: undefined,
     suggestions: [],
+    aiSuggestionsByTask: {},
+    aiSuggestionHistoryByTask: {},
+    aiSuggestionLoadingByTask: {},
+    aiSuggestionErrorByTask: {},
     page: 1,
     pageSize: 20,
     total: 0,

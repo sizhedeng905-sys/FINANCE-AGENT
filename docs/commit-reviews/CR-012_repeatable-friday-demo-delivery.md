@@ -63,7 +63,7 @@
 ## 10. 限制
 
 - 三次连续人工演练为 `NOT_RUN`，因此周五状态仍为 `CONDITIONAL_NO_GO`。
-- CR-011 的三次正常 push 均遇到 `Recv failure: Connection was reset`；远端新 SHA 状态为 `BLOCKED_EXTERNAL`，不能借用 CR-010 CI。
+- CR-011 与 CR-012 已随 SHA `66749b3` 推送；Build run `29828098638` 与 CodeQL run `29828098718` 均成功。
 - 真实 OCR/AI/财务真值、目标服务器、恢复和 owner UAT 仍未关闭。
 - `basic` 扫描、local storage 和 memory controls 只适用于本地合成演示，不代表 production 配置。
 
@@ -81,4 +81,4 @@
 
 ## 12. 状态
 
-`LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL`。本地交付包、命令负测、服务 smoke 和自动化故事复验已通过；远端证据和三次人工演练尚未完成。
+`REMOTE_ENGINEERING_VERIFIED / HUMAN_REHEARSAL_NOT_RUN`。本地交付包、命令负测、服务 smoke、自动化故事复验和远端 CI 已通过；三次人工演练尚未完成。

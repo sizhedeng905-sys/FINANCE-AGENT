@@ -2,6 +2,8 @@ import { runtimeConfig } from '@/config/runtime';
 import type {
   CreateImportTaskPayload,
   ConfirmImportTaskPayload,
+  ExcelAiSuggestionHistory,
+  ExcelAiSuggestionResult,
   FieldSuggestion,
   FieldSuggestionListQuery,
   ImportConfirmResult,
@@ -110,10 +112,30 @@ export function autoMatchImportTask(id: string): Promise<ImportTask> {
     : mockAutoMatchImportTask(id);
 }
 
-export function generateImportSuggestions(id: string): Promise<{ count: number; suggestions: FieldSuggestion[] }> {
+export function generateFieldDefinitionCandidates(id: string): Promise<{ count: number; suggestions: FieldSuggestion[] }> {
   return runtimeConfig.dataMode === 'api'
     ? httpClient.post<{ count: number; suggestions: FieldSuggestion[] }>(`/import-tasks/${encodeURIComponent(id)}/generate-suggestions`)
     : mockGenerateImportSuggestions(id);
+}
+
+export function requestImportAiSuggestions(id: string): Promise<ExcelAiSuggestionResult> {
+  if (runtimeConfig.dataMode === 'api') {
+    return httpClient.post<ExcelAiSuggestionResult>(`/import-tasks/${encodeURIComponent(id)}/ai-suggestions`);
+  }
+  return Promise.resolve({
+    status: 'manual_required',
+    mode: 'manual',
+    reasonCode: 'FRONTEND_MOCK_MODE',
+    message: '当前是前端 Mock 数据模式，AI 映射建议未调用后端；请继续人工映射',
+    mapping: null,
+    businessRecordsCreated: 0,
+  });
+}
+
+export function getImportAiSuggestionHistory(id: string): Promise<ExcelAiSuggestionHistory> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<ExcelAiSuggestionHistory>(`/import-tasks/${encodeURIComponent(id)}/ai-suggestions`)
+    : Promise.resolve({ items: [] });
 }
 
 export function getImportPreview(id: string, query: ImportPreviewQuery = {}): Promise<ImportPreview> {

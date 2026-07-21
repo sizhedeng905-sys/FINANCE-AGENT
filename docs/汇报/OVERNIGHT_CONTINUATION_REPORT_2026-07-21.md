@@ -6,7 +6,7 @@
 - 分支：`agent/b8-stable-hardening`
 - Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 起始 SHA：`7a0fded95aa1fb78658c1dd173bdb33264ec539c`
-- 当前 SHA：`aa7230a`；CR-012 尚未提交
+- 当前远端 SHA：`66749b3`；CR-013 正在本地收口
 - 用户未跟踪文件、模型、本地数据、`.env`、上传物和本地扫描证据均保持未暂存。
 
 ## 执行台账
@@ -15,9 +15,9 @@
 | --- | --- | --- | --- | --- |
 | D | CR-009 | Production-safe system registry 复核 | `VERIFIED_NO_CODE_CHANGE` | 保留原实现 |
 | A | CR-010 | 后端运行镜像移除无用 npm/Corepack | `ENGINEERING_VERIFIED` | 保持持续扫描 |
-| B | CR-011 | Excel 到经营报告演示 E2E | `LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL` | 网络恢复后正常 push 并观察 Build/CodeQL |
-| C | CR-012 | 2026-07-24 可重复演示包 | `LOCAL_ENGINEERING_VERIFIED` | 提交并与 CR-011 一起推送；人工三次演练 |
-| E | 待分配 | Excel AI 前端 advisory bridge | `READY_FOR_ENGINEERING` | CR-012 提交后开始独立前端提交 |
+| B | CR-011 | Excel 到经营报告演示 E2E | `REMOTE_ENGINEERING_VERIFIED` | 人工三次演练 |
+| C | CR-012 | 2026-07-24 可重复演示包 | `REMOTE_ENGINEERING_VERIFIED / HUMAN_REHEARSAL_NOT_RUN` | 人工三次演练 |
+| E | CR-013 | Excel AI 前端 advisory bridge | `LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING` | 提交后观察 Build/CodeQL；继续后端审核 provenance |
 
 ## CR-009 复核
 
@@ -43,7 +43,7 @@
 - 财务 B 重新校验并批准；同一 Idempotency-Key 重放返回同一结果，最终恰好 3 条 confirmed Excel 记录。
 - 项目 structure、老板报告和 Snapshot 增量均为 3 条与 `13422.21`；`sourceDigest` 和 canonical `snapshotHash` 均从来源重算一致。
 - 单条 E2E 1/1、完整 Playwright 18/18、后端 50/464、PostgreSQL + 强制 Redis 14/124、migration 双路径、双端 build、runtime 与双端 audit 全部通过。
-- 提交 `aa7230a` 已形成；三次正常 push 均失败于 `Recv failure: Connection was reset`，按任务书停止重试并标记 `BLOCKED_EXTERNAL`。
+- 提交 `aa7230a` 已随 CR-012 推送；SHA `66749b3` 的 Build run `29828098638` 与 CodeQL run `29828098718` 均成功。
 
 ## CR-012 当前证据
 
@@ -56,14 +56,14 @@
 
 ## 周五演示判断
 
-当前为 `CONDITIONAL_NO_GO`：CR-010 已远端全绿，任务 B 自动化主故事和任务 C 离线运行包均已本地通过；但 CR-011/CR-012 尚未取得远端新 SHA 证据，三次人工演练仍为 `NOT_RUN`。主故事不依赖真实 OCR 或本地大模型。
+当前为 `CONDITIONAL_NO_GO`：CR-010 至 CR-012 已远端全绿，任务 B 自动化主故事和任务 C 离线运行包均有同 SHA 证据；三次人工演练仍为 `NOT_RUN`。CR-013 已在本地接通 Excel AI 人工草稿，但不依赖真实 OCR 或本地大模型，也不替代人工演练。
 
 ## 恢复点
 
-CR-012 提交前第一条命令：
+CR-013 提交前第一条命令：
 
 ```bash
 npm run check:docs
 ```
 
-随后执行 demo 定向复验、双端 build、文档/repository/staged hygiene、diff 审查和提交。网络恢复后正常 push CR-011/CR-012 并检查新 SHA 的 Build 与 CodeQL；本地工程继续进入独立的 Excel AI 前端 advisory bridge。
+随后执行 Excel AI 专项 E2E、双端 build、文档/repository/staged hygiene、diff 审查和提交。正常 push CR-013 并检查同 SHA Build/CodeQL；本地工程继续进入独立的后端审核决定与 provenance 持久化。

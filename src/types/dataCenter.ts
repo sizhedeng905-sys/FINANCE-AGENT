@@ -300,6 +300,7 @@ export interface ImportTask {
   fileName: string;
   templateId: string;
   templateName: string;
+  templateVersion?: number;
   importType: DataRecordType;
   status: 'uploaded' | 'parsing' | 'parsed' | 'mapping' | 'pending_confirm' | 'confirming' | 'confirmed' | 'confirmation_failed' | 'failed' | 'cancelled';
   version: number;
@@ -421,6 +422,8 @@ export interface MappingDecision {
 export interface ImportColumn {
   id: string;
   columnIndex: number;
+  sourceColumnId?: string;
+  columnLetter?: string;
   sourceKey: string;
   sourceName: string;
   normalizedName: string;
@@ -600,6 +603,145 @@ export interface ImportMappingInput {
 export interface SaveImportMappingsPayload {
   mappings: ImportMappingInput[];
   saveToProfile?: boolean;
+}
+
+export type AiSuggestionProviderClass = 'mock' | 'local' | 'external';
+
+export interface ExcelAiClassificationOutput {
+  schemaVersion: 'classification/1.0';
+  selectedTemplateVersionId: string | null;
+  candidateTemplateVersionIds: string[];
+  confidence: string;
+  evidenceRefs: string[];
+  reasonCodes: string[];
+  warnings: string[];
+  decision: 'NEEDS_FINANCE_REVIEW';
+}
+
+export interface ExcelAiMappingItem {
+  sourceRef: string;
+  targetFieldKey: string;
+  targetFieldId: string;
+  targetFieldName: string;
+  transformKey: string;
+  confidence: string;
+  evidenceRefs: string[];
+}
+
+export interface ExcelAiMappingOutput {
+  schemaVersion: 'mapping/1.0';
+  templateVersionId: string;
+  mappings: ExcelAiMappingItem[];
+  unmappedSourceRefs: string[];
+  unresolvedRequiredFields: string[];
+  warnings: string[];
+  decision: 'NEEDS_FINANCE_REVIEW';
+}
+
+export interface ExcelAiExecution<T> {
+  status: 'succeeded';
+  aiTaskId: string;
+  requestKey: string;
+  reused: boolean;
+  provider: string;
+  providerClass: AiSuggestionProviderClass;
+  model: string;
+  promptVersion: string;
+  promptExecutionHash: string;
+  outputSchemaHash: string;
+  output: T;
+  outputHash: string;
+  versionVectorHash: string;
+}
+
+export interface ExcelAiManualExecution {
+  status: 'disabled' | 'in_progress' | 'failed';
+  aiTaskId?: string;
+  requestKey?: string;
+  reused?: boolean;
+  reasonCode?: string;
+  message?: string;
+}
+
+export interface ExcelAiManualSuggestionResult {
+  status: 'manual_required';
+  mode: 'manual';
+  reasonCode: string;
+  message: string;
+  classification?: ExcelAiExecution<ExcelAiClassificationOutput> | null;
+  mapping: null;
+  execution?: ExcelAiManualExecution;
+  businessRecordsCreated: 0;
+}
+
+export interface ExcelAiReviewSuggestionResult {
+  status: 'needs_finance_review';
+  mode: 'suggest';
+  mock?: boolean;
+  classification: ExcelAiExecution<ExcelAiClassificationOutput>;
+  mapping: ExcelAiExecution<ExcelAiMappingOutput> | null;
+  reasonCode?: 'TEMPLATE_UNRESOLVED';
+  aiCalls?: number;
+  deterministicApplication?: {
+    rowCount: number;
+    performed: false;
+    reason: string;
+  };
+  businessRecordsCreated: 0;
+}
+
+export interface ExcelMappingProfileSuggestionItem {
+  sourceRef: string;
+  targetFieldId: string | null;
+  targetFieldKey: string | null;
+  transformKey: string;
+  ignored: boolean;
+  source: 'mapping_profile';
+}
+
+export interface ExcelAiProfileSuggestionResult {
+  status: 'profile_reused';
+  mode: 'manual_approval_required';
+  profile: {
+    id: string;
+    version: number | null;
+    snapshotHash: string | null;
+    structureFingerprint: string | null;
+  };
+  mappings: ExcelMappingProfileSuggestionItem[];
+  aiCalls: 0;
+  businessRecordsCreated: 0;
+}
+
+export type ExcelAiSuggestionResult =
+  | ExcelAiManualSuggestionResult
+  | ExcelAiReviewSuggestionResult
+  | ExcelAiProfileSuggestionResult;
+
+export interface ExcelAiSuggestionHistoryItem {
+  id: string;
+  taskType: 'excel_template_classification' | 'excel_column_mapping';
+  status: string;
+  requestKey: string;
+  inputHash: string;
+  versionVectorHash?: string;
+  outputHash?: string;
+  output?: ExcelAiClassificationOutput | ExcelAiMappingOutput;
+  error?: string;
+  attempt?: {
+    attemptNo: number;
+    provider: string;
+    model: string;
+    status: string;
+    latencyMs?: number;
+    completedAt?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExcelAiSuggestionHistory {
+  items: ExcelAiSuggestionHistoryItem[];
 }
 
 export interface ReviewImportRowPayload {

@@ -89,4 +89,4 @@ fixture 的项目、车牌和人员均为显式合成值，文件在测试准备
 
 ## 12. 状态
 
-`LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL`。合成故事线及全量本地门禁已经通过；三次正常 push 均因连接重置失败，CR-011 新 SHA 仍需 GitHub Build 和 CodeQL 证明。任务 C 的运行包已由 CR-012 完成，真实三次人工演练仍为 `NOT_RUN`。
+`REMOTE_ENGINEERING_VERIFIED`。合成故事线及全量本地门禁已经通过，并随 SHA `66749b3` 取得 Build run `29828098638` 与 CodeQL run `29828098718` 绿色证据。任务 C 的运行包已由 CR-012 完成，真实三次人工演练仍为 `NOT_RUN`。

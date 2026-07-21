@@ -6,7 +6,7 @@
 
 预期结果：
 
-- 当前 CR-011/CR-012 提交获得同 SHA Build 与 CodeQL 证据；外部网络阻塞按 URL 和日志如实登记。
+- CR-011/CR-012 已随 SHA `66749b3` 获得同 SHA Build 与 CodeQL 证据；继续为后续提交逐 SHA 验证。
 - 按 Runbook 连续完成三次人工演练，逐次记录耗时、金额、偏差和清理结果。
 - 前端接入真实 `POST/GET /api/import-tasks/:id/ai-suggestions`，明确显示候选模板、逐列建议、warning、evidence、Prompt/模型/Mock provenance。
 - 采纳 AI 建议只修改当前页面草稿；保存前不发 PUT、不自动重校验、不切换冻结模板、不创建 BusinessRecord。

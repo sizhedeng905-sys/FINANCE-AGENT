@@ -24,9 +24,9 @@
 ## 诚实边界
 
 - 三次连续人工演练没有执行，验收表保持 `NOT_RUN`。
-- CR-011 提交 `aa7230a` 的三次 push 均因连接重置失败，当前为 `BLOCKED_EXTERNAL`；CR-010 的绿色 CI 不能替代它。
+- CR-011 `aa7230a` 与本提交 `66749b3` 已正常推送；SHA `66749b3` 的 Build run `29828098638` 与 CodeQL run `29828098718` 均成功。
 - 主故事不依赖 OCR、真实模型或 AI 叙述。真实准确率、正式财务口径、目标服务器和 production 发布均未宣称通过。
 
 ## 当前判断
 
-交付包为 `LOCAL_ENGINEERING_VERIFIED`，周五现场仍为 `CONDITIONAL_NO_GO`。取得当前候选远端 CI 并完成三次人工演练后，才能根据实际结果重新判断 GO。
+交付包为 `REMOTE_ENGINEERING_VERIFIED`，周五现场仍为 `CONDITIONAL_NO_GO`。远端自动化已通过，但只有完成三次人工演练后，才能根据实际结果重新判断 GO。

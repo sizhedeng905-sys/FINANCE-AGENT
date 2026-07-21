@@ -53,4 +53,4 @@ npm run demo:web
 
 ## 当前判定
 
-自动化故事线与本机启动 smoke 已有证据；三次连续人工现场演练仍为 `NOT_RUN`，CR-011 新提交的远端推送暂受网络重置阻塞。因此本交付包当前是 `LOCAL_ENGINEERING_VERIFIED / CONDITIONAL_NO_GO`，不能写成正式演示 GO 或 production-ready。
+自动化故事线、本机启动 smoke 和 SHA `66749b3` 的远端 Build/CodeQL 已有证据；三次连续人工现场演练仍为 `NOT_RUN`。因此本交付包当前是 `REMOTE_ENGINEERING_VERIFIED / CONDITIONAL_NO_GO`，不能写成正式演示 GO 或 production-ready。

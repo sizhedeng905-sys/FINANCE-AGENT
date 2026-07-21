@@ -25,6 +25,7 @@ export function toImportTask(task: ImportTaskDetail) {
     projectName: task.project.name,
     templateId: task.templateId,
     templateName: task.template.name,
+    templateVersion: task.templateVersion,
     rawFileId: task.rawFileId,
     fileName: task.fileName,
     importType: task.importType,
