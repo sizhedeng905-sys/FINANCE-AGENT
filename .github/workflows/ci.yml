@@ -48,8 +48,25 @@ jobs:
           test "$frontend_user" = '101:101'
           test "$backend_revision" = "$GITHUB_SHA"
           test "$frontend_revision" = "$GITHUB_SHA"
-          backend_prisma_version="$(docker run --rm --entrypoint sh "$BACKEND_CI_IMAGE" -c 'openssl version >/dev/null && ./node_modules/.bin/prisma -v' 2>&1)"
-          if grep -qi 'failed to detect' <<<"$backend_prisma_version"; then
+          backend_entrypoint="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{json .Config.Entrypoint}}')"
+          test "$backend_entrypoint" = '["backend-entrypoint"]'
+          backend_runtime_check="$(docker run --rm \
+            --env DATABASE_URL=postgresql://runtime-check:runtime-check@127.0.0.1:5432/runtime_check \
+            "$BACKEND_CI_IMAGE" sh -eu -c '
+              test ! -e /usr/local/lib/node_modules/npm
+              test ! -e /usr/local/lib/node_modules/corepack
+              ! command -v npm
+              ! command -v npx
+              ! command -v corepack
+              node --version
+              openssl version
+              ./node_modules/.bin/prisma -v
+              ./node_modules/.bin/prisma validate --schema prisma/schema.prisma
+              node --check dist/main.js
+              node --check dist/worker.js
+              node --check dist/system-bootstrap.js
+            ' 2>&1)"
+          if grep -qi 'failed to detect' <<<"$backend_runtime_check"; then
             exit 1
           fi
           docker image inspect "$BACKEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/backend.identity.json"

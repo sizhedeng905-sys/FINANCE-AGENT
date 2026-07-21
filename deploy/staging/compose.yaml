@@ -315,7 +315,7 @@ services:
     command:
       - sh
       - -c
-      - npx prisma migrate deploy && npx prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && node dist/system-bootstrap.js && ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js
+      - ./node_modules/.bin/prisma migrate deploy && ./node_modules/.bin/prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && node dist/system-bootstrap.js && ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js
     depends_on:
       postgres:
         condition: service_healthy

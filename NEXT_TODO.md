@@ -11,6 +11,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 单一项目负责人治理由 CR-007 集中到 `docs/owner-input/`；不再等待多角色姓名、日期或签字。
 - 文档信息架构由 CR-008 收口：报告、审计和验收证据集中到 `docs/汇报/`，计划与检查清单集中到 `docs/计划/`，并由 `npm run check:docs` 检查已跟踪 Markdown 本地链接。
 - production-safe AI 系统登记由 CR-009 收口：空白库仅初始化 11 个系统 Prompt、受控 ModelDeployment/TaskModelRoute 和一条变更审计；两个并发初始化进程精确收敛为 changed/unchanged，配置漂移会阻止 API/Worker 启动。
+- CR-009 的远端 PostgreSQL/E2E 与 CodeQL 均成功；唯一红灯来自后端最终镜像中无运行用途的全局 npm 依赖。CR-010 已在本地移除 runtime npm/npx/Corepack，并保留项目内 Prisma、Node、OpenSSL 和默认 entrypoint；新 SHA 远端 CI 尚待确认。
 - 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
 - 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
@@ -27,17 +28,23 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
 ## 自动推进顺序
 
-1. Excel AI 前端审核闭环。
-   - 接入真实 `/import-tasks/:id/ai-suggestions`。
-   - 显示候选模板、理由、warning、Prompt/模型/Mock 来源；支持逐列接受、修改、拒绝、忽略与重校验。
-   - 将实际 MappingDecision/provenance 冻结到批准快照，AI 失败时保持完整手工路径。
-2. OCR 并发和 AI 采纳闭环。
+1. 恢复供应链绿色基线。
+   - 提交 CR-010 并确认同一新 SHA 的 Build 与 CodeQL 均成功。
+   - 不降低 Grype 阈值，不增加无依据 allowlist。
+2. 建立周五演示 E2E 与交付包。
+   - 用合成 Excel 证明批准前正式记录/项目结构/报告不变，第二财务批准后每行一条、逐分一致且重复提交不重复入账。
+   - 建立 `docs/deliveries/2026-07-24/` 的演示稿、验收证据、限制和下一波计划。
+3. Excel AI 前端审核桥接。
+   - 接入真实 `/import-tasks/:id/ai-suggestions`，建议只能进入页面草稿。
+   - 显示候选模板、理由、warning、Prompt/模型/Mock 来源；支持逐列接受、修改、拒绝和忽略。
+   - 后续独立提交服务端 MappingDecision/provenance；AI 失败时保持完整手工路径。
+4. OCR 并发和 AI 采纳闭环。
    - `expectedVersion` 与 `expectedReviewRevision` 强制必填并覆盖 stale 409。
    - 原始值、AI 建议、人工值、bbox/evidence 和 provenance 可复核；采纳后重新做确定性校验。
-3. 报告人工复核与来源展开。
+5. 报告人工复核与来源展开。
    - 草稿、接受、退回/拒绝状态机；受保护 API、版本并发和 audit。
    - 前端分页调用 `/reports/snapshots/:id/sources`；AI 仍不计算金额。
-4. Staging、模型网络和完整 smoke。
+6. Staging、模型网络和完整 smoke。
    - API/Worker 与模型使用受控 Docker network、服务 DNS、相同 secret reference、健康/超时/并发/kill switch。
    - 本地合成 smoke 自动完成；真实目标云环境保持 `EXTERNAL_RESOURCE_NEEDED`。
 

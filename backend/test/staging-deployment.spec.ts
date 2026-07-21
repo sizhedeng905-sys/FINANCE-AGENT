@@ -41,7 +41,8 @@ describe('B8-09 staging deployment', () => {
     }
     expect(compose).not.toMatch(/image:\s+[^\n]*:latest(?:\s|$)/i);
 
-    const migrateCommand = compose.match(/npx prisma migrate deploy[^\n]+/)?.[0] ?? '';
+    expect(compose).not.toContain('npx prisma');
+    const migrateCommand = compose.match(/\.\/node_modules\/\.bin\/prisma migrate deploy[^\n]+/)?.[0] ?? '';
     expect(migrateCommand.indexOf('prisma/runtime-grants.sql')).toBeGreaterThan(
       migrateCommand.indexOf('prisma migrate deploy')
     );

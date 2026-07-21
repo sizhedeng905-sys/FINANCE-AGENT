@@ -21,11 +21,12 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-007 | [CR-007_owner-governance-consolidation.md](CR-007_owner-governance-consolidation.md) | `docs: consolidate single-owner decisions and open questions` | P1 governance | ENGINEERING_VERIFIED | CR-006 |
 | CR-008 | [CR-008_docs-information-architecture.md](CR-008_docs-information-architecture.md) | `docs: organize reports and plans` | P2 documentation | ENGINEERING_VERIFIED | CR-007 |
 | CR-009 | [CR-009_production-safe-system-registry.md](CR-009_production-safe-system-registry.md) | `P1: bootstrap production AI system registry` | P1 AI integrity | ENGINEERING_VERIFIED | CR-008 |
+| CR-010 | [CR-010_runtime-image-package-manager-removal.md](CR-010_runtime-image-package-manager-removal.md) | `P0: remove package managers from backend runtime` | P0 supply chain | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-009 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap；下一提交进入 Excel AI 产品审核闭环。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap。CR-010 正在恢复运行镜像供应链绿色基线；其后先建立周五演示 E2E 与交付包，再进入 Excel AI 产品审核闭环。
 - OCR 与报告财务复核：前序 P1 契约稳定后开始。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 

@@ -29,7 +29,9 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3001
 WORKDIR /app
-RUN groupadd --gid 10001 finance \
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    && groupadd --gid 10001 finance \
     && useradd --uid 10001 --gid finance --no-create-home --shell /usr/sbin/nologin finance \
     && mkdir -p /app/.upload-quarantine \
     && chown -R finance:finance /app
