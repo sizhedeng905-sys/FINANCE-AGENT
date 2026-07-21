@@ -1,15 +1,46 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { AiPromptVersion, Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 import { AiProviderClass } from '../ai-policy/ai-feature-policy.service';
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  AI_PROMPT_INPUT_NORMALIZER_VERSION,
+  normalizeAiPromptInput
+} from './ai-prompt-input-normalizer';
+import {
   AiPromptComponentRef,
   AiPromptDefinition,
   getPromptDefinition,
-  promptContentSha256
+  promptContentSha256,
+  RenderedAiUserPrompt,
+  renderAiUserPromptTemplate
 } from './ai-prompt-registry';
+
+export interface AiPromptExecutionProvenance {
+  schemaVersion: 'ai-prompt-execution/1.1';
+  prompt: { id: string; promptKey: string; versionNo: number; contentSha256: string };
+  components: Array<{ id: string; promptKey: string; versionNo: number; contentSha256: string }>;
+  bundleSha256: string;
+  systemInstructionsSha256: string;
+  userPromptTemplateSha256: string;
+  renderedUserPromptSha256: string;
+  renderedUserPromptCharacters: number;
+  templateVariables: RenderedAiUserPrompt['variables'];
+  inputJsonSha256: string;
+  inputNormalizationVersion: typeof AI_PROMPT_INPUT_NORMALIZER_VERSION;
+  inputSchemaVersion: string;
+  outputSchemaVersion: string;
+  outputSchemaSha256: string;
+}
+
+export interface PreparedAiPromptExecution {
+  renderedUserPrompt: string;
+  outputSchema: Record<string, unknown>;
+  provenance: AiPromptExecutionProvenance;
+  executionSha256: string;
+}
 
 @Injectable()
 export class AiPromptRegistryService {
@@ -55,10 +86,60 @@ export class AiPromptRegistryService {
       promptVersion: prompt,
       componentVersions: components,
       instructions: [...components.map((component) => component.systemPrompt), prompt.systemPrompt].join('\n'),
+      userPromptTemplate: definition.userPromptTemplate,
+      outputSchema: definition.outputSchema,
       versionVector,
       bundleSha256: canonicalJsonSha256(versionVector),
       maxInputBudget: prompt.maxInputBudget,
       timeoutPolicy: definition.timeoutPolicy
+    };
+  }
+
+  prepareExecution(
+    bundle: Awaited<ReturnType<AiPromptRegistryService['resolveActive']>>,
+    inputJson: unknown,
+    expectedOutputSchema?: Record<string, unknown>
+  ): PreparedAiPromptExecution {
+    if (!bundle.outputSchema || Array.isArray(bundle.outputSchema) || typeof bundle.outputSchema !== 'object') {
+      throw new ServiceUnavailableException('Executable prompt output schema is unavailable');
+    }
+    const outputSchema = bundle.outputSchema as Record<string, unknown>;
+    const outputSchemaSha256 = canonicalJsonSha256(outputSchema);
+    if (expectedOutputSchema && canonicalJsonSha256(expectedOutputSchema) !== outputSchemaSha256) {
+      throw new ServiceUnavailableException('Runtime output schema does not match the versioned prompt contract');
+    }
+    const normalizedInput = normalizeAiPromptInput(inputJson);
+    const rendered = renderAiUserPromptTemplate(
+      bundle.userPromptTemplate,
+      { input_json: normalizedInput },
+      bundle.maxInputBudget ?? 0
+    );
+    const schemaCharacters = JSON.stringify(outputSchema).length;
+    if (rendered.characters + schemaCharacters > (bundle.maxInputBudget ?? 0)) {
+      throw new ServiceUnavailableException('Rendered prompt and output schema exceed the versioned input budget');
+    }
+    const provenance: AiPromptExecutionProvenance = {
+      schemaVersion: 'ai-prompt-execution/1.1',
+      prompt: this.versionRef(bundle.promptVersion) as AiPromptExecutionProvenance['prompt'],
+      components: bundle.componentVersions.map((component) =>
+        this.versionRef(component) as AiPromptExecutionProvenance['components'][number]),
+      bundleSha256: bundle.bundleSha256,
+      systemInstructionsSha256: this.textSha256(bundle.instructions),
+      userPromptTemplateSha256: rendered.templateSha256,
+      renderedUserPromptSha256: rendered.renderedSha256,
+      renderedUserPromptCharacters: rendered.characters,
+      templateVariables: rendered.variables,
+      inputJsonSha256: rendered.variables.find((variable) => variable.name === 'input_json')!.valueSha256,
+      inputNormalizationVersion: AI_PROMPT_INPUT_NORMALIZER_VERSION,
+      inputSchemaVersion: bundle.promptVersion.inputSchemaVersion!,
+      outputSchemaVersion: bundle.promptVersion.outputSchemaVersion!,
+      outputSchemaSha256
+    };
+    return {
+      renderedUserPrompt: rendered.text,
+      outputSchema,
+      provenance,
+      executionSha256: canonicalJsonSha256(provenance)
     };
   }
 
@@ -162,5 +243,9 @@ export class AiPromptRegistryService {
       versionNo: prompt.versionNo,
       contentSha256: prompt.contentSha256
     };
+  }
+
+  private textSha256(value: string) {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
   }
 }

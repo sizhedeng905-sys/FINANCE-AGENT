@@ -1,6 +1,6 @@
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 
-export const AI_INVOCATION_VECTOR_VERSION = 'ai-invocation-vector/1.0';
+export const AI_INVOCATION_VECTOR_VERSION = 'ai-invocation-vector/1.1';
 
 export interface AiInvocationVersionVectorInput {
   source: {
@@ -21,10 +21,12 @@ export interface AiInvocationVersionVectorInput {
     versionNo: number;
     contentSha256: string;
     bundleSha256: string;
+    executionSha256: string;
   };
   contracts: {
     inputSchemaVersion: string;
     outputSchemaVersion: string;
+    outputSchemaSha256: string;
   };
   provider: {
     providerClass: 'mock' | 'local' | 'external';
@@ -86,8 +88,10 @@ function validateVersionVectorInput(input: AiInvocationVersionVectorInput) {
   }
   assertSha256(input.prompt.contentSha256, 'prompt.contentSha256');
   assertSha256(input.prompt.bundleSha256, 'prompt.bundleSha256');
+  assertSha256(input.prompt.executionSha256, 'prompt.executionSha256');
   assertVersion(input.contracts.inputSchemaVersion, 'contracts.inputSchemaVersion');
   assertVersion(input.contracts.outputSchemaVersion, 'contracts.outputSchemaVersion');
+  assertSha256(input.contracts.outputSchemaSha256, 'contracts.outputSchemaSha256');
 
   assertIdentifier(input.provider.provider, 'provider.provider');
   assertIdentifier(input.provider.modelName, 'provider.modelName');

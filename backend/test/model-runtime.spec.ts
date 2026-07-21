@@ -312,6 +312,53 @@ describe('model runtime safeguards', () => {
       expect.objectContaining({ timeoutMs: 4321 })
     );
   });
+
+  it('sends the rendered versioned user prompt instead of bypassing it with a generic wrapper', async () => {
+    const http = {
+      request: jest.fn(async () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"decision":"NEEDS_FINANCE_REVIEW"}' } }]
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    } as any;
+    const gate = {
+      run: jest.fn(async (_key: string, _limit: number, operation: () => Promise<unknown>) => operation())
+    } as any;
+    const provider = new HttpAiProviderService(config({ 'ai.maxResponseBytes': 1024 }), http, gate);
+    const renderedUserPrompt = '<excel_mapping_input_json>{"sourceId":"source-1"}</excel_mapping_input_json>';
+
+    await provider.generate({
+      provider: 'openai_compatible',
+      model: 'Qwen/test',
+      baseUrl: 'http://127.0.0.1:18000/v1',
+      apiKey: 'route-secret',
+      instructions: 'Return strict JSON.',
+      question: '',
+      history: [],
+      contexts: [],
+      structuredInput: { sourceId: 'source-1' },
+      outputSchema: { type: 'object', additionalProperties: false },
+      renderedUserPrompt
+    } as any);
+
+    const body = JSON.parse(http.request.mock.calls[0][1].body);
+    const userMessage = body.messages.at(-1).content as string;
+    expect(userMessage).toContain(renderedUserPrompt);
+    expect(userMessage).not.toContain('<untrusted_structured_input_json>');
+
+    await expect(provider.generate({
+      provider: 'openai_compatible',
+      model: 'Qwen/test',
+      baseUrl: 'http://127.0.0.1:18000/v1',
+      apiKey: 'route-secret',
+      instructions: 'x'.repeat(120),
+      question: '',
+      history: [],
+      contexts: [],
+      outputSchema: { type: 'object' },
+      renderedUserPrompt: '<input>{}</input>',
+      maxInputCharacters: 200
+    } as any)).rejects.toThrow('完整请求超过安全上限');
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
 });
 
 function deferredForTest() {

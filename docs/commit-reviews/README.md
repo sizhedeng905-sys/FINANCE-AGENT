@@ -17,11 +17,12 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-003 | [CR-003_excel-publication-isolation.md](CR-003_excel-publication-isolation.md) | `P0: isolate unpublished Excel records` | P0 data integrity | PARTIAL | CR-002 |
 | CR-004 | [CR-004_excel-publication-integrity-fence.md](CR-004_excel-publication-integrity-fence.md) | `P0: fence Excel publication integrity` | P0 data integrity | PASS | CR-003 |
 | CR-005 | [CR-005_excel-staging-regression-closure.md](CR-005_excel-staging-regression-closure.md) | `P0: close Excel staging regressions and claims` | P0 data integrity | PASS | CR-004 |
+| CR-006 | [CR-006_prompt-execution-provenance.md](CR-006_prompt-execution-provenance.md) | `P1: execute versioned prompts with audited provenance` | P1 AI integrity | ENGINEERING_VERIFIED | CR-005 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：P0 全量门禁通过后开始。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance；production bootstrap 与产品闭环继续按顺序推进。
 - OCR 与报告财务复核：前序 P1 契约稳定后开始。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 

@@ -23,7 +23,10 @@ import {
   buildAiInvocationVersionVector,
   completeAiInvocationVersionVector
 } from '../model-runtime/ai-invocation-version-vector';
-import { AiPromptRegistryService } from '../model-runtime/ai-prompt-registry.service';
+import {
+  AiPromptRegistryService,
+  PreparedAiPromptExecution
+} from '../model-runtime/ai-prompt-registry.service';
 import {
   modelExecutionSnapshot,
   ResolvedModelDeployment
@@ -79,6 +82,8 @@ export type AiStructuredSuggestionResult<T> =
       providerClass: AiProviderClass;
       model: string;
       promptVersion: string;
+      promptExecutionHash: string;
+      outputSchemaHash: string;
       output: T;
       outputHash: string;
       versionVectorHash: string;
@@ -102,6 +107,7 @@ interface AttemptCompletionContext<T> {
   vector: AiInvocationVersionVector;
   policySnapshot: ReturnType<AiFeaturePolicyService['snapshot']>;
   promptBundle: PromptBundle;
+  promptExecution: PreparedAiPromptExecution;
   deployment: ResolvedModelDeployment;
   providerClass: AiProviderClass;
   latencyMs: number;
@@ -164,8 +170,14 @@ export class AiStructuredSuggestionService {
     }
 
     let promptBundle: PromptBundle;
+    let promptExecution: PreparedAiPromptExecution;
     try {
       promptBundle = await this.promptRegistry.resolveActive(input.promptKey, providerClass);
+      promptExecution = this.promptRegistry.prepareExecution(
+        promptBundle,
+        input.structuredInput,
+        input.outputSchema
+      );
     } catch {
       return {
         status: 'failed',
@@ -174,7 +186,7 @@ export class AiStructuredSuggestionService {
       };
     }
 
-    const inputHash = canonicalJsonSha256(input.structuredInput);
+    const inputHash = promptExecution.provenance.inputJsonSha256;
     const featurePolicySnapshotHash = canonicalJsonSha256(policySnapshot);
     const vector = buildAiInvocationVersionVector({
       source: input.source,
@@ -183,11 +195,13 @@ export class AiStructuredSuggestionService {
         promptKey: promptBundle.promptVersion.promptKey,
         versionNo: promptBundle.promptVersion.versionNo,
         contentSha256: promptBundle.promptVersion.contentSha256!,
-        bundleSha256: promptBundle.bundleSha256
+        bundleSha256: promptBundle.bundleSha256,
+        executionSha256: promptExecution.executionSha256
       },
       contracts: {
         inputSchemaVersion: promptBundle.promptVersion.inputSchemaVersion!,
-        outputSchemaVersion: promptBundle.promptVersion.outputSchemaVersion!
+        outputSchemaVersion: promptBundle.promptVersion.outputSchemaVersion!,
+        outputSchemaSha256: promptExecution.provenance.outputSchemaSha256
       },
       provider: {
         providerClass,
@@ -223,6 +237,7 @@ export class AiStructuredSuggestionService {
       correlationId,
       vector,
       policySnapshot,
+      promptExecution,
       leaseDurationMs,
       promptVersionId: promptBundle.promptVersion.id,
       endpointSnapshot: this.endpointSnapshot(deployment.endpoint)
@@ -285,8 +300,8 @@ export class AiStructuredSuggestionService {
         question: '',
         history: [],
         contexts: [],
-        structuredInput: input.structuredInput,
-        outputSchema: input.outputSchema,
+        renderedUserPrompt: promptExecution.renderedUserPrompt,
+        outputSchema: promptExecution.outputSchema,
         requestIdempotencyKey: requestKey,
         beforeProviderRequest: () => this.authorizeAndRenewClaim({
           input,
@@ -311,6 +326,7 @@ export class AiStructuredSuggestionService {
         vector,
         policySnapshot,
         promptBundle,
+        promptExecution,
         deployment,
         providerClass,
         providerResult,
@@ -341,7 +357,9 @@ export class AiStructuredSuggestionService {
         promptVersion: `${promptBundle.promptVersion.promptKey}:v${promptBundle.promptVersion.versionNo}`,
         output,
         outputHash,
-        versionVectorHash: vector.vectorSha256
+        versionVectorHash: vector.vectorSha256,
+        promptExecutionHash: promptExecution.executionSha256,
+        outputSchemaHash: promptExecution.provenance.outputSchemaSha256
       };
     } catch (error) {
       const errorMessage = this.safeError(error);
@@ -353,6 +371,7 @@ export class AiStructuredSuggestionService {
         vector,
         policySnapshot,
         promptBundle,
+        promptExecution,
         deployment,
         providerClass,
         latencyMs: Date.now() - startedAt,
@@ -386,6 +405,7 @@ export class AiStructuredSuggestionService {
     correlationId: string;
     vector: ReturnType<typeof buildAiInvocationVersionVector>;
     policySnapshot: unknown;
+    promptExecution: PreparedAiPromptExecution;
     leaseDurationMs: number;
     promptVersionId: string;
     endpointSnapshot: string | null;
@@ -464,7 +484,9 @@ export class AiStructuredSuggestionService {
         schemaVersion: 'ai-task-input-audit/1.0',
         inputHash: args.inputHash,
         inputAudit: args.input.inputAudit,
-        policySnapshot: args.policySnapshot
+        policySnapshot: args.policySnapshot,
+        promptExecution: args.promptExecution.provenance,
+        promptExecutionHash: args.promptExecution.executionSha256
       });
       const task = existing
         ? await tx.aiTask.update({
@@ -588,6 +610,8 @@ export class AiStructuredSuggestionService {
         providerClass,
         model: deployment.modelName,
         promptVersion: `${promptBundle.promptVersion.promptKey}:v${promptBundle.promptVersion.versionNo}`,
+        promptExecutionHash: expectedVector.prompt.executionSha256,
+        outputSchemaHash: expectedVector.contracts.outputSchemaSha256,
         output,
         outputHash: task.outputHash,
         versionVectorHash: task.versionVectorHash
@@ -823,7 +847,9 @@ export class AiStructuredSuggestionService {
         inputHash: args.vector.inputSha256,
         inputAudit: args.input.inputAudit,
         versionVector: args.vector,
-        policySnapshot: args.policySnapshot
+        policySnapshot: args.policySnapshot,
+        promptExecution: args.promptExecution.provenance,
+        promptExecutionHash: args.promptExecution.executionSha256
       }),
       responsePayload: this.json({
         schemaVersion: 'ai-structured-call-audit/1.0',

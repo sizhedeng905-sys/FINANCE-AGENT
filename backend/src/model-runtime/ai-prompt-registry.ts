@@ -1,4 +1,5 @@
 import { JSONSchemaType } from 'ajv';
+import { createHash } from 'node:crypto';
 
 import { CLAIM_ENVELOPE_SCHEMA } from '../ai/ai-answer-grounding.service';
 import {
@@ -11,11 +12,21 @@ import {
   UNMAPPED_FIELD_SUGGESTION_SCHEMA
 } from '../ai/ai-suggestion.schemas';
 import { AiProviderClass } from '../ai-policy/ai-feature-policy.service';
-import { canonicalJsonSha256 } from '../common/utils/canonical-json';
+import { canonicalJson, canonicalJsonSha256 } from '../common/utils/canonical-json';
 
 export const AI_PROMPT_REGISTRY_VERSION = 'ai-prompt-registry/1.0';
 export const AI_REDACTION_POLICY_VERSION = 'ai-redaction/1.0';
 export const FINANCE_CORE_GUARD_KEY = 'finance_core_guard';
+export const AI_PROMPT_TEMPLATE_VARIABLES = ['input_json'] as const;
+
+export interface RenderedAiUserPrompt {
+  schemaVersion: 'ai-rendered-user-prompt/1.0';
+  text: string;
+  templateSha256: string;
+  renderedSha256: string;
+  characters: number;
+  variables: Array<{ name: typeof AI_PROMPT_TEMPLATE_VARIABLES[number]; valueSha256: string }>;
+}
 
 export const AI_PROMPT_MANIFEST_KEYS = [
   'template_draft',
@@ -279,6 +290,60 @@ export function getPromptDefinition(promptKey: string, versionNo?: number) {
   );
 }
 
+export function renderAiUserPromptTemplate(
+  template: string | null,
+  variables: Record<string, unknown>,
+  maxCharacters: number
+): RenderedAiUserPrompt {
+  if (!template) throw new TypeError('Executable prompt requires a user prompt template');
+  if (!Number.isInteger(maxCharacters) || maxCharacters < 1) {
+    throw new TypeError('Prompt input budget must be a positive integer');
+  }
+  if (Object.getPrototypeOf(variables) !== Object.prototype && Object.getPrototypeOf(variables) !== null) {
+    throw new TypeError('Prompt template variables must be a plain object');
+  }
+
+  const placeholderPattern = /{{\s*([a-z][a-z0-9_]*)\s*}}/g;
+  const matches = [...template.matchAll(placeholderPattern)];
+  const remainder = template.replace(placeholderPattern, '');
+  if (matches.length === 0 || remainder.includes('{{') || remainder.includes('}}')) {
+    throw new TypeError('Prompt user template contains an invalid placeholder');
+  }
+  const names = matches.map((match) => match[1]);
+  if (new Set(names).size !== names.length) {
+    throw new TypeError('Prompt user template contains a duplicate placeholder');
+  }
+  const allowed = new Set<string>(AI_PROMPT_TEMPLATE_VARIABLES);
+  if (names.some((name) => !allowed.has(name))) {
+    throw new TypeError('Prompt user template contains a non-allowlisted variable');
+  }
+  const suppliedNames = Object.keys(variables).sort();
+  const requiredNames = [...names].sort();
+  if (canonicalJson(suppliedNames) !== canonicalJson(requiredNames)) {
+    throw new TypeError('Prompt template variables do not match the required allowlist');
+  }
+
+  const serialized = new Map<string, string>();
+  for (const name of names) serialized.set(name, canonicalJson(variables[name]));
+  const text = template.replace(placeholderPattern, (_placeholder, name: string) => serialized.get(name)!);
+  if (text.length > maxCharacters) throw new TypeError('Rendered user prompt exceeds its input budget');
+  return {
+    schemaVersion: 'ai-rendered-user-prompt/1.0',
+    text,
+    templateSha256: sha256Text(template),
+    renderedSha256: sha256Text(text),
+    characters: text.length,
+    variables: names.map((name) => ({
+      name: name as typeof AI_PROMPT_TEMPLATE_VARIABLES[number],
+      valueSha256: canonicalJsonSha256(variables[name])
+    }))
+  };
+}
+
 function withHash(input: PromptDefinitionInput): AiPromptDefinition {
   return { ...input, contentSha256: promptContentSha256(input) };
+}
+
+function sha256Text(value: string) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }

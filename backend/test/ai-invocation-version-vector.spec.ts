@@ -29,11 +29,13 @@ function vectorInput(): AiInvocationVersionVectorInput {
       promptKey: 'excel_column_mapping',
       versionNo: 1,
       contentSha256: sha('prompt'),
-      bundleSha256: sha('prompt-bundle')
+      bundleSha256: sha('prompt-bundle'),
+      executionSha256: sha('prompt-execution')
     },
     contracts: {
       inputSchemaVersion: 'excel-mapping-input/1.0',
-      outputSchemaVersion: 'mapping/1.0'
+      outputSchemaVersion: 'mapping/1.0',
+      outputSchemaSha256: sha('output-schema')
     },
     provider: {
       providerClass: 'mock',
@@ -68,6 +70,9 @@ describe('complete AI invocation version vector', () => {
     const changedPolicy = vectorInput();
     changedPolicy.authorizationPolicyVersion = 'finance-ingestion-authz/2.0';
     expect(buildAiInvocationVersionVector(changedPolicy).vectorSha256).not.toBe(first.vectorSha256);
+    const changedRendering = vectorInput();
+    changedRendering.prompt.executionSha256 = sha('different-rendered-user-prompt');
+    expect(buildAiInvocationVersionVector(changedRendering).vectorSha256).not.toBe(first.vectorSha256);
   });
 
   it('rejects incomplete hashes and creates a content-addressed completion', () => {

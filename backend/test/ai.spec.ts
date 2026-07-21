@@ -191,6 +191,17 @@ describe('phase 8 boss AI assistant', () => {
         timeoutPolicy: { timeoutMs: 5000, maxAttempts: 1, onFailure: 'MANUAL_REVIEW' },
         versionVector: { schemaVersion: 'ai-prompt-bundle/1.0', prompt: { id: 'prompt_v2' }, components: [] },
         bundleSha256: 'a'.repeat(64)
+      })),
+      prepareExecution: jest.fn(() => ({
+        renderedUserPrompt: '<boss_chat_input_json>{"schemaVersion":"boss-chat-grounded-input/2.0"}</boss_chat_input_json>',
+        outputSchema: { type: 'object', additionalProperties: false },
+        provenance: {
+          schemaVersion: 'ai-prompt-execution/1.1',
+          renderedUserPromptSha256: 'b'.repeat(64),
+          inputJsonSha256: 'e'.repeat(64),
+          outputSchemaSha256: 'c'.repeat(64)
+        },
+        executionSha256: 'd'.repeat(64)
       }))
     };
     const service = new AiService(
@@ -219,6 +230,13 @@ describe('phase 8 boss AI assistant', () => {
     expect(callLogs[0].requestPayload).toMatchObject({
       schemaVersion: 'ai-call-audit/1.0',
       inputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      promptExecutionSha256: 'd'.repeat(64),
+      promptExecution: expect.objectContaining({
+        schemaVersion: 'ai-prompt-execution/1.1',
+        renderedUserPromptSha256: 'b'.repeat(64),
+        inputJsonSha256: 'e'.repeat(64),
+        outputSchemaSha256: 'c'.repeat(64)
+      }),
       questionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       questionCharacters: 6,
       contextCount: 1,

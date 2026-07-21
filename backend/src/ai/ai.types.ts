@@ -71,6 +71,7 @@ export interface AiProviderRequest {
   mockOutput?: unknown;
   mockTemplateVersionId?: string;
   structuredInput?: unknown;
+  renderedUserPrompt?: string;
   outputSchema?: unknown;
   requestIdempotencyKey?: string;
   beforeProviderRequest?: () => Promise<void>;

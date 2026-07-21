@@ -3669,6 +3669,8 @@ describe('real PostgreSQL integration', () => {
         .expect(400);
 
       const today = await chat('今天经营情况怎么样', 1);
+      const todayCallLog = await prisma.aiCallLog.findUniqueOrThrow({ where: { id: today.callLogId } });
+      expect(todayCallLog.errorMessage).toBeNull();
       expect(today).toMatchObject({ provider: 'mock', fallback: false, toolsUsed: ['get_today_report'] });
       expect(today.reply).toContain('没有已确认实绩经营记录');
       expect(today.reply).not.toMatch(/收入\d+(?:\.\d+)?元.*利润\d+(?:\.\d+)?元/);

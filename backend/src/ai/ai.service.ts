@@ -6,7 +6,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AiProviderClass } from '../ai-policy/ai-feature-policy.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
-import { AiPromptRegistryService } from '../model-runtime/ai-prompt-registry.service';
+import {
+  AiPromptRegistryService,
+  PreparedAiPromptExecution
+} from '../model-runtime/ai-prompt-registry.service';
 import { modelExecutionSnapshot } from '../model-runtime/model-deployment-config';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -103,11 +106,18 @@ export class AiService {
     let outputTokens = 0;
     let raw: unknown = null;
     let errorMessage: string | null = null;
+    let promptExecution: PreparedAiPromptExecution | null = null;
     let validatedClaims: ReturnType<AiAnswerGroundingService['createExpectedEnvelope']>['claims'] = [];
 
     try {
       contexts = await this.tools.buildContext(dto.message, dto.workOrderId, actor);
       const claimCandidates = this.grounding.createExpectedEnvelope(contexts, dto.message).claims;
+      promptExecution = this.promptRegistry.prepareExecution(promptBundle, {
+        schemaVersion: 'boss-chat-grounded-input/2.0',
+        currentUserQuestion: dto.message,
+        allowedFinancialClaims: claimCandidates,
+        untrustedToolData: contexts
+      });
       const providerRequest = {
         provider: providerName,
         model,
@@ -129,7 +139,9 @@ export class AiService {
         question: dto.message,
         history,
         contexts,
-        claimCandidates
+        claimCandidates,
+        renderedUserPrompt: promptExecution.renderedUserPrompt,
+        outputSchema: promptExecution.outputSchema
       };
       const result = await this.provider.generate(providerRequest);
       inputTokens = result.inputTokens;
@@ -157,8 +169,10 @@ export class AiService {
     const inputHash = this.hashAuditValue({
       message: dto.message,
       workOrderId: dto.workOrderId ?? null,
+      history,
       contexts,
-      promptBundleSha256: promptBundle.bundleSha256
+      promptBundleSha256: promptBundle.bundleSha256,
+      promptExecutionSha256: promptExecution?.executionSha256 ?? null
     });
     const requestAudit = this.buildRequestAudit(
       dto,
@@ -166,7 +180,8 @@ export class AiService {
       contexts,
       inputHash,
       promptBundle.versionVector,
-      promptBundle.bundleSha256
+      promptBundle.bundleSha256,
+      promptExecution
     );
     const responseAudit = this.buildResponseAudit(raw, reply, validatedClaims.length, errorMessage !== null);
     const persisted = await this.prisma.$transaction(async (tx) => {
@@ -460,13 +475,16 @@ export class AiService {
     contexts: Awaited<ReturnType<AiToolsService['buildContext']>>,
     inputHash: string,
     promptVersionVector: unknown,
-    promptBundleSha256: string
+    promptBundleSha256: string,
+    promptExecution: PreparedAiPromptExecution | null
   ) {
     return {
       schemaVersion: 'ai-call-audit/1.0',
       inputHash,
       promptBundleSha256,
       promptVersionVector,
+      promptExecution: promptExecution?.provenance ?? null,
+      promptExecutionSha256: promptExecution?.executionSha256 ?? null,
       questionHash: this.hashAuditValue(dto.message),
       questionCharacters: dto.message.length,
       workOrderScoped: Boolean(dto.workOrderId),

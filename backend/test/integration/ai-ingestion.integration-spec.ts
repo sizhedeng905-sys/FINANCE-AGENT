@@ -84,6 +84,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     let rawFileId: string | undefined;
     let storagePath: string | undefined;
     const invalidResourceId = `${requestPrefix}-invalid-output`;
+    const schemaDriftResourceId = `${requestPrefix}-schema-drift`;
 
     try {
       const [financeLogin, employeeLogin] = await Promise.all([
@@ -204,6 +205,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         classification: {
           status: 'succeeded',
           providerClass: 'mock',
+          promptExecutionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          outputSchemaHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           output: {
             selectedTemplateVersionId: templateVersionId,
             decision: 'NEEDS_FINANCE_REVIEW'
@@ -212,6 +215,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         mapping: {
           status: 'succeeded',
           providerClass: 'mock',
+          promptExecutionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          outputSchemaHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           output: {
             templateVersionId,
             decision: 'NEEDS_FINANCE_REVIEW',
@@ -257,6 +262,26 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           provider: 'mock',
           promptVersionId: expect.any(String)
         });
+        expect(aiTask.versionVector).toMatchObject({
+          schemaVersion: 'ai-invocation-vector/1.1',
+          prompt: { executionSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+          contracts: { outputSchemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
+        });
+        expect(aiTask.inputPayload).toMatchObject({
+          schemaVersion: 'ai-task-input-audit/1.0',
+          promptExecutionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          promptExecution: {
+            schemaVersion: 'ai-prompt-execution/1.1',
+            inputNormalizationVersion: 'ai-prompt-json/1.0',
+            inputJsonSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            renderedUserPromptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            outputSchemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            templateVariables: [{
+              name: 'input_json',
+              valueSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+            }]
+          }
+        });
         expect(JSON.stringify(aiTask.inputPayload)).not.toContain(injectionText);
       }
       const callLogs = await prisma.aiCallLog.findMany({
@@ -264,6 +289,21 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       });
       expect(callLogs).toHaveLength(2);
       expect(callLogs.every((item) => item.success)).toBe(true);
+      for (const callLog of callLogs) {
+        expect(callLog.requestPayload).toMatchObject({
+          schemaVersion: 'ai-structured-call-audit/1.0',
+          promptExecutionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          promptExecution: {
+            schemaVersion: 'ai-prompt-execution/1.1',
+            inputNormalizationVersion: 'ai-prompt-json/1.0',
+            inputJsonSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            systemInstructionsSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            userPromptTemplateSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            renderedUserPromptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            outputSchemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+          }
+        });
+      }
       expect(JSON.stringify(callLogs)).not.toContain(injectionText);
       expect(await prisma.auditLog.count({
         where: { resourceId: taskId, action: 'ai.structured_suggestion.succeeded' }
@@ -370,6 +410,52 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         where: { correlationId: `${requestPrefix}-invalid` }
       })).toMatchObject({ success: false });
 
+      const schemaDrift = await executor.execute({
+        taskType: 'excel_column_mapping',
+        promptKey: 'excel_column_mapping',
+        resourceType: 'integration_schema_drift',
+        resourceId: schemaDriftResourceId,
+        actor: {
+          id: finance.id,
+          username: finance.username,
+          name: finance.name,
+          role: finance.role,
+          department: finance.department ?? '',
+          phone: finance.phone ?? '',
+          status: UserStatus.active,
+          tokenVersion: finance.tokenVersion
+        },
+        context: { requestId: `${requestPrefix}-schema-drift` },
+        dataClassification: 'synthetic',
+        structuredInput: { sourceId: schemaDriftResourceId },
+        inputAudit: { sourceId: schemaDriftResourceId, inputHashOnly: true },
+        outputSchema: { type: 'array', items: { type: 'string' } },
+        source: {
+          kind: 'excel',
+          sourceId: schemaDriftResourceId,
+          sourceSha256: '9'.repeat(64),
+          irHash: 'a'.repeat(64),
+          irSchemaVersion: 'excel-ir/1.0',
+          processorVersion: 'integration-test/1.0'
+        },
+        template: {
+          templateVersionId,
+          templateContentSha256: 'b'.repeat(64),
+          candidateSetSha256: 'c'.repeat(64)
+        },
+        transformRegistryVersion: IMPORT_TRANSFORM_REGISTRY_VERSION,
+        validationRuleVersion: EXCEL_AI_VALIDATION_RULE_VERSION,
+        mappingProfileVersion: null,
+        authorizationPolicyVersion: EXCEL_AI_AUTHORIZATION_POLICY_VERSION,
+        mockOutput: invalidOutput,
+        validate: () => invalidOutput
+      });
+      expect(schemaDrift).toMatchObject({
+        status: 'failed',
+        reasonCode: 'AI_SUGGESTION_FAILED'
+      });
+      expect(await prisma.aiTask.count({ where: { resourceId: schemaDriftResourceId } })).toBe(0);
+
       config.set('ai.globalKillSwitch', true);
       const killed = await request(app.getHttpServer())
         .post(`/api/import-tasks/${taskId}/ai-suggestions`)
@@ -441,7 +527,12 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       config.set('ai.globalKillSwitch', originalKillSwitch);
       await prisma.aiCallLog.deleteMany({ where: { correlationId: { startsWith: requestPrefix } } });
       await prisma.aiTask.deleteMany({
-        where: { resourceId: { in: [taskId, invalidResourceId].filter((id): id is string => Boolean(id)) } }
+        where: {
+          resourceId: {
+            in: [taskId, invalidResourceId, schemaDriftResourceId]
+              .filter((id): id is string => Boolean(id))
+          }
+        }
       });
       if (taskId) await prisma.importTask.deleteMany({ where: { id: taskId } });
       if (projectId) await prisma.mappingProfile.deleteMany({ where: { projectId } });
@@ -450,7 +541,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       if (templateId) await prisma.templateField.deleteMany({ where: { templateId } });
       if (templateId) await prisma.template.deleteMany({ where: { id: templateId } });
       if (projectId) await prisma.project.deleteMany({ where: { id: projectId } });
-      const resourceIds = [taskId, rawFileId, projectId, templateId, invalidResourceId]
+      const resourceIds = [taskId, rawFileId, projectId, templateId, invalidResourceId, schemaDriftResourceId]
         .filter((id): id is string => Boolean(id));
       if (resourceIds.length) {
         await prisma.auditLog.deleteMany({ where: { resourceId: { in: resourceIds } } });
