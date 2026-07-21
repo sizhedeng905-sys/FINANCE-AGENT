@@ -35,4 +35,4 @@
 
 ## 结论
 
-自动化演示故事线为 `LOCAL_ENGINEERING_VERIFIED`。它证明合成数据下的确定性业务闭环，不证明真实公司数据准确率、OCR 真实效果、AI 自动判断或 production-ready。CR-011 远端 CI 待新 SHA 验证；人工三次现场演练在任务 C 运行包完成后执行并如实记录。
+自动化演示故事线为 `LOCAL_ENGINEERING_VERIFIED`。它证明合成数据下的确定性业务闭环，不证明真实公司数据准确率、OCR 真实效果、AI 自动判断或 production-ready。CR-011 三次 push 均因连接重置失败，远端 CI 为 `BLOCKED_EXTERNAL`；CR-012 已交付运行包，人工三次现场演练仍为 `NOT_RUN`。

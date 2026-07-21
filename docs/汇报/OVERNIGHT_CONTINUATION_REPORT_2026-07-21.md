@@ -6,7 +6,7 @@
 - 分支：`agent/b8-stable-hardening`
 - Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 起始 SHA：`7a0fded95aa1fb78658c1dd173bdb33264ec539c`
-- 当前 SHA：`1abe513b0392e367dc4242930a6022dbf4e7bc8e`；CR-011 尚未提交
+- 当前 SHA：`aa7230a`；CR-012 尚未提交
 - 用户未跟踪文件、模型、本地数据、`.env`、上传物和本地扫描证据均保持未暂存。
 
 ## 执行台账
@@ -15,9 +15,9 @@
 | --- | --- | --- | --- | --- |
 | D | CR-009 | Production-safe system registry 复核 | `VERIFIED_NO_CODE_CHANGE` | 保留原实现 |
 | A | CR-010 | 后端运行镜像移除无用 npm/Corepack | `ENGINEERING_VERIFIED` | 保持持续扫描 |
-| B | CR-011 | Excel 到经营报告演示 E2E | `LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING` | 提交、push、观察 Build/CodeQL |
-| C | 待分配 | 2026-07-24 可重复演示包 | `NOT_STARTED` | CR-011 远端绿色后开始 |
-| E | 待分配 | Excel AI 前端 advisory bridge | `DEFERRED_BY_GATE` | A-C 稳定后开始 |
+| B | CR-011 | Excel 到经营报告演示 E2E | `LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL` | 网络恢复后正常 push 并观察 Build/CodeQL |
+| C | CR-012 | 2026-07-24 可重复演示包 | `LOCAL_ENGINEERING_VERIFIED` | 提交并与 CR-011 一起推送；人工三次演练 |
+| E | 待分配 | Excel AI 前端 advisory bridge | `READY_FOR_ENGINEERING` | CR-012 提交后开始独立前端提交 |
 
 ## CR-009 复核
 
@@ -43,17 +43,27 @@
 - 财务 B 重新校验并批准；同一 Idempotency-Key 重放返回同一结果，最终恰好 3 条 confirmed Excel 记录。
 - 项目 structure、老板报告和 Snapshot 增量均为 3 条与 `13422.21`；`sourceDigest` 和 canonical `snapshotHash` 均从来源重算一致。
 - 单条 E2E 1/1、完整 Playwright 18/18、后端 50/464、PostgreSQL + 强制 Redis 14/124、migration 双路径、双端 build、runtime 与双端 audit 全部通过。
+- 提交 `aa7230a` 已形成；三次正常 push 均失败于 `Recv failure: Connection was reset`，按任务书停止重试并标记 `BLOCKED_EXTERNAL`。
+
+## CR-012 当前证据
+
+- 新增 `demo:reset/verify/api/web/test`，只接受 loopback PostgreSQL 和精确库名 `finance_agent_test`，production 与外部凭据失败关闭。
+- 配置/攻击测试 6/6；实际 production 命令 exit 1；43 migration reset、账号/项目/模板/金额 verify 均通过。
+- API/Web 实际启动后 readiness 与 200 smoke 通过，停止后无端口残留。
+- 一键故事线收紧前后连续两次 1/1：用例 15.1-15.2 秒、总耗时 21.5-21.7 秒，每次 teardown 均清理任务、3 条记录、快照、文件引用和磁盘产物。
+- 后端 50/464、runtime 4/4、前后端 build、43 migration 双路径、96 docs/167 links、768 candidates 与双端 production audit 全部通过；14/124 PostgreSQL/Redis 全量沿用 CR-011 同一业务基线，本提交未重复运行。
+- `docs/deliveries/2026-07-24/` 已包含 Runbook、验收、限制和 2-4 周计划；三次人工演练明确为 `NOT_RUN`。
 
 ## 周五演示判断
 
-当前为 `CONDITIONAL_NO_GO`：CR-010 已远端全绿，任务 B 的自动化主故事也已本地通过；但 CR-011 新 SHA 尚未取得远端绿色，任务 C 的离线运行包和三次人工演练记录仍未完成。主故事不依赖真实 OCR 或本地大模型。
+当前为 `CONDITIONAL_NO_GO`：CR-010 已远端全绿，任务 B 自动化主故事和任务 C 离线运行包均已本地通过；但 CR-011/CR-012 尚未取得远端新 SHA 证据，三次人工演练仍为 `NOT_RUN`。主故事不依赖真实 OCR 或本地大模型。
 
 ## 恢复点
 
-CR-011 提交前第一条命令：
+CR-012 提交前第一条命令：
 
 ```bash
 npm run check:docs
 ```
 
-随后依次执行 repository/staged hygiene、diff 审查、提交、正常 push，并检查该 SHA 的 Build 与 CodeQL。远端绿色后进入任务 C，不先做 Excel AI UI。
+随后执行 demo 定向复验、双端 build、文档/repository/staged hygiene、diff 审查和提交。网络恢复后正常 push CR-011/CR-012 并检查新 SHA 的 Build 与 CodeQL；本地工程继续进入独立的 Excel AI 前端 advisory bridge。

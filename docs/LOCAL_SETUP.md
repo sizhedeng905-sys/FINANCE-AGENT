@@ -122,6 +122,20 @@ curl http://127.0.0.1:3001/api/health/ready
 
 就绪响应应包含 `data.status=ok` 和 `data.database=ok`。再用 `employee/123456` 登录，确认请求由 `/api/auth/login` 返回真实 Token，而非 Mock 标识。
 
+## 周五合成演示
+
+周五演示只使用本机精确数据库 `finance_agent_test`、现有 migration/seed 和 Mock Provider：
+
+```powershell
+npm run demo:config:test
+npm run demo:reset
+npm run demo:verify
+```
+
+随后分别运行 `npm run demo:api` 与 `npm run demo:web`，访问 `http://127.0.0.1:4173`。完整 5-8 分钟步骤、账号和预期金额见 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](deliveries/2026-07-24/DEMO_RUNBOOK.md)。一键自动复验为 `npm run demo:test`。
+
+这些命令会拒绝 production、远程 PostgreSQL 和非精确测试库；不会启用真实 OCR、本地大模型或外部 Provider。
+
 ## Mock 模式
 
 仅演示前端时设置：
@@ -145,7 +159,7 @@ npm run check:hygiene
 
 `test:integration` 和 `test:e2e` 会对专用测试库执行 generate、`migrate deploy`、seed 和精确测试数据清理。脚本检测到非 `_test` 数据库会立即终止。
 
-当前 R11 候选证据：前端 runtime 4/4、前端/后端 build、后端 47/47 suites 与 428/428 tests、强制 Redis 的 PostgreSQL 集成 13/13 suites 与 114/114 tests、Playwright 17/17、41 条 migration 空库与 40→41 升级、Staging 配置/日志/备份/SBOM 脚本和两套生产依赖审计均通过。
+当前候选证据：前端 runtime 4/4、前端/后端 build、后端 50 suites / 464 tests、强制 Redis 的 PostgreSQL 集成 14 suites / 124 tests、Playwright 18/18、43 条 migration 空库与 42→43 升级、demo 配置 6/6 和一键故事 1/1、Staging 配置/日志/备份/SBOM 脚本及两套生产依赖审计均通过。
 
 ## 模型与 OCR
 

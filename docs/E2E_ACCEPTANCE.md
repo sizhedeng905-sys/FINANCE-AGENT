@@ -46,7 +46,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 
 ## 自动化覆盖
 
-后端真实 PostgreSQL/Redis 集成测试为 13/13 suites、114/114 tests，覆盖：
+后端真实 PostgreSQL/Redis 集成测试当前为 14/14 suites、124/124 tests，覆盖：
 
 - 四角色权限、员工资源归属、finance/boss 管理边界；
 - 无 Token、伪造 Token、过期 Token、旧 `tokenVersion`、停用和登出失效；
@@ -61,7 +61,7 @@ npx playwright show-trace test-results/<case>/trace.zip
 - 文件大小上限减一/恰好/超一字节、低磁盘 507、隔离区/对象残留、幂等重放、通知 outbox 和 retention dry-run。
 - 两实例共享登录限流、上传准入、模型 FIFO 执行门，以及 Redis 断连、超时、崩溃租约回收和导入确认 P2028/P2034 有界恢复。
 
-Playwright 共 17 条，覆盖：
+Playwright 当前共 18 条，覆盖：
 
 - employee、finance、reviewer、boss 真实登录及默认首页；
 - 员工创建提交、财务通过、复核并自动规则检查、老板终审；
@@ -72,6 +72,7 @@ Playwright 共 17 条，覆盖：
 - 财务在公式 XLSX 中显式授权缓存证据，另一名财务重新校验并批准；旧 `.xls` 走隔离转换；
 - 财务真实上传 PDF，在原件画布/bbox 证据上修改 OCR 字段，另一名财务批准后才生成经营记录；
 - 老板报告展示 canonical Snapshot、source digest、warning、Provider/Prompt 和逐条 `sourcePath`；
+- 周五演示故事线证明财务 A 上传、财务 B 复核、批准前隔离、3 条记录逐分合计 `13422.21`、幂等重放和 Snapshot 来源/hash；
 - CORS 白名单、拒绝未知 Origin、安全响应头和 PostgreSQL readiness。
 
 ## CI
@@ -80,15 +81,15 @@ Playwright 共 17 条，覆盖：
 
 ## 当前证据
 
-2026-07-21 R11 候选验收结果：
+2026-07-21 当前候选验收结果：
 
 - 前端 build：通过；
 - 后端 build：通过；
-- 后端单测：47 suites，428 tests，失败 0；
-- PostgreSQL/Redis 集成：13 suites，114 tests，失败 0；
-- Playwright：17 tests，失败 0；
+- 后端单测：50 suites，464 tests，失败 0；
+- PostgreSQL/Redis 集成：14 suites，124 tests，失败 0；
+- Playwright：18 tests，失败 0；
 - E2E teardown：测试数据库和 `backend/test-uploads/e2e` 均为 0 残留；
-- Prisma：41 个 migration，空库和 40→41 升级通过，222 个索引、89 个外键；
+- Prisma：43 个 migration，空库和 42→43 升级通过，224 个索引、89 个外键；
 - Prompt Registry 漂移：4/4 unit 与空库 41 migration 后 3/3 PostgreSQL 通过；
 - 仓库卫生：708 个 tracked/candidate 文件通过；
 - 根目录和后端生产依赖审计：0 vulnerabilities。
