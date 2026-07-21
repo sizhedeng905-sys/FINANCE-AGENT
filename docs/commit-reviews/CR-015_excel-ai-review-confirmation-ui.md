@@ -4,7 +4,7 @@
 
 ## 审查结论
 
-状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING`
+状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL`
 
 ## 变更边界
 
@@ -30,6 +30,6 @@
 
 ## 剩余风险
 
-- 本提交后的 Build/CodeQL 需要新 SHA 远端证明。
+- 本地提交 `2a59509` 连续三次无法连接 `github.com:443`；Build/CodeQL 需要网络恢复并推送新 SHA 后证明。
 - 三次现场人工演练、真实模型/业务真值、目标 Staging 和 owner UAT 未完成。
 - 最终批准快照仍由后端审计链承担；后续 UI 增量可以在提交完成页增加只读批准快照/BusinessRecord 跳转，但不得复制另一套事实源。

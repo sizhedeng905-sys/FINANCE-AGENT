@@ -295,9 +295,12 @@ test('Friday demo: a reviewed Excel reaches official records and a grounded oper
     'POST',
     `/api/import-tasks/${created.data.id}/confirm`
   ));
-  const recordsResponsePromise = page.waitForResponse((response) => (
-    response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/records'
-  ));
+  const recordsResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET'
+      && url.pathname === '/api/records'
+      && url.searchParams.get('importTaskId') === created.data.id;
+  });
   await page.getByRole('button', { name: '批准并入库 3 条' }).click();
   const confirmResponse = await confirmResponsePromise;
   const firstConfirmation = await readEnvelope<{
@@ -325,8 +328,9 @@ test('Friday demo: a reviewed Excel reaches official records and a grounded oper
   }>(replayResponse, 201);
   expect(replay.data).toEqual(firstConfirmation.data);
 
+  await expect(page).toHaveURL(new RegExp(`/data/records\\?importTaskId=${encodeURIComponent(created.data.id)}$`));
   await readEnvelope(await recordsResponsePromise);
-  await expect(page).toHaveURL(new RegExp('/data/records$'));
+  await expect(page.getByText('仅显示该导入任务生成的正式记录')).toBeVisible();
   await expect(page.locator('.ant-table-row').filter({ hasText: '1,250.25' })).toBeVisible();
 
   await expect.poll(async () => {
@@ -336,6 +340,15 @@ test('Friday demo: a reviewed Excel reaches official records and a grounded oper
     ));
     return task.data.status;
   }, { timeout: 30_000 }).toBe('confirmed');
+
+  await page.getByRole('button', { name: '查看批准证据' }).click();
+  await expect(page).toHaveURL(new RegExp(`/data/import/${created.data.id}/confirm$`));
+  const approvalCard = page.locator('.ant-card').filter({ hasText: '不可变批准快照' });
+  await expect(approvalCard).toBeVisible();
+  await expect(approvalCard).toContainText('财务');
+  await expect(approvalCard).toContainText('3 条');
+  await approvalCard.getByRole('button', { name: '查看本批正式记录' }).click();
+  await expect(page).toHaveURL(new RegExp(`/data/records\\?importTaskId=${encodeURIComponent(created.data.id)}$`));
 
   const finalRecords = await apiEnvelope<{ items: RecordDto[]; total: number }>(await request.get(
     `${API_URL}/records?importTaskId=${encodeURIComponent(created.data.id)}&page=1&pageSize=20`,

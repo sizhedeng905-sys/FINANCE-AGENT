@@ -812,6 +812,8 @@ export const useDataCenterStore = create<DataCenterState>()(
           recordType: query.recordType,
           sourceType: query.sourceType,
           status: query.status,
+          dataLayer: query.dataLayer,
+          importTaskId: query.importTaskId,
           dateFrom: query.dateFrom,
           dateTo: query.dateTo,
         };

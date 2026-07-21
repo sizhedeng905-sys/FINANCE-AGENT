@@ -40,7 +40,8 @@
 | CR-011/CR-012 新 SHA 远端 CI | SHA `66749b3`：Build `29828098638`、CodeQL `29828098718` | `PASS` |
 | CR-013 新 SHA 远端 CI | SHA `7d363f6`：Build `29831004356`、CodeQL `29831004341` | `PASS` |
 | CR-014 新 SHA 远端 CI | SHA `5580ce3`：Build `29834746500`、CodeQL `29834746264` | `PASS` |
-| CR-015 确认页证据专项 | Excel AI 3/3、完整 Playwright 21/21、390px 无持续横向溢出、文件残留 0 | `LOCAL_PASS / REMOTE_PENDING` |
+| CR-015 确认页证据专项 | Excel AI 3/3、完整 Playwright 21/21、390px 无持续横向溢出、文件残留 0；本地提交 `2a59509` 连续三次无法连接 `github.com:443` | `LOCAL_PASS / REMOTE_PUSH_BLOCKED_EXTERNAL` |
+| CR-016 批准证据与批次记录定位 | 先红灯复现批准后进入未过滤记录页；修复后周五故事 1/1、Excel 4/4、完整 Playwright 21/21、runtime 4/4、production build 通过，文件残留 0 | `LOCAL_PASS / REMOTE_PUSH_BLOCKED_EXTERNAL` |
 
 详细 E2E 断言见 [CR-011 提交审查](../../commit-reviews/CR-011_friday-excel-report-demo-e2e.md)。CR-011 与本交付包均已包含在远端 SHA `66749b3`，上表链接是该 SHA 的直接证据。
 

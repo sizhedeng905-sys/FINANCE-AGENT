@@ -6,7 +6,7 @@
 - 分支：`agent/b8-stable-hardening`
 - Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 起始 SHA：`7a0fded95aa1fb78658c1dd173bdb33264ec539c`
-- 当前远端 SHA：`5580ce3`；CR-015 正在本地收口
+- 当前远端 SHA：`5580ce3`；本地 HEAD `2a59509`，CR-015 推送受阻，CR-016 正在本地收口
 - 用户未跟踪文件、模型、本地数据、`.env`、上传物和本地扫描证据均保持未暂存。
 
 ## 执行台账
@@ -19,7 +19,8 @@
 | C | CR-012 | 2026-07-24 可重复演示包 | `REMOTE_ENGINEERING_VERIFIED / HUMAN_REHEARSAL_NOT_RUN` | 人工三次演练 |
 | E | CR-013 | Excel AI 前端 advisory bridge | `REMOTE_ENGINEERING_VERIFIED` | 保持人工草稿失败关闭边界 |
 | F | CR-014 | Excel AI 审核决定与 provenance | `REMOTE_ENGINEERING_VERIFIED` | 保持服务端事实链和攻击回归 |
-| G | CR-015 | 第二财务确认页证据摘要 | `LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING` | 提交并观察同 SHA Build/CodeQL |
+| G | CR-015 | 第二财务确认页证据摘要 | `LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL` | 网络恢复后正常推送 |
+| H | CR-016 | 批准快照与本批正式记录定位 | `LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL` | 提交后与 CR-015 一并等待网络恢复 |
 
 ## CR-009 复核
 
@@ -63,18 +64,19 @@
 - 攻击回归覆盖缺失/过期版本、旧输出、跨任务/模板、哈希和目标字段篡改、非法 edit、并发保存及重放；成功路径只生成四条审核决定、audit/ledger，不生成 BusinessRecord。
 - CR-014 已随 SHA `5580ce3` 推送；[Build run 29834746500](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29834746500) 两个 job 与 [CodeQL run 29834746264](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29834746264) 均成功。
 - CR-015 在确认页分页显示来源列、AI 建议、人工决定、最终字段、操作者、revision、模板/转换/evidence 与哈希。任务/账号/分页切换的晚到请求被丢弃，证据读取失败时批准按钮失败关闭，纯人工空集合保持可用。
-- CR-015 当前本地证据为单场景 1/1、Excel AI 专项 3/3、完整 Playwright 21/21 和前端 production build；teardown 清理后磁盘文件残留为 0。新 SHA 远端 CI 尚待提交后核验。
+- CR-015 当前本地证据为单场景 1/1、Excel AI 专项 3/3、完整 Playwright 21/21 和前端 production build；teardown 清理后磁盘文件残留为 0。本地提交 `2a59509` 连续三次因连接重置或无法连接 `github.com:443` 推送失败，已按规则标记外部阻断。
+- CR-016 先以周五 E2E 复现批准后跳入未过滤记录页，再让 URL、Store 与真实 API 使用同一个 `importTaskId`；确认页只读展示 `excel-approval/1.0` 批准人、记录数、revision 与哈希，并可返回同批正式记录。周五 1/1、Excel 4/4、完整 Playwright 21/21、runtime 4/4 和 build 通过。
 
 ## 周五演示判断
 
-当前为 `CONDITIONAL_NO_GO`：CR-010 至 CR-014 已远端全绿，任务 B 自动化主故事和任务 C 离线运行包均有同 SHA 证据；三次人工演练仍为 `NOT_RUN`。CR-015 的确认页证据链已在本地通过，不依赖真实 OCR 或本地大模型，也不替代人工演练和 owner UAT。
+当前为 `CONDITIONAL_NO_GO`：CR-010 至 CR-014 已远端全绿，任务 B 自动化主故事和任务 C 离线运行包均有同 SHA 证据；三次人工演练仍为 `NOT_RUN`。CR-015/CR-016 的审核与批准证据链已在本地通过，但尚未推送取得同 SHA CI，也不替代人工演练和 owner UAT。
 
 ## 恢复点
 
-CR-015 提交前第一条命令：
+CR-016 提交前第一条命令：
 
 ```bash
 npm run check:docs
 ```
 
-随后执行文档/repository/staged hygiene、diff 审查和提交。正常 push CR-015 并检查同 SHA Build/CodeQL；PR 保持 Draft，不把工程绿色写成人工演练、真实准确率或生产授权。
+随后执行文档/repository/staged hygiene、diff 审查和提交。GitHub 网络恢复后正常 push 当前分支并检查 CR-015/CR-016 最新 SHA 的 Build/CodeQL；在此之前继续保持 `REMOTE_PUSH_BLOCKED_EXTERNAL`，PR 保持 Draft。

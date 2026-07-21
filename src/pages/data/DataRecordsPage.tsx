@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
+import { AuditOutlined, CloseOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   App,
@@ -18,6 +20,7 @@ import {
   Space,
   Table,
   Tag,
+  Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
@@ -37,6 +40,9 @@ interface EditRecordForm {
 
 export default function DataRecordsPage({ readOnly = false }: { readOnly?: boolean }) {
   const { message } = App.useApp();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const importTaskId = searchParams.get('importTaskId')?.trim() || undefined;
   const [selected, setSelected] = useState<BusinessRecord | null>(null);
   const [editing, setEditing] = useState<BusinessRecord | null>(null);
   const [projectId, setProjectId] = useState<string>();
@@ -65,8 +71,8 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
 
   useEffect(() => {
     void fetchProjects({ page: 1, pageSize: 100 }).catch(() => undefined);
-    void fetchRecords({ page: 1, pageSize: 20 }).catch(() => undefined);
-  }, [fetchProjects, fetchRecords]);
+    void fetchRecords({ page: 1, pageSize: 20, importTaskId }).catch(() => undefined);
+  }, [fetchProjects, fetchRecords, importTaskId]);
 
   const query = (overrides: RecordListQuery = {}) => {
     const has = (key: keyof RecordListQuery) => Object.prototype.hasOwnProperty.call(overrides, key);
@@ -78,6 +84,7 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
       sourceType: has('sourceType') ? overrides.sourceType : sourceType,
       status: has('status') ? overrides.status : status,
       dataLayer: has('dataLayer') ? overrides.dataLayer : dataLayer,
+      importTaskId: has('importTaskId') ? overrides.importTaskId : importTaskId,
       dateFrom: has('dateFrom') ? overrides.dateFrom : dateRange?.[0].format('YYYY-MM-DD'),
       dateTo: has('dateTo') ? overrides.dateTo : dateRange?.[1].format('YYYY-MM-DD'),
     });
@@ -193,6 +200,37 @@ export default function DataRecordsPage({ readOnly = false }: { readOnly?: boole
       <PageHeader title={readOnly ? '数据记录查看' : '数据记录'} description="所有最终进入系统的业务数据 BusinessRecord" />
       {projectError ? <Alert type="error" showIcon message="项目列表加载失败" description={projectError} /> : null}
       {recordError ? <Alert type="error" showIcon message="业务记录请求失败" description={recordError} style={{ marginTop: 12 }} /> : null}
+      {importTaskId ? (
+        <Alert
+          className="section-row"
+          type="success"
+          showIcon
+          message="仅显示该导入任务生成的正式记录"
+          description={<Typography.Text code copyable>{importTaskId}</Typography.Text>}
+          action={(
+            <Space wrap>
+              {!readOnly ? (
+                <Button
+                  icon={<AuditOutlined />}
+                  onClick={() => navigate(`/data/import/${encodeURIComponent(importTaskId)}/confirm`)}
+                >
+                  查看批准证据
+                </Button>
+              ) : null}
+              <Button
+                icon={<CloseOutlined />}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('importTaskId');
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                清除定位
+              </Button>
+            </Space>
+          )}
+        />
+      ) : null}
       <Card className="section-row">
         <Space wrap className="table-filter">
           <Select<BusinessRecord['projectId']>

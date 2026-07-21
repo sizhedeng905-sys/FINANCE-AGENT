@@ -325,7 +325,7 @@ export interface ImportTask {
     policyVersion: string;
     snapshotHash: string;
     requestKeyHash: string;
-    snapshot: Record<string, unknown>;
+    snapshot: ImportApprovalSnapshot;
   };
   progress?: {
     executionMode?: 'synchronous' | 'background';
@@ -360,6 +360,33 @@ export interface ImportTask {
   };
   sheets: ImportSheet[];
   columns: ImportColumn[];
+}
+
+export interface ImportApprovalSnapshot {
+  schemaVersion: 'excel-approval/1.0';
+  taskId: string;
+  taskVersion: number;
+  projectId: string;
+  review: {
+    reviewRevision: number;
+    validationSnapshotHash: string;
+    validationRuleVersion: string;
+    rowSetHash: string;
+    normalizedOutputHash: string;
+    acknowledgedWarningIds: string[];
+  };
+  approval: {
+    approvedByUserId: string;
+    approvedByUsername: string;
+    approvedAt: string;
+    selfApproval: false;
+    requestKeyHash: string;
+  };
+  output: {
+    normalizedOutputHash: string;
+    recordCount: number;
+  };
+  snapshotHash: string;
 }
 
 export interface ImportSheet {

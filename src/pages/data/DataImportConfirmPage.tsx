@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, App, Button, Card, Checkbox, Col, Empty, Input, Modal, Progress, Row, Space, Spin, Statistic, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import ExcelAiReviewEvidence from '@/components/data/ExcelAiReviewEvidence';
+import ExcelApprovalEvidence from '@/components/data/ExcelApprovalEvidence';
 import PageHeader from '@/components/PageHeader';
 import { getImportAiReviewDecisions } from '@/api/importApi';
 import { useAuthStore } from '@/store/authStore';
@@ -35,6 +36,9 @@ export default function DataImportConfirmPage() {
   const revalidateTask = useImportStore((state) => state.revalidateTask);
   const currentUser = useAuthStore((state) => state.user);
   const task = currentTask ?? preview?.task;
+  const importedRecordsPath = id
+    ? `/data/records?importTaskId=${encodeURIComponent(id)}`
+    : '/data/records';
   const followConfirmation = useRef(false);
   const aiReviewRequestEpoch = useRef(0);
   const [page, setPage] = useState(1);
@@ -113,12 +117,12 @@ export default function DataImportConfirmPage() {
     if (task?.status === 'confirmed') {
       followConfirmation.current = false;
       message.success(`导入完成，共生成 ${task.counts.imported} 条经营记录`);
-      navigate('/data/records');
+      navigate(importedRecordsPath);
     } else if (task?.status === 'confirmation_failed') {
       followConfirmation.current = false;
       message.error(task.errorMessage || '后台确认失败，已保存进度，可重试');
     }
-  }, [message, navigate, task]);
+  }, [importedRecordsPath, message, navigate, task]);
 
   const currentValidation = task && task.validation?.reviewRevision === task.reviewRevision ? task.validation : null;
   const warnings = currentValidation?.snapshot.warnings ?? [];
@@ -233,7 +237,7 @@ export default function DataImportConfirmPage() {
     });
     if (result.task.status === 'confirmed') {
       message.success('该任务已确认，本次未重复生成记录');
-      navigate('/data/records');
+      navigate(importedRecordsPath);
       return;
     }
     message.info('任务已进入后台确认，完成后将自动打开数据记录');
@@ -290,6 +294,12 @@ export default function DataImportConfirmPage() {
                 showIcon
                 message="后台确认未完成"
                 description={task.errorMessage || '已保存已处理批次，可从当前进度安全重试'}
+              />
+            ) : null}
+            {task?.approval ? (
+              <ExcelApprovalEvidence
+                approval={task.approval}
+                onOpenRecords={() => navigate(importedRecordsPath)}
               />
             ) : null}
             <ExcelAiReviewEvidence
@@ -357,7 +367,7 @@ export default function DataImportConfirmPage() {
                 >
                   {task?.status === 'confirmation_failed' ? `重试批准 ${recordCount} 条` : `批准并入库 ${recordCount} 条`}
                 </Button>
-                {task?.status === 'confirmed' ? <Button onClick={() => navigate('/data/records')}>查看数据记录</Button> : null}
+                {task?.status === 'confirmed' ? <Button onClick={() => navigate(importedRecordsPath)}>查看数据记录</Button> : null}
               </Space>
             </Card>
           </>

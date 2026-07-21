@@ -4,7 +4,7 @@
 
 分支：`agent/b8-stable-hardening`
 
-状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING`
+状态：`LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL`
 
 ## 目标
 
@@ -46,4 +46,4 @@
 - 人工映射在模型不可用时仍可保存；若确认页自身无法读取审计证据，则审批失败关闭，避免在证据状态未知时继续写库。
 - 最终批准仍由既有后端在事务内重新鉴权、核对验证快照、版本和幂等键；本组件不能提交 reviewer、role、目标状态或 BusinessRecord。
 - 三次人工演练仍为 `NOT_RUN`；真实财务/OCR/AI 真值、目标 Linux Staging 和 owner UAT 仍未关闭。
-- 本提交推送后必须以新 SHA 重新取得 Build 与 CodeQL 证据，PR 保持 Draft。
+- 本地提交 `2a59509` 连续三次无法连接 `github.com:443`，状态为外部网络阻断；网络恢复后正常推送并以新 SHA 取得 Build/CodeQL，PR 保持 Draft。

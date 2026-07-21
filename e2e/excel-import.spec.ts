@@ -241,9 +241,12 @@ test('API mode: cached formula evidence is approved by a second finance user', a
     'POST',
     `/api/import-tasks/${created.data.id}/confirm`
   ));
-  const recordsResponse = page.waitForResponse((nextResponse) => (
-    nextResponse.request().method() === 'GET' && new URL(nextResponse.url()).pathname === '/api/records'
-  ));
+  const recordsResponse = page.waitForResponse((nextResponse) => {
+    const url = new URL(nextResponse.url());
+    return nextResponse.request().method() === 'GET'
+      && url.pathname === '/api/records'
+      && url.searchParams.get('importTaskId') === created.data.id;
+  });
   await page.getByRole('button', { name: '批准并入库 1 条' }).click();
   const confirmed = await readEnvelope<ImportConfirmDto>(await confirmResponse);
   expect(confirmed.data).toMatchObject({
@@ -255,6 +258,7 @@ test('API mode: cached formula evidence is approved by a second finance user', a
     task: { status: 'confirming' }
   });
 
+  await expect(page).toHaveURL(new RegExp(`/data/records\\?importTaskId=${encodeURIComponent(created.data.id)}$`));
   const records = await readEnvelope<{ items: RecordDto[] }>(await recordsResponse);
   const imported = records.data.items.find((record) => record.importTaskId === created.data.id);
   expect(imported).toMatchObject({
@@ -262,7 +266,7 @@ test('API mode: cached formula evidence is approved by a second finance user', a
     status: 'confirmed'
   });
   expect(imported?.sourceId).toBeTruthy();
-  await expect(page).toHaveURL(new RegExp('/data/records$'));
+  await expect(page.getByText('仅显示该导入任务生成的正式记录')).toBeVisible();
 });
 
 test('API mode: finance uploads a legacy XLS through the data center', async ({ page }) => {

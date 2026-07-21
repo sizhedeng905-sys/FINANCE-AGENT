@@ -3,7 +3,7 @@
 更新日期：2026-07-21
 执行基准：`docs/财务Agent_真实化与阶段9-10推进总提示词.md`
 当前分支：`agent/b8-stable-hardening`
-当前批次：R0-R11 真实性、安全、恢复与并发重新审计继续收口。CR-002 至 CR-010 已关闭 Excel staging、Prompt provenance、治理、文档、production-safe system registry 和运行镜像供应链问题。CR-011 新增周五演示 E2E，CR-012 建立只允许本机精确测试库的现场交付包，两者已随 SHA `66749b3` 远端双绿。CR-013 把真实 Excel AI 建议接入财务人工草稿，并已随 SHA `7d363f6` 取得 Build/CodeQL 双绿。CR-014 由服务端验证并持久化四类人工决定及完整 provenance，已随 SHA `5580ce3` 取得远端 Build/CodeQL 双绿。CR-015 在第二财务确认页分页展示该事实链，证据请求绑定任务/账号/分页且丢弃晚到响应，读取失败时最终批准失败关闭。当前候选通过 50 suites / 464 unit、完整 PostgreSQL/Redis 回归 11 suites / 111 个实际执行测试（另 3 suites / 14 tests 按仓库既有条件跳过）、完整 Playwright 21/21、44 migrations 双路径和双端 build，另有 demo 配置 6/6 与一键故事 1/1。CR-015 尚待本提交与远端同 SHA 验证；三次人工演练为 `NOT_RUN`，真实口径/准确率为 `REAL_SAMPLE_NEEDED`，目标 Staging 为 `EXTERNAL_RESOURCE_NEEDED`。
+当前批次：R0-R11 真实性、安全、恢复与并发重新审计继续收口。CR-002 至 CR-010 已关闭 Excel staging、Prompt provenance、治理、文档、production-safe system registry 和运行镜像供应链问题。CR-011 新增周五演示 E2E，CR-012 建立只允许本机精确测试库的现场交付包，两者已随 SHA `66749b3` 远端双绿。CR-013 把真实 Excel AI 建议接入财务人工草稿，并已随 SHA `7d363f6` 取得 Build/CodeQL 双绿。CR-014 由服务端验证并持久化四类人工决定及完整 provenance，已随 SHA `5580ce3` 取得远端 Build/CodeQL 双绿。CR-015 在第二财务确认页分页展示该事实链；CR-016 将批准完成页定位到本批正式记录并展示不可变批准快照，同时修复 Store 丢弃 `importTaskId/dataLayer`。当前候选通过 50 suites / 464 unit、完整 PostgreSQL/Redis 回归 11 suites / 111 个实际执行测试（另 3 suites / 14 tests 按仓库既有条件跳过）、完整 Playwright 21/21、44 migrations 双路径和双端 build，另有 demo 配置 6/6 与一键故事 1/1。CR-015 本地提交 `2a59509` 连续三次无法连接 GitHub，CR-016 本地工程验收完成；两者尚待正常推送与同 SHA 验证。三次人工演练为 `NOT_RUN`，真实口径/准确率为 `REAL_SAMPLE_NEEDED`，目标 Staging 为 `EXTERNAL_RESOURCE_NEEDED`。
 
 ## 完成口径
 
@@ -25,7 +25,7 @@
 | R6-R8 后端边界、治理、CI | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | Gate A-C、真实应用镜像、固定 Syft/Grype、OpenSSL 3、日志/备份/同 manifest rollback 与 Python 路径均已实现并有本地/远端证据；目标 self-hosted Staging/恢复仍未提供 |
 | R9 真实 Staging | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | 登录、上传和模型执行门已共享化；Excel 发布完整性经 CR-002 至 CR-005 重新攻击并本地收口。目标环境与 live PR checks 仍须独立核验，不能把本地工程证据写成真实部署通过 |
 | R10 真实模型/业务准确率 | `L0 ENGINEERING_VERIFIED / L1 REAL_SAMPLE_NEEDED` | 文本/OCR 连续健康 3 天；四套资产、容器配置、Qwen/Paddle 认证合成推理、401 边界和镜像内 Python contract 8/8 已通过；L1 仍需要冻结真值 |
-| R11 最终交接 | 进行中 | CR-010 至 CR-014 已推送且远端全绿；CR-015 第二财务确认页证据摘要已本地通过 21/21 E2E，待提交与同 SHA 远端验证；三次人工演练未执行，保持 Draft、不 merge、不转 Ready |
+| R11 最终交接 | 进行中 | CR-010 至 CR-014 已推送且远端全绿；CR-015/CR-016 已本地通过 21/21 E2E，GitHub 连接三次失败，待正常推送与同 SHA 验证；三次人工演练未执行，保持 Draft、不 merge、不转 Ready |
 | M0-M8 AI 分类/映射/审批/快照补充 | 工程与合成验收完成 / 外部和人工门禁未关闭 | Excel/OCR AI 只建议；双人审批、整批原子入账、不可变报告快照、严格 Claim grounding、攻击/并发/资源/降级、Prompt 漂移和最终证据已有自动化证据 |
 
 项目负责人已填写 `docs/FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`。CR-007 将已确认决定集中到 `docs/owner-input/OWNER_DECISIONS.md`，将最多十个未决口径集中到 `docs/owner-input/OPEN_QUESTIONS.md`；旧 H01-H16 文档仅保留为历史索引。项目不再等待姓名、日期或多方签字，但产品四角色、第二财务审批、真实样本、外部资源和 owner UAT 门禁不变。
@@ -100,6 +100,7 @@ B8-09 已完成的工程证据：
 - CR-013 已接通真实 Excel AI 建议 POST/GET 和财务本页草稿，显示模板、证据、warning、Provider/模型/Prompt 与哈希，逐列采纳/拒绝/修改/忽略均不自动保存或入账；跨模板、503、任务切换和登出失败关闭。后端 50/464、专项 E2E 2/2、完整 Playwright 20/20 和双端 build 通过；SHA `7d363f6` 的 Build run `29831004356` 与 CodeQL run `29831004341` 均成功，详见 `docs/汇报/CR_013_EXCEL_AI_ADVISORY_DRAFT_BRIDGE_2026-07-21.md`。
 - CR-014 为 Excel 映射保存增加 expected task/review version 和受约束的 AI review provenance。服务端只接受当前任务最新且未使用的成功 AI 输出，重算 canonical output hash，验证完整版本向量、冻结模板、source/evidence、转换白名单和最终字段语义，并在映射、audit、ledger 同一事务记录 accept/edit/reject/ignore。集成攻击覆盖缺失/过期版本、旧输出、跨任务、哈希/字段篡改、跨模板、并发和重放；最终恰好四条决定且 BusinessRecord 为 0。详见 `docs/汇报/CR_014_EXCEL_AI_REVIEW_PROVENANCE_2026-07-21.md`。
 - CR-014 已随 SHA `5580ce3` 通过远端 Build run `29834746500` 和 CodeQL run `29834746264`。CR-015 在第二财务确认页展示该分页事实链，覆盖另一财务读取、确定性重新校验、390px 页面宽度、证据接口 503 后批准禁用和正式记录为 0；专项 3/3、完整 Playwright 21/21 与前端 production build 通过。详见 `docs/汇报/CR_015_EXCEL_AI_REVIEW_CONFIRMATION_UI_2026-07-21.md`。
+- CR-016 先以周五 E2E 证明批准后错误落入未过滤记录页，再让 URL、Store 和 API 真实携带 `importTaskId`；记录页可回看 `excel-approval/1.0` 批准人、记录数、revision 与哈希，并返回同批正式记录。Store 丢失的 `dataLayer` 同步修复。周五 1/1、Excel 4/4、完整 Playwright 21/21、runtime 4/4 和 build 通过；详见 `docs/汇报/CR_016_EXCEL_APPROVAL_EVIDENCE_AND_RECORD_SCOPE_2026-07-21.md`。
 - 固定 Node 镜像已拉取并记录 digest；本机前端、后端和 backup 镜像构建成功，隔离 18 服务栈已真实启动并通过 Node/TLS 与浏览器 API/CSP smoke，合成写入已清理且容器/卷残留为 0。H13 目标 Linux Staging、真实 restore、RPO/RTO 和 rollback 仍未执行。
 - RC 新增空库 24 条与上一基线 23→24 的自动迁移门禁；本地开发库也已应用 24/24 并通过 41 表、27 enum、173 index、77 foreign key 校验。
 - 真实 GPU 再验收覆盖文本重启、VL 按需切换和文本恢复，期间 OCR 432 次 readiness 采样 0 失败；最终文本/OCR常驻，VL/Embedding离线。

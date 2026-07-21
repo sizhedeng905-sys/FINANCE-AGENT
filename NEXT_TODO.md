@@ -12,39 +12,39 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 文档信息架构由 CR-008 收口：报告、审计和验收证据集中到 `docs/汇报/`，计划与检查清单集中到 `docs/计划/`，并由 `npm run check:docs` 检查已跟踪 Markdown 本地链接。
 - production-safe AI 系统登记由 CR-009 收口：空白库仅初始化 11 个系统 Prompt、受控 ModelDeployment/TaskModelRoute 和一条变更审计；两个并发初始化进程精确收敛为 changed/unchanged，配置漂移会阻止 API/Worker 启动。
 - CR-010 已移除 runtime npm/npx/Corepack，并保留项目内 Prisma、Node、OpenSSL 和默认 entrypoint；SHA `1abe513` 的 Build 与 CodeQL 均成功，容器 fixable Critical 门禁已关闭。
-- CR-011 已在本地建立“Excel 到经营报告”演示 E2E：不同财务审批、批准前隔离、3 条逐分记录、`13422.21` 报告增量、幂等重放和 Snapshot 哈希均有自动断言；新 SHA 远端 CI 尚待确认。
-- CR-012 已建立 `docs/deliveries/2026-07-24/` 与安全 `demo:*` 命令：只允许本机精确测试库，Mock/外部禁用边界、账号/fixture 核验、服务 smoke 和一键 E2E 均已通过；三次人工演练保持 `NOT_RUN`。
+- CR-011/CR-012 已建立“Excel 到经营报告”演示 E2E 与安全 `demo:*` 交付包，SHA `66749b3` 的 Build/CodeQL 双绿；三次人工演练保持 `NOT_RUN`。
+- CR-013 已把真实 Excel AI 建议接入财务草稿，SHA `7d363f6` 的 Build/CodeQL 双绿；AI 不能自动保存、校验、跳转或入账。
+- CR-014 已由服务端核验并持久化四类人工决定、AI Task、输出/版本向量哈希、证据、最终字段和操作者，SHA `5580ce3` 的 Build/CodeQL 双绿。
+- CR-015 已在第二财务确认页展示服务端审核证据，证据读取失败时批准失败关闭；本地提交 `2a59509` 完成 21/21 E2E，但连续三次无法连接 GitHub，尚未推送。
+- CR-016 已在本地完成不可变批准快照展示、按 `importTaskId` 定位正式记录和双向跳转；同时修复 Store 丢弃 `dataLayer/importTaskId` 查询参数。完整 Playwright 21/21、runtime 4/4 和 build 通过，等待本地提交与网络恢复。
 - 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
 - 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
 ## 已有工程证据
 
-- 后端全量单元：50 suites / 464 tests。
-- PostgreSQL/Redis 全量：14 suites / 124 tests；无 Redis 与强制 Redis 分组均已实际执行。
-- Playwright 基线：18 tests，其中周五演示故事线 1 test。
+- 后端全量单元：50 suites / 464 tests（CR-014 服务端基线）。
+- PostgreSQL/Redis 全量：11 suites / 111 个实际执行测试；仓库既有 3 suites / 14 tests 按条件跳过（CR-014 当前完整基线）。
+- Playwright 当前基线：21/21；包含 Excel AI 审核证据、批准快照定位和周五演示故事线。
 - CR-009 system registry 专项：5 个 PostgreSQL 集成测试；独立空库 acceptance 覆盖 43 migrations、bootstrap/verify、Mock 调用、API/Worker 启动和漂移拒绝。
-- Prisma migration：43 条空库路径与 42→43 升级路径。
-- 前后端 production build、runtime 4/4 和两套 production dependency audit 已通过；最终 repository hygiene 在 CR-009 暂存后复验。
+- Prisma migration：44 条空库路径与上一版本升级路径（CR-014 基线）。
+- 前后端 production build、runtime 4/4、文档链接和 repository hygiene 已通过；CR-016 不含 migration 或后端写路径变更。
 
 以上只证明对应提交的工程行为，不代表真实 OCR 准确率、财务逐分对账、目标云环境、恢复演练或 owner UAT 已通过。
 
 ## 自动推进顺序
 
-1. 恢复远端后收口 CR-011/CR-012 证据。
-   - CR-011 的三次正常 push 均遇到 `Recv failure: Connection was reset`；网络恢复后正常 push，确认当前新 SHA 的 Build 与 CodeQL，禁止借用旧 SHA。
+1. 恢复远端后推送 CR-015/CR-016。
+   - CR-015 本地提交为 `2a59509`；三次正常 push 分别遇到连接重置或无法连接 `github.com:443`。
+   - 网络恢复后正常 push 当前分支，分别按实际新 SHA 检查 Build 与 CodeQL；禁止借用 CR-014 绿色，不 force push。
 2. 完成三次人工周五演练。
    - 按 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](docs/deliveries/2026-07-24/DEMO_RUNBOOK.md) 每次从 reset 开始，如实填写验收表；未执行前保持 `NOT_RUN`。
-3. Excel AI 前端审核桥接。
-   - 接入真实 `/import-tasks/:id/ai-suggestions`，建议只能进入页面草稿。
-   - 显示候选模板、理由、warning、Prompt/模型/Mock 来源；支持逐列接受、修改、拒绝和忽略。
-   - 后续独立提交服务端 MappingDecision/provenance；AI 失败时保持完整手工路径。
-4. OCR 并发和 AI 采纳闭环。
-   - `expectedVersion` 与 `expectedReviewRevision` 强制必填并覆盖 stale 409。
-   - 原始值、AI 建议、人工值、bbox/evidence 和 provenance 可复核；采纳后重新做确定性校验。
-5. 报告人工复核与来源展开。
+3. 真实样本校准。
+   - 由项目负责人提供不入 Git、已授权和带真值的最小 Excel/OCR/财务样本；分别测量解析、OCR、映射和人工修正。
+   - 未提供前保持 `REAL_SAMPLE_NEEDED`，不把 Mock/合成结果写成真实准确率。
+4. 报告人工复核与来源展开。
    - 草稿、接受、退回/拒绝状态机；受保护 API、版本并发和 audit。
    - 前端分页调用 `/reports/snapshots/:id/sources`；AI 仍不计算金额。
-6. Staging、模型网络和完整 smoke。
+5. Staging、模型网络和完整 smoke。
    - API/Worker 与模型使用受控 Docker network、服务 DNS、相同 secret reference、健康/超时/并发/kill switch。
    - 本地合成 smoke 自动完成；真实目标云环境保持 `EXTERNAL_RESOURCE_NEEDED`。
 

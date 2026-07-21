@@ -26,12 +26,13 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-012 | [CR-012_repeatable-friday-demo-delivery.md](CR-012_repeatable-friday-demo-delivery.md) | `docs: package repeatable Friday demo` | P1 delivery readiness | REMOTE_ENGINEERING_VERIFIED | CR-011 |
 | CR-013 | [CR-013_excel-ai-advisory-draft-bridge.md](CR-013_excel-ai-advisory-draft-bridge.md) | `feat: bridge Excel AI suggestions into finance draft` | P1 AI review integrity | REMOTE_ENGINEERING_VERIFIED | CR-012 |
 | CR-014 | [CR-014_excel-ai-review-provenance.md](CR-014_excel-ai-review-provenance.md) | `feat: persist verified Excel AI review decisions` | P1 AI review integrity | REMOTE_ENGINEERING_VERIFIED | CR-013 |
-| CR-015 | [CR-015_excel-ai-review-confirmation-ui.md](CR-015_excel-ai-review-confirmation-ui.md) | `feat: show Excel AI review evidence before approval` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-014 |
+| CR-015 | [CR-015_excel-ai-review-confirmation-ui.md](CR-015_excel-ai-review-confirmation-ui.md) | `feat: show Excel AI review evidence before approval` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-014 |
+| CR-016 | [CR-016_excel-approval-evidence-record-scope.md](CR-016_excel-approval-evidence-record-scope.md) | `feat: link Excel approval evidence to scoped records` | P1 delivery evidence | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-015 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015 已在本地完成第二财务确认页审计摘要和失败关闭验收。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015 已在本地完成第二财务确认页审计摘要，CR-016 已在本地完成批准快照与任务级正式记录定位；后两项等待 GitHub 网络恢复。
 - OCR 与报告财务复核：前序 P1 契约稳定后开始。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 

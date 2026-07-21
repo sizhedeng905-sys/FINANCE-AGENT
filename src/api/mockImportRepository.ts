@@ -520,13 +520,40 @@ export async function mockConfirmImportTask(id: string, payload: ConfirmImportTa
   task.confirmedBy = approver.name;
   task.counts = { ...task.counts, valid: valid.length, errors: 0, imported: valid.length };
   const approvalHash = mockHash({ id, reviewRevision: task.reviewRevision, approvedBy: approver.id, output: payload.expectedPayloadHash });
+  const requestKeyHash = mockHash({ id, reviewRevision: task.reviewRevision });
+  const validation = task.validation;
   task.approval = {
     reviewRevision: task.reviewRevision,
     validationSnapshotHash: payload.expectedValidationSnapshotHash,
     policyVersion: 'finance-excel-approval/1.0-pending-h10',
     snapshotHash: approvalHash,
-    requestKeyHash: mockHash({ id, reviewRevision: task.reviewRevision }),
-    snapshot: { schemaVersion: 'excel-approval/1.0', selfApproval: false, normalizedOutputHash: payload.expectedPayloadHash },
+    requestKeyHash,
+    snapshot: {
+      schemaVersion: 'excel-approval/1.0',
+      taskId: task.id,
+      taskVersion: task.version,
+      projectId: task.projectId,
+      review: {
+        reviewRevision: task.reviewRevision,
+        validationSnapshotHash: payload.expectedValidationSnapshotHash,
+        validationRuleVersion: validation.ruleVersion,
+        rowSetHash: validation.snapshot.rowSetHash,
+        normalizedOutputHash: validation.snapshot.normalizedOutputHash,
+        acknowledgedWarningIds: payload.acknowledgedWarningIds,
+      },
+      approval: {
+        approvedByUserId: approver.id,
+        approvedByUsername: approver.username,
+        approvedAt: task.confirmedAt,
+        selfApproval: false,
+        requestKeyHash,
+      },
+      output: {
+        normalizedOutputHash: validation.snapshot.normalizedOutputHash,
+        recordCount: valid.length,
+      },
+      snapshotHash: approvalHash,
+    },
   };
   return {
     task: cloneTask(task),
