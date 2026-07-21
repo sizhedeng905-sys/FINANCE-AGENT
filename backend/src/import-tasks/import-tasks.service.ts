@@ -108,6 +108,20 @@ const previewTaskInclude = {
   }
 } satisfies Prisma.ImportTaskInclude;
 
+const stagedRecordIntegrityInclude = {
+  values: { orderBy: [{ fieldId: 'asc' as const }, { id: 'asc' as const }] },
+  sourceImportRow: {
+    select: {
+      id: true,
+      importTaskId: true,
+      status: true,
+      confirmationProcessedAt: true,
+      generatedRecordHash: true,
+      generatedRecordValueCount: true
+    }
+  }
+} satisfies Prisma.BusinessRecordInclude;
+
 type PreviewTask = Prisma.ImportTaskGetPayload<{ include: typeof previewTaskInclude }>;
 type PreviewImportRow = Prisma.ImportRowGetPayload<Record<string, never>>;
 type PreviewField = FieldDefinition;
@@ -194,6 +208,7 @@ export const EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'excel-approval/1.0';
 export const EXCEL_APPROVAL_POLICY_VERSION = 'finance-excel-approval/1.0-pending-h10';
 export const EXCEL_APPROVAL_AUTHORIZATION_POLICY_VERSION = 'finance-excel-approval-authz/1.0';
 export const EXCEL_ROW_REVIEW_POLICY_VERSION = 'excel-row-review-h01/1.0';
+export const EXCEL_STAGING_CONTENT_SCHEMA_VERSION = 'excel-staging-record/1.0';
 const IMPORT_VALIDATION_MAX_ISSUES = 100;
 const SUMMARY_ROW_LABELS = new Set(['小计', '合计', '总计', '本页合计', '累计']);
 
@@ -226,6 +241,50 @@ interface PreparedConfirmationIntegrity {
   rowSetHash: string;
   normalizedOutputHash: string;
   recordCount: number;
+  stagingManifestHash: string;
+  stagingValueCount: number;
+}
+
+interface StagingRecordIntegrity {
+  recordId: string;
+  contentHash: string;
+  valueCount: number;
+}
+
+interface StagingRecordHashInput {
+  id: string;
+  projectId: string;
+  templateId: string;
+  templateVersion: number;
+  templateSnapshot: unknown;
+  sourceSnapshot: unknown;
+  confirmationSnapshot: unknown;
+  recordType: string;
+  accountingDirection: string;
+  dataLayer: string;
+  recordDate: Date;
+  amount: Prisma.Decimal;
+  currency: string;
+  category: string | null;
+  subCategory: string | null;
+  description: string | null;
+  sourceType: string;
+  sourceId: string;
+  importTaskId: string;
+  status: BusinessRecordStatus;
+  publicationStatus: BusinessRecordPublicationStatus;
+  attachments: unknown;
+  createdBy: string | null;
+  stagingApprovalHash: string;
+}
+
+interface StagingRecordValueHashInput {
+  fieldId: string;
+  fieldName: string;
+  valueText?: string | null;
+  valueNumber?: Prisma.Decimal | Prisma.DecimalJsLike | string | number | null;
+  valueDate?: Date | string | null;
+  valueJson?: unknown;
 }
 
 interface PreparedWorkbook {
@@ -2089,7 +2148,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       const recordData: Prisma.BusinessRecordCreateManyInput[] = [];
       const valueData: Prisma.RecordValueCreateManyInput[] = [];
       const ledgerData: Prisma.LedgerEventCreateManyInput[] = [];
-      const recordIdByRow = new Map<string, string>();
+      const recordIntegrityByRow = new Map<string, StagingRecordIntegrity>();
 
       for (const row of preview.rows) {
         if (([ImportRowStatus.ignored, ImportRowStatus.duplicate] as ImportRowStatus[]).includes(row.status)) {
@@ -2109,8 +2168,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           category: row.category
         });
         const recordId = this.deterministicImportRecordId(row.id);
-        recordIdByRow.set(row.id, recordId);
-        recordData.push({
+        const recordValues = row.values.map((value) => this.buildRecordValueData(
+          recordId,
+          value,
+          task.template.templateFields
+        ));
+        const recordInput = {
           id: recordId,
           projectId: task.projectId,
           templateId: task.templateId,
@@ -2147,6 +2210,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           dataLayer: task.template.dataLayer,
           recordDate: canonical.recordDate,
           amount: canonical.amount,
+          currency: 'CNY',
           category: canonical.category,
           subCategory: row.subCategory,
           description: `${task.fileName} 第${row.rowNumber}行导入记录`,
@@ -2155,14 +2219,18 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           importTaskId: job.taskId,
           status: BusinessRecordStatus.pending_confirm,
           publicationStatus: BusinessRecordPublicationStatus.unpublished,
+          stagingApprovalHash: job.approvalSnapshotHash,
           attachments: [task.rawFileId],
           createdBy: job.actor.username
-        });
-        valueData.push(...row.values.map((value) => this.buildRecordValueData(
+        } satisfies Prisma.BusinessRecordCreateManyInput;
+        const contentHash = this.stagingRecordContentHash(recordInput, recordValues);
+        recordData.push(recordInput);
+        valueData.push(...recordValues);
+        recordIntegrityByRow.set(row.id, {
           recordId,
-          value,
-          task.template.templateFields
-        )));
+          contentHash,
+          valueCount: recordValues.length
+        });
         ledgerData.push({
           eventType: 'business_record_staged',
           aggregateType: 'business_record',
@@ -2191,7 +2259,31 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       if (ledgerData.length > 0) {
         await tx.ledgerEvent.createMany({ data: ledgerData, skipDuplicates: true });
       }
-      await this.persistConfirmationRows(tx, job.taskId, preview.rows, recordIdByRow, now);
+      const sealedRecords = await this.persistStagingRecordIntegrity(
+        tx,
+        job.taskId,
+        job.approvalSnapshotHash,
+        recordIntegrityByRow
+      );
+      if (sealedRecords !== recordIntegrityByRow.size) {
+        throw new ConflictException({
+          message: 'Excel 暂存记录封存数量不一致，整批不会发布',
+          data: { reason: 'IMPORT_STAGING_SEAL_COUNT_MISMATCH' }
+        });
+      }
+      const persistedRows = await this.persistConfirmationRows(
+        tx,
+        job.taskId,
+        preview.rows,
+        recordIntegrityByRow,
+        now
+      );
+      if (persistedRows !== preview.rows.length) {
+        throw new ConflictException({
+          message: 'Excel 确认行持久化数量不一致，整批不会发布',
+          data: { reason: 'IMPORT_STAGING_ROW_COUNT_MISMATCH' }
+        });
+      }
 
       const progress = await tx.importTask.updateMany({
         where: {
@@ -2202,7 +2294,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         },
         data: {
           confirmationProcessedRows: { increment: preview.rows.length },
-          confirmationSuccessRows: { increment: recordIdByRow.size },
+          confirmationSuccessRows: { increment: recordIntegrityByRow.size },
           importedRows: 0,
           leaseUntil: new Date(Date.now() + this.confirmationLeaseMs)
         }
@@ -2240,13 +2332,18 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       await this.renewOwnedConfirmationLease(job);
       nextHeartbeatAt = Date.now() + Math.max(100, Math.floor(this.confirmationLeaseMs / 3));
     };
-    const integrity = await this.recomputeApprovalIntegrity(
+    const approvalIntegrity = await this.recomputeApprovalIntegrity(
+      this.prisma,
+      task,
+      () => heartbeat(false)
+    );
+    const stagingIntegrity = await this.recomputeStagingIntegrity(
       this.prisma,
       task,
       () => heartbeat(false)
     );
     await heartbeat(true);
-    return { taskVersion: task.version, ...integrity };
+    return { taskVersion: task.version, ...approvalIntegrity, ...stagingIntegrity };
   }
 
   private async completeBackgroundConfirmation(
@@ -2300,9 +2397,80 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
+      const [publicationFacts] = await tx.$queryRaw<Array<{
+        readyRecordCount: bigint;
+        actualValueCount: bigint;
+        stagedLedgerCount: bigint;
+      }>>`
+        SELECT
+          (
+            SELECT COUNT(*)::bigint
+            FROM business_records AS record
+            JOIN import_rows AS import_row
+              ON import_row.generated_record_id = record.id
+             AND import_row.import_task_id = record.import_task_id
+            WHERE record.import_task_id = ${job.taskId}
+              AND record.publication_status = ${BusinessRecordPublicationStatus.unpublished}::"BusinessRecordPublicationStatus"
+              AND record.status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
+              AND record.version = 1
+              AND record.staging_approval_hash = ${job.approvalSnapshotHash}
+              AND record.staging_content_hash IS NOT NULL
+              AND record.staging_content_hash = import_row.generated_record_hash
+              AND record.source_id = import_row.id
+              AND import_row.status = ${ImportRowStatus.mapped}::"ImportRowStatus"
+              AND import_row.confirmed_at IS NULL
+              AND record.confirmed_at IS NULL
+              AND record.confirmed_by IS NULL
+              AND record.voided_at IS NULL
+              AND record.voided_by IS NULL
+              AND import_row.confirmation_processed_at IS NOT NULL
+              AND import_row.generated_record_value_count IS NOT NULL
+              AND (
+                SELECT COUNT(*)::integer
+                FROM record_values AS value
+                WHERE value.record_id = record.id
+              ) = import_row.generated_record_value_count
+          ) AS "readyRecordCount",
+          (
+            SELECT COUNT(*)::bigint
+            FROM record_values AS value
+            JOIN business_records AS record ON record.id = value.record_id
+            WHERE record.import_task_id = ${job.taskId}
+          ) AS "actualValueCount",
+          (
+            SELECT COUNT(*)::bigint
+            FROM ledger_events AS event
+            JOIN business_records AS record ON record.id = event.aggregate_id
+            WHERE record.import_task_id = ${job.taskId}
+              AND event.aggregate_type = 'business_record'
+              AND event.event_type = 'business_record_staged'
+          ) AS "stagedLedgerCount"
+      `;
+      const readyRecordCount = Number(publicationFacts.readyRecordCount);
+      const actualValueCount = Number(publicationFacts.actualValueCount);
+      const stagedLedgerCount = Number(publicationFacts.stagedLedgerCount);
+      if (
+        !/^[0-9a-f]{64}$/.test(integrity.stagingManifestHash)
+        || readyRecordCount !== expectedRecordCount
+        || actualValueCount !== integrity.stagingValueCount
+        || stagedLedgerCount !== expectedRecordCount
+      ) {
+        throw new ConflictException({
+          message: 'Excel 暂存记录未通过最终发布栅栏，整批不会发布',
+          data: {
+            reason: 'IMPORT_STAGING_PUBLICATION_FENCE_FAILED',
+            expectedRecordCount,
+            readyRecordCount,
+            expectedValueCount: integrity.stagingValueCount,
+            actualValueCount,
+            stagedLedgerCount
+          }
+        });
+      }
+
       const now = new Date();
-      await tx.$executeRaw`
-        UPDATE business_records
+      const publishedRecordCount = Number(await tx.$executeRaw`
+        UPDATE business_records AS record
         SET status = ${BusinessRecordStatus.confirmed}::"BusinessRecordStatus",
             publication_status = ${BusinessRecordPublicationStatus.published}::"BusinessRecordPublicationStatus",
             confirmed_at = ${now},
@@ -2310,15 +2478,74 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
             confirmation_snapshot = COALESCE(confirmation_snapshot, '{}'::jsonb)
               || jsonb_build_object('confirmedAt', ${now.toISOString()}, 'confirmedBy', ${approver.username}),
             updated_at = ${now}
-        WHERE import_task_id = ${job.taskId}
-          AND publication_status = ${BusinessRecordPublicationStatus.unpublished}::"BusinessRecordPublicationStatus"
-          AND status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
-      `;
-      await tx.importRow.updateMany({
-        where: { importTaskId: job.taskId, generatedRecordId: { not: null } },
-        data: { status: ImportRowStatus.confirmed, confirmedAt: now }
-      });
-      await tx.$executeRaw`
+        WHERE record.import_task_id = ${job.taskId}
+          AND record.publication_status = ${BusinessRecordPublicationStatus.unpublished}::"BusinessRecordPublicationStatus"
+          AND record.status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
+          AND record.version = 1
+          AND record.source_type = ${RecordSourceType.excel}::"RecordSourceType"
+          AND record.staging_approval_hash = ${job.approvalSnapshotHash}
+          AND record.staging_content_hash IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM import_rows AS source_row
+            WHERE source_row.generated_record_id = record.id
+              AND source_row.import_task_id = record.import_task_id
+              AND source_row.id = record.source_id
+              AND source_row.status = ${ImportRowStatus.mapped}::"ImportRowStatus"
+              AND source_row.confirmed_at IS NULL
+              AND source_row.confirmation_processed_at IS NOT NULL
+              AND source_row.generated_record_hash = record.staging_content_hash
+              AND source_row.generated_record_value_count = (
+                SELECT COUNT(*)::integer
+                FROM record_values AS value
+                WHERE value.record_id = record.id
+              )
+          )
+      `);
+      if (publishedRecordCount !== expectedRecordCount) {
+        throw new ConflictException({
+          message: 'Excel 正式记录发布行数不一致，事务已回滚',
+          data: {
+            reason: 'IMPORT_PUBLICATION_RECORD_ROWCOUNT_MISMATCH',
+            expectedRecordCount,
+            publishedRecordCount
+          }
+        });
+      }
+      const confirmedImportRowCount = Number(await tx.$executeRaw`
+        UPDATE import_rows AS source_row
+        SET status = ${ImportRowStatus.confirmed}::"ImportRowStatus",
+            confirmed_at = ${now}
+        FROM business_records AS record
+        WHERE source_row.import_task_id = ${job.taskId}
+          AND source_row.status = ${ImportRowStatus.mapped}::"ImportRowStatus"
+          AND source_row.confirmed_at IS NULL
+          AND source_row.confirmation_processed_at IS NOT NULL
+          AND source_row.generated_record_id = record.id
+          AND source_row.generated_record_hash IS NOT NULL
+          AND source_row.generated_record_hash = record.staging_content_hash
+          AND source_row.generated_record_value_count = (
+            SELECT COUNT(*)::integer
+            FROM record_values AS value
+            WHERE value.record_id = record.id
+          )
+          AND record.import_task_id = source_row.import_task_id
+          AND record.source_id = source_row.id
+          AND record.publication_status = ${BusinessRecordPublicationStatus.published}::"BusinessRecordPublicationStatus"
+          AND record.status = ${BusinessRecordStatus.confirmed}::"BusinessRecordStatus"
+          AND record.staging_approval_hash = ${job.approvalSnapshotHash}
+      `);
+      if (confirmedImportRowCount !== expectedRecordCount) {
+        throw new ConflictException({
+          message: 'Excel 来源行发布行数不一致，事务已回滚',
+          data: {
+            reason: 'IMPORT_PUBLICATION_SOURCE_ROWCOUNT_MISMATCH',
+            expectedRecordCount,
+            confirmedImportRows: confirmedImportRowCount
+          }
+        });
+      }
+      const committedLedgerCount = Number(await tx.$executeRaw`
         UPDATE ledger_events AS event
         SET event_type = 'business_record_created',
             payload = COALESCE(event.payload, '{}'::jsonb)
@@ -2330,7 +2557,17 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         WHERE event.aggregate_id = record.id
           AND event.event_type = 'business_record_staged'
           AND record.import_task_id = ${job.taskId}
-      `;
+      `);
+      if (committedLedgerCount !== expectedRecordCount) {
+        throw new ConflictException({
+          message: 'Excel ledger 发布行数不一致，事务已回滚',
+          data: {
+            reason: 'IMPORT_PUBLICATION_LEDGER_ROWCOUNT_MISMATCH',
+            expectedRecordCount,
+            committedLedgerCount
+          }
+        });
+      }
       const summary = { importedRows: successRows, errorRows, duplicateRows, ignoredRows };
       const published = await tx.importTask.updateMany({
         where: {
@@ -2364,6 +2601,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         approvalSnapshotHash: task.approvalSnapshotHash,
         validationSnapshotHash: task.validationSnapshotHash,
         normalizedOutputHash: integrity.normalizedOutputHash,
+        stagingManifestHash: integrity.stagingManifestHash,
+        stagingValueCount: integrity.stagingValueCount,
         selfApproval: false
       }, job.context);
       await this.auditLogs.write(
@@ -2393,7 +2632,9 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         {
           recordCount: successRows,
           approvalSnapshotHash: task.approvalSnapshotHash,
-          normalizedOutputHash: integrity.normalizedOutputHash
+          normalizedOutputHash: integrity.normalizedOutputHash,
+          stagingManifestHash: integrity.stagingManifestHash,
+          stagingValueCount: integrity.stagingValueCount
         },
         `import_task:${job.taskId}:business_records_batch_committed`
       );
@@ -2436,6 +2677,55 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         .map((value) => ({ fieldId: value.fieldId, fieldType: value.fieldType, value: value.value }))
         .sort((left, right) => left.fieldId.localeCompare(right.fieldId))
     };
+  }
+
+  private stagingRecordContentHash(
+    record: StagingRecordHashInput,
+    values: StagingRecordValueHashInput[]
+  ) {
+    return canonicalJsonSha256({
+      schemaVersion: EXCEL_STAGING_CONTENT_SCHEMA_VERSION,
+      approvalSnapshotHash: record.stagingApprovalHash,
+      record: {
+        id: record.id,
+        projectId: record.projectId,
+        templateId: record.templateId,
+        templateVersion: record.templateVersion,
+        templateSnapshot: record.templateSnapshot ?? null,
+        sourceSnapshot: record.sourceSnapshot ?? null,
+        confirmationSnapshot: record.confirmationSnapshot ?? null,
+        recordType: record.recordType,
+        accountingDirection: record.accountingDirection,
+        dataLayer: record.dataLayer,
+        recordDate: record.recordDate.toISOString(),
+        amount: record.amount.toFixed(2),
+        currency: record.currency,
+        category: record.category ?? null,
+        subCategory: record.subCategory ?? null,
+        description: record.description ?? null,
+        sourceType: record.sourceType,
+        sourceId: record.sourceId,
+        importTaskId: record.importTaskId,
+        status: record.status,
+        publicationStatus: record.publicationStatus,
+        attachments: record.attachments ?? null,
+        createdBy: record.createdBy ?? null
+      },
+      values: values
+        .map((value) => ({
+          fieldId: value.fieldId,
+          fieldName: value.fieldName,
+          valueText: value.valueText ?? null,
+          valueNumber: value.valueNumber === null || value.valueNumber === undefined
+            ? null
+            : new Prisma.Decimal(String(value.valueNumber)).toString(),
+          valueDate: value.valueDate === null || value.valueDate === undefined
+            ? null
+            : new Date(value.valueDate).toISOString(),
+          valueJson: value.valueJson ?? null
+        }))
+        .sort((left, right) => left.fieldId.localeCompare(right.fieldId))
+    });
   }
 
   private updateCanonicalDigest(digest: ReturnType<typeof createHash>, value: unknown) {
@@ -2904,52 +3194,192 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  private async recomputeStagingIntegrity(
+    prisma: PrismaWriter,
+    task: PreviewTask,
+    heartbeat?: () => Promise<void>
+  ) {
+    const manifestDigest = createHash('sha256');
+    const expectedRecordCount = this.approvalRecordCount(task);
+    let recordCount = 0;
+    let valueCount = 0;
+    let lastId: string | undefined;
+    while (true) {
+      await heartbeat?.();
+      const records = await prisma.businessRecord.findMany({
+        where: {
+          importTaskId: task.id,
+          id: lastId ? { gt: lastId } : undefined
+        },
+        include: stagedRecordIntegrityInclude,
+        orderBy: { id: 'asc' },
+        take: IMPORT_PREVIEW_SUMMARY_BATCH_SIZE
+      });
+      if (records.length === 0) break;
+      for (const record of records) {
+        const sourceRow = record.sourceImportRow;
+        const structurallyValid =
+          record.publicationStatus === BusinessRecordPublicationStatus.unpublished
+          && record.status === BusinessRecordStatus.pending_confirm
+          && record.version === 1
+          && record.sourceType === RecordSourceType.excel
+          && record.stagingApprovalHash === task.approvalSnapshotHash
+          && typeof record.stagingContentHash === 'string'
+          && /^[0-9a-f]{64}$/.test(record.stagingContentHash)
+          && record.confirmedAt === null
+          && record.confirmedBy === null
+          && record.voidedAt === null
+          && record.voidedBy === null
+          && sourceRow !== null
+          && sourceRow.importTaskId === task.id
+          && sourceRow.id === record.sourceId
+          && sourceRow.confirmationProcessedAt !== null
+          && sourceRow.generatedRecordHash === record.stagingContentHash
+          && sourceRow.generatedRecordValueCount === record.values.length;
+        if (!structurallyValid) {
+          throw new ConflictException({
+            message: 'Excel 暂存记录状态、版本或批准快照不一致，整批不会发布',
+            data: { reason: 'IMPORT_STAGING_INTEGRITY_MISMATCH', recordId: record.id }
+          });
+        }
+        const contentHash = this.stagingRecordContentHash(
+          record as StagingRecordHashInput,
+          record.values
+        );
+        if (contentHash !== record.stagingContentHash) {
+          throw new ConflictException({
+            message: 'Excel 暂存记录内容哈希不一致，整批不会发布',
+            data: { reason: 'IMPORT_STAGING_CONTENT_HASH_MISMATCH', recordId: record.id }
+          });
+        }
+        recordCount += 1;
+        valueCount += record.values.length;
+        this.updateCanonicalDigest(manifestDigest, {
+          recordId: record.id,
+          contentHash,
+          valueCount: record.values.length
+        });
+      }
+      lastId = records[records.length - 1].id;
+    }
+    if (recordCount !== expectedRecordCount) {
+      throw new ConflictException({
+        message: 'Excel 暂存记录数量与批准快照不一致，整批不会发布',
+        data: {
+          reason: 'IMPORT_STAGING_RECORD_COUNT_MISMATCH',
+          expectedRecordCount,
+          actualRecordCount: recordCount
+        }
+      });
+    }
+    return {
+      stagingManifestHash: manifestDigest.digest('hex'),
+      stagingValueCount: valueCount
+    };
+  }
+
   private async resetFailedConfirmationStaging(tx: Prisma.TransactionClient, taskId: string) {
     const recordIds = (await tx.businessRecord.findMany({
-      where: { importTaskId: taskId, status: BusinessRecordStatus.pending_confirm },
+      where: {
+        importTaskId: taskId,
+        publicationStatus: BusinessRecordPublicationStatus.unpublished
+      },
       select: { id: true }
     })).map((record) => record.id);
     if (recordIds.length > 0) {
       await tx.ledgerEvent.deleteMany({ where: { aggregateId: { in: recordIds }, eventType: 'business_record_staged' } });
       await tx.businessRecord.deleteMany({
-        where: { id: { in: recordIds }, importTaskId: taskId, status: BusinessRecordStatus.pending_confirm }
+        where: {
+          id: { in: recordIds },
+          importTaskId: taskId,
+          publicationStatus: BusinessRecordPublicationStatus.unpublished
+        }
       });
     }
     await tx.importRow.updateMany({
       where: { importTaskId: taskId },
-      data: { confirmationProcessedAt: null, generatedRecordId: null, confirmedAt: null }
+      data: {
+        confirmationProcessedAt: null,
+        generatedRecordId: null,
+        generatedRecordHash: null,
+        generatedRecordValueCount: null,
+        confirmedAt: null
+      }
     });
+  }
+
+  private async persistStagingRecordIntegrity(
+    tx: Prisma.TransactionClient,
+    taskId: string,
+    approvalSnapshotHash: string,
+    integrityByRow: Map<string, StagingRecordIntegrity>
+  ) {
+    if (integrityByRow.size === 0) return 0;
+    const updates = [...integrityByRow.values()].map((integrity) => Prisma.sql`(
+      ${integrity.recordId}::text,
+      ${integrity.contentHash}::text
+    )`);
+    return Number(await tx.$executeRaw(Prisma.sql`
+      UPDATE business_records AS target
+      SET staging_content_hash = source.content_hash,
+          updated_at = NOW()
+      FROM (VALUES ${Prisma.join(updates)}) AS source(id, content_hash)
+      WHERE target.id = source.id
+        AND target.import_task_id = ${taskId}
+        AND target.publication_status = ${BusinessRecordPublicationStatus.unpublished}::"BusinessRecordPublicationStatus"
+        AND target.status = ${BusinessRecordStatus.pending_confirm}::"BusinessRecordStatus"
+        AND target.version = 1
+        AND target.staging_approval_hash = ${approvalSnapshotHash}
+        AND (target.staging_content_hash IS NULL OR target.staging_content_hash = source.content_hash)
+    `));
   }
 
   private async persistConfirmationRows(
     tx: Prisma.TransactionClient,
     taskId: string,
     rows: PreviewRow[],
-    recordIdByRow: Map<string, string>,
+    integrityByRow: Map<string, StagingRecordIntegrity>,
     processedAt: Date
   ) {
-    const updates = rows.map((row) => Prisma.sql`(
-      ${row.id}::text,
-      ${JSON.stringify(row.normalizedData)}::jsonb,
-      ${row.status}::"ImportRowStatus",
-      ${JSON.stringify(row.errors)}::jsonb,
-      ${JSON.stringify(row.warnings)}::jsonb,
-      ${recordIdByRow.get(row.id) ?? row.generatedRecordId ?? null}::text
-    )`);
-    await tx.$executeRaw(Prisma.sql`
+    if (rows.length === 0) return 0;
+    const updates = rows.map((row) => {
+      const integrity = integrityByRow.get(row.id);
+      return Prisma.sql`(
+        ${row.id}::text,
+        ${JSON.stringify(row.normalizedData)}::jsonb,
+        ${row.status}::"ImportRowStatus",
+        ${JSON.stringify(row.errors)}::jsonb,
+        ${JSON.stringify(row.warnings)}::jsonb,
+        ${integrity?.recordId ?? row.generatedRecordId ?? null}::text,
+        ${integrity?.contentHash ?? null}::text,
+        ${integrity?.valueCount ?? null}::integer
+      )`;
+    });
+    return Number(await tx.$executeRaw(Prisma.sql`
       UPDATE import_rows AS target
       SET normalized_data_json = source.normalized_data,
           status = source.status,
           errors = source.errors,
           warnings = source.warnings,
           generated_record_id = source.generated_record_id,
+          generated_record_hash = source.generated_record_hash,
+          generated_record_value_count = source.generated_record_value_count,
           confirmation_processed_at = ${processedAt}
       FROM (VALUES ${Prisma.join(updates)})
-        AS source(id, normalized_data, status, errors, warnings, generated_record_id)
+        AS source(
+          id,
+          normalized_data,
+          status,
+          errors,
+          warnings,
+          generated_record_id,
+          generated_record_hash,
+          generated_record_value_count
+        )
       WHERE target.id = source.id
         AND target.import_task_id = ${taskId}
         AND target.confirmation_processed_at IS NULL
-    `);
+    `));
   }
 
   private async failOwnedConfirmation(job: BackgroundConfirmationJob, error: unknown) {

@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import {
   AccountingDirection,
   AiMessageRole,
+  BusinessRecordPublicationStatus,
   BusinessRecordStatus,
   DataRecordType,
   FileScanStatus,
@@ -6481,11 +6482,273 @@ describe('real PostgreSQL integration', () => {
           status: ImportTaskStatus.confirmation_failed,
           visibleTotal: 0
         });
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.unpublished
+          }
+        })).toBe(2);
+        expect(await prisma.auditLog.count({
+          where: { resourceId: taskId, action: 'import_task.confirm' }
+        })).toBe(0);
+        expect(await prisma.ledgerEvent.count({
+          where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+        })).toBe(0);
+
+        const retryApproval = await loadImportApproval(taskId, financeToken, false);
+        await confirmRequest(
+          taskId,
+          retryApproval.payload,
+          `b8-confirm-${suffix}-staging-tamper-retry`
+        ).expect(201);
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmed,
+          importedRows: 2,
+          confirmationAttempts: 2
+        });
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.published,
+            status: BusinessRecordStatus.confirmed
+          }
+        })).toBe(2);
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.unpublished
+          }
+        })).toBe(0);
       } finally {
         releasePreparation();
         preparationSpy.mockRestore();
         await waitForTerminalStatus(taskId);
       }
+    });
+
+    it('fails publication closed when sealed source evidence changes after integrity preparation', async () => {
+      const taskId = await createTask(2, '2026-07-19');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        completeBackgroundConfirmation(
+          job: { taskId: string },
+          integrity: unknown
+        ): Promise<void>;
+      };
+      const originalCompletion = service.completeBackgroundConfirmation.bind(service);
+      let signalCompletionEntered!: () => void;
+      let releaseCompletion!: () => void;
+      const completionEntered = new Promise<void>((resolve) => {
+        signalCompletionEntered = resolve;
+      });
+      const completionHold = new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+      const completionSpy = jest
+        .spyOn(service, 'completeBackgroundConfirmation')
+        .mockImplementation(async (job, integrity) => {
+          if (job.taskId !== taskId) return originalCompletion(job, integrity);
+          signalCompletionEntered();
+          await completionHold;
+          return originalCompletion(job, integrity);
+        });
+
+      try {
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-sealed-source-tamper`
+        ).expect(201);
+        await Promise.race([
+          completionEntered,
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`Timed out waiting for final publication for ${taskId}`)),
+            30_000
+          ))
+        ]);
+
+        const sealedRow = await prisma.importRow.findFirstOrThrow({
+          where: {
+            importTaskId: taskId,
+            generatedRecordHash: { not: null }
+          },
+          orderBy: { rowNumber: 'asc' }
+        });
+        await prisma.importRow.update({
+          where: { id: sealedRow.id },
+          data: { normalizedData: { tamperedAfterIntegrityPreparation: true } }
+        });
+        const invalidatedRecord = await prisma.businessRecord.findUniqueOrThrow({
+          where: { id: sealedRow.generatedRecordId! },
+          select: { version: true, stagingContentHash: true }
+        });
+        expect(invalidatedRecord).toEqual({ version: 2, stagingContentHash: null });
+        releaseCompletion();
+
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmation_failed,
+          importedRows: 0,
+          confirmedAt: null,
+          confirmedBy: null
+        });
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.published
+          }
+        })).toBe(0);
+        expect(await prisma.auditLog.count({
+          where: { resourceId: taskId, action: 'import_task.confirm' }
+        })).toBe(0);
+        expect(await prisma.ledgerEvent.count({
+          where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+        })).toBe(0);
+      } finally {
+        releaseCompletion();
+        completionSpy.mockRestore();
+        await waitForTerminalStatus(taskId);
+      }
+    });
+
+    it('rolls back every publication write when PostgreSQL affects fewer records than approved', async () => {
+      const taskId = await createTask(3, '2026-07-20');
+      const approval = await loadImportApproval(taskId, financeToken);
+      const service = app.get(ImportTasksService) as unknown as {
+        completeBackgroundConfirmation(
+          job: { taskId: string },
+          integrity: unknown
+        ): Promise<void>;
+      };
+      const originalCompletion = service.completeBackgroundConfirmation.bind(service);
+      let suppressionInstalled = false;
+      const dropSuppression = async () => {
+        await prisma.$executeRawUnsafe(
+          'DROP TRIGGER IF EXISTS "integration_suppress_one_publication" ON "business_records"'
+        );
+        await prisma.$executeRawUnsafe(
+          'DROP FUNCTION IF EXISTS "integration_suppress_one_publication"()'
+        );
+        await prisma.$executeRawUnsafe(
+          'DROP TABLE IF EXISTS "integration_publication_suppression"'
+        );
+      };
+      const installSuppression = async () => {
+        await dropSuppression();
+        await prisma.$executeRawUnsafe(
+          'CREATE TABLE "integration_publication_suppression" ("task_id" TEXT PRIMARY KEY)'
+        );
+        await prisma.$executeRaw`
+          INSERT INTO "integration_publication_suppression" ("task_id") VALUES (${taskId})
+        `;
+        await prisma.$executeRawUnsafe(`
+          CREATE FUNCTION "integration_suppress_one_publication"() RETURNS trigger AS $$
+          BEGIN
+            IF OLD."publication_status" = 'unpublished'
+               AND NEW."publication_status" = 'published'
+               AND EXISTS (
+                 SELECT 1 FROM "integration_publication_suppression" AS suppression
+                 WHERE suppression."task_id" = OLD."import_task_id"
+               )
+               AND OLD."id" = (
+                 SELECT MIN(candidate."id")
+                 FROM "business_records" AS candidate
+                 WHERE candidate."import_task_id" = OLD."import_task_id"
+                   AND candidate."publication_status" = 'unpublished'
+               )
+            THEN
+              DELETE FROM "integration_publication_suppression"
+              WHERE "task_id" = OLD."import_task_id";
+              RETURN NULL;
+            END IF;
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql
+        `);
+        await prisma.$executeRawUnsafe(`
+          CREATE TRIGGER "integration_suppress_one_publication"
+          BEFORE UPDATE ON "business_records"
+          FOR EACH ROW EXECUTE FUNCTION "integration_suppress_one_publication"()
+        `);
+      };
+      const completionSpy = jest
+        .spyOn(service, 'completeBackgroundConfirmation')
+        .mockImplementation(async (job, integrity) => {
+          if (job.taskId === taskId && !suppressionInstalled) {
+            suppressionInstalled = true;
+            await installSuppression();
+          }
+          return originalCompletion(job, integrity);
+        });
+
+      try {
+        await confirmRequest(
+          taskId,
+          approval.payload,
+          `b8-confirm-${suffix}-publication-rowcount`
+        ).expect(201);
+        expect(await waitForTerminalStatus(taskId)).toMatchObject({
+          status: ImportTaskStatus.confirmation_failed,
+          importedRows: 0,
+          confirmedAt: null,
+          confirmedBy: null
+        });
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.published
+          }
+        })).toBe(0);
+        expect(await prisma.businessRecord.count({
+          where: {
+            importTaskId: taskId,
+            publicationStatus: BusinessRecordPublicationStatus.unpublished,
+            status: BusinessRecordStatus.pending_confirm
+          }
+        })).toBe(3);
+        expect(await prisma.importRow.count({
+          where: { importTaskId: taskId, status: ImportRowStatus.confirmed }
+        })).toBe(0);
+        expect(await prisma.ledgerEvent.count({
+          where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+        })).toBe(0);
+        expect(await prisma.ledgerEvent.count({
+          where: {
+            aggregateType: 'business_record',
+            eventType: 'business_record_created',
+            aggregateId: {
+              in: (await prisma.businessRecord.findMany({
+                where: { importTaskId: taskId },
+                select: { id: true }
+              })).map((record) => record.id)
+            }
+          }
+        })).toBe(0);
+      } finally {
+        completionSpy.mockRestore();
+        await dropSuppression();
+      }
+
+      const retryApproval = await loadImportApproval(taskId, financeToken, false);
+      await confirmRequest(
+        taskId,
+        retryApproval.payload,
+        `b8-confirm-${suffix}-publication-rowcount-retry`
+      ).expect(201);
+      expect(await waitForTerminalStatus(taskId)).toMatchObject({
+        status: ImportTaskStatus.confirmed,
+        importedRows: 3,
+        confirmationAttempts: 2
+      });
+      expect(await prisma.businessRecord.count({
+        where: {
+          importTaskId: taskId,
+          publicationStatus: BusinessRecordPublicationStatus.published,
+          status: BusinessRecordStatus.confirmed
+        }
+      })).toBe(3);
+      expect(await prisma.ledgerEvent.count({
+        where: { aggregateId: taskId, eventType: 'import_task_confirmed' }
+      })).toBe(1);
     });
 
     it('confirms 5,001 rows through a fast asynchronous API and a complete business-data closure', async () => {
