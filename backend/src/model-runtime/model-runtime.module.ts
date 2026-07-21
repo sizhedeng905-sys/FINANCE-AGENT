@@ -9,6 +9,7 @@ import { ModelRuntimeController } from './model-runtime.controller';
 import { ModelRuntimeService } from './model-runtime.service';
 import { ResilientHttpClientService } from './resilient-http-client.service';
 import { StructuredOutputValidatorService } from './structured-output-validator.service';
+import { SystemRegistryStartupVerifier } from './system-registry-startup-verifier';
 
 @Global()
 @Module({
@@ -20,6 +21,7 @@ import { StructuredOutputValidatorService } from './structured-output-validator.
     ResilientHttpClientService,
     StructuredOutputValidatorService,
     AiPromptRegistryService,
+    SystemRegistryStartupVerifier,
     JwtAuthGuard,
     RolesGuard
   ],

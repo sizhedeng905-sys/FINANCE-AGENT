@@ -13,7 +13,8 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
-import { AI_PROMPT_DEFINITIONS } from '../src/model-runtime/ai-prompt-registry';
+import { bootstrapSystemRegistry } from '../src/model-runtime/system-registry-bootstrap';
+import { resolveSystemRegistryConfiguration } from '../src/model-runtime/system-registry-manifest';
 
 const prisma = new PrismaClient();
 
@@ -48,6 +49,9 @@ function assertSafeSeedEnvironment() {
 
 async function main() {
   assertSafeSeedEnvironment();
+  const systemRegistry = resolveSystemRegistryConfiguration(process.env).manifest;
+  await bootstrapSystemRegistry(prisma, systemRegistry);
+
   const passwordHash = await bcrypt.hash('123456', 10);
   const users = [
     {
@@ -629,187 +633,6 @@ async function main() {
       isActive: true
     }
   });
-
-  for (const prompt of AI_PROMPT_DEFINITIONS) {
-    const where = { promptKey_versionNo: { promptKey: prompt.promptKey, versionNo: prompt.versionNo } };
-    const existing = await prisma.aiPromptVersion.findUnique({ where });
-    if (existing?.contentSha256 && existing.contentSha256 !== prompt.contentSha256) {
-      throw new Error(
-        `Prompt registry drift for ${prompt.promptKey}:v${prompt.versionNo}; create a new immutable version instead.`
-      );
-    }
-    if (existing?.retiredAt) continue;
-    await prisma.aiPromptVersion.updateMany({
-      where: { promptKey: prompt.promptKey, isActive: true, versionNo: { not: prompt.versionNo } },
-      data: { isActive: false }
-    });
-    if (existing) continue;
-    await prisma.aiPromptVersion.create({
-      data: {
-        id: `ai-prompt-${prompt.promptKey.replaceAll('_', '-')}-v${prompt.versionNo}`,
-        promptKey: prompt.promptKey,
-        versionNo: prompt.versionNo,
-        title: prompt.title,
-        purpose: prompt.purpose,
-        systemPrompt: prompt.systemTemplate,
-        userPromptTemplate: prompt.userPromptTemplate,
-        inputSchemaVersion: prompt.inputSchemaVersion,
-        outputSchemaVersion: prompt.outputSchemaVersion,
-        outputSchemaJson: prompt.outputSchema as Prisma.InputJsonValue,
-        allowedProviderClasses: prompt.allowedProviderClasses as Prisma.InputJsonValue,
-        maxInputBudget: prompt.maxInputBudget,
-        timeoutPolicy: prompt.timeoutPolicy as Prisma.InputJsonValue,
-        redactionPolicyVersion: prompt.redactionPolicyVersion,
-        requiredComponents: prompt.requiredComponents as unknown as Prisma.InputJsonValue,
-        contentSha256: prompt.contentSha256,
-        isActive: true,
-        createdBy: 'system'
-      }
-    });
-  }
-
-  const modelDeployments = [
-    {
-      id: 'model-deployment-mock-text',
-      deploymentKey: 'mock-text',
-      provider: 'mock',
-      modelName: 'mock-structured-v1',
-      modelVersion: '1',
-      endpoint: null,
-      secretRef: null,
-      taskTypes: [
-        'boss_chat',
-        'excel_template_classification',
-        'excel_column_mapping',
-        'ocr_document_classification',
-        'ocr_field_mapping',
-        'report_narrative',
-        'report_fact_check'
-      ],
-      maxConcurrency: 4,
-      timeoutMs: 5000,
-      isLocal: true,
-      isEnabled: true,
-      status: 'healthy' as const
-    },
-    {
-      id: 'model-deployment-qwen-text',
-      deploymentKey: 'qwen3-14b-awq',
-      provider: 'openai_compatible',
-      modelName: 'Qwen/Qwen3-14B-AWQ',
-      modelVersion: '0.23.0',
-      endpoint: 'http://127.0.0.1:8000/v1',
-      secretRef: 'AI_API_KEY',
-      taskTypes: [
-        'boss_chat',
-        'structured_extraction',
-        'risk_explanation',
-        'excel_template_classification',
-        'excel_column_mapping',
-        'ocr_document_classification',
-        'ocr_field_mapping',
-        'report_narrative',
-        'report_fact_check'
-      ],
-      maxConcurrency: 1,
-      timeoutMs: 60000,
-      isLocal: true,
-      isEnabled: false,
-      status: 'disabled' as const
-    },
-    {
-      id: 'model-deployment-qwen-vl',
-      deploymentKey: 'qwen3-vl-8b-instruct',
-      provider: 'openai_compatible',
-      modelName: 'Qwen/Qwen3-VL-8B-Instruct',
-      modelVersion: '0.23.0',
-      endpoint: 'http://127.0.0.1:8001/v1',
-      secretRef: 'VL_API_KEY',
-      taskTypes: ['ocr_ambiguity_review', 'document_vision'],
-      maxConcurrency: 1,
-      timeoutMs: 90000,
-      isLocal: true,
-      isEnabled: false,
-      status: 'disabled' as const
-    },
-    {
-      id: 'model-deployment-paddle-ocr',
-      deploymentKey: 'paddleocr-vl',
-      provider: 'local_paddle',
-      modelName: 'PaddlePaddle/PaddleOCR-VL',
-      modelVersion: 'v1',
-      endpoint: 'http://127.0.0.1:8868',
-      secretRef: 'OCR_API_KEY',
-      taskTypes: ['ocr_document'],
-      maxConcurrency: 1,
-      timeoutMs: 60000,
-      isLocal: true,
-      isEnabled: false,
-      status: 'disabled' as const
-    },
-    {
-      id: 'model-deployment-qwen-embedding',
-      deploymentKey: 'qwen3-embedding-8b',
-      provider: 'openai_compatible',
-      modelName: 'Qwen/Qwen3-Embedding-8B',
-      modelVersion: '0.23.0',
-      endpoint: 'http://127.0.0.1:8002/v1',
-      secretRef: 'EMBEDDING_API_KEY',
-      taskTypes: ['embedding'],
-      maxConcurrency: 1,
-      timeoutMs: 60000,
-      isLocal: true,
-      isEnabled: false,
-      status: 'disabled' as const
-    }
-  ];
-
-  for (const deployment of modelDeployments) {
-    await prisma.modelDeployment.upsert({
-      where: { deploymentKey: deployment.deploymentKey },
-      create: deployment,
-      update: {
-        provider: deployment.provider,
-        modelName: deployment.modelName,
-        modelVersion: deployment.modelVersion,
-        endpoint: deployment.endpoint,
-        secretRef: deployment.secretRef,
-        taskTypes: deployment.taskTypes,
-        maxConcurrency: deployment.maxConcurrency,
-        timeoutMs: deployment.timeoutMs,
-        isLocal: deployment.isLocal,
-        isEnabled: deployment.isEnabled,
-        status: deployment.status
-      }
-    });
-  }
-
-  const modelRoutes = [
-    ['boss_chat', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['boss_chat', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['excel_template_classification', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['excel_template_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['excel_column_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['excel_column_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['ocr_document_classification', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['ocr_document_classification', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['ocr_field_mapping', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['ocr_field_mapping', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['report_narrative', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['report_narrative', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['report_fact_check', 'model-deployment-mock-text', 100, true, 'mock'],
-    ['report_fact_check', 'model-deployment-qwen-text', 10, false, 'manual'],
-    ['ocr_document', 'model-deployment-paddle-ocr', 10, false, 'manual'],
-    ['ocr_ambiguity_review', 'model-deployment-qwen-vl', 10, false, 'manual'],
-    ['embedding', 'model-deployment-qwen-embedding', 10, false, 'manual']
-  ] as const;
-  for (const [taskType, deploymentId, priority, isEnabled, fallbackPolicy] of modelRoutes) {
-    await prisma.taskModelRoute.upsert({
-      where: { taskType_deploymentId: { taskType, deploymentId } },
-      create: { taskType, deploymentId, priority, isEnabled, fallbackPolicy },
-      update: { priority, isEnabled, fallbackPolicy }
-    });
-  }
 
   console.log('Phase 10 seed complete: core data, mock AI/OCR, and disabled local model routes are ready.');
 }

@@ -128,6 +128,13 @@ export default () => ({
     maxQueue: Number.parseInt(process.env.OTEL_TRACE_MAX_QUEUE ?? '1000', 10),
     flushIntervalMs: Number.parseInt(process.env.OTEL_TRACE_FLUSH_INTERVAL_MS ?? '2000', 10)
   },
+  systemRegistry: {
+    profile: process.env.AI_SYSTEM_REGISTRY_PROFILE
+      || (process.env.NODE_ENV === 'production' ? '' : 'development-local-v1'),
+    startupMode: process.env.AI_SYSTEM_REGISTRY_STARTUP_MODE
+      || (process.env.NODE_ENV === 'production' ? 'verify' : 'disabled'),
+    manifestJson: process.env.AI_SYSTEM_REGISTRY_MANIFEST_JSON || ''
+  },
   ai: {
     provider: process.env.AI_PROVIDER || 'mock',
     providerClass: process.env.AI_PROVIDER_CLASS

@@ -1,4 +1,5 @@
 import { STEP_UP_ACTIONS, StepUpAction, stepUpDefinition } from '../step-up/step-up-actions';
+import { resolveSystemRegistryConfiguration } from '../model-runtime/system-registry-manifest';
 
 const PLACEHOLDER_SECRETS = new Set([
   'development-secret-change-me',
@@ -135,6 +136,7 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   if (nodeEnv === 'production' && processRole === 'all') {
     throw new Error('PROCESS_ROLE must be api or worker in production.');
   }
+  resolveSystemRegistryConfiguration(environment);
 
   if (!/^postgres(?:ql)?:\/\//.test(databaseUrl)) {
     throw new Error('DATABASE_URL must be a PostgreSQL connection URL.');

@@ -42,6 +42,8 @@ x-backend-environment: &backend-environment
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://tempo:4318/v1/traces
   OTEL_SERVICE_NAME: finance-agent-api
   AI_PROVIDER: mock
+  AI_SYSTEM_REGISTRY_PROFILE: mock-safe-v1
+  AI_SYSTEM_REGISTRY_STARTUP_MODE: verify
   OCR_PROVIDER: mock
   NODE_EXTRA_CA_CERTS: /run/tls/ca.crt
 
@@ -304,6 +306,8 @@ services:
     restart: "no"
     environment:
       NODE_ENV: production
+      AI_SYSTEM_REGISTRY_PROFILE: mock-safe-v1
+      AI_SYSTEM_REGISTRY_STARTUP_MODE: verify
       DATABASE_URL_FILE: /run/secrets/migration_database_url
     secrets:
       - migration_database_url
@@ -311,7 +315,7 @@ services:
     command:
       - sh
       - -c
-      - npx prisma migrate deploy && npx prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js
+      - npx prisma migrate deploy && npx prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && node dist/system-bootstrap.js && ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js
     depends_on:
       postgres:
         condition: service_healthy

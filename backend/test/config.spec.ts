@@ -20,6 +20,7 @@ describe('environment validation', () => {
     LOGIN_RATE_LIMIT_STORE: 'redis',
     UPLOAD_ADMISSION_STORE: 'redis',
     MODEL_EXECUTION_GATE_STORE: 'redis',
+    AI_SYSTEM_REGISTRY_PROFILE: 'mock-safe-v1',
     REDIS_URL: 'rediss://runtime:redis-secret-12345@redis.example.com:6379',
     METRICS_TOKEN: 'metrics-secret-1234567890-ABCDEFGHIJ-klmnop',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://tempo.finance-agent.example.com/v1/traces'
@@ -41,6 +42,9 @@ describe('environment validation', () => {
     [{ ...valid, AI_REPORT_MODE: 'auto_commit' }, 'AI_REPORT_MODE'],
     [{ ...valid, AI_GLOBAL_KILL_SWITCH: 'yes' }, 'AI_GLOBAL_KILL_SWITCH'],
     [{ ...valid, AI_EXTERNAL_PROVIDER_MODE: 'enabled' }, 'AI_EXTERNAL_PROVIDER_MODE'],
+    [{ ...valid, AI_SYSTEM_REGISTRY_PROFILE: 'unknown' }, 'AI_SYSTEM_REGISTRY_PROFILE'],
+    [{ ...valid, AI_SYSTEM_REGISTRY_STARTUP_MODE: 'warn' }, 'AI_SYSTEM_REGISTRY_STARTUP_MODE'],
+    [{ ...valid, AI_SYSTEM_REGISTRY_MANIFEST_JSON: '{}' }, 'only allowed with custom'],
     [{ ...valid, MAX_FILE_SIZE_MB: '0' }, 'MAX_FILE_SIZE_MB'],
     [{ ...valid, MAX_FILE_SIZE_MB: '51' }, 'MAX_FILE_SIZE_MB'],
     [{ ...valid, JWT_ALGORITHM: 'none' }, 'JWT_ALGORITHM'],
@@ -193,6 +197,8 @@ describe('environment validation', () => {
     expect(() => validateEnvironment({ ...production, LOGIN_RATE_LIMIT_STORE: 'memory' })).toThrow('LOGIN_RATE_LIMIT_STORE');
     expect(() => validateEnvironment({ ...production, UPLOAD_ADMISSION_STORE: 'memory' })).toThrow('UPLOAD_ADMISSION_STORE');
     expect(() => validateEnvironment({ ...production, MODEL_EXECUTION_GATE_STORE: 'memory' })).toThrow('MODEL_EXECUTION_GATE_STORE');
+    expect(() => validateEnvironment({ ...production, AI_SYSTEM_REGISTRY_STARTUP_MODE: 'disabled' }))
+      .toThrow('must be verify in production');
     expect(() => validateEnvironment({ ...production, METRICS_TOKEN: '' })).toThrow('METRICS_TOKEN');
   });
 

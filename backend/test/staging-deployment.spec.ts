@@ -18,6 +18,8 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('LOGIN_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('UPLOAD_ADMISSION_STORE: redis');
     expect(compose).toContain('MODEL_EXECUTION_GATE_STORE: redis');
+    expect(compose).toContain('AI_SYSTEM_REGISTRY_PROFILE: mock-safe-v1');
+    expect(compose).toContain('AI_SYSTEM_REGISTRY_STARTUP_MODE: verify');
     expect(compose).toContain('FILE_SCAN_MODE: clamav');
     expect(compose).toContain('ssl=on');
     expect(compose).toContain('listen_addresses=*');
@@ -38,6 +40,17 @@ describe('B8-09 staging deployment', () => {
       expect(compose).not.toContain(port);
     }
     expect(compose).not.toMatch(/image:\s+[^\n]*:latest(?:\s|$)/i);
+
+    const migrateCommand = compose.match(/npx prisma migrate deploy[^\n]+/)?.[0] ?? '';
+    expect(migrateCommand.indexOf('prisma/runtime-grants.sql')).toBeGreaterThan(
+      migrateCommand.indexOf('prisma migrate deploy')
+    );
+    expect(migrateCommand.indexOf('node dist/system-bootstrap.js')).toBeGreaterThan(
+      migrateCommand.indexOf('prisma/runtime-grants.sql')
+    );
+    expect(migrateCommand.indexOf('node dist/staging-seed.js')).toBeGreaterThan(
+      migrateCommand.indexOf('node dist/system-bootstrap.js')
+    );
 
     const databaseRoles = read(stagingRoot, 'postgres', '01-init-roles.sh');
     expect(databaseRoles).toContain("sed -i -E '/^[[:space:]]*host[[:space:]]/d'");

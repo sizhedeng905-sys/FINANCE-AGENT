@@ -26,12 +26,22 @@ copy .env.example .env
 npm run prisma:generate
 ```
 
-Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis, `REQUEST_RATE_LIMIT_STORE=redis`, `LOGIN_RATE_LIMIT_STORE=redis`, `UPLOAD_ADMISSION_STORE=redis`, `MODEL_EXECUTION_GATE_STORE=redis`, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. Then initialize the database:
+Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis, `REQUEST_RATE_LIMIT_STORE=redis`, `LOGIN_RATE_LIMIT_STORE=redis`, `UPLOAD_ADMISSION_STORE=redis`, `MODEL_EXECUTION_GATE_STORE=redis`, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. For local development and synthetic demo data, initialize the database with:
 
 ```bash
 npm run prisma:migrate
 npm run prisma:seed
 ```
+
+Production and production-like environments must not run the demo seed. Apply migrations, bootstrap only the immutable system AI registry, and verify it before starting API or Worker processes:
+
+```bash
+npm run prisma:migrate:deploy
+npm run system:bootstrap
+npm run system:verify
+```
+
+Run migration and bootstrap with the deployment/migration database credential; API and Worker runtime credentials only need to verify the completed registry and must not receive schema or registry-maintenance grants. Set `AI_SYSTEM_REGISTRY_PROFILE` to `mock-safe-v1`, `development-local-v1`, or `custom`. Production requires an explicit profile and `AI_SYSTEM_REGISTRY_STARTUP_MODE=verify`; a custom profile is supplied through strict `AI_SYSTEM_REGISTRY_MANIFEST_JSON`, with credentials referenced by environment variable name through `secretRef`. Registry drift, unknown enabled routes/deployments, missing enabled secrets, or retired/drifted Prompt versions fail startup. `npm run system:acceptance` verifies a temporary blank `_test` database and refuses a non-test database.
 
 ## Scripts
 
@@ -48,6 +58,10 @@ npm run prisma:generate
 npm run prisma:migrate
 npm run prisma:migrate:deploy
 npm run prisma:seed
+npm run system:bootstrap
+npm run system:verify
+npm run system:verify:smoke
+npm run system:acceptance
 npm run db:verify
 npm run realdata:scan
 npm run realdata:xls-profile
@@ -84,15 +98,15 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-21, R11 candidate):
+Current verification baseline (2026-07-21, CR-009 candidate):
 
-- Backend build and Prisma validation pass. Migration-path verification installs all 41 migrations on an empty database and upgrades the 40-migration predecessor to the current schema.
-- Jest: 47/47 suites and 428/428 tests.
-- Full PostgreSQL integration with Redis required passes 13/13 suites and 114/114 tests, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
+- Backend build and Prisma validation pass. Migration-path verification installs all 43 migrations on an empty database and upgrades the 42-migration predecessor to the current schema.
+- Jest: 50/50 suites and 464/464 tests.
+- Full PostgreSQL/Redis integration executes all 14/14 suites and 124/124 tests across the normal and Redis-required groups, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
 - Root Playwright acceptance: 17/17 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
-- R11 re-ran frontend runtime 4/4, both production builds, Playwright 17/17, the 41-migration empty and 40-to-41 upgrade paths, repository hygiene for 720 tracked/candidate files, and both production dependency audits. Prompt manifest/guard drift checks remain covered by the complete unit/PostgreSQL suites.
+- CR-009 verifies a fresh temporary `_test` database through 43 migrations, two concurrent bootstrap processes converging to one change and one zero-write replay, exact 11 Prompt / 1 Mock deployment / 7 route system counts, zero business/demo rows, a strict Mock mapping call, API and Worker startup verification, and deliberate configuration-drift startup rejection. The bootstrap uses the existing system tables, a serializable transaction, PostgreSQL advisory lock, bounded conflict retries, immutable content hashes, and one change audit.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
