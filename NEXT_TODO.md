@@ -1,66 +1,60 @@
 # FINANCE-AGENT 下一步执行清单
 
-更新日期：2026-07-15
+更新日期：2026-07-21
+分支：`agent/b8-stable-hardening`
+Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
-项目已不是纯前端原型。阶段 0-10 的真实 PostgreSQL/API 主链路已完成，当前按 `docs/REAL_BUSINESS_DATA_TEST_PLAN.md` 推进真实业务数据门禁。详细证据见 `docs/IMPLEMENTATION_PROGRESS.md` 和 `docs/REAL_BUSINESS_DATA_TEST_REPORT.md`。
+## 当前结论
 
-## 当前门禁：B7 工程交付完成，等待财务签字
+- Excel staging P0 已由 CR-002 至 CR-005 关闭：未发布记录不可见、不可通过通用接口修改，最终发布具备内容、版本、状态、数量和 affected-row 围栏。
+- Prompt 真执行已由 CR-006 关闭：版本化 `userPromptTemplate` 真正进入 Provider，请求与输出的脱敏 provenance 已进入现有 AI 审计链。
+- 单一项目负责人治理由 CR-007 集中到 `docs/owner-input/`；不再等待多角色姓名、日期或签字。
+- 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
+- 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
-已完成：
+## 已有工程证据
 
-- XLSX 多 Sheet、隐藏 Sheet、1-3 行合并表头和人工选择。
-- 公式默认拒绝、缓存结果显式授权、共享公式来源还原和 audit/ledger。
-- 稀疏行列边界、样式尾部排除、数据区合并单元格人工复核。
-- 大于 10 MiB 或含媒体 XLSX 的流式行读取；19.67 MiB 与 46.35 MiB 真实匿名样本在 512 MiB 堆限制下通过。
-- 单元、真实 PostgreSQL、Playwright 和前后端构建回归。
-- 15 份旧 `.xls` 已通过受限子进程隔离转换与解析；原件不变，45 个 Sheet、2351 个公式和 224 个合并区域往返一致。
-- B2 已收口：50 MiB 是含边界硬上限，超过 1 字节即统一返回 `41301`；第一版不开放独立大文件通道。
+- 后端全量单元：48 suites / 435 tests。
+- P0 强制 Redis PostgreSQL 基线：13 suites / 119 tests。
+- Playwright P0 基线：17 tests。
+- Prompt 专项 PostgreSQL/Redis：7 tests。
+- Prisma migration：43 条空库路径与 42→43 升级路径。
+- 前后端 production build、runtime、repository hygiene 和两套 production dependency audit 已通过 CR-006 当前候选验证。
 
-已完成的 B2 收口项：
+以上只证明对应提交的工程行为，不代表真实 OCR 准确率、财务逐分对账、目标云环境、恢复演练或 owner UAT 已通过。
 
-1. 已完成：为 4999/5000/5001/30196 行建立不含业务数据的确定性生成器、500 行批次消费和资源基线；同步接口继续保持 5000 行上限。
-2. 已完成：超过 5000 行自动进入可观察的后台分块任务，具备 500 行批次、heartbeat、取消、lease 过期接管和最多三次恢复。
-3. 已完成：5001/30196 行真实 PostgreSQL 持久化无重复、无漏行；旧 worker 与新租约并存时令牌隔离生效，确认前不生成 `BusinessRecord`。
-4. 已完成：旧 `.xls` 不依赖桌面 Excel/COM；只在 256 MiB、30 秒、无网络/写权限的子进程中重建内存 `.xlsx`，转换结果不落盘。
-5. 已完成：上传限制由 Nest 配置动态注入，避免 `.env` 与 Multer 漂移；上限下、恰好上限和上限加 1 字节均通过真实 multipart/PostgreSQL 门禁，失败无数据库或隔离目录残留。
+## 自动推进顺序
 
-## 后续门禁
+1. `CR-008`：production-safe AI bootstrap。
+   - 空白 production-like PostgreSQL 执行 migrate → bootstrap → verify。
+   - 只创建系统 Prompt、ModelDeployment 和 TaskModelRoute，不创建演示用户或业务数据。
+   - 同版本同 hash 幂等；同版本 hash 漂移失败关闭；配置来自环境并且 secret 只使用 reference。
+   - API/Worker 启动前验证 registry/route 完整性，并用 Mock 完成一次真实调用。
+2. Excel AI 前端审核闭环。
+   - 接入真实 `/import-tasks/:id/ai-suggestions`。
+   - 显示候选模板、理由、warning、Prompt/模型/Mock 来源；支持逐列接受、修改、拒绝、忽略与重校验。
+   - 将实际 MappingDecision/provenance 冻结到批准快照，AI 失败时保持完整手工路径。
+3. OCR 并发和 AI 采纳闭环。
+   - `expectedVersion` 与 `expectedReviewRevision` 强制必填并覆盖 stale 409。
+   - 原始值、AI 建议、人工值、bbox/evidence 和 provenance 可复核；采纳后重新做确定性校验。
+4. 报告人工复核与来源展开。
+   - 草稿、接受、退回/拒绝状态机；受保护 API、版本并发和 audit。
+   - 前端分页调用 `/reports/snapshots/:id/sources`；AI 仍不计算金额。
+5. Staging、模型网络和完整 smoke。
+   - API/Worker 与模型使用受控 Docker network、服务 DNS、相同 secret reference、健康/超时/并发/kill switch。
+   - 本地合成 smoke 自动完成；真实目标云环境保持 `EXTERNAL_RESOURCE_NEEDED`。
 
-### B3 OCR 与视觉样本（自动化完成，等待人工标签）
+## 项目负责人输入
 
-- 文本模型和 OCR 常驻，VL/Embedding 按需；真实 Provider 不可用时核心财务链路继续可用。
-- 35 页 PDF 页范围、Provider 校准/验证和 30 分钟常驻已通过；文本与 OCR 常驻，VL/Embedding 保持按需。
-- 17 份匿名评估样本已准备，因字段标签尚未人工复核，准确率保持 `awaiting_labels`，发布为人工辅助模式。
+- 已确认决定：[`docs/owner-input/OWNER_DECISIONS.md`](docs/owner-input/OWNER_DECISIONS.md)
+- 待回答问题：[`docs/owner-input/OPEN_QUESTIONS.md`](docs/owner-input/OPEN_QUESTIONS.md)，每批最多十题；未回答时采用失败关闭默认。
+- 真实样本：OCR 17/5 真值、财务逐分对账、汇总/重复样例、老板标准问答。
+- 外部资源：目标云服务器、域名/证书、对象存储、GPU/registry/告警、外部 Provider 详情、独立审计服务和恢复目标。
 
-### B4-B5 统一经营记录、报表与老板 AI（完成）
+## 每个提交的门禁
 
-- 四类来源统一模板、来源与确认快照；`actual/reconciliation/budget` 由后端模板推导，报表仅统计 confirmed actual。
-- 72 条 Qwen 基准的有效数字、空数据、注入和 Schema 均 100%；原始模型 fallback 较高，必须保留 grounding 和结构化降级。
-- 跨来源业务去重继续保留人工复核；L3 抽样会计真值等待财务签字。
-
-### B6 性能与故障恢复（完成）
-
-- 后端重启与本地 PostgreSQL TCP 代理短断通过；readiness 失败关闭、liveness 保持在线，恢复后自动重连。
-- ClamAV 离线返回 503，磁盘低水位在落盘前返回 507；lease 接管、1/3/5 并发上传/导入和模型队列全部通过。
-- Qwen 文本重启、按需 VL、文本恢复及 Qwen/OCR 同时推理通过；272 次切换期 OCR 健康采样 0 失败，Embedding 未启动。
-- 修复 E2E teardown 目录漂移，清理 50 个历史孤儿测试文件；隔离目录和 E2E 运行目录收口后均为 0 残留。
-
-### B7 财务 UAT 与最终交付（工程完成）
-
-- 已生成 `docs/B7_FINANCE_UAT_ACCEPTANCE.md`；入账粒度、L3 金额、OCR 标签和重复政策明确保留为外部签字项。
-- 已通过前后端 build、184 单测、30 PostgreSQL、14 Playwright、Prisma、hygiene、依赖审计、模型资产和 112 份原件哈希复核。
-- GitHub 提交、CI 与审查状态统一以 Draft PR #3 为准；财务/OCR 外部门禁关闭前不 merge、不标记生产就绪。
-
-### 财务下一步
-
-- 按 UAT-01 至 UAT-07 执行真实业务抽样，不把逐字段真值或敏感值提交 Git。
-- 签署入账粒度、负数/冲销、主表/凭证、35 页拆分和重复处置政策。
-- 完成 17 份 OCR 标签与 L3 逐分对账后，再决定是否从人工辅助模式升级。
-
-## 每批提交条件
-
-- 先有失败复现或明确基线，再修改通用能力。
-- 所有接口继续使用后端身份、统一响应、DTO 校验、分页、权限、audit 和必要 ledger。
-- 原始样本扫描前后 SHA-256 一致，公开输出仅含匿名 ID 和聚合指标。
-- 相关单元、PostgreSQL 集成、Playwright、前后端 build 与仓库卫生全部通过。
-- README、进度报告、未完成限制和复现命令同步更新。
+- 一个可独立审查主题对应一个 `docs/commit-reviews/CR-XXX_*.md`，并更新索引。
+- 先有失败复现或明确基线，再修改行为；不删断言、不静默回 Mock、不吞错误。
+- 只暂存本提交有意文件，不提交 `.env`、真实数据、模型权重、备份、上传文件或受保护未跟踪资产。
+- 运行受影响单元、真实 PostgreSQL/Redis、API/Playwright、Prisma、build、audit、hygiene 和 `git diff --check`；未运行明确写 `NOT_RUN`。
+- 正常 push 到当前分支并更新 Draft PR #4；不 merge、不标记 Ready、不 force push。

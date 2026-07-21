@@ -1,133 +1,75 @@
-# FINANCE-AGENT 人工决策与 UAT 签字
+# FINANCE-AGENT H01-H16 历史决策与 UAT 索引
 
-文档版本：0.4-draft
-当前状态：`Owner decisions captured / Pending formal signoff and evidence`
-创建日期：2026-07-18
-最近更新：2026-07-20
+文档版本：`0.5-historical`
+最近更新：2026-07-21
+状态：历史索引，不再是人工输入或多角色签字入口
 
-## 使用规则
+## 治理变更说明
 
-本文件是 H01-H16 的唯一人工决策入口。Codex 只维护模板、证据链接和状态校验，不得代替财务、业务、老板、安全、运维或独立审查人填写业务结论。
+项目只有当前用户一名项目负责人。自 2026-07-21 起，不再要求财务、业务、老板、安全、运维或独立审查人分别填写姓名、日期和签字，也不能以缺少多方签字阻塞可自动完成的工程工作。
 
-一项决定只有同时满足以下条件，才能从 `Pending` 改为 `Approved`：
+这项治理变更不改变产品内四角色、后端权限、职责分离和不同财务账号审批规则。Excel/OCR 上传者仍不能批准自己的导入；真实样本、外部资源、独立审计和项目负责人亲自 UAT 仍须提供真实证据。
 
-1. 决策内容、适用范围和例外完整；
-2. 决策人姓名、岗位/角色、日期和证据引用完整；
-3. 至少有一项正常、边界、拒绝、权限、并发/重放和报表影响样例；
-4. 不存在未解决的冲突备注；
-5. 签字人明确确认这是当前最新版本。
+当前唯一入口：
 
-空白、草稿、口头描述、聊天推测和由 AI 生成的答案均保持 `Pending`。任何修改都应在末尾变更记录中追加一行，不覆盖历史决定。
+- 已确认决定：[`owner-input/OWNER_DECISIONS.md`](owner-input/OWNER_DECISIONS.md)
+- 最多十个开放问题：[`owner-input/OPEN_QUESTIONS.md`](owner-input/OPEN_QUESTIONS.md)
+- 原始问卷：[`FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md)
 
-## 项目负责人问卷导入
+旧状态统一翻译如下：
 
-- 来源：[`FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md`](FINANCE_AGENT_OWNER_PRODUCT_DECISION_QUESTIONNAIRE_2026-07-20.md)
-- 导入日期：2026-07-20
-- 授权证据：项目负责人在当前开发会话中确认方框内 `1` 为选中，并要求 Codex 据此更新信息和继续开发。
-- 完整性结论：已收到 30 题的产品偏好，但决策人姓名、角色、日期未填写；多项真实证据负责人、阈值、资源或白名单仍为空，因此没有 H 项被标记为 `Approved`。
-- H01 后续澄清：项目负责人于 2026-07-20 明确最终采用“按照每行明细”，覆盖 Q01 原勾选；来源汇总行不得与明细同时入账，无法确定时必须由财务处置。
-- 安全解释：Q18 的“不设文件/PDF 上限”按“没有固定业务上限”记录；工程实现仍必须有可配置资源预算、流式处理和明确的超预算错误，不能等待资源耗尽后才超时。
-- 外部 AI：Q21 表示脱敏后可使用指定外部 Provider，但厂商、地域、字段、用途和保留期均未填写；在清单批准前，真实数据外发继续失败关闭。
+| 旧术语 | 当前术语 |
+| --- | --- |
+| `Pending formal signoff` / `pending_human_decision` | `OWNER_CONFIRMATION_NEEDED` 或 `SAFE_DEFAULT_ACTIVE` |
+| `Awaiting real evidence` / `awaiting_labels` | `REAL_SAMPLE_NEEDED` |
+| `Blocked external` | `EXTERNAL_RESOURCE_NEEDED` |
+| 工程/合成测试通过 | `ENGINEERING_VERIFIED` |
+| 最终人工验收 | `OWNER_UAT_VERIFIED` |
 
-## H01 入账粒度、汇总与明细互斥
+## 已导入决定
 
-- 状态：`Decision captured / Pending formal signoff and examples`
-- 决策负责人：财务负责人
-- 需要共同确认：业务负责人
-- 当前系统保守行为：每个通过校验的 Excel 明细行生成一条记录；普通错误明细不能排除，精确标签命中的疑似汇总行必须由财务明确纳入或排除，任何阻断错误都会阻止整批发布。模板决定 `actual/reconciliation/budget`；跨文件业务重复仍只提示，不自动合并或删除。
-- 已收到的决定草案：
-  - 每个有效 Excel 明细行生成一条可独立追溯的正式记录，总额由程序聚合计算。
-  - 来源中的汇总行不得与明细同时入账；疑似汇总行必须由财务排除或明确确认为业务明细。
-  - 正式提交必须保存行证据、排除 revision、互斥校验版本和批准快照。
-- 工程证据：[`M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`](M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md)；该证据不替代真实汇总行样例和正式签字。
-- 仍需填写：
-  - 汇总行稳定识别特征、真实样例和互斥键；
-  - 允许的例外、历史数据规则和验收样例。
-- 决策人：
-- 岗位/角色：
-- 决策日期：
-- 证据引用：负责人问卷 Q01/Q02、Q04 后补充及 2026-07-20 对话澄清“按照每行明细”
-- 冲突与例外：原 Q01-B 已被后续明确澄清覆盖；汇总行识别样例仍缺
+- 2026-07-20 的负责人问卷按“方框内写入 `1` 为选中”解析。
+- H01 后续澄清“按照每行明细”覆盖问卷 Q01 的旧勾选：每个有效明细行一条记录，汇总由程序计算，汇总与明细不得双计。
+- 重复候选只提示，窗口前后 3 天且金额逐分一致；不自动删除、合并或拒绝。
+- 费用明细为主记录并可关联多附件；缺少模板声明的必填附件时阻断。
+- 对账按项目、日期、币种和收入/成本方向逐分一致；混合币种不相加。
+- 老板 AI 先给确定性数字，证据不足明确拒答，并显示 Snapshot、来源和 warning。
+- 四角色保持不变；最新任务书要求 Excel/OCR 继续由不同财务账号审批，覆盖问卷中自审批选项的宽松解释。
+- 本地模型不可用时转人工；真实数据外发必须先稳定匿名并命中服务端 Provider 白名单。
+- legal hold 禁止删除；全部真实门禁通过后才允许有限试运行。
 
-## H02 负数、冲销、更正、作废与关账
+完整决策及当前失败关闭行为见 [`owner-input/OWNER_DECISIONS.md`](owner-input/OWNER_DECISIONS.md)。
 
-- 状态：`Pending - scope details required`
-- 决策负责人：财务负责人
-- 需要共同确认：业务负责人、审计/合规负责人
-- 当前系统保守行为：正式金额只接受正数；会计方向由模板决定；已确认记录不可修改；作废仅改变状态并保留原值、来源、附件、audit 和 ledger，不等同于会计冲销；没有更正链、反向分录或关账期。
-- 已收到的决定草案：
-  - 负数只允许指定模板或指定角色录入；收入/支出方向由模板模式和人工审核共同确认。
-  - 已确认记录允许财务更正，但必须保留修改前后值、原因、操作者、audit 和 ledger 历史。
-  - 第一版不需要关账期。
-- 当前失败关闭行为：负数模板/角色白名单未给出前继续拒绝正式负数；不可变 revision 和报表重述规则实现并验收前，已确认记录继续禁止直接覆盖。
-- 仍需填写：负数模板/角色清单，更正对历史报表的生效/重述规则，作废与冲销区别及样例。
-- 决策人：
-- 岗位/角色：
-- 决策日期：
-- 证据引用：负责人问卷 Q03-Q05 及自由文本
-- 冲突与例外：业务意图已给出，执行白名单和报表语义未给出
+## H01-H16 当前索引
 
-## H07 报销主数据与附件证据归属
+| 编号 | 主题 | 当前状态 | 当前证据或缺口 |
+| --- | --- | --- | --- |
+| H01 | 入账粒度、汇总与明细互斥 | `OWNER_CONFIRMED / REAL_SAMPLE_NEEDED` | 每个有效明细行入账，汇总不双计；仍需真实汇总行样例。 |
+| H02 | 负数、冲销、更正、作废、关账 | `OWNER_CONFIRMATION_NEEDED` | 第一版不关账；负数白名单与更正后的报表语义仍需选择。 |
+| H03 | 跨来源重复 | `OWNER_CONFIRMED / REAL_SAMPLE_NEEDED` | A-E 信号、前后 3 天、金额逐分一致且只提示；仍需真实正反样例。 |
+| H04 | 17 份 OCR 字段真值 | `REAL_SAMPLE_NEEDED` | 需要冻结标签。 |
+| H05 | 5 份 OCR 盲测 | `REAL_SAMPLE_NEEDED` | 需要未参与调参者完成盲测。 |
+| H06 | 分币逐分对账 | `OWNER_CONFIRMED / REAL_SAMPLE_NEEDED` | Decimal 与分币框架已实现；周期和真实真值未关闭。 |
+| H07 | 报销主数据与附件 | `OWNER_CONFIRMATION_NEEDED` | 主记录与冲突处理已确认；必填模板清单未确认。 |
+| H08 | 老板问题与正确答案 | `OWNER_CONFIRMATION_NEEDED / REAL_SAMPLE_NEEDED` | 回答风格已确认；合理性规则、标准问题和真值未关闭。 |
+| H09 | 出站脱敏 | `OWNER_CONFIRMED / REAL_SAMPLE_NEEDED` | 离开本机必须稳定匿名；仍需真实出站复核。 |
+| H10 | 权限、职责分离、step-up | `OWNER_CONFIRMATION_NEEDED` | 四角色和第二财务已确认；step-up 方式未选择。 |
+| H11 | 文件准入、下载、扫描 | `OWNER_CONFIRMATION_NEEDED` | 类型和下载角色已确认；扫描 break-glass 未确认，当前失败关闭。 |
+| H12 | 外部 AI 数据政策 | `OWNER_CONFIRMATION_NEEDED / EXTERNAL_RESOURCE_NEEDED` | 外发需脱敏和白名单；Provider 详情未提供，当前 disabled。 |
+| H13 | 服务器、域名、GPU、监控 | `EXTERNAL_RESOURCE_NEEDED` | 目标为授权云服务器；具体资源未提供。 |
+| H14 | RPO/RTO、保留、删除、备份 | `OWNER_CONFIRMATION_NEEDED / EXTERNAL_RESOURCE_NEEDED` | legal hold 已确认；目标值、期限和云资源未提供。 |
+| H15 | 独立代码与安全复核 | `EXTERNAL_RESOURCE_NEEDED` | 已选择外部审计服务，尚未提供服务与报告。 |
+| H16 | 最终 UAT 与有限试运行 | `OWNER_CONFIRMED`，尚未 `OWNER_UAT_VERIFIED` | 已确认全部门禁通过后才试运行；当前不允许上线。 |
 
-- 状态：`Pending - required template list missing`
-- 决策负责人：财务负责人和业务负责人
-- 需要共同确认：安全/合规负责人
-- 当前系统保守行为：附件只作为受控证据；财务确认前 OCR 不生成正式记录；手工、工单、Excel 和 OCR 的原文件关联可追溯，但 BusinessRecord 的附件目前主要保存为受保护 JSON 引用，尚无已批准的凭证角色/主从/拆分规则。
-- 已收到的决定草案：
-  - 每个费用明细是一条主记录，一条明细可以关联多张附件。
-  - 被模板声明为必填的附件缺失时阻断批准。
-  - OCR 与人工填写冲突时，以财务人工确认值为准，并强制保存覆盖理由和 revision。
-- 仍需填写：哪些模板/字段必须有附件，一张凭证跨明细/项目的拆分规则，附件替换、作废和保留样例。
-- 决策人：
-- 岗位/角色：
-- 决策日期：
-- 证据引用：负责人问卷 Q10-Q11
-- 冲突与例外：必填附件模板清单未给出
+## 工程证据边界
 
-## H06/H08 报告工程证据
-
-- 工程报告：[`M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`](M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md)
-- 已实现的保守行为：只读取 `confirmed + actual`；金额使用 Decimal；币种分组且不跨币相加；固定 `Asia/Shanghai` 期间；来源记录 ID/version/hash 与核心 Snapshot hash 可复核。
-- AI 边界：报告 AI 不查询数据库、不计算金额、不写业务记录；只能逐字选择服务端生成的 Claim 白名单，任何新增客户、原因、比较、预测、数字、值篡改或 warning 遗漏都会失败关闭。
-- 人工门禁仍开放：上述均为合成工程证据，不能替代真实逐分对账、正式指标定义、老板标准答案、授权人姓名/角色/日期和签字。
-
-## H03-H16 状态索引
-
-| 编号 | 决策主题 | 当前状态 | 负责人 | 最小证据 |
-| --- | --- | --- | --- | --- |
-| H03 | 跨来源重复指纹与处置 | `Decision captured / Pending signoff` | 财务、业务 | A-E 信号；前后 3 天且金额逐分一致；仅提示。仍需真实样例和处置签字 |
-| H04 | 17 份 OCR 字段真值 | `Awaiting real evidence` | 独立标注/复核人员 | 已选择独立人员标注 17 份；仍缺人员、日期、冻结标签和分歧处理 |
-| H05 | 5 份 OCR 盲测冻结 | `Awaiting real evidence` | 独立评测人员 | 已选择冻结 5 份；仍缺未参与调参者、阈值、冻结清单和盲测记录 |
-| H06 | L3 分币对账真值 | `Engineering framework passed / Pending real truth and signoff` | 财务负责人 | M6 已固定 confirmed actual、分币种 Decimal、时区/期间、来源 digest 与不可变 Snapshot；仍缺周期、人工真值、逐分结果和签字 |
-| H08 | 老板问题与正确答案 | `Engineering framework passed / Pending metric definitions and signoff` | 老板/授权审批人 | M6 已限制 AI 逐字选择服务端 Claim 白名单并展示 sourcePath/warning；仍缺期间、正式指标口径、合理性规则和标准答案 |
-| H09 | 脱敏不可重识别标准 | `Decision captured / Pending evidence` | 安全/合规 | 本机内受控使用原数据，离开本机必须稳定匿名；仍缺字段清单和重识别测试 |
-| H10 | 权限、职责分离、MFA、自审批 | `Decision captured / Pending implementation and signoff` | 管理层、安全、业务 | 四角色沿用；自审批仅在二次确认和完整审计后开放；批量入账及用户安全操作需 step-up |
-| H11 | 文件准入、预览、下载、净化 | `Pending - safe resource/bypass policy required` | 安全、业务 | xlsx/PDF/JPG/PNG；仅财务/老板下载；仍缺技术预算和人工绕过责任边界 |
-| H12 | 外部 AI 数据政策 | `Pending - provider allowlist missing` | 安全、法务、管理层 | 脱敏后方可发指定外部 Provider；本地失败转人工；厂商/地域/字段/用途/保留未给出，外发保持关闭 |
-| H13 | 服务器、域名、GPU、拓扑、监控 | `Blocked external - target resources missing` | 基础设施负责人 | 已选授权访问的云服务器；仍缺资源、域名、GPU、对象存储和告警 |
-| H14 | RPO/RTO、保留、删除、KMS、异地备份 | `Pending - targets missing` | 运维、DBA、安全、合规 | RPO/RTO 未定；拟长期保存和腾讯云；legal hold 禁删；继续仅 dry-run |
-| H15 | 独立代码与安全复核 | `Blocked external - auditor not engaged` | 非本实现人员 | 已选择外部审计服务；仍缺服务方、日期、报告和问题关闭证据 |
-| H16 | 最终 UAT 与 Go Live | `Awaiting all gates and signoff` | 财务、业务、老板、安全、项目负责人 | 已决定全部目标门禁通过后才有限试用；当前不得上线 |
-
-H07 已在上文单独列出，因此没有在索引表重复。
-
-## 最终签字
-
-| 角色 | 姓名 | 结论 | 范围/例外 | 日期 | 签字/证据引用 |
-| --- | --- | --- | --- | --- | --- |
-| 财务负责人 |  |  |  |  |  |
-| 业务负责人 |  |  |  |  |  |
-| 老板/授权审批人 |  |  |  |  |  |
-| 安全/合规负责人 |  |  |  |  |  |
-| 运维/DBA |  |  |  |  |  |
-| 独立审查人 |  |  |  |  |  |
-| 项目负责人 |  |  |  |  |  |
+- [`M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md`](M5_2_EXCEL_APPROVAL_COMMIT_REPORT_2026-07-20.md)：每行明细、汇总处置、第二财务和整批原子发布。
+- [`M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md`](M6_REPORT_SNAPSHOT_GROUNDING_REPORT_2026-07-20.md)：confirmed actual、Decimal、分币种、不可变 Snapshot 和 Claim grounding。
+- 工程证据只能标记 `ENGINEERING_VERIFIED`，不能替代 `REAL_SAMPLE_NEEDED`、`EXTERNAL_RESOURCE_NEEDED` 或 `OWNER_UAT_VERIFIED`。
 
 ## 变更记录
 
-| 版本 | 日期 | 修改人 | 变更 | 决策影响 |
-| --- | --- | --- | --- | --- |
-| 0.1-draft | 2026-07-18 | Codex（仅创建模板） | 建立 H01-H16 唯一决策入口，未填写任何业务结论 | 全部保持 `Pending` |
-| 0.2-draft | 2026-07-20 | Codex（依据项目负责人问卷回填） | 导入 Q01-Q30，登记明确规则、冲突、缺项和失败关闭行为 | 无项目升级为 `Approved`；H03/H09/H10 等进入已记录待签字，真实证据门禁保持开放 |
-| 0.3-draft | 2026-07-20 | Codex（工程证据回填） | 关联 M5.2 每行明细、汇总行人工处置和整批失败关闭证据 | H01 保持 `Pending formal signoff and examples`，未用合成验收替代人工签字 |
-| 0.4-draft | 2026-07-20 | Codex（M6 工程证据回填） | 关联 canonical ReportSnapshot、分币种 Decimal 和严格 Claim grounding 证据 | H06/H08 工程框架通过；真实对账、正式口径、标准答案和签字仍保持 Pending |
+| 版本 | 日期 | 变更 |
+| --- | --- | --- |
+| 0.1-0.4 draft | 2026-07-18 至 2026-07-20 | 建立旧 H01-H16 多角色签字模板并导入问卷与工程证据。 |
+| 0.5 historical | 2026-07-21 | 依据唯一负责人治理要求降为历史索引，移除多角色签字门禁，链接当前 owner-input 台账。 |
