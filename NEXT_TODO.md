@@ -11,7 +11,8 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 - 单一项目负责人治理由 CR-007 集中到 `docs/owner-input/`；不再等待多角色姓名、日期或签字。
 - 文档信息架构由 CR-008 收口：报告、审计和验收证据集中到 `docs/汇报/`，计划与检查清单集中到 `docs/计划/`，并由 `npm run check:docs` 检查已跟踪 Markdown 本地链接。
 - production-safe AI 系统登记由 CR-009 收口：空白库仅初始化 11 个系统 Prompt、受控 ModelDeployment/TaskModelRoute 和一条变更审计；两个并发初始化进程精确收敛为 changed/unchanged，配置漂移会阻止 API/Worker 启动。
-- CR-009 的远端 PostgreSQL/E2E 与 CodeQL 均成功；唯一红灯来自后端最终镜像中无运行用途的全局 npm 依赖。CR-010 已在本地移除 runtime npm/npx/Corepack，并保留项目内 Prisma、Node、OpenSSL 和默认 entrypoint；新 SHA 远端 CI 尚待确认。
+- CR-010 已移除 runtime npm/npx/Corepack，并保留项目内 Prisma、Node、OpenSSL 和默认 entrypoint；SHA `1abe513` 的 Build 与 CodeQL 均成功，容器 fixable Critical 门禁已关闭。
+- CR-011 已在本地建立“Excel 到经营报告”演示 E2E：不同财务审批、批准前隔离、3 条逐分记录、`13422.21` 报告增量、幂等重放和 Snapshot 哈希均有自动断言；新 SHA 远端 CI 尚待确认。
 - 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
 - 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
 
@@ -19,7 +20,7 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
 - 后端全量单元：50 suites / 464 tests。
 - PostgreSQL/Redis 全量：14 suites / 124 tests；无 Redis 与强制 Redis 分组均已实际执行。
-- Playwright P0 基线：17 tests。
+- Playwright 基线：18 tests，其中周五演示故事线 1 test。
 - CR-009 system registry 专项：5 个 PostgreSQL 集成测试；独立空库 acceptance 覆盖 43 migrations、bootstrap/verify、Mock 调用、API/Worker 启动和漂移拒绝。
 - Prisma migration：43 条空库路径与 42→43 升级路径。
 - 前后端 production build、runtime 4/4 和两套 production dependency audit 已通过；最终 repository hygiene 在 CR-009 暂存后复验。
@@ -28,12 +29,11 @@ Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
 ## 自动推进顺序
 
-1. 恢复供应链绿色基线。
-   - 提交 CR-010 并确认同一新 SHA 的 Build 与 CodeQL 均成功。
-   - 不降低 Grype 阈值，不增加无依据 allowlist。
-2. 建立周五演示 E2E 与交付包。
-   - 用合成 Excel 证明批准前正式记录/项目结构/报告不变，第二财务批准后每行一条、逐分一致且重复提交不重复入账。
+1. 收口 CR-011 远端证据。
+   - 确认同一新 SHA 的 Build 与 CodeQL 均成功。
+2. 建立周五演示交付包。
    - 建立 `docs/deliveries/2026-07-24/` 的演示稿、验收证据、限制和下一波计划。
+   - 提供只允许本地 `_test`/demo 数据库执行的重复准备与验证命令；三次人工演练未执行前保持 `NOT_RUN`。
 3. Excel AI 前端审核桥接。
    - 接入真实 `/import-tasks/:id/ai-suggestions`，建议只能进入页面草稿。
    - 显示候选模板、理由、warning、Prompt/模型/Mock 来源；支持逐列接受、修改、拒绝和忽略。

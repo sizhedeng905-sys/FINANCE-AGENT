@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。R1-R9.3B、CR-002 至 CR-005 已关闭前端真实性、共享控制、Excel 暂存隔离和发布完整性等本地工程问题；CR-006 让版本化 Prompt 真正进入 Provider 请求并冻结脱敏 provenance；CR-007 统一单一项目负责人治理；CR-008 将结果材料与计划材料归档到 `docs/汇报/` 和 `docs/计划/`；CR-009 补齐 production-safe AI 系统登记初始化。CR-010 正在恢复后端运行镜像供应链绿色基线：最终镜像移除无运行用途的全局 npm/npx/Corepack，项目内 Prisma、Node、OpenSSL、entrypoint 与非 root 用户均保持可用，本地 SBOM/Grype 和全量回归已通过，远端新 SHA 待提交验证。M0-M8 的其余非生产工程与合成验收保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。当前候选通过 50 suites / 464 个后端单测、14 suites / 124 个 PostgreSQL/Redis 集成测试、17 个 Playwright、43 条 migration 双路径、前后端构建与两套 0 vulnerability 审计。R10 L0 的常驻 Qwen/Paddle 合成推理与鉴权也已验证。目标 Linux Staging 为 `EXTERNAL_RESOURCE_NEEDED`，财务/OCR/AI 真值为 `REAL_SAMPLE_NEEDED`，项目负责人 UAT 尚未达到 `OWNER_UAT_VERIFIED`，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL 数据库、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。CR-002 至 CR-009 已关闭 Excel staging、Prompt provenance、治理、文档和 production-safe AI 系统登记问题；CR-010 又移除后端运行镜像中无用途的全局 npm/npx/Corepack，同一 SHA 的 Build、应用 SBOM/fixable Critical gate 和 CodeQL 均已远端通过。CR-011 现已建立周五演示级“Excel 到经营报告”合成 E2E：财务 A 上传、财务 B 复核、批准前正式数据不变、批准后 3 条记录逐分合计 `13422.21`，项目 structure、老板报告、Snapshot sourceDigest/hash 一致，且幂等重放不重复入账。当前候选通过 50 suites / 464 个后端单测、14 suites / 124 个 PostgreSQL/Redis 集成测试、18 个 Playwright、43 条 migration 双路径、前后端构建与两套 0 vulnerability 审计。M0-M8 的非生产工程与合成验收保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。目标 Linux Staging 为 `EXTERNAL_RESOURCE_NEEDED`，财务/OCR/AI 真值为 `REAL_SAMPLE_NEEDED`，项目负责人 UAT 尚未达到 `OWNER_UAT_VERIFIED`，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R10 修复与再验收 | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | R8.9 分层 CI、M8.1 Nginx Critical、R9 共享控制、Excel 暂存完整性重审和 R10 本地模型 L0 均有工程证据；L1 真值与目标 release 仍开放 |
-| R11 最终交接 | `in_progress` | Excel P0、Prompt provenance、治理与 system bootstrap 已收口；先恢复 CR-010 供应链绿色，再建立周五演示 E2E/交付包，之后才推进 Excel AI 前端桥接；不 merge、不转 Ready |
+| R11 最终交接 | `in_progress` | CR-010 供应链已远端全绿，CR-011 周五演示 E2E 已本地通过；下一项是离线演示交付包，之后才推进 Excel AI 前端桥接；不 merge、不转 Ready |
 | AI 映射补充 M0-M8 | `ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED` | OCR/Excel 审核入账、canonical ReportSnapshot、严格 Claim grounding、攻击/资源/降级和最终证据已通过；真实口径/准确率和目标 Staging 尚未关闭 |
 | 发布结论 | `SAFE_DEFAULT_ACTIVE` | 目标环境、真实 Staging、恢复演练、独立安全复核、财务/OCR/AI 真值和 owner UAT 均未完成，发布失败关闭 |
 
@@ -26,8 +26,8 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 - 工作分支：`agent/b8-stable-hardening`
 - Draft PR：[PR #4: B8 stable hardening through model control plane](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
-- CR-009 Build and acceptance：[run 29821449158](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29821449158)，PostgreSQL/E2E 成功，容器 fixable Critical gate 失败；CR-010 本地修复完成，新 SHA 待提交
-- CR-009 CodeQL：[run 29821448996](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29821448996)，成功
+- CR-010 Build and acceptance：[run 29823851399](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29823851399)，两个 job 全部成功
+- CR-010 CodeQL：[run 29823851377](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29823851377)，成功；CR-011 新 SHA 待提交验证
 - PR 安全 review thread：3/3 已解决且已过期，未解决数量为 0
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境、真实样本、独立复核和 owner UAT。
@@ -91,6 +91,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - CR-006 修复了 Prompt Registry 只校验/哈希 `userPromptTemplate`、但 Provider 仍收到通用包装文本的执行偏差。模板现在只接受唯一的 `input_json` 白名单变量，先把 Date、Prisma Decimal、bigint 和普通 JSON 规范化，再 canonical 渲染；任意类实例、循环、非有限数、原型污染键、未知/重复变量、Schema 漂移和预算溢出均失败关闭。`AiTask/AiCallLog` 冻结 Prompt 组件、system/template/rendered/schema/input 哈希、Provider/模型向量和输出哈希，不保存渲染后的业务正文。老板助手、Excel/OCR 建议和 ReportSnapshot 叙述 PostgreSQL/Redis 专项 7/7 通过。CR-006 当时开放的 production bootstrap 已由后续 CR-009 关闭；受保护 Prompt 文档仍不由 Codex 伪造。
 - CR-009 复用 `AiPromptVersion`、`ModelDeployment` 和 `TaskModelRoute` 建立 production-safe 系统登记。配置只接受内置 profile 或严格 JSON manifest，secret 只保存环境变量引用；初始化使用 serializable 事务、PostgreSQL advisory lock 和有界冲突重试，只补缺失系统行，配置/hash 漂移、未知启用项和缺失 secret 均拒绝启动。独立 `_test` 空库已完成 43 migrations，两个并发 bootstrap 精确收敛为 changed/unchanged；Mock 映射真调用、API/Worker 启动和故意漂移负测通过，11 类业务表保持 0。详见 [`docs/汇报/CR_009_PRODUCTION_SAFE_AI_SYSTEM_REGISTRY_REPORT_2026-07-21.md`](docs/汇报/CR_009_PRODUCTION_SAFE_AI_SYSTEM_REGISTRY_REPORT_2026-07-21.md)。
 - CR-010 针对 CR-009 新 SHA 唯一远端红灯收缩后端运行镜像攻击面：build stage 保留 npm，runtime 移除全局 npm/npx/Corepack，Staging migration 直接调用项目内 Prisma。新镜像以 `10001:10001` 和默认 entrypoint 运行，Node/OpenSSL/Prisma 有效；本地 SBOM 不再含基础镜像全局 npm 依赖树，固定 Grype 新数据库扫描及全量单元、PostgreSQL/Redis、Playwright、migration/build/audit 均通过。远端状态必须由 CR-010 新 SHA 重新证明，详见 [`docs/汇报/CR_010_RUNTIME_IMAGE_SUPPLY_CHAIN_RECOVERY_REPORT_2026-07-21.md`](docs/汇报/CR_010_RUNTIME_IMAGE_SUPPLY_CHAIN_RECOVERY_REPORT_2026-07-21.md)。
+- CR-011 新增纯合成、真实 API 的周五演示 E2E。三行 Excel 含公式缓存 warning，上传者不能审批；批准前正式 records、项目 structure 和老板金额不变，通用记录接口返回 404；另一财务批准后恰好生成 3 条记录，项目/报告/Snapshot 增量为 `13422.21`，相同批准命令重放不重复入账，Snapshot 的来源摘要和核心哈希可重算。详见 [`docs/汇报/CR_011_FRIDAY_EXCEL_REPORT_DEMO_E2E_2026-07-21.md`](docs/汇报/CR_011_FRIDAY_EXCEL_REPORT_DEMO_E2E_2026-07-21.md)。
 - H10 已选择沿用四角色；最新任务书明确保留不同财务账号审批，因此 Excel/OCR 上传者继续禁止自审批。批量批准入账及用户停用/重置/权限变更需要 step-up；具体身份方式仍为 `OWNER_CONFIRMATION_NEEDED`，不能由 CI 绿色替代。
 
 逐项编号、负责人、状态和验收门禁见 [`docs/汇报/B8_BLOCKER_MATRIX.md`](docs/汇报/B8_BLOCKER_MATRIX.md)。R1 工程 P0 与 R9.1-R9.3 三类共享控制的本地工程子项已关闭，但目标 Staging、正式恢复和人工门禁未完成，仍不进入真实用户试运行。

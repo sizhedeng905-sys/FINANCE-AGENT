@@ -54,6 +54,17 @@ formulaSheet.addImage(formulaImageId, { tl: { col: 5, row: 0 }, ext: { width: 1,
 await formulaWorkbook.xlsx.writeFile(formulaFixturePath);
 console.log(`Generated E2E formula Excel fixture: ${formulaFixturePath}`);
 
+const demoFixturePath = resolve(fixtureDirectory, 'E2E 周五演示费用导入.xlsx');
+const demoWorkbook = new ExcelJS.Workbook();
+const demoSheet = demoWorkbook.addWorksheet('周五演示费用明细');
+demoSheet.addRow(['发生日期', '费用金额', '车牌', '司机']);
+demoSheet.addRow([validDate, 1250.25, '演A10001', '演示司机甲']);
+const demoFormulaRow = demoSheet.addRow([validDate, null, '演A10002', '演示司机乙']);
+demoFormulaRow.getCell(2).value = { formula: 'SUM(8000,765.43)', result: 8765.43 };
+demoSheet.addRow([validDate, 3406.53, '演A10003', '演示司机丙']);
+await demoWorkbook.xlsx.writeFile(demoFixturePath);
+console.log(`Generated Friday demo Excel fixture: ${demoFixturePath}`);
+
 const legacyFixturePath = resolve(fixtureDirectory, 'E2E 旧版费用导入.xls');
 const legacyWorkbook = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(legacyWorkbook, XLSX.utils.aoa_to_sheet([

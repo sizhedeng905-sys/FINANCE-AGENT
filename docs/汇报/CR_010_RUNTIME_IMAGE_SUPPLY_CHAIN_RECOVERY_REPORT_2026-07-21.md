@@ -50,6 +50,6 @@ CR-009 的系统登记逻辑经独立复验没有发现回归。其 GitHub Build
 
 本地状态：`LOCAL_ENGINEERING_VERIFIED`。
 
-远端状态：`REMOTE_CI_PENDING`，待提交并观察新 SHA 的 Build 与 CodeQL。
+远端状态：`ENGINEERING_VERIFIED`。SHA `1abe513b0392e367dc4242930a6022dbf4e7bc8e` 的 [Build run 29823851399](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29823851399) 两个 job 全部成功，包含 runtime identity、SBOM、fixable Critical gate、PostgreSQL/Redis 和 17 条 Playwright；[CodeQL run 29823851377](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29823851377) 成功。
 
 发布状态：仍非 production-ready；目标 Staging、恢复、真实样本准确率与 owner UAT 未关闭。
