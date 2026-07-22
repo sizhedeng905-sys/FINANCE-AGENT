@@ -12,6 +12,8 @@ import { AiService } from './ai.service';
 import { AiChatDto } from './dto/ai-chat.dto';
 import { QueryAiCallLogsDto } from './dto/query-ai-call-logs.dto';
 import { QueryAiConversationsDto } from './dto/query-ai-conversations.dto';
+import { QueryReportNarrativesDto } from './dto/query-report-narratives.dto';
+import { ReviewReportNarrativeDto } from './dto/review-report-narrative.dto';
 import { ReportNarrativesService } from './report-narratives.service';
 
 @ApiTags('ai')
@@ -35,9 +37,29 @@ export class AiController {
   }
 
   @Get('report-narratives/:id')
-  @Roles(UserRole.boss)
+  @Roles(UserRole.finance, UserRole.boss)
   reportNarrativeDetail(@Param('id') id: string) {
     return this.reportNarratives.findOne(id);
+  }
+
+  @Get('report-narratives')
+  @Roles(UserRole.finance, UserRole.boss)
+  reportNarrativesPending(
+    @Query() query: QueryReportNarrativesDto,
+    @CurrentUserDecorator() user: CurrentUser
+  ) {
+    return this.reportNarratives.findPending(query, user);
+  }
+
+  @Post('report-narratives/:id/review')
+  @Roles(UserRole.finance, UserRole.boss)
+  reviewReportNarrative(
+    @Param('id') id: string,
+    @Body() dto: ReviewReportNarrativeDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.reportNarratives.review(id, dto, user, getRequestContext(request));
   }
 
   @Post('chat')

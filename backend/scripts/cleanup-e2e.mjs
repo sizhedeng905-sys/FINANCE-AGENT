@@ -156,6 +156,7 @@ async function main() {
     await tx.$executeRaw`SELECT set_config('app.allow_report_audit_purge', 'on', true)`;
     await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
     await tx.$executeRaw`SELECT set_config('app.allow_ocr_ai_review_purge', 'on', true)`;
+    await tx.reportNarrativeReviewDecision.deleteMany({ where: { narrativeId: { in: reportNarrativeIds } } });
     await tx.aiFinancialClaim.deleteMany({ where: { reportNarrativeId: { in: reportNarrativeIds } } });
     await tx.reportNarrative.deleteMany({ where: { id: { in: reportNarrativeIds } } });
     await tx.reportSnapshotSource.deleteMany({ where: { snapshotId: { in: reportSnapshotIds } } });

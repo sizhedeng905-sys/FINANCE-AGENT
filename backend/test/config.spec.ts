@@ -42,6 +42,7 @@ describe('environment validation', () => {
     [{ ...valid, AI_REPORT_MODE: 'auto_commit' }, 'AI_REPORT_MODE'],
     [{ ...valid, AI_GLOBAL_KILL_SWITCH: 'yes' }, 'AI_GLOBAL_KILL_SWITCH'],
     [{ ...valid, AI_EXTERNAL_PROVIDER_MODE: 'enabled' }, 'AI_EXTERNAL_PROVIDER_MODE'],
+    [{ ...valid, REPORT_NARRATIVE_REVIEW_MODE: 'boss_only' }, 'REPORT_NARRATIVE_REVIEW_MODE'],
     [{ ...valid, AI_SYSTEM_REGISTRY_PROFILE: 'unknown' }, 'AI_SYSTEM_REGISTRY_PROFILE'],
     [{ ...valid, AI_SYSTEM_REGISTRY_STARTUP_MODE: 'warn' }, 'AI_SYSTEM_REGISTRY_STARTUP_MODE'],
     [{ ...valid, AI_SYSTEM_REGISTRY_MANIFEST_JSON: '{}' }, 'only allowed with custom'],
@@ -77,6 +78,14 @@ describe('environment validation', () => {
     expect(validateEnvironment({ ...valid, DATA_RETENTION_MODE: 'dry-run' })).toMatchObject({
       DATA_RETENTION_MODE: 'dry-run'
     });
+  });
+
+  it('fails closed to disabled narrative review and permits only finance then boss', () => {
+    expect(validateEnvironment({ ...valid })).toMatchObject(valid);
+    expect(validateEnvironment({
+      ...valid,
+      REPORT_NARRATIVE_REVIEW_MODE: 'finance_then_boss'
+    })).toMatchObject({ REPORT_NARRATIVE_REVIEW_MODE: 'finance_then_boss' });
   });
 
   it('allows only an explicitly classified local compatible provider or an external OpenAI provider', () => {

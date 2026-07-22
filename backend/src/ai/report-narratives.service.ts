@@ -1,5 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ReportNarrativeStatus } from '@prisma/client';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  Prisma,
+  ReportNarrativeReviewCommand,
+  ReportNarrativeReviewStage,
+  ReportNarrativeStatus,
+  UserRole,
+  UserStatus
+} from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CurrentUser, RequestContext } from '../common/types/current-user';
@@ -18,6 +26,12 @@ import {
 import { AiSuggestionValidatorService } from './ai-suggestion-validator.service';
 import { AiStructuredSuggestionService } from './ai-structured-suggestion.service';
 import { ReportNarrativeGroundingService } from './report-narrative-grounding.service';
+import { QueryReportNarrativesDto } from './dto/query-report-narratives.dto';
+import { ReviewReportNarrativeDto } from './dto/review-report-narrative.dto';
+import {
+  deriveReportNarrativeReviewState,
+  reportNarrativeTransition
+} from './report-narrative-review-state';
 
 export const REPORT_NARRATIVE_VALIDATION_VERSION = 'report-claim-validator/2.0';
 export const REPORT_NARRATIVE_AUTHORIZATION_VERSION = 'boss-report-authz/1.0';
@@ -31,7 +45,8 @@ const REPORT_NARRATIVE_TEMPLATE_HASH = canonicalJsonSha256({
 
 const storedNarrativeInclude = {
   snapshot: { select: { snapshotHash: true } },
-  claims: { orderBy: { claimId: 'asc' as const } }
+  claims: { orderBy: { claimId: 'asc' as const } },
+  reviews: { orderBy: { reviewVersion: 'asc' as const } }
 } satisfies Prisma.ReportNarrativeInclude;
 
 type StoredNarrative = Prisma.ReportNarrativeGetPayload<{ include: typeof storedNarrativeInclude }>;
@@ -44,7 +59,8 @@ export class ReportNarrativesService {
     private readonly executor: AiStructuredSuggestionService,
     private readonly validator: AiSuggestionValidatorService,
     private readonly grounding: ReportNarrativeGroundingService,
-    private readonly auditLogs: AuditLogsService
+    private readonly auditLogs: AuditLogsService,
+    private readonly config: ConfigService
   ) {}
 
   async generate(snapshotId: string, actor: CurrentUser, context: RequestContext) {
@@ -189,6 +205,124 @@ export class ReportNarrativesService {
     return this.present(narrative);
   }
 
+  async findPending(query: QueryReportNarrativesDto, actor: CurrentUser) {
+    const stage = this.reviewStage(actor.role);
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const where: Prisma.ReportNarrativeWhereInput = stage === ReportNarrativeReviewStage.FINANCE
+      ? { reviews: { none: {} } }
+      : {
+          reviews: {
+            some: {
+              stage: ReportNarrativeReviewStage.FINANCE,
+              command: ReportNarrativeReviewCommand.ACCEPT
+            },
+            none: { stage: ReportNarrativeReviewStage.BOSS }
+          }
+        };
+    const [items, total] = await Promise.all([
+      this.prisma.reportNarrative.findMany({
+        where,
+        include: storedNarrativeInclude,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      }),
+      this.prisma.reportNarrative.count({ where })
+    ]);
+    return {
+      items: items.map((item) => this.present(item)),
+      page,
+      pageSize,
+      total,
+      policy: this.reviewPolicy()
+    };
+  }
+
+  async review(
+    id: string,
+    dto: ReviewReportNarrativeDto,
+    actor: CurrentUser,
+    context: RequestContext
+  ) {
+    const policy = this.reviewPolicy();
+    if (!policy.enabled) {
+      throw new ConflictException('报告 AI 叙述复核策略尚未启用');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const lockKey = `report-narrative-review:${id}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      const account = await tx.user.findUnique({
+        where: { id: actor.id },
+        select: { id: true, username: true, name: true, role: true, status: true }
+      });
+      if (!account || account.status !== UserStatus.active || account.role !== actor.role) {
+        throw new ForbiddenException('当前账号已停用或权限已变化');
+      }
+      const stage = this.reviewStage(account.role);
+      const narrative = await tx.reportNarrative.findUnique({
+        where: { id },
+        include: storedNarrativeInclude
+      });
+      if (!narrative) throw new NotFoundException('报告 AI 叙述不存在');
+      if (
+        narrative.narrativeHash !== dto.expectedNarrativeHash
+        || narrative.snapshot.snapshotHash !== dto.expectedSnapshotHash
+      ) {
+        throw new ConflictException('报告 AI 叙述或快照依据已变化');
+      }
+      const current = deriveReportNarrativeReviewState(narrative.reviews);
+      if (current.version !== dto.expectedReviewVersion) {
+        throw new ConflictException('报告 AI 叙述复核版本已变化');
+      }
+      let transition;
+      try {
+        transition = reportNarrativeTransition(stage, current.status, dto.command);
+      } catch {
+        throw new ConflictException('当前角色不能从该状态执行报告叙述复核');
+      }
+      const review = await tx.reportNarrativeReviewDecision.create({
+        data: {
+          narrativeId: narrative.id,
+          reviewVersion: transition.reviewVersion,
+          stage,
+          command: dto.command,
+          fromStatus: transition.fromStatus,
+          toStatus: transition.toStatus,
+          reason: dto.reason,
+          actorUserId: account.id,
+          actorUsername: account.username,
+          actorName: account.name
+        }
+      });
+      await this.auditLogs.write(
+        tx,
+        actor,
+        'report.narrative.reviewed',
+        'report_narrative',
+        narrative.id,
+        {
+          snapshotId: narrative.snapshotId,
+          snapshotHash: narrative.snapshot.snapshotHash,
+          narrativeHash: narrative.narrativeHash,
+          reviewVersion: transition.reviewVersion,
+          stage,
+          command: dto.command,
+          fromStatus: transition.fromStatus,
+          toStatus: transition.toStatus,
+          reason: dto.reason,
+          policyVersion: policy.policyVersion
+        },
+        context
+      );
+      return this.present({ ...narrative, reviews: [...narrative.reviews, review] });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      maxWait: 5_000,
+      timeout: 15_000
+    });
+  }
+
   private providerInput(snapshot: CanonicalReportSnapshot) {
     return {
       schemaVersion: 'report-narrative-input/1.0',
@@ -230,6 +364,7 @@ export class ReportNarrativesService {
   }
 
   private present(narrative: StoredNarrative) {
+    const reviewState = deriveReportNarrativeReviewState(narrative.reviews);
     return {
       id: narrative.id,
       snapshotId: narrative.snapshotId,
@@ -253,7 +388,43 @@ export class ReportNarrativesService {
         value: claim.value,
         sourceValueHash: claim.sourceValueHash
       })),
+      review: {
+        status: reviewState.status,
+        version: reviewState.version,
+        policy: this.reviewPolicy(),
+        history: narrative.reviews.map((review) => ({
+          id: review.id,
+          reviewVersion: review.reviewVersion,
+          stage: review.stage,
+          command: review.command,
+          fromStatus: review.fromStatus,
+          toStatus: review.toStatus,
+          reason: review.reason,
+          actor: {
+            id: review.actorUserId,
+            username: review.actorUsername,
+            name: review.actorName
+          },
+          createdAt: review.createdAt.toISOString()
+        }))
+      },
       createdAt: narrative.createdAt.toISOString()
+    };
+  }
+
+  private reviewStage(role: UserRole) {
+    if (role === UserRole.finance) return ReportNarrativeReviewStage.FINANCE;
+    if (role === UserRole.boss) return ReportNarrativeReviewStage.BOSS;
+    throw new ForbiddenException('当前角色不能复核报告 AI 叙述');
+  }
+
+  private reviewPolicy() {
+    const mode = this.config.get<string>('reportNarrativeReview.mode') ?? 'disabled';
+    return {
+      mode,
+      enabled: mode === 'finance_then_boss',
+      policyVersion: 'report-narrative-review/1.0-pending-oq03',
+      workflow: 'FINANCE_THEN_BOSS'
     };
   }
 

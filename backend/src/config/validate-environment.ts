@@ -11,6 +11,7 @@ const AI_PROVIDERS = new Set(['mock', 'openai', 'openai_compatible']);
 const AI_PROVIDER_CLASSES = new Set(['mock', 'local', 'external']);
 const AI_FEATURE_MODES = new Set(['disabled', 'suggest']);
 const AI_EXTERNAL_PROVIDER_MODES = new Set(['disabled', 'synthetic-only']);
+const REPORT_NARRATIVE_REVIEW_MODES = new Set(['disabled', 'finance_then_boss']);
 const OCR_PROVIDERS = new Set(['mock', 'local_paddle']);
 const NODE_ENVIRONMENTS = new Set(['development', 'test', 'production']);
 const FILE_SCAN_MODES = new Set(['basic', 'clamav']);
@@ -35,6 +36,7 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   const aiReportMode = String(environment.AI_REPORT_MODE ?? 'disabled');
   const aiGlobalKillSwitch = String(environment.AI_GLOBAL_KILL_SWITCH ?? 'false');
   const aiExternalProviderMode = String(environment.AI_EXTERNAL_PROVIDER_MODE ?? 'disabled');
+  const reportNarrativeReviewMode = String(environment.REPORT_NARRATIVE_REVIEW_MODE ?? 'disabled');
   const maxFileSizeMb = Number(String(environment.MAX_FILE_SIZE_MB ?? '10'));
   const uploadAdmissionStore = String(environment.UPLOAD_ADMISSION_STORE ?? 'memory');
   const uploadMaxConcurrentPerUser = Number(String(environment.UPLOAD_MAX_CONCURRENT_PER_USER ?? '5'));
@@ -188,6 +190,9 @@ export function validateEnvironment(environment: Record<string, unknown>) {
   }
   if (!AI_EXTERNAL_PROVIDER_MODES.has(aiExternalProviderMode)) {
     throw new Error('AI_EXTERNAL_PROVIDER_MODE must be one of: disabled, synthetic-only.');
+  }
+  if (!REPORT_NARRATIVE_REVIEW_MODES.has(reportNarrativeReviewMode)) {
+    throw new Error('REPORT_NARRATIVE_REVIEW_MODE must be one of: disabled, finance_then_boss.');
   }
   if (!Number.isInteger(maxFileSizeMb) || maxFileSizeMb < 1 || maxFileSizeMb > 50) {
     throw new Error('MAX_FILE_SIZE_MB must be an integer between 1 and 50.');

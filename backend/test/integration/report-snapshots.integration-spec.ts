@@ -8,6 +8,8 @@ import {
   Prisma,
   RecordDataLayer,
   RecordSourceType,
+  ReportNarrativeReviewCommand,
+  ReportNarrativeReviewStatus,
   ReportSnapshotType
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +30,7 @@ describe('ReportSnapshot PostgreSQL integration', () => {
   let provider: AiProviderService;
   let originalReportMode: unknown;
   let originalKillSwitch: unknown;
+  let originalNarrativeReviewMode: unknown;
 
   beforeAll(async () => {
     const databaseUrl = process.env.DATABASE_URL;
@@ -53,24 +56,28 @@ describe('ReportSnapshot PostgreSQL integration', () => {
     provider = app.get(AiProviderService);
     originalReportMode = config.get('ai.reportMode');
     originalKillSwitch = config.get('ai.globalKillSwitch');
+    originalNarrativeReviewMode = config.get('reportNarrativeReview.mode');
   });
 
   afterAll(async () => {
     if (config) {
       config.set('ai.reportMode', originalReportMode);
       config.set('ai.globalKillSwitch', originalKillSwitch);
+      config.set('reportNarrativeReview.mode', originalNarrativeReviewMode);
     }
     if (app) await app.close();
   });
 
   it('freezes confirmed actual facts, separates currencies, grounds AI claims, and rejects mutation', async () => {
     const suffix = randomUUID().slice(0, 8);
-    const [bossLogin, employeeLogin] = await Promise.all([
+    const [bossLogin, employeeLogin, financeLogin] = await Promise.all([
       request(app.getHttpServer()).post('/api/auth/login').send({ username: 'boss', password: '123456' }).expect(200),
-      request(app.getHttpServer()).post('/api/auth/login').send({ username: 'employee', password: '123456' }).expect(200)
+      request(app.getHttpServer()).post('/api/auth/login').send({ username: 'employee', password: '123456' }).expect(200),
+      request(app.getHttpServer()).post('/api/auth/login').send({ username: 'finance', password: '123456' }).expect(200)
     ]);
     const bossToken = bossLogin.body.data.accessToken as string;
     const employeeToken = employeeLogin.body.data.accessToken as string;
+    const financeToken = financeLogin.body.data.accessToken as string;
     const boss = await prisma.user.findUniqueOrThrow({ where: { username: 'boss' } });
     const project = await prisma.project.create({
       data: {
@@ -349,6 +356,165 @@ describe('ReportSnapshot PostgreSQL integration', () => {
       .expect(201);
     expect(generatedAgain.body.data.narrative.id).toBe(generated.body.data.narrative.id);
     expect(await prisma.reportNarrative.count({ where: { snapshotId: result.snapshot.snapshotId } })).toBe(1);
+
+    const narrativeId = generated.body.data.narrative.id as string;
+    const narrativeHash = generated.body.data.narrative.narrativeHash as string;
+    const snapshotHash = result.snapshot.snapshotHash as string;
+    const narrativeBeforeReview = await prisma.reportNarrative.findUniqueOrThrow({
+      where: { id: narrativeId },
+      select: { narrativeHash: true, narrativeJson: true }
+    });
+    const immutableFactsBeforeReview = {
+      businessRecords: await prisma.businessRecord.count({ where: { projectId: project.id } }),
+      snapshots: await prisma.reportSnapshot.count({ where: { id: result.snapshot.snapshotId } }),
+      claims: await prisma.aiFinancialClaim.count({ where: { reportNarrativeId: narrativeId } })
+    };
+    const reviewBody = {
+      expectedReviewVersion: 0,
+      expectedNarrativeHash: narrativeHash,
+      expectedSnapshotHash: snapshotHash,
+      command: ReportNarrativeReviewCommand.ACCEPT,
+      reason: '合成验收：财务核对快照与叙述依据一致'
+    };
+
+    config.set('reportNarrativeReview.mode', 'disabled');
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send(reviewBody)
+      .expect(409);
+    expect(await prisma.reportNarrativeReviewDecision.count({ where: { narrativeId } })).toBe(0);
+
+    config.set('reportNarrativeReview.mode', 'finance_then_boss');
+    await request(app.getHttpServer())
+      .get('/api/ai/report-narratives?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
+
+    const financePending = await request(app.getHttpServer())
+      .get('/api/ai/report-narratives?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+    expect(financePending.body.data.policy).toMatchObject({
+      enabled: true,
+      workflow: 'FINANCE_THEN_BOSS'
+    });
+    expect(financePending.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: narrativeId,
+        review: expect.objectContaining({
+          status: ReportNarrativeReviewStatus.NEEDS_FINANCE_REVIEW,
+          version: 0
+        })
+      })
+    ]));
+
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send(reviewBody)
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ...reviewBody, reason: 'x\u0001y' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ ...reviewBody, expectedNarrativeHash: '0'.repeat(64) })
+      .expect(409);
+    expect(await prisma.reportNarrativeReviewDecision.count({ where: { narrativeId } })).toBe(0);
+
+    const concurrentFinanceReviews = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/ai/report-narratives/${narrativeId}/review`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send(reviewBody),
+      request(app.getHttpServer())
+        .post(`/api/ai/report-narratives/${narrativeId}/review`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send(reviewBody)
+    ]);
+    expect(concurrentFinanceReviews.map((response) => response.status).sort()).toEqual([201, 409]);
+    const financeAccepted = concurrentFinanceReviews.find((response) => response.status === 201)!;
+    expect(financeAccepted.body.data.review).toMatchObject({
+      status: ReportNarrativeReviewStatus.NEEDS_BOSS_REVIEW,
+      version: 1
+    });
+    expect(financeAccepted.body.data.review.history).toEqual([
+      expect.objectContaining({
+        reviewVersion: 1,
+        stage: 'FINANCE',
+        command: ReportNarrativeReviewCommand.ACCEPT,
+        actor: expect.objectContaining({ username: 'finance' })
+      })
+    ]);
+    expect(await prisma.reportNarrativeReviewDecision.count({ where: { narrativeId } })).toBe(1);
+
+    await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send(reviewBody)
+      .expect(409);
+
+    const bossPending = await request(app.getHttpServer())
+      .get('/api/ai/report-narratives?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+    expect(bossPending.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: narrativeId,
+        review: expect.objectContaining({
+          status: ReportNarrativeReviewStatus.NEEDS_BOSS_REVIEW,
+          version: 1
+        })
+      })
+    ]));
+
+    const bossAccepted = await request(app.getHttpServer())
+      .post(`/api/ai/report-narratives/${narrativeId}/review`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .send({
+        ...reviewBody,
+        expectedReviewVersion: 1,
+        reason: '合成验收：老板确认仅采纳已核验的文字叙述'
+      })
+      .expect(201);
+    expect(bossAccepted.body.data.review).toMatchObject({
+      status: ReportNarrativeReviewStatus.ACCEPTED,
+      version: 2
+    });
+    expect(bossAccepted.body.data.review.history).toHaveLength(2);
+    expect(await prisma.auditLog.count({
+      where: {
+        action: 'report.narrative.reviewed',
+        resourceType: 'report_narrative',
+        resourceId: narrativeId
+      }
+    })).toBe(2);
+
+    expect({
+      businessRecords: await prisma.businessRecord.count({ where: { projectId: project.id } }),
+      snapshots: await prisma.reportSnapshot.count({ where: { id: result.snapshot.snapshotId } }),
+      claims: await prisma.aiFinancialClaim.count({ where: { reportNarrativeId: narrativeId } })
+    }).toEqual(immutableFactsBeforeReview);
+    expect(await prisma.reportNarrative.findUniqueOrThrow({
+      where: { id: narrativeId },
+      select: { narrativeHash: true, narrativeJson: true }
+    })).toEqual(narrativeBeforeReview);
+
+    const firstReview = await prisma.reportNarrativeReviewDecision.findFirstOrThrow({
+      where: { narrativeId },
+      orderBy: { reviewVersion: 'asc' }
+    });
+    await expect(prisma.reportNarrativeReviewDecision.update({
+      where: { id: firstReview.id },
+      data: { reason: 'tampered' }
+    })).rejects.toThrow('immutable report audit rows');
+    await expect(prisma.reportNarrativeReviewDecision.delete({
+      where: { id: firstReview.id }
+    })).rejects.toThrow('immutable report audit rows');
 
     let releaseConcurrentProvider!: () => void;
     let markConcurrentProviderEntered!: () => void;

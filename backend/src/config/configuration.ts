@@ -151,6 +151,9 @@ export default () => ({
     maxResponseBytes: Number.parseInt(process.env.AI_MAX_RESPONSE_BYTES ?? '2097152', 10),
     auditRetentionDays: Number.parseInt(process.env.AI_AUDIT_RETENTION_DAYS ?? '90', 10)
   },
+  reportNarrativeReview: {
+    mode: process.env.REPORT_NARRATIVE_REVIEW_MODE || 'disabled'
+  },
   ocr: {
     provider: process.env.OCR_PROVIDER || 'mock',
     model: process.env.OCR_MODEL || 'mock-ocr-v1',
