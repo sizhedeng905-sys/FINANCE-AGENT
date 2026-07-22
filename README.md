@@ -53,7 +53,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - R4 的恢复演练先恢复到唯一临时数据库和临时桶，再核对 schema、migration、对象强哈希与数据库引用；有对象和空对象两条本机隔离路径均通过。5 类对象篡改、migration 篡改、悬空引用和清单篡改均有自动拒绝断言。
 - 正式数据恢复仍需 H13/H14 目标绑定的一次性授权、应用停写和补偿快照。PostgreSQL 与 S3 不存在跨系统原子事务，当前只声明“应用级分阶段切换并补偿”，没有执行或宣称生产恢复通过。
 - R5 将 release/rollback 升级为自校验的镜像锁、发布计划、供应链索引和最终 manifest；部署前冻结全部服务身份、配置与 migration ledger，部署/回退后复核运行容器 image ID，tag 漂移、证据篡改和 migration 不一致均失败关闭。
-- R5 固定第三方构建输入 digest，并以固定源码/包版本构建 PostgreSQL、MinIO、Prometheus、Alertmanager、node-exporter、Alloy 和 Tempo；Promtail 已迁移到不挂载 Docker socket 的 Alloy。22 镜像完整扫描通过“无可修复 Critical”门禁，但仍有 53 High、88 Medium、38 Low，目标 registry/签名仍受 H13 阻断。
+- R5 固定第三方构建输入 digest，并以固定源码/包版本构建 PostgreSQL、MinIO、Prometheus、Alertmanager、node-exporter、Alloy 和 Tempo；Promtail 已迁移到不挂载 Docker socket 的 Alloy。22 镜像完整扫描通过“无可修复 Critical”门禁，但仍有 53 High、88 Medium、38 Low。CR-041 已补只读 digest/repository/SLSA subject 绑定与 hash-only 证据，真实 registry、Cosign 信任根和签名身份仍受 H13/H15 阻断。
 - R6.1 删除 `previewInclude.rows` 全量读取；预览只查询当前页，首次精确统计按 500 行批次扫描并绑定任务版本缓存，映射变化自动失效。JSON 响应硬上限 1 MiB，页面最多 100 行且前端不缓存全表。
 - R6.1 已验证默认/最小/最大/超限/深页/无权限、5,001 与 50,000 行预览、50,001 行拒绝和真实浏览器 20→5 行翻页；25 条 migration 空库及 24→25 升级通过。
 - R6.2 将项目、模板、手工记录、Excel、OCR、工单和项目文件写入统一到 PostgreSQL 事务级项目锁；2 秒锁超时返回稳定可重试 409，成功后恢复原 `lock_timeout`。

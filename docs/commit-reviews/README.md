@@ -52,6 +52,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-038 | [CR-038_read-only-target-preflight.md](CR-038_read-only-target-preflight.md) | `feat: add read-only staging target preflight` | P2 deployment evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_TARGET_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-037 |
 | CR-039 | [CR-039_progress-checkpoint-one.md](CR-039_progress-checkpoint-one.md) | `docs: add progress checkpoint one` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED / REMOTE_PUSH_PENDING | CR-038 |
 | CR-040 | [CR-040_file-secret-alert-delivery.md](CR-040_file-secret-alert-delivery.md) | `feat: add file-secret alert delivery framework` | P2 deployment evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_RECEIVER_BLOCKED_EXTERNAL / REMOTE_CI_PENDING | CR-039 |
+| CR-041 | [CR-041_digest-only-registry-signatures.md](CR-041_digest-only-registry-signatures.md) | `feat: verify digest-only registry signatures` | P2 supply-chain evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_REGISTRY_AND_TRUST_ROOT_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-040 |
 
 ## 审查分组
 
