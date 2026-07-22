@@ -1,6 +1,6 @@
 # B8-09 Staging 与试运行运行手册
 
-更新日期：2026-07-18
+更新日期：2026-07-22
 
 ## 1. 使用边界
 
@@ -99,6 +99,41 @@ npm run staging:preflight
 机器清单固定覆盖 Linux、Docker Server、Compose、系统 NTP 同步、CPU/RAM/磁盘、应用/对象 DNS、两个公开端口、TLS 链/主机名/到期、registry v2、PostgreSQL TLS 协商、Redis `AUTH` + `PING`、S3 health、ClamAV `PING`、备份 health 和告警 health。PostgreSQL 项只证明网络与 TLS 协商，不宣称 SQL 权限或业务查询通过；S3/备份/告警项只证明 HTTPS health 状态，不代替后续签名、加密、真实告警送达或恢复演练。
 
 证据写入 Git 忽略的 `deploy/staging/.evidence/target-preflight-*.json` 与 `.md`。结果语义：`passed` 表示本次只读机器检查全绿；`failed` 表示已提供目标的某项检查失败；`blocked_external` 表示仍缺 target profile 或外部配置。无论哪种状态，都不等于部署批准、生产就绪、UAT 或 H13-H16 签字。
+
+### 3.3 告警接收与合成交付
+
+`local_demo` 固定使用 `./monitoring/alertmanager.yml`，receiver 不配置任何外发渠道。初始化脚本只创建内容为本机禁用标记的 `alert_webhook_url` 占位文件；本机配置不会读取它。`staging:check` 会拒绝 local profile 改用 webhook 配置，也会拒绝 target profile 继续使用本机空接收器。
+
+target 必须同时满足：
+
+- `STAGING_ALERTMANAGER_CONFIG_FILE=./monitoring/alertmanager-webhook.yml`；
+- 由已批准的 secret provider 在 `deploy/staging/.secrets/alert_webhook_url` 挂载一个 HTTPS webhook URL；
+- URL 不进入 `.env`、Git、命令参数、应用日志或提交证据；
+- Alertmanager 使用原生 `url_file` 读取 secret，并启用 `send_resolved`。
+
+普通合成测试只启动本机回环 receiver，不访问外部网络：
+
+```bash
+npm run staging:alert:test
+```
+
+对真实 target 接收端发送一次 firing 和一次 resolved 必须是受控人工动作。命令要求 target profile 已通过、私密 URL 文件存在，并同时提供一次性环境授权和确认参数：
+
+```bash
+STAGING_ALERT_SYNTHETIC_DELIVERY_APPROVED=true npm run staging:alert:synthetic -- --confirm-target-alert-delivery
+```
+
+PowerShell 使用：
+
+```powershell
+$env:STAGING_ALERT_SYNTHETIC_DELIVERY_APPROVED = 'true'
+npm run staging:alert:synthetic -- --confirm-target-alert-delivery
+Remove-Item Env:STAGING_ALERT_SYNTHETIC_DELIVERY_APPROVED
+```
+
+缺少任一授权、仍是 local profile、URL 文件缺失/非法或发送失败时，命令在发出后续请求前失败关闭；`blocked_external` 使用退出码 2。证据只写入忽略目录 `.evidence/alert-synthetic-*.json`，保存 route/endpoint/payload 哈希、阶段、HTTP 状态和重试次数，不保存 URL、provider 响应正文或业务数据。若 firing 成功但 resolved 失败，证据保留已成功阶段并明确标记失败阶段，必须人工检查接收渠道。
+
+该合成命令直接验证接收 webhook 的 firing/resolved 契约，不替代 Prometheus 规则触发、Alertmanager 分组/抑制、值班人实际收件和关闭响应的目标演练。真实接收人、升级顺序、渠道 SLA 和留存仍受 H13/H14/H15 约束；没有真实接收端证据时保持 `BLOCKED_EXTERNAL`。
 
 初始化脚本只创建缺失文件，不覆盖已有 secret。它会生成：
 

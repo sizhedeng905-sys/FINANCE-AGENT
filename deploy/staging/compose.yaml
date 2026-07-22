@@ -474,8 +474,10 @@ services:
         BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unverified}
     restart: unless-stopped
     command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    secrets:
+      - alert_webhook_url
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${STAGING_ALERTMANAGER_CONFIG_FILE:-./monitoring/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     read_only: true
     tmpfs:
@@ -651,6 +653,8 @@ secrets:
     file: ./.secrets/grafana_admin_password
   staging_seed_password:
     file: ./.secrets/staging_seed_password
+  alert_webhook_url:
+    file: ./.secrets/alert_webhook_url
   postgres_tls_cert:
     file: ./.runtime/tls/postgres.crt
   postgres_tls_key:

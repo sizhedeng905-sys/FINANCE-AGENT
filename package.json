@@ -48,6 +48,8 @@
     "staging:target:check": "node deploy/staging/scripts/target-profile-check.mjs",
     "staging:preflight:test": "node --test deploy/staging/scripts/target-preflight.test.mjs",
     "staging:preflight": "node deploy/staging/scripts/target-preflight-check.mjs",
+    "staging:alert:test": "node --test deploy/staging/scripts/alert-webhook.test.mjs",
+    "staging:alert:synthetic": "node deploy/staging/scripts/alert-webhook-check.mjs",
     "staging:sbom:test": "node --test deploy/staging/scripts/generate-sbom.test.mjs",
     "staging:check": "node deploy/staging/scripts/verify-config.mjs",
     "staging:backup-integrity:test": "node deploy/staging/scripts/test-backup-integrity.mjs",

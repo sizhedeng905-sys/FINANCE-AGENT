@@ -19,7 +19,7 @@ const requiredSecrets = [
   'migration_database_url', 'runtime_database_url', 'backup_database_url', 'restore_database_url', 'jwt_secret',
   'redis_password', 'redis_url', 'minio_root_user', 'minio_root_password',
   's3_access_key_id', 's3_secret_access_key', 'metrics_token', 'grafana_admin_password',
-  'staging_seed_password'
+  'staging_seed_password', 'alert_webhook_url'
 ];
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
 const expectedCustomImages = {
@@ -70,11 +70,34 @@ const sourceEnvironmentId = services.backup?.environment?.BACKUP_SOURCE_ENVIRONM
 const imageIdentityPolicy = services.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
 const backupEnvironment = services.backup?.environment ?? {};
 const backupTmpfs = services.backup?.tmpfs ?? [];
+const alertmanagerConfigFile = String(
+  process.env.STAGING_ALERTMANAGER_CONFIG_FILE
+  ?? fileEnvironment.STAGING_ALERTMANAGER_CONFIG_FILE
+  ?? './monitoring/alertmanager.yml',
+);
+const expectedAlertmanagerConfig = settings.profile === 'target'
+  ? './monitoring/alertmanager-webhook.yml'
+  : './monitoring/alertmanager.yml';
 if (sourceEnvironmentId !== settings.environmentId) {
   throw new Error('Rendered backup environment ID does not match STAGING_ENVIRONMENT_ID');
 }
 if (!['local_identity', 'signed_registry'].includes(imageIdentityPolicy)) {
   throw new Error('IMAGE_IDENTITY_POLICY must be local_identity or signed_registry');
+}
+if (alertmanagerConfigFile !== expectedAlertmanagerConfig) {
+  throw new Error(`${settings.profile} must use its fixed Alertmanager configuration`);
+}
+const alertmanagerConfigMount = (services.alertmanager?.volumes ?? [])
+  .find((volume) => volume.target === '/etc/alertmanager/alertmanager.yml');
+if (
+  !alertmanagerConfigMount
+  || resolve(alertmanagerConfigMount.source) !== resolve(stagingRoot, expectedAlertmanagerConfig)
+  || alertmanagerConfigMount.read_only !== true
+) {
+  throw new Error('Rendered Alertmanager configuration mount does not match the deployment profile');
+}
+if (!(services.alertmanager?.secrets ?? []).some((secret) => secret.source === 'alert_webhook_url')) {
+  throw new Error('Alertmanager must receive its webhook URL through the fixed file secret');
 }
 if (imageIdentityPolicy === 'local_identity' && !sourceEnvironmentId.endsWith('-local')) {
   throw new Error('local_identity requires BACKUP_SOURCE_ENVIRONMENT_ID ending with -local');

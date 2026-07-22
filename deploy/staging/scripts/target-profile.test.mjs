@@ -24,6 +24,7 @@ const targetEnvironment = {
   STAGING_TARGET_CHANGE_ID: 'change-20260722-01',
   STAGING_TARGET_SECRET_PROVIDER: 'docker_secret_files',
   STAGING_TARGET_CERTIFICATE_ISSUER: 'enterprise-pki-01',
+  STAGING_ALERTMANAGER_CONFIG_FILE: './monitoring/alertmanager-webhook.yml',
 };
 const compose = {
   services: {
@@ -69,6 +70,7 @@ test('rejects every local-demo safety boundary under the target profile', () => 
     [{ STAGING_TRUSTED_PROXY_CIDRS: '10.0.0.0/8' }, 'TARGET_PROXY_GATEWAY_MISMATCH'],
     [{ STAGING_REGISTRY_PREFIX: 'finance-agent' }, 'TARGET_REGISTRY_REQUIRED'],
     [{ STAGING_REGISTRY_PREFIX: 'registry.example.com/finance/agent' }, 'TARGET_REGISTRY_REQUIRED'],
+    [{ STAGING_ALERTMANAGER_CONFIG_FILE: './monitoring/alertmanager.yml' }, 'TARGET_ALERT_WEBHOOK_CONFIG_REQUIRED'],
   ];
 
   for (const [override, expectedCode] of cases) {

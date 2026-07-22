@@ -56,7 +56,8 @@ const secrets = {
   s3_secret_access_key: hex(48),
   metrics_token: hex(48),
   grafana_admin_password: hex(32),
-  staging_seed_password: hex(32)
+  staging_seed_password: hex(32),
+  alert_webhook_url: 'disabled-local-demo',
 };
 
 let secretFilesCreated = 0;

@@ -85,6 +85,9 @@ export function validateTargetProfile({
   if (!targetSecretProviders.has(metadata.STAGING_TARGET_SECRET_PROVIDER)) {
     fail('TARGET_SECRET_PROVIDER_INVALID', 'STAGING_TARGET_SECRET_PROVIDER is not an allowed secret provider class');
   }
+  if (environment.STAGING_ALERTMANAGER_CONFIG_FILE !== './monitoring/alertmanager-webhook.yml') {
+    fail('TARGET_ALERT_WEBHOOK_CONFIG_REQUIRED', 'Target profile requires the file-secret Alertmanager webhook configuration');
+  }
 
   const requiredCertificateFiles = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
   const present = new Set(certificateFilesPresent);
