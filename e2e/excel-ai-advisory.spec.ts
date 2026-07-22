@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { expect, test, type Page } from '@playwright/test';
 import {
   API_FRONTEND_URL,
@@ -8,6 +10,21 @@ import {
   readEnvelope,
   selectOption,
 } from './support/app';
+
+const execFileAsync = promisify(execFile);
+
+async function cleanE2eState() {
+  await execFileAsync(
+    process.execPath,
+    [resolve(import.meta.dirname, '../backend/scripts/cleanup-e2e.mjs')],
+    {
+      cwd: resolve(import.meta.dirname, '..'),
+      env: process.env,
+      timeout: 60_000,
+      windowsHide: true,
+    },
+  );
+}
 
 interface ImportColumnDto {
   id: string;
@@ -236,6 +253,7 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
 
 test('API mode: a second finance user approves only the same verified AI review evidence', async ({ page }) => {
   test.setTimeout(120_000);
+  await cleanE2eState();
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E AI审核证据费用导入.xlsx');
   await login(page, 'finance', '/finance/home');
   await page.goto(`${API_FRONTEND_URL}/data/import`);
@@ -340,8 +358,10 @@ test('API mode: a second finance user approves only the same verified AI review 
   await expect(evidenceCard.getByText('建议生成时间')).toBeVisible();
   await expect(evidenceCard.getByText(/excel_column_mapping:v\d+/)).toBeVisible();
   await evidenceCard.locator('.ant-table-row-expand-icon').first().click();
+  const expandedEvidence = evidenceCard.locator('.ant-table-expanded-row').first();
+  await expect(expandedEvidence).toBeVisible();
   const compactOutputHash = `${suggestion.data.mapping.outputHash.slice(0, 12)}...${suggestion.data.mapping.outputHash.slice(-6)}`;
-  await expect(evidenceCard.getByText(compactOutputHash)).toBeVisible();
+  await expect(expandedEvidence.getByText(compactOutputHash, { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(evidenceCard).toBeVisible();
   await expect.poll(

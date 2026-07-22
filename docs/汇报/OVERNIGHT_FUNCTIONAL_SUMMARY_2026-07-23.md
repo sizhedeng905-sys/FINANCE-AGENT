@@ -17,7 +17,7 @@
 - 昨晚最重要的成果：恢复了被 Prisma 格式和陈旧测试阻断的远端主验收，并把依赖安装与后端运行镜像收紧到可审查、可失败关闭的边界。
 - 今天可以直接看到或使用：周五 Excel 主闭环仍可完整演示；昨晚无新增用户功能，主要完成故障修复、安全加固、全量回归和发布准备。
 - 周五演示判断：`CONDITIONAL_GO`。自动化闭环和最终 Demo 复核通过，仍需负责人完成三次手工彩排。
-- 当前最大红灯：真实目标 Staging、真实 OCR/AI 真值与 owner UAT 都没有证据，不能把本机/CI 绿色解释为可生产上线。
+- 当前最大红灯：CR048 的 Build #48 在浏览器 E2E 暴露了证据 locator 与 retry 状态污染；CR049 已在本机完成重复场景、22 个 E2E 和 Demo 修复回归，新 SHA 远端结果仍待确认。
 - 上线判断：仍不可上线；还缺目标环境、真实告警、registry 签名、异地恢复/RPO/RTO、真实财务/OCR/AI 验收、独立审查和负责人签收。
 
 ## 二、昨晚功能上做了什么
@@ -58,10 +58,20 @@
 - 验证状态：故事线 1/1；第二财务批准后恰好 3 条正式记录，金额 `1250.25`、`8765.43`、`3406.53`，合计 `13422.21`。
 - 限制：AI/OCR 是醒目标识的 Mock/合成路径；三次人工彩排仍为 `NOT_RUN`。
 
+### 5. 修复 Excel AI 证据测试的重复执行隔离
+
+- 昨晚之前：CR048 的 Linux E2E 首次因同一截断 hash 在卡片中出现两次而 strict-mode 失败；retry 又复用了首次留下的 Mapping Profile，返回 `profile_reused`。
+- 现在：测试在该状态型场景开始时调用既有 `_test` 安全清理，并只在展开的证据行中精确校验 output hash。
+- 对你有什么用：真实功能回归不会因测试自身残留而随机红灯，也不会用宽松 `.first()` 隐藏重复证据。
+- 你在哪里能看到：后台测试能力，界面不可见；文件为 `e2e/excel-ai-advisory.spec.ts`。
+- 验证状态：重复目标场景 2/2、全量 E2E 22/22、Friday Demo 1/1；CR049 远端 CI 待 push 后确认。
+- 限制：本机没有临时下载 CI Chromium，Linux Chromium 仍由 GitHub Actions 验证。
+
 ## 三、昨晚修掉了什么问题
 
 | 问题 | 可能造成的后果 | 怎么修的 | 当前证据 | 是否影响周五演示 |
 | --- | --- | --- | --- | --- |
+| Excel AI 证据 locator 重复且 retry 继承旧 Profile | Linux E2E 21/22，后续 R5 扫描跳过 | CR049 精确展开行 locator + `_test` 状态前置清理 | 目标重复 2/2、全量 22/22、Demo 1/1；远端 pending | 产品行为不变；若不修会降低候选可信度 |
 | Prisma format 红灯 | 主 CI 入口退出 | CR044 纯排版修复 | Prisma/migration 本机通过；远端完整主作业成功 | 不改业务行为，但原红灯阻止冻结候选 |
 | Staging 测试断言旧固定值 | 后端单测失败，集成/E2E 被跳过 | CR045 对齐参数化契约 | 定向 12/12、本机 473/473、远端成功 | 不改 Demo 功能，关闭验收阻断 |
 | install script 无完整批准契约 | 新依赖可执行未复核生命周期脚本 | CR046 精确 allow/deny 与漂移门禁 | 策略 7/7、干净安装、CI 成功 | 无可见变化，降低供应链风险 |
@@ -110,32 +120,35 @@
 | Model/proxy | config/lock/proxy checks | `PASS` | 均 exit 0 | `5c16f3e` | 不代表真实模型准确率 |
 | 依赖审计 | root/backend full/production | `PASS` | 4 次均 0 vulnerabilities | `5c16f3e` | 查询时已知公告 |
 | 应用镜像 | Docker build + image integrity | `PASS` | 本机 17 cases，约 183.4 秒 | `5c16f3e` | 本机扫描 defer；远端 Syft/Grype 通过 |
-| 文档/卫生 | docs/hygiene/diff | `PASS` | 145 files/221 links；866 candidates；diff exit 0 | CR048 文档工作树 | 首次 9 处尾空格失败后已修正 |
+| 文档/卫生 | docs/hygiene/diff | `PASS` | 146 files/222 links；867 candidates；diff exit 0 | CR049 工作树 | 首次 9 处尾空格失败后已修正 |
 | 真实 staging init/check/logs | 私有 target 路径 | `NOT_RUN` | 0 | 不适用 | 会读取/改写私有资产，未获授权不执行 |
 | 本机 Docker Scout | CVE scan | `BLOCKED_EXTERNAL` | 0 | 不适用 | 需要 Docker ID；没有冒充通过 |
 | GitHub Build | [run 29915561659](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561659) | `PASS` | 2/2 jobs；所有步骤成功 | `5c16f3e` | 单元、集成、22 E2E、镜像、SBOM、Grype |
 | GitHub CodeQL | [run 29915561810](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561810) | `PASS` | completed/success | `5c16f3e` | 同 SHA |
+| CR048 GitHub Build | [run 29917551053](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29917551053) | `FAIL` | 21/22 E2E；应用镜像/Prisma/build/473 unit/125 integration 通过 | `4e55dca` | locator strict failure；retry 返回 `profile_reused`；R5 跳过 |
+| CR049 目标重复场景 | Edge + retry + repeat | `PASS` | 2/2；30.9 秒 | CR049 工作树 | 每次清理旧 E2E Profile/task/record |
+| CR049 全量 E2E/Demo | Playwright + Friday Demo | `PASS` | 22/22，约 1.4 分钟；Demo 1/1，22.2 秒 | CR049 工作树 | 产品运行时未改 |
 
 保留的中间失败：CR044 远端 471/473；CR046 首次缺 `TEST_REDIS_URL` 时 11 suites/111 tests 通过、3 Redis suites 收集失败；普通前端 build 后 staging bundle 因本地 API base 正确失败；一次只读 `db:verify` 命中未升级开发库但没有写入。最终正式证据均来自隔离 `_test` 数据库和精确环境。
 
 ## 七、GitHub 和提交状态
 
 - 起始 SHA：`5222553bcd74c56c39a9a2b1e8e2ffd2dfeff677`；最后运行时代码 SHA：`5c16f3e114adf4be59c8dd629827970225de51f5`。
-- 最终文档基线：CR047 为 `7a62d6e`；本次严格结构校正属于 CR048，其 SHA 通过 `git log --follow -- docs/汇报/OVERNIGHT_FUNCTIONAL_SUMMARY_2026-07-23.md` 追溯，避免在提交内伪造自引用 SHA。
-- 夜间新增运行时提交 3 个：CR044-CR046；文档收口为 CR047-CR048。CR040-CR043 在夜间起点前已本地提交，本夜正常推送。
-- Push：CR040-CR047 已推送；CR048 在本报告提交后正常推送。工作树只保留受保护未跟踪资产。
+- 最终文档基线：CR047 为 `7a62d6e`、CR048 为 `4e55dca`；本次 E2E 修复与事实更新属于 CR049，其 SHA 通过 `git log --follow` 追溯，避免在提交内伪造自引用 SHA。
+- 夜间新增生产运行时提交 3 个：CR044-CR046；CR047/048 为文档，CR049 为测试可靠性修复。CR040-CR043 在夜间起点前已本地提交，本夜正常推送。
+- Push：CR040-CR048 已推送；CR049 在本报告提交后正常推送。工作树只保留受保护未跟踪资产。
 - PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)，`OPEN / DRAFT / MERGEABLE`；未 merge、未标记 Ready。
 - Build and acceptance：运行时 [run 29915561659](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561659) `PASS`，对应 `5c16f3e`。
 - CodeQL：运行时 [run 29915561810](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561810) `PASS`，对应 `5c16f3e`。
-- 文档 HEAD 新 CI：可以在 push 后为 `PENDING`；不借它否定或替代已经完成的运行时同 SHA验收，也不无限追加动态状态提交。
-- 未解决 review/CI：未发现新的 review thread；运行时红灯已关闭。人工/外部门禁仍开放。
+- CR048 CI：CodeQL 通过，Build #48 因 1 个 E2E 失败；CR049 已本机修复，新 SHA CI 待确认。
+- 未解决 review/CI：3 个历史 thread 均 resolved/outdated；当前唯一工程红灯是 CR049 远端复验。人工/外部门禁仍开放。
 - 已保护且未暂存：`.vscode/`、用户任务书/设计文档、`docs/ai/`、本地模型部署教程、模型下载脚本和 `人工复核.md`；`.env`、secrets、模型权重和本地数据继续由 ignore/私有边界保护。
 
 ## 八、还差什么
 
 ### Codex 还能继续自主完成
 
-1. 若 CR048 文档 HEAD 的 CI 出现新回归，读取具体 step/log，做最小独立修复；完成标准是运行时门禁不被降低。
+1. 观察 CR049 的 Linux Chromium、R5 SBOM/Grype 与 CodeQL；完成标准是两个 Build job 和 CodeQL 全部成功。
 2. 在负责人提供经授权真值后执行 OCR/AI/财务逐项测量；完成标准是原始证据、人工真值、错误分类和版本都可追溯。
 3. 在目标资源授权后执行只读 preflight，再按 runbook 做 staging/恢复验收；风险是任何命令都不能读取或覆盖未授权 secret。
 
@@ -170,6 +183,7 @@
 | `c861197` / CR045 | `backend/test/staging-deployment.spec.ts` | 对齐参数化默认值、registry 前缀和 bind 契约 | 防止合法参数化被误判 | 恢复 2 条陈旧失败 | 不执行真实 Staging |
 | `5c16f3e` / CR046 | `package*.json`、`backend/package*.json`、`backend/Dockerfile`、`.github/workflows/ci.yml`、`backend/scripts/check-install-script-policy*.mjs` | 补丁依赖、install script 精确策略、独立 production dependency stage | 收紧依赖与运行镜像边界 | 恢复旧 lockfile/prune；无 DB 回滚 | 未验证真实 registry/target 日志 |
 | `7a62d6e` / CR047 | README、`NEXT_TODO.md`、汇报、commit-review 索引 | 同步夜间事实、远端双绿、Demo 与人工交接 | 给负责人和审查者统一当前基线 | 仅文档回退 | 首版章节未严格贴合任务书，CR048 校正 |
-| CR048 | 本报告、CR048 review、commit-review 索引 | 严格对齐一至十一结构并补完整技术附录 | 让交接文档可逐项验收 | 仅文档回退 | 提交自身 SHA 必须通过 Git 历史追溯 |
+| `4e55dca` / CR048 | 本报告、CR048 review、commit-review 索引 | 严格对齐一至十一结构并补完整技术附录 | 让交接文档可逐项验收 | 仅文档回退 | Build #48 暴露 E2E 重试隔离问题 |
+| CR049 | `e2e/excel-ai-advisory.spec.ts`、CR049 review、报告/索引 | 精确展开行 hash locator；状态型场景前清理 E2E 数据 | 消除 strict locator 与 retry Profile 污染 | 仅测试代码，无 migration | 本机未装 CI Chromium；待同 SHA 远端验证 |
 
 远端同 SHA artifacts：`gitleaks-results.sarif`、`application-container-evidence`、`r5-image-identity-evidence`。常驻 `finance-agent-models-qwen-text-1` 与 `finance-agent-models-paddle-ocr-1` 未停止或重建；临时测试 Redis、数据库、fixture 镜像与文件按契约清理。
