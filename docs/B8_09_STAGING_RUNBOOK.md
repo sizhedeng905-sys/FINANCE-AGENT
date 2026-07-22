@@ -83,6 +83,28 @@ target 静态契约通过后，执行以下命令。该命令不启动/停止容
 npm run staging:preflight
 ```
 
+### Secret inventory 与轮换
+
+`deploy/staging/secret-policy.json` 是不含值的工程策略清单，固定 20 个 Compose file-secret、13 个轮换组、消费服务、消费重启顺序和影响代码。它的 `engineering_default_pending_h14` 状态表示 90 天默认年龄（合成 seed 为 30 天）只是上线前工程门禁，不替代 H14 批准的正式轮换/保留政策。执行：
+
+```bash
+npm run staging:secret:inventory
+```
+
+检查器只对固定 `.secrets/<name>` 执行 `lstat`，不读取内容，也不把绝对路径、字节数、mtime、mode 或内容哈希写进证据。它拒绝缺失、空/超限、未来时间、符号链接、非普通文件；Linux target 还拒绝 group/world 权限和硬链接。`fresh`、`due_soon`、`stale` 由文件 mtime 计算，明确只是工程信号，不证明 Vault/KMS/云 Secret Manager 中的真实版本已轮换。`stale` 或非法文件阻断 `staging:check`；target 缺少挂载时独立 inventory 命令返回 `blocked_external`。
+
+真实轮换不得直接运行仓库脚本改值。由已批准的 secret provider 在仓库外生成新 generation，并按 `secret-policy.json` 的 rotation set 整组处理，尤其不能把 `*_password` 与派生 `*_database_url`/`redis_url` 分开轮换。统一顺序为：
+
+1. 预检当前 inventory、备份/恢复状态、目标权限和受影响服务；记录不含值的 generation ID 与幂等键；
+2. 在 provider 中暂存整组新版本，保持旧版本可回退；
+3. 先让 PostgreSQL/Redis/MinIO 等凭据提供方接受新版本，再更新对应 file-secret generation；不支持双版本的组必须进入明确维护窗口；
+4. 严格按 `consumerOrder` 重载/重启消费者，执行 readiness、最小 smoke、备份或告警合成检查；
+5. 只有全部验证通过后才撤销旧版本；`revoke_old` 是不可逆回滚边界；
+6. 撤销前失败时恢复旧 generation、重启相同消费者并验证，状态记为 `ROLLED_BACK`；撤销后失败禁止冒充回滚，进入 `FORWARD_FIX_REQUIRED` 并用新 generation 前向修复；
+7. `jwt-signing` 会使现有 HS256 会话失效，必须提前安排重新登录；`staging-seed` 仅用于 local demo，target 必须继续禁用合成 seed。
+
+`npm run staging:secret:test` 用纯合成 metadata 和 generation ID 验证顺序、optimistic version、幂等重放、撤销前回滚及撤销后前向修复。它不生成、读取、替换或撤销任何真实 secret，也不声称真实 provider 轮换通过。
+
 预检需要由 H13/H14 提供以下目标连接元数据；值保留在未跟踪的目标 `.env`，JSON/Markdown 证据只保留计数、状态、稳定错误码和哈希：
 
 | 边界 | 必需变量 |

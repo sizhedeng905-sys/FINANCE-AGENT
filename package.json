@@ -52,6 +52,8 @@
     "staging:alert:synthetic": "node deploy/staging/scripts/alert-webhook-check.mjs",
     "staging:signature:test": "node --test deploy/staging/scripts/registry-signature.test.mjs",
     "staging:signature:check": "node deploy/staging/scripts/registry-signature-check.mjs",
+    "staging:secret:test": "node --test deploy/staging/scripts/secret-lifecycle.test.mjs",
+    "staging:secret:inventory": "node deploy/staging/scripts/secret-inventory-check.mjs",
     "staging:sbom:test": "node --test deploy/staging/scripts/generate-sbom.test.mjs",
     "staging:check": "node deploy/staging/scripts/verify-config.mjs",
     "staging:backup-integrity:test": "node deploy/staging/scripts/test-backup-integrity.mjs",

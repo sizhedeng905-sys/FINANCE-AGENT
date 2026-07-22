@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+import {
+  assertSecretInventoryGate,
+  buildSecretInventory,
+  collectSecretFileMetadata,
+  validateSecretPolicy,
+} from './secret-lifecycle.mjs';
 import { validateTargetProfile } from './target-profile.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -14,13 +20,8 @@ const fileEnvironment = parseEnvironmentSource(
   'staging environment',
 );
 const settings = resolveDeploymentEnvironment({ ...fileEnvironment, ...process.env });
-const requiredSecrets = [
-  'postgres_superuser_password', 'migration_password', 'runtime_password', 'backup_password', 'restore_password',
-  'migration_database_url', 'runtime_database_url', 'backup_database_url', 'restore_database_url', 'jwt_secret',
-  'redis_password', 'redis_url', 'minio_root_user', 'minio_root_password',
-  's3_access_key_id', 's3_secret_access_key', 'metrics_token', 'grafana_admin_password',
-  'staging_seed_password', 'alert_webhook_url'
-];
+const secretPolicy = JSON.parse(await readFile(join(stagingRoot, 'secret-policy.json'), 'utf8'));
+const requiredSecrets = [...validateSecretPolicy(secretPolicy).secrets.keys()].sort();
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
 const expectedCustomImages = {
   'backend-api': `${settings.registryPrefix}/backend`,
@@ -65,6 +66,17 @@ await writeFile(join(certificateMetrics, 'finance_agent_tls.prom'), [
 
 const composeResult = run('docker', ['compose', '--env-file', '.env', '-f', 'compose.yaml', 'config', '--format', 'json']);
 const compose = JSON.parse(composeResult.stdout);
+const validatedSecretPolicy = validateSecretPolicy(secretPolicy, compose);
+const secretInventory = buildSecretInventory({
+  policy: secretPolicy,
+  compose,
+  fileMetadata: await collectSecretFileMetadata(
+    join(stagingRoot, '.secrets'),
+    [...validatedSecretPolicy.secrets.keys()],
+  ),
+  profile: settings.profile,
+});
+assertSecretInventoryGate(secretInventory);
 const services = compose.services ?? {};
 const sourceEnvironmentId = services.backup?.environment?.BACKUP_SOURCE_ENVIRONMENT_ID ?? '';
 const imageIdentityPolicy = services.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
@@ -222,6 +234,11 @@ const evidence = {
     parameterizedTopology: true,
     targetProfile: targetProfile?.status ?? 'not_applicable',
     secretsPresent: requiredSecrets.length,
+    secretFreshness: secretInventory.status,
+    secretFreshnessBasis: secretInventory.freshnessBasis,
+    secretPolicySha256: secretInventory.policySha256,
+    secretInventorySha256: secretInventory.inventorySha256,
+    secretFreshnessCounts: secretInventory.counts,
     certificatesVerified: true,
     fixedImageTags: true,
     immutableThirdPartyImages: true,
