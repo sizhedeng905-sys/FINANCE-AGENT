@@ -59,6 +59,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-045 | [CR-045_staging-parameterization-regression.md](CR-045_staging-parameterization-regression.md) | `test: align staging parameterization assertions` | P0 CI regression | REMOTE_ENGINEERING_VERIFIED | CR-044 |
 | CR-046 | [CR-046_dependency-install-runtime-image-hardening.md](CR-046_dependency-install-runtime-image-hardening.md) | `build: harden dependency install and runtime image` | P1 supply chain | REMOTE_ENGINEERING_VERIFIED / REAL_STAGING_LOGS_BLOCKED_EXTERNAL | CR-045 |
 | CR-047 | [CR-047_overnight-fact-sync.md](CR-047_overnight-fact-sync.md) | `docs: close overnight evidence and handoff` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED | CR-046 |
+| CR-048 | [CR-048_overnight-report-structure-closure.md](CR-048_overnight-report-structure-closure.md) | `docs: align overnight handoff structure` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED | CR-047 |
 
 当前远端校准：CR-015 至 CR-046 的实现均已包含在运行时树 `5c16f3e`，该树的 Build and acceptance 与 CodeQL 已通过。CR-015 至 CR-038 行内保留的 `REMOTE_PUSH_BLOCKED_EXTERNAL` 是各审查文档提交时的历史状态，不代表当前分支仍未推送；真实样本、目标环境和 owner UAT 等业务门禁仍按各行原义保持开放。
 
