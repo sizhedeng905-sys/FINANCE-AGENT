@@ -4,14 +4,21 @@ import { Alert, Button, Card, Col, Descriptions, Empty, List, Row, Space, Spin, 
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import MetricCard from '@/components/MetricCard';
+import ReportNarrativeReviewPanel from '@/components/reports/ReportNarrativeReviewPanel';
+import ReportNarrativeReviewQueue from '@/components/reports/ReportNarrativeReviewQueue';
 import ReportSnapshotSources from '@/components/reports/ReportSnapshotSources';
 import { useReportStore } from '@/store/reportStore';
-import { createReportSnapshotApi, generateReportNarrativeApi } from '@/api/reportApi';
+import {
+  createReportSnapshotApi,
+  fetchReportNarrativeApi,
+  generateReportNarrativeApi,
+  reviewReportNarrativeApi,
+} from '@/api/reportApi';
 import type {
   BossReportPeriod,
   ProjectRankingItem,
-  ReportNarrativeClaim,
   ReportNarrativeGenerationResult,
+  ReportNarrativeReviewCommand,
   ReportSnapshotResult,
 } from '@/types/report';
 import { formatMoney, formatPercent } from '@/utils/format';
@@ -31,17 +38,6 @@ const rankingColumns: ColumnsType<ProjectRankingItem> = [
   { title: '异常', dataIndex: 'riskCount' },
 ];
 
-const claimColumns: ColumnsType<ReportNarrativeClaim> = [
-  { title: '叙述', dataIndex: 'text' },
-  { title: '快照值', dataIndex: 'value', width: 150 },
-  {
-    title: '数据路径',
-    dataIndex: 'sourcePath',
-    width: 240,
-    render: (value: string) => <Typography.Text code copyable>{value}</Typography.Text>,
-  },
-];
-
 export default function BossReportsPage() {
   const [period, setPeriod] = useState<BossReportPeriod>('daily');
   const report = useReportStore((state) => state.bossReports.find((item) => item.period === period));
@@ -52,6 +48,8 @@ export default function BossReportsPage() {
   const [narrativeResult, setNarrativeResult] = useState<ReportNarrativeGenerationResult | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const [narrativeReviewLoading, setNarrativeReviewLoading] = useState(false);
+  const [narrativeReviewReady, setNarrativeReviewReady] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,6 +59,7 @@ export default function BossReportsPage() {
   useEffect(() => {
     setSnapshotResult(null);
     setNarrativeResult(null);
+    setNarrativeReviewReady(false);
     setEvidenceError(null);
   }, [period]);
 
@@ -68,6 +67,7 @@ export default function BossReportsPage() {
     setSnapshotLoading(true);
     setEvidenceError(null);
     setNarrativeResult(null);
+    setNarrativeReviewReady(false);
     try {
       setSnapshotResult(await createReportSnapshotApi(period));
     } catch (requestError) {
@@ -83,10 +83,60 @@ export default function BossReportsPage() {
     setEvidenceError(null);
     try {
       setNarrativeResult(await generateReportNarrativeApi(snapshotResult.snapshot.snapshotId));
+      setNarrativeReviewReady(true);
     } catch (requestError) {
+      setNarrativeReviewReady(false);
       setEvidenceError(requestError instanceof Error ? requestError.message : 'AI 叙述生成失败');
     } finally {
       setNarrativeLoading(false);
+    }
+  };
+
+  const updateNarrative = (narrative: NonNullable<ReportNarrativeGenerationResult['narrative']>) => {
+    setNarrativeResult((current) => ({
+      ...(current ?? { status: 'needs_finance_review' }),
+      status: 'needs_finance_review',
+      narrative,
+    }));
+  };
+
+  const refreshNarrative = async () => {
+    const narrative = narrativeResult?.narrative;
+    if (!narrative) return;
+    setNarrativeReviewLoading(true);
+    setEvidenceError(null);
+    try {
+      updateNarrative(await fetchReportNarrativeApi(narrative.id));
+      setNarrativeReviewReady(true);
+    } catch (requestError) {
+      setNarrativeReviewReady(false);
+      setEvidenceError(requestError instanceof Error ? requestError.message : '报告叙述状态刷新失败');
+      throw requestError;
+    } finally {
+      setNarrativeReviewLoading(false);
+    }
+  };
+
+  const reviewNarrative = async (command: ReportNarrativeReviewCommand, reason: string) => {
+    const narrative = narrativeResult?.narrative;
+    if (!narrative) return;
+    setNarrativeReviewLoading(true);
+    setEvidenceError(null);
+    try {
+      updateNarrative(await reviewReportNarrativeApi(narrative.id, {
+        expectedReviewVersion: narrative.review.version,
+        expectedNarrativeHash: narrative.narrativeHash,
+        expectedSnapshotHash: narrative.snapshotHash,
+        command,
+        reason,
+      }));
+      setNarrativeReviewReady(true);
+    } catch (requestError) {
+      setNarrativeReviewReady(false);
+      setEvidenceError(requestError instanceof Error ? requestError.message : '报告叙述复核失败');
+      throw requestError;
+    } finally {
+      setNarrativeReviewLoading(false);
     }
   };
 
@@ -200,30 +250,18 @@ export default function BossReportsPage() {
               ) : null}
               {narrativeResult?.narrative ? (
                 <div style={{ marginTop: 16 }}>
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message={narrativeResult.narrative.summary}
-                    description={(
-                      <Space wrap>
-                        <Tag color="gold">需财务复核</Tag>
-                        <Tag>{narrativeResult.narrative.provider}</Tag>
-                        <Typography.Text type="secondary">{narrativeResult.narrative.promptVersion}</Typography.Text>
-                      </Space>
-                    )}
-                    style={{ marginBottom: 16 }}
-                  />
-                  <Table
-                    rowKey="claimId"
-                    size="small"
-                    columns={claimColumns}
-                    dataSource={narrativeResult.narrative.claims}
-                    pagination={false}
-                    scroll={{ x: 760 }}
+                  <ReportNarrativeReviewPanel
+                    narrative={narrativeResult.narrative}
+                    role="boss"
+                    busy={narrativeReviewLoading}
+                    onRefresh={refreshNarrative}
+                    onReview={narrativeReviewReady ? reviewNarrative : undefined}
                   />
                 </div>
               ) : null}
             </Card>
+
+            <ReportNarrativeReviewQueue role="boss" title="待老板复核的 AI 叙述" />
 
             <Card title="项目利润排行" className="section-row">
               <Table

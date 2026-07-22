@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Col, Empty, List, Row, Spin, Tabs, Typography } from 'antd';
 import PageHeader from '@/components/PageHeader';
 import MetricCard from '@/components/MetricCard';
+import ReportNarrativeReviewQueue from '@/components/reports/ReportNarrativeReviewQueue';
 import RiskTag from '@/components/workOrder/RiskTag';
 import { useReportStore } from '@/store/reportStore';
 import type { FinanceReportPeriod } from '@/types/report';
@@ -44,6 +45,7 @@ export default function FinanceReportsPage() {
           style={{ marginBottom: 16 }}
         />
       ) : null}
+      <ReportNarrativeReviewQueue role="finance" title="AI 报告文字复核" />
       <Spin spinning={loading}>
         {!report && !loading ? <Empty description="暂无报表数据" /> : null}
         {report ? (

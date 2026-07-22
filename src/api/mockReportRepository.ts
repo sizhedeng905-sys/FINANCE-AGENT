@@ -1,18 +1,23 @@
 import { mockBossReports, mockFinanceReports } from '@/mock/mockReports';
+import type { Role } from '@/types/auth';
 import type { BusinessRecord } from '@/types/dataCenter';
 import type {
   BossReport,
   BossReportPeriod,
   FinanceReport,
   FinanceReportPeriod,
+  PaginatedReportNarratives,
   PaginatedReportSnapshotSources,
   ProjectReport,
   ReportAccountingDirection,
+  ReportNarrative,
   ReportNarrativeGenerationResult,
+  ReportNarrativeReviewPolicy,
   ReportSnapshot,
   ReportSnapshotResult,
   ReportSnapshotSource,
   ReportSnapshotSourceQuery,
+  ReviewReportNarrativePayload,
 } from '@/types/report';
 import { mockGetProject } from './mockProjectRepository';
 import { mockRecordSnapshot } from './mockRecordRepository';
@@ -21,6 +26,13 @@ import { centsToMoney, moneyToCents, subtractMoney, sumMoney } from '@/utils/mon
 const delay = (ms = 140) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const reportSnapshots = new Map<string, ReportSnapshot>();
 const reportSnapshotSources = new Map<string, ReportSnapshotSource[]>();
+const reportNarratives = new Map<string, ReportNarrative>();
+const mockNarrativeReviewPolicy: ReportNarrativeReviewPolicy = {
+  mode: 'disabled',
+  enabled: false,
+  policyVersion: 'mock-report-narrative-review/1.0',
+  workflow: 'FINANCE_THEN_BOSS',
+};
 
 function mockHash(value: unknown) {
   const source = JSON.stringify(value);
@@ -272,6 +284,8 @@ export async function mockGenerateReportNarrative(snapshotId: string): Promise<R
   await delay();
   const snapshot = reportSnapshots.get(snapshotId);
   if (!snapshot) throw new Error('请先生成报告快照');
+  const existing = reportNarratives.get(`mock-narrative-${snapshotId}`);
+  if (existing) return { status: 'needs_finance_review', narrative: structuredClone(existing) };
   const countText = `本期确认记录共 ${snapshot.metrics.recordCount} 条。`;
   const claims = [
     {
@@ -291,25 +305,65 @@ export async function mockGenerateReportNarrative(snapshotId: string): Promise<R
       sourceValueHash: mockHash({ sourcePath: `/warnings/${index}/message`, value: warning.message }),
     })),
   ];
-  return {
-    status: 'needs_finance_review',
-    narrative: {
-      id: `mock-narrative-${snapshotId}`,
-      snapshotId,
-      snapshotHash: snapshot.snapshotHash,
-      schemaVersion: 'report-narrative/1.0',
-      title: snapshot.reportType === 'WEEKLY' ? '经营周报' : snapshot.reportType === 'MONTHLY' ? '经营月报' : '经营日报',
-      summary: countText,
-      warningPaths: snapshot.warnings.map((_warning, index) => `/warnings/${index}`),
-      decision: 'NEEDS_FINANCE_REVIEW',
-      narrativeHash: mockHash(claims),
-      provider: 'mock',
-      model: 'mock-structured-v1',
-      promptVersion: 'report_narrative:v3',
-      versionVectorHash: mockHash({ snapshotHash: snapshot.snapshotHash, prompt: 'v3' }),
-      aiTaskId: `mock-task-${snapshotId}`,
-      claims,
-      createdAt: new Date().toISOString(),
+  const narrative: ReportNarrative = {
+    id: `mock-narrative-${snapshotId}`,
+    snapshotId,
+    snapshotHash: snapshot.snapshotHash,
+    schemaVersion: 'report-narrative/1.0',
+    title: snapshot.reportType === 'WEEKLY' ? '经营周报' : snapshot.reportType === 'MONTHLY' ? '经营月报' : '经营日报',
+    summary: countText,
+    warningPaths: snapshot.warnings.map((_warning, index) => `/warnings/${index}`),
+    decision: 'NEEDS_FINANCE_REVIEW',
+    narrativeHash: mockHash(claims),
+    provider: 'mock',
+    model: 'mock-structured-v1',
+    promptVersion: 'report_narrative:v3',
+    versionVectorHash: mockHash({ snapshotHash: snapshot.snapshotHash, prompt: 'v3' }),
+    aiTaskId: `mock-task-${snapshotId}`,
+    claims,
+    review: {
+      status: 'NEEDS_FINANCE_REVIEW',
+      version: 0,
+      policy: { ...mockNarrativeReviewPolicy },
+      history: [],
     },
+    createdAt: new Date().toISOString(),
   };
+  reportNarratives.set(narrative.id, narrative);
+  return { status: 'needs_finance_review', narrative: structuredClone(narrative) };
+}
+
+export async function mockFetchPendingReportNarratives(
+  role: Extract<Role, 'finance' | 'boss'>,
+  page = 1,
+  pageSize = 10,
+): Promise<PaginatedReportNarratives> {
+  await delay();
+  const expectedStatus = role === 'finance' ? 'NEEDS_FINANCE_REVIEW' : 'NEEDS_BOSS_REVIEW';
+  const items = [...reportNarratives.values()]
+    .filter((narrative) => narrative.review.status === expectedStatus)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  return {
+    items: structuredClone(items.slice((page - 1) * pageSize, page * pageSize)),
+    page,
+    pageSize,
+    total: items.length,
+    policy: { ...mockNarrativeReviewPolicy },
+  };
+}
+
+export async function mockFetchReportNarrative(id: string): Promise<ReportNarrative> {
+  await delay();
+  const narrative = reportNarratives.get(id);
+  if (!narrative) throw new Error('报告 AI 叙述不存在');
+  return structuredClone(narrative);
+}
+
+export async function mockReviewReportNarrative(
+  id: string,
+  _payload: ReviewReportNarrativePayload,
+): Promise<ReportNarrative> {
+  await delay();
+  if (!reportNarratives.has(id)) throw new Error('报告 AI 叙述不存在');
+  throw new Error('Mock 模式的报告文字复核策略默认关闭');
 }

@@ -7,6 +7,7 @@ import {
   isApiResponse,
   login,
   logout,
+  readApiEnvelope,
   readEnvelope,
   selectOption
 } from './support/app';
@@ -182,11 +183,114 @@ test('API mode: employee submission reaches a confirmed record and boss report',
   await page.getByRole('button', { name: '生成 AI 叙述' }).click();
   const narrative = await readEnvelope<{
     status: string;
-    narrative: { snapshotHash: string; claims: Array<{ sourcePath: string }> };
+    narrative: {
+      id: string;
+      snapshotHash: string;
+      narrativeHash: string;
+      claims: Array<{ sourcePath: string }>;
+      review: { status: string; version: number };
+    };
   }>(await narrativeResponse);
   expect(narrative.data.status).toBe('needs_finance_review');
   expect(narrative.data.narrative.snapshotHash).toBe(snapshot.data.snapshot.snapshotHash);
   expect(narrative.data.narrative.claims.some((claim) => claim.sourcePath === '/metrics/recordCount')).toBe(true);
-  await expect(page.getByText('需财务复核', { exact: true })).toBeVisible();
+  expect(narrative.data.narrative.review).toMatchObject({ status: 'NEEDS_FINANCE_REVIEW', version: 0 });
+  await expect(page.getByText('草稿 · 待财务复核', { exact: true })).toBeVisible();
   await expect(page.getByText('/metrics/recordCount', { exact: true })).toBeVisible();
+
+  await logout(page);
+  await login(page, 'finance', '/finance/home');
+  const financeQueueResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/ai/report-narratives'
+  ));
+  await page.goto(`${API_FRONTEND_URL}/finance/reports`);
+  const financeQueue = await readEnvelope<{
+    items: Array<{ id: string; review: { status: string; version: number } }>;
+  }>(await financeQueueResponse);
+  expect(financeQueue.data.items).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: narrative.data.narrative.id,
+      review: expect.objectContaining({ status: 'NEEDS_FINANCE_REVIEW', version: 0 }),
+    }),
+  ]));
+  const financeReviewRegion = page.getByRole('region', {
+    name: `报告叙述复核 ${narrative.data.narrative.id}`,
+  });
+  await expect(financeReviewRegion).toBeVisible();
+  await financeReviewRegion.getByLabel(`复核理由-${narrative.data.narrative.id}`)
+    .fill(`E2E finance narrative accepted ${suffix}`);
+  const financeReviewResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/ai/report-narratives/${narrative.data.narrative.id}/review`
+  ));
+  await financeReviewRegion.getByRole('button', { name: '财务接受并提交老板' }).click();
+  const financeReviewed = await readEnvelope<{
+    snapshotHash: string;
+    narrativeHash: string;
+    review: { status: string; version: number };
+  }>(await financeReviewResponse);
+  expect(financeReviewed.data).toMatchObject({
+    snapshotHash: snapshot.data.snapshot.snapshotHash,
+    narrativeHash: narrative.data.narrative.narrativeHash,
+    review: { status: 'NEEDS_BOSS_REVIEW', version: 1 },
+  });
+  await expect(financeReviewRegion.getByText('草稿 · 待老板复核', { exact: true })).toBeVisible();
+
+  await logout(page);
+  await login(page, 'boss', '/boss/home');
+  const bossQueueResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/ai/report-narratives'
+  ));
+  await page.goto(`${API_FRONTEND_URL}/boss/reports`);
+  const bossQueue = await readEnvelope<{
+    items: Array<{ id: string; review: { status: string; version: number } }>;
+  }>(await bossQueueResponse);
+  expect(bossQueue.data.items).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: narrative.data.narrative.id,
+      review: expect.objectContaining({ status: 'NEEDS_BOSS_REVIEW', version: 1 }),
+    }),
+  ]));
+  const bossReviewRegion = page.getByRole('region', {
+    name: `报告叙述复核 ${narrative.data.narrative.id}`,
+  });
+  await expect(bossReviewRegion).toBeVisible();
+  await bossReviewRegion.getByLabel(`复核理由-${narrative.data.narrative.id}`)
+    .fill(`E2E boss narrative accepted ${suffix}`);
+  const bossReviewResponse = page.waitForResponse((response) => (
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/ai/report-narratives/${narrative.data.narrative.id}/review`
+  ));
+  await bossReviewRegion.getByRole('button', { name: '老板接受文字建议' }).click();
+  const bossReviewed = await readEnvelope<{
+    snapshotHash: string;
+    narrativeHash: string;
+    review: { status: string; version: number; history: unknown[] };
+  }>(await bossReviewResponse);
+  expect(bossReviewed.data).toMatchObject({
+    snapshotHash: snapshot.data.snapshot.snapshotHash,
+    narrativeHash: narrative.data.narrative.narrativeHash,
+    review: { status: 'ACCEPTED', version: 2 },
+  });
+  expect(bossReviewed.data.review.history).toHaveLength(2);
+  await expect(bossReviewRegion.getByText('已接受文字建议', { exact: true })).toBeVisible();
+
+  const recordsAfterNarrativeReview = await readApiEnvelope<{ items: RecordDto[] }>(await page.request.get(
+    'http://127.0.0.1:3101/api/records?page=1&pageSize=100',
+  ));
+  expect(recordsAfterNarrativeReview.data.items.filter((item) => item.id === completed.data.generatedRecordId))
+    .toEqual([expect.objectContaining({ amount, sourceId: workOrderId, status: 'confirmed' })]);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(
+    () => page.locator('.app-sider').evaluate((element) => element.getBoundingClientRect().width),
+    { timeout: 5_000 },
+  ).toBeLessThanOrEqual(1);
+  const mobileWidth = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(mobileWidth.scroll).toBeLessThanOrEqual(mobileWidth.client + 1);
 });

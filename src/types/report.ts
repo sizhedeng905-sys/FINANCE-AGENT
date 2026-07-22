@@ -223,6 +223,42 @@ export interface ReportNarrativeClaim {
   sourceValueHash: string;
 }
 
+export type ReportNarrativeReviewStatus =
+  | 'NEEDS_FINANCE_REVIEW'
+  | 'NEEDS_BOSS_REVIEW'
+  | 'CHANGES_REQUESTED'
+  | 'REJECTED'
+  | 'ACCEPTED';
+
+export type ReportNarrativeReviewStage = 'FINANCE' | 'BOSS';
+export type ReportNarrativeReviewCommand = 'ACCEPT' | 'REQUEST_CHANGES' | 'REJECT';
+
+export interface ReportNarrativeReviewPolicy {
+  mode: 'disabled' | 'finance_then_boss';
+  enabled: boolean;
+  policyVersion: string;
+  workflow: 'FINANCE_THEN_BOSS';
+}
+
+export interface ReportNarrativeReviewEvent {
+  id: string;
+  reviewVersion: number;
+  stage: ReportNarrativeReviewStage;
+  command: ReportNarrativeReviewCommand;
+  fromStatus: ReportNarrativeReviewStatus;
+  toStatus: ReportNarrativeReviewStatus;
+  reason: string;
+  actor: { id: string; username: string; name: string };
+  createdAt: string;
+}
+
+export interface ReportNarrativeReviewState {
+  status: ReportNarrativeReviewStatus;
+  version: number;
+  policy: ReportNarrativeReviewPolicy;
+  history: ReportNarrativeReviewEvent[];
+}
+
 export interface ReportNarrative {
   id: string;
   snapshotId: string;
@@ -239,7 +275,24 @@ export interface ReportNarrative {
   versionVectorHash: string;
   aiTaskId: string;
   claims: ReportNarrativeClaim[];
+  review: ReportNarrativeReviewState;
   createdAt: string;
+}
+
+export interface PaginatedReportNarratives {
+  items: ReportNarrative[];
+  page: number;
+  pageSize: number;
+  total: number;
+  policy: ReportNarrativeReviewPolicy;
+}
+
+export interface ReviewReportNarrativePayload {
+  expectedReviewVersion: number;
+  expectedNarrativeHash: string;
+  expectedSnapshotHash: string;
+  command: ReportNarrativeReviewCommand;
+  reason: string;
 }
 
 export interface ReportNarrativeGenerationResult {

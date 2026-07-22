@@ -1,12 +1,16 @@
 import { runtimeConfig } from '@/config/runtime';
+import type { Role } from '@/types/auth';
 import type {
   BossReport,
   BossReportPeriod,
   FinanceReport,
   FinanceReportPeriod,
+  PaginatedReportNarratives,
   PaginatedReportSnapshotSources,
   ProjectReport,
   ReportNarrativeGenerationResult,
+  ReportNarrative,
+  ReviewReportNarrativePayload,
   ReportSnapshotResult,
   ReportSnapshotSourceQuery,
   ReportSnapshotType,
@@ -19,7 +23,10 @@ import {
   mockFetchProjectMonthlyReport,
   mockCreateReportSnapshot,
   mockFetchReportSnapshotSources,
+  mockFetchPendingReportNarratives,
+  mockFetchReportNarrative,
   mockGenerateReportNarrative,
+  mockReviewReportNarrative,
 } from './mockReportRepository';
 
 function reportQuery(periodKey: string, period: string, dateKey?: string, date?: string): string {
@@ -111,4 +118,29 @@ export function generateReportNarrativeApi(snapshotId: string): Promise<ReportNa
       {},
     )
     : mockGenerateReportNarrative(snapshotId);
+}
+
+export function fetchPendingReportNarrativesApi(
+  role: Extract<Role, 'finance' | 'boss'>,
+  page = 1,
+  pageSize = 10,
+): Promise<PaginatedReportNarratives> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedReportNarratives>(`/ai/report-narratives?page=${page}&pageSize=${pageSize}`)
+    : mockFetchPendingReportNarratives(role, page, pageSize);
+}
+
+export function fetchReportNarrativeApi(id: string): Promise<ReportNarrative> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<ReportNarrative>(`/ai/report-narratives/${encodeURIComponent(id)}`)
+    : mockFetchReportNarrative(id);
+}
+
+export function reviewReportNarrativeApi(
+  id: string,
+  payload: ReviewReportNarrativePayload,
+): Promise<ReportNarrative> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<ReportNarrative>(`/ai/report-narratives/${encodeURIComponent(id)}/review`, payload)
+    : mockReviewReportNarrative(id, payload);
 }

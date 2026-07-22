@@ -45,6 +45,7 @@ const serverEnvironment = {
   AI_PROVIDER_CLASS: 'mock',
   AI_INGESTION_MODE: 'suggest',
   AI_REPORT_MODE: 'suggest',
+  REPORT_NARRATIVE_REVIEW_MODE: 'finance_then_boss',
   AI_MODEL: 'mock-structured-v1',
   AI_TIMEOUT_MS: '5000'
 };

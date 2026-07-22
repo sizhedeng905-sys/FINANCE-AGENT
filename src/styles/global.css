@@ -192,6 +192,33 @@ select {
   white-space: normal;
 }
 
+.report-narrative-review-panel,
+.report-narrative-review-panel .ant-alert,
+.report-narrative-review-panel .ant-descriptions,
+.report-narrative-review-panel .ant-descriptions-view,
+.report-narrative-review-panel .ant-descriptions-item-content,
+.report-narrative-review-panel .ant-table-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.report-narrative-review-panel + .report-narrative-review-panel {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 24px;
+}
+
+.report-narrative-review-panel .ant-descriptions-item-content,
+.report-narrative-review-panel .ant-tag,
+.report-narrative-review-panel code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.report-narrative-review-panel .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .excel-ai-review-evidence .ant-descriptions-item-content,
 .excel-ai-review-evidence .ant-tag {
   overflow-wrap: anywhere;
