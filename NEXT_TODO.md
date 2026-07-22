@@ -1,65 +1,66 @@
 # FINANCE-AGENT 下一步执行清单
 
-更新日期：2026-07-21
+更新日期：2026-07-23 交接基线
+
 分支：`agent/b8-stable-hardening`
+
+最后运行时代码：`5c16f3e114adf4be59c8dd629827970225de51f5`
+
 Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
 ## 当前结论
 
-- Excel staging P0 已由 CR-002 至 CR-005 关闭：未发布记录不可见、不可通过通用接口修改，最终发布具备内容、版本、状态、数量和 affected-row 围栏。
-- Prompt 真执行已由 CR-006 关闭：版本化 `userPromptTemplate` 真正进入 Provider，请求与输出的脱敏 provenance 已进入现有 AI 审计链。
-- 单一项目负责人治理由 CR-007 集中到 `docs/owner-input/`；不再等待多角色姓名、日期或签字。
-- 文档信息架构由 CR-008 收口：报告、审计和验收证据集中到 `docs/汇报/`，计划与检查清单集中到 `docs/计划/`，并由 `npm run check:docs` 检查已跟踪 Markdown 本地链接。
-- production-safe AI 系统登记由 CR-009 收口：空白库仅初始化 11 个系统 Prompt、受控 ModelDeployment/TaskModelRoute 和一条变更审计；两个并发初始化进程精确收敛为 changed/unchanged，配置漂移会阻止 API/Worker 启动。
-- CR-010 已移除 runtime npm/npx/Corepack，并保留项目内 Prisma、Node、OpenSSL 和默认 entrypoint；SHA `1abe513` 的 Build 与 CodeQL 均成功，容器 fixable Critical 门禁已关闭。
-- CR-011/CR-012 已建立“Excel 到经营报告”演示 E2E 与安全 `demo:*` 交付包，SHA `66749b3` 的 Build/CodeQL 双绿；三次人工演练保持 `NOT_RUN`。
-- CR-013 已把真实 Excel AI 建议接入财务草稿，SHA `7d363f6` 的 Build/CodeQL 双绿；AI 不能自动保存、校验、跳转或入账。
-- CR-014 已由服务端核验并持久化四类人工决定、AI Task、输出/版本向量哈希、证据、最终字段和操作者，SHA `5580ce3` 的 Build/CodeQL 双绿。
-- CR-015 已在第二财务确认页展示服务端审核证据，证据读取失败时批准失败关闭；本地提交 `2a59509` 完成 21/21 E2E，但连续三次无法连接 GitHub，尚未推送。
-- CR-016 已在本地完成不可变批准快照展示、按 `importTaskId` 定位正式记录和双向跳转；同时修复 Store 丢弃 `dataLayer/importTaskId` 查询参数。提交 `435acce` 已通过完整 Playwright 21/21、runtime 4/4 和 build，等待网络恢复。
-- 产品内四角色、后端鉴权、职责分离和不同财务账号审批保持不变。
-- 当前不是 production-ready，也尚未达到完整“AI 产品闭环”。
+- 周五合成 Demo 技术闭环为 `CONDITIONAL_GO`：登录、Excel 导入、AI 建议、财务修改、第二财务批准、3 条正式记录、ReportSnapshot 与叙述依据均有自动化证据。
+- 运行时代码 `5c16f3e` 的本机回归、GitHub Build and acceptance 与 CodeQL 均通过；PR #4 保持 Draft，可供人工审查。
+- 当前不是 production-ready。目标 Linux Staging、真实告警、真实镜像签名、真实异地恢复、真实 OCR/AI 真值、三次人工彩排、独立审查和 owner UAT 均未完成。
+- AI 只提供受控建议；财务批准前不生成正式可见记录；报告金额只来自固定查询、Decimal 与 canonical ReportSnapshot。这些安全边界不得为演示或赶进度放宽。
 
-## 已有工程证据
+## 已完成工程基线
 
-- 后端全量单元：50 suites / 464 tests（CR-014 服务端基线）。
-- PostgreSQL/Redis 全量：11 suites / 111 个实际执行测试；仓库既有 3 suites / 14 tests 按条件跳过（CR-014 当前完整基线）。
-- Playwright 当前基线：21/21；包含 Excel AI 审核证据、批准快照定位和周五演示故事线。
-- CR-009 system registry 专项：5 个 PostgreSQL 集成测试；独立空库 acceptance 覆盖 43 migrations、bootstrap/verify、Mock 调用、API/Worker 启动和漂移拒绝。
-- Prisma migration：44 条空库路径与上一版本升级路径（CR-014 基线）。
-- 前后端 production build、runtime 4/4、文档链接和 repository hygiene 已通过；CR-016 不含 migration 或后端写路径变更。
+- Prisma：51 个 migration；空库安装与 50→51 升级路径通过。
+- 后端单元：51/51 suites、473/473 tests。
+- PostgreSQL/Redis 集成：14/14 suites、125/125 tests；覆盖 30,196 与 49,999 行边界。
+- Playwright API 模式：22/22；包含 Excel AI、OCR、报告与周五 Demo。
+- Friday Demo 专项：1/1；恰好生成 3 条正式记录，金额 `1250.25`、`8765.43`、`3406.53`，合计 `13422.21`。
+- 供应链：根目录和后端完整/生产 `npm audit` 均为 0 个已知漏洞；install script 精确批准/拒绝检查 7/7；后端 runtime 镜像无 npm/npx/corepack 且以非 root 用户运行。
+- 远端：[`Build and acceptance #46`](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561659) 与 [`CodeQL #43`](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561810) 在同一运行时 SHA 上成功。
 
-以上只证明对应提交的工程行为，不代表真实 OCR 准确率、财务逐分对账、目标云环境、恢复演练或 owner UAT 已通过。
+以上证据只证明仓库代码与合成/匿名测试行为，不代表真实财务口径、真实模型准确率、目标环境或生产发布已通过。
 
-## 自动推进顺序
+## 明早优先级
 
-1. 恢复远端后推送 CR-015/CR-016。
-   - CR-015/CR-016 本地提交分别为 `2a59509`、`435acce`；三次正常 push 分别遇到连接重置或无法连接 `github.com:443`，随后只读探测确认 `github.com` DNS 仍失败。
-   - 网络恢复后正常 push 当前分支，分别按实际新 SHA 检查 Build 与 CodeQL；禁止借用 CR-014 绿色，不 force push。
-2. 完成三次人工周五演练。
-   - 按 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](docs/deliveries/2026-07-24/DEMO_RUNBOOK.md) 每次从 reset 开始，如实填写验收表；未执行前保持 `NOT_RUN`。
-3. 真实样本校准。
-   - 由项目负责人提供不入 Git、已授权和带真值的最小 Excel/OCR/财务样本；分别测量解析、OCR、映射和人工修正。
-   - 未提供前保持 `REAL_SAMPLE_NEEDED`，不把 Mock/合成结果写成真实准确率。
-4. 报告人工复核与来源展开。
-   - 草稿、接受、退回/拒绝状态机；受保护 API、版本并发和 audit。
-   - 前端分页调用 `/reports/snapshots/:id/sources`；AI 仍不计算金额。
-5. Staging、模型网络和完整 smoke。
-   - API/Worker 与模型使用受控 Docker network、服务 DNS、相同 secret reference、健康/超时/并发/kill switch。
-   - 本地合成 smoke 自动完成；真实目标云环境保持 `EXTERNAL_RESOURCE_NEEDED`。
+1. 完成三次人工周五 Demo 彩排。
+   - 每次按 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](docs/deliveries/2026-07-24/DEMO_RUNBOOK.md) 从 reset 开始。
+   - 记录总耗时、投屏可读性、关键页面停留点和任何偏差；任一金额、记录数或角色不一致立即停止，不现场改数据掩盖问题。
+2. 审查 Draft PR #4。
+   - 先看 CR-044 至 CR-047，再按功能分组回看 CR-017 至 CR-043。
+   - 核对同 SHA CI、供应链 artifact、未决门禁和回滚说明；保持 Draft，不 merge、不标记 Ready。
+3. 准备下一轮真实验收输入。
+   - 只在仓库外准备已授权、可脱敏且带人工真值的最小 Excel/OCR/财务样本。
+   - 同时列出目标 Staging、registry、告警接收端与异地备份目标的负责人和可用时间；凭据不得写入 Git 或问卷。
 
-## 项目负责人输入
+## 后续必须由负责人或真实环境完成
 
-- 已确认决定：[`docs/owner-input/OWNER_DECISIONS.md`](docs/owner-input/OWNER_DECISIONS.md)
-- 待回答问题：[`docs/owner-input/OPEN_QUESTIONS.md`](docs/owner-input/OPEN_QUESTIONS.md)，每批最多十题；未回答时采用失败关闭默认。
-- 真实样本：OCR 17/5 真值、财务逐分对账、汇总/重复样例、老板标准问答。
-- 外部资源：目标云服务器、域名/证书、对象存储、GPU/registry/告警、外部 Provider 详情、独立审计服务和恢复目标。
+| 工作 | 当前状态 | 最小输入 | 未提供时的安全行为 |
+| --- | --- | --- | --- |
+| 三次人工 Demo 彩排 | `NOT_RUN` | 负责人亲自按 runbook 操作并记录 | 只保留 `CONDITIONAL_GO`，不宣称演示验收完成 |
+| OCR/AI 真实准确率 | `REAL_SAMPLE_NEEDED` | 已授权真值样本与人工标签 | 继续标明 Mock/合成，仅允许建议和人工复核 |
+| 财务口径逐分核对 | `AWAITING_HUMAN_SIGNOFF` | 收入、成本、利润、冲销/重复规则真值 | 只声明框架与合成 Decimal 结果，不固化正式口径 |
+| 目标 Linux Staging | `BLOCKED_EXTERNAL` | 主机、域名、证书、对象存储、授权配置 | 不运行会读取本地私密资产的目标命令，不声称部署通过 |
+| 告警、registry 签名、异地恢复 | `BLOCKED_EXTERNAL` | 真实接收端、可信根/凭据、独立故障域与 RPO/RTO | 保持合成契约，发布失败关闭 |
+| 独立审查、owner UAT、Go Live | `AWAITING_HUMAN_SIGNOFF` | 独立审查结论与负责人明确签收 | PR 保持 Draft，不 merge、不转 Ready、不生产部署 |
 
-## 每个提交的门禁
+## Codex 可继续自主维护
 
-- 一个可独立审查主题对应一个 `docs/commit-reviews/CR-XXX_*.md`，并更新索引。
-- 文档移动或新增后运行 `npm run check:docs`，不得提交失效的仓库内链接。
-- 先有失败复现或明确基线，再修改行为；不删断言、不静默回 Mock、不吞错误。
-- 只暂存本提交有意文件，不提交 `.env`、真实数据、模型权重、备份、上传文件或受保护未跟踪资产。
-- 运行受影响单元、真实 PostgreSQL/Redis、API/Playwright、Prisma、build、audit、hygiene 和 `git diff --check`；未运行明确写 `NOT_RUN`。
-- 正常 push 到当前分支并更新 Draft PR #4；不 merge、不标记 Ready、不 force push。
+- 修复新出现且可本地复现的 P0/P1 回归，并为每个独立修改建立 commit-review。
+- 保持依赖、Prisma、单元、集成、E2E、镜像和文档门禁；不以删除断言或静默 Mock 获取绿色。
+- 在收到经授权真值或目标环境后执行对应验收，原样记录失败、耗时和限制。
+- 更新 README、汇报、Draft PR 和阻断矩阵，但不替代负责人作业务签收或生产授权。
+
+## 每个后续提交的门禁
+
+- 一个独立主题对应一个 `docs/commit-reviews/CR-XXX_*.md` 并更新索引。
+- 只暂存有意文件；不提交 `.env`、secrets、模型权重、真实数据、备份、上传文件或受保护的未跟踪资产。
+- 先跑定向测试，再跑受影响的单元、PostgreSQL/Redis、Playwright、Prisma、build、audit、docs、hygiene 与 `git diff --check`。
+- 未运行写 `NOT_RUN`，外部阻塞写 `BLOCKED_EXTERNAL`，真实样本不足写 `REAL_SAMPLE_NEEDED`。
+- 正常 push 当前分支；不使用 `reset --hard`、force push 或历史改写；不合并、不标记 Ready。

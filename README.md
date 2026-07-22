@@ -2,11 +2,11 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。周五 Demo 已形成“登录 -> Excel 导入 -> AI 建议 -> 财务复核 -> 幂等入账 -> ReportSnapshot -> 老板叙述依据”的可重置合成技术闭环；M0-M8 非生产工程边界保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。Draft PR #4 已推送至 CR-039（远端 SHA `4288253`）；CR-040 告警交付、CR-041 digest-only 签名、CR-042 无值 secret 生命周期和 CR-043 异地备份证据契约已在本地完成实现与独立审查提交，但 2026-07-22 无法连接 GitHub 443，尚待正常推送与同 SHA CI。目标 Linux Staging、真实 offsite restore/RPO/RTO、正式 secret/provider、财务/OCR/AI 真值及负责人 UAT 均未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。周五 Demo 已形成“登录 -> Excel 导入 -> AI 建议 -> 财务复核 -> 幂等入账 -> ReportSnapshot -> 老板叙述依据”的可重置合成技术闭环；M0-M8 非生产工程边界保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。Draft PR #4 的最后运行时代码已推送至 CR-046（`5c16f3e`）：CR-040 至 CR-043 完成告警、签名、secret 生命周期与异地备份证据框架，CR-044/045 修复远端 Prisma 与 Staging 测试红灯，CR-046 收紧依赖安装脚本和运行镜像。目标 Linux Staging、真实 offsite restore/RPO/RTO、正式 secret/provider、财务/OCR/AI 真值、三次人工彩排及负责人 UAT 均未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
-状态快照：2026-07-22
+状态快照：2026-07-23
 
 | 项目 | 当前状态 | 人工判断依据 |
 | --- | --- | --- |
@@ -18,7 +18,7 @@
 | B8-09 Staging | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R10 修复与再验收 | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | R8.9 分层 CI、M8.1 Nginx Critical、R9 共享控制、Excel 暂存完整性重审和 R10 本地模型 L0 均有工程证据；L1 真值与目标 release 仍开放 |
-| R11 最终交接 | `in_progress` | Draft PR #4 已远端更新至 CR-039；CR-040 至 CR-043 本地完成但 GitHub 443 当前不可达，尚待推送和同 SHA CI；三次人工演练未执行，不 merge、不转 Ready |
+| R11 最终交接 | `in_progress` | Draft PR #4 已远端更新至 CR-046（`5c16f3e`）；本机全量、Demo、Build and acceptance 与 CodeQL 均通过；三次人工演练未执行，不 merge、不转 Ready |
 | AI 映射补充 M0-M8 | `ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED` | OCR/Excel 审核入账、canonical ReportSnapshot、严格 Claim grounding、攻击/资源/降级和最终证据已通过；真实口径/准确率和目标 Staging 尚未关闭 |
 | 发布结论 | `SAFE_DEFAULT_ACTIVE` | 目标环境、真实 Staging、恢复演练、独立安全复核、财务/OCR/AI 真值和 owner UAT 均未完成，发布失败关闭 |
 
@@ -33,9 +33,19 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - CR-013 CodeQL：[run 29831004341](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29831004341)，成功
 - CR-014 Build and acceptance：[run 29834746500](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29834746500)，两个 job 全部成功
 - CR-014 CodeQL：[run 29834746264](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29834746264)，成功
+- CR-046 Build and acceptance：[run 29915561659](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561659)，运行时代码 `5c16f3e`，两个 job 全部成功
+- CR-046 CodeQL：[run 29915561810](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561810)，成功
 - PR 安全 review thread：3/3 已解决且已过期，未解决数量为 0
 
 上述绿色检查是重新审计前的历史工程基线，不能覆盖新登记问题，也不能替代真实环境、真实样本、独立复核和 owner UAT。
+
+### 2026-07-23 夜间收口
+
+- 最后运行时代码：`5c16f3e114adf4be59c8dd629827970225de51f5`；完整功能说明与边界见 [`docs/汇报/OVERNIGHT_FUNCTIONAL_SUMMARY_2026-07-23.md`](docs/汇报/OVERNIGHT_FUNCTIONAL_SUMMARY_2026-07-23.md)。
+- 本机当前基线：Prisma 51 migrations，后端 51/51 suites、473/473 tests，PostgreSQL/Redis 14/14 suites、125/125 tests，Playwright API 模式 22/22，周五 Demo 专项 1/1。
+- Demo 断言：另一财务账号批准后恰好生成 3 条正式记录，金额为 `1250.25`、`8765.43`、`3406.53`，合计 `13422.21`；Mock/合成身份明确，测试完成后清理业务产物。
+- 供应链：根目录和后端完整/生产 npm audit 均为 0 个已知漏洞；install script 必须精确版本批准或明确拒绝；后端镜像从独立 production dependency install 构建，runtime 仍无 npm/npx/corepack。
+- 真实目标 Staging、告警接收、registry 签名、异地恢复、OCR/AI 真值和人工 UAT 仍失败关闭；这些未完成项不能被本机或 CI 绿色替代。
 
 ### R0-R8.9 重新审计进展
 
@@ -442,6 +452,7 @@ npm run test:runtime
 npm run test:integration --prefix backend
 npm run test:e2e
 npm run staging:frontend:check
+npm run check:install-scripts
 npm run check:hygiene
 npm run db:migration-paths --prefix backend
 ```

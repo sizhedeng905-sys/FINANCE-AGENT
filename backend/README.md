@@ -98,15 +98,16 @@ npm run test:e2e
 
 The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
 
-Current verification baseline (2026-07-21, CR-009 candidate):
+Current verification baseline (2026-07-23, CR-046 runtime `5c16f3e`):
 
-- Backend build and Prisma validation pass. Migration-path verification installs all 43 migrations on an empty database and upgrades the 42-migration predecessor to the current schema.
-- Jest: 50/50 suites and 464/464 tests.
-- Full PostgreSQL/Redis integration executes all 14/14 suites and 124/124 tests across the normal and Redis-required groups, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
-- Root Playwright acceptance: 17/17 tests.
+- Backend build and Prisma validation pass. Migration-path verification installs all 51 migrations on an empty database and upgrades the 50-migration predecessor to the current schema.
+- Jest: 51/51 suites and 473/473 tests.
+- Full PostgreSQL/Redis integration executes all 14/14 suites and 125/125 tests across the normal and Redis-required groups, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
+- Root Playwright API-mode acceptance: 22/22 tests.
 - Backend and frontend production builds pass.
 - Root and backend production dependency audits report 0 vulnerabilities.
-- CR-009 verifies a fresh temporary `_test` database through 43 migrations, two concurrent bootstrap processes converging to one change and one zero-write replay, exact 11 Prompt / 1 Mock deployment / 7 route system counts, zero business/demo rows, a strict Mock mapping call, API and Worker startup verification, and deliberate configuration-drift startup rejection. The bootstrap uses the existing system tables, a serializable transaction, PostgreSQL advisory lock, bounded conflict retries, immutable content hashes, and one change audit.
+- System acceptance verifies a fresh temporary `_test` database through 51 migrations, two concurrent bootstrap processes converging to one change and one zero-write replay, exact 11 Prompt / 1 Mock deployment / 7 route system counts, zero business/demo rows, a strict Mock mapping call, API and Worker startup verification, and deliberate configuration-drift startup rejection. The bootstrap uses the existing system tables, a serializable transaction, PostgreSQL advisory lock, bounded conflict retries, immutable content hashes, and one change audit.
+- Root/backend install scripts are explicit repository policy: approvals are exact-version, Scarf/`fsevents` remain denied, policy drift fails CI, and the runtime image is built from a clean production-only dependency stage.
 - R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
 - R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
 - Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.

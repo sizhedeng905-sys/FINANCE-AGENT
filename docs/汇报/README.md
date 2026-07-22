@@ -6,6 +6,7 @@
 
 ## 当前总览
 
+- [2026-07-23 夜间自主执行功能总述](OVERNIGHT_FUNCTIONAL_SUMMARY_2026-07-23.md)
 - [实施进度](IMPLEMENTATION_PROGRESS.md)
 - [发布候选审计台账](RELEASE_CANDIDATE_AUDIT.md)
 - [B8 阻断问题矩阵](B8_BLOCKER_MATRIX.md)

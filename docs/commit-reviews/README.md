@@ -50,21 +50,24 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-036 | [CR-036_parameterized-staging-topology.md](CR-036_parameterized-staging-topology.md) | `feat: parameterize staging deployment topology` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_ENVIRONMENT_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-035 |
 | CR-037 | [CR-037_fail-closed-target-profile.md](CR-037_fail-closed-target-profile.md) | `feat: enforce fail-closed staging target profile` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_RESOURCES_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-036 |
 | CR-038 | [CR-038_read-only-target-preflight.md](CR-038_read-only-target-preflight.md) | `feat: add read-only staging target preflight` | P2 deployment evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_TARGET_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-037 |
-| CR-039 | [CR-039_progress-checkpoint-one.md](CR-039_progress-checkpoint-one.md) | `docs: add progress checkpoint one` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED / REMOTE_PUSH_PENDING | CR-038 |
-| CR-040 | [CR-040_file-secret-alert-delivery.md](CR-040_file-secret-alert-delivery.md) | `feat: add file-secret alert delivery framework` | P2 deployment evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_RECEIVER_BLOCKED_EXTERNAL / REMOTE_CI_PENDING | CR-039 |
-| CR-041 | [CR-041_digest-only-registry-signatures.md](CR-041_digest-only-registry-signatures.md) | `feat: verify digest-only registry signatures` | P2 supply-chain evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_REGISTRY_AND_TRUST_ROOT_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-040 |
-| CR-042 | [CR-042_value-free-secret-lifecycle.md](CR-042_value-free-secret-lifecycle.md) | `feat: add value-free secret lifecycle gates` | P2 secret lifecycle | SYNTHETIC_ENGINEERING_VERIFIED / REAL_PROVIDER_ROTATION_BLOCKED_EXTERNAL / H14_POLICY_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-041 |
-| CR-043 | [CR-043_offsite-backup-evidence-contracts.md](CR-043_offsite-backup-evidence-contracts.md) | `feat: add offsite backup evidence contracts` | P2 disaster-recovery evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_OFFSITE_RESTORE_BLOCKED_EXTERNAL / H14_TARGETS_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-042 |
-| CR-044 | [CR-044_prisma-format-gate.md](CR-044_prisma-format-gate.md) | `fix: restore Prisma format gate` | P0 CI acceptance | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-043 |
-| CR-045 | [CR-045_staging-parameterization-regression.md](CR-045_staging-parameterization-regression.md) | `test: align staging parameterization assertions` | P0 CI regression | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-044 |
-| CR-046 | [CR-046_dependency-install-runtime-image-hardening.md](CR-046_dependency-install-runtime-image-hardening.md) | `build: harden dependency install and runtime image` | P1 supply chain | LOCAL_ENGINEERING_VERIFIED / REMOTE_IMAGE_SCAN_PENDING / REAL_STAGING_LOGS_BLOCKED_EXTERNAL | CR-045 |
+| CR-039 | [CR-039_progress-checkpoint-one.md](CR-039_progress-checkpoint-one.md) | `docs: add progress checkpoint one` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED / REMOTE_PUSHED | CR-038 |
+| CR-040 | [CR-040_file-secret-alert-delivery.md](CR-040_file-secret-alert-delivery.md) | `feat: add file-secret alert delivery framework` | P2 deployment evidence | REMOTE_SYNTHETIC_VERIFIED / REAL_RECEIVER_BLOCKED_EXTERNAL | CR-039 |
+| CR-041 | [CR-041_digest-only-registry-signatures.md](CR-041_digest-only-registry-signatures.md) | `feat: verify digest-only registry signatures` | P2 supply-chain evidence | REMOTE_SYNTHETIC_VERIFIED / REAL_REGISTRY_AND_TRUST_ROOT_BLOCKED_EXTERNAL | CR-040 |
+| CR-042 | [CR-042_value-free-secret-lifecycle.md](CR-042_value-free-secret-lifecycle.md) | `feat: add value-free secret lifecycle gates` | P2 secret lifecycle | REMOTE_SYNTHETIC_VERIFIED / REAL_PROVIDER_ROTATION_BLOCKED_EXTERNAL / H14_POLICY_PENDING | CR-041 |
+| CR-043 | [CR-043_offsite-backup-evidence-contracts.md](CR-043_offsite-backup-evidence-contracts.md) | `feat: add offsite backup evidence contracts` | P2 disaster-recovery evidence | REMOTE_SYNTHETIC_VERIFIED / REAL_OFFSITE_RESTORE_BLOCKED_EXTERNAL / H14_TARGETS_PENDING | CR-042 |
+| CR-044 | [CR-044_prisma-format-gate.md](CR-044_prisma-format-gate.md) | `fix: restore Prisma format gate` | P0 CI acceptance | REMOTE_ENGINEERING_VERIFIED | CR-043 |
+| CR-045 | [CR-045_staging-parameterization-regression.md](CR-045_staging-parameterization-regression.md) | `test: align staging parameterization assertions` | P0 CI regression | REMOTE_ENGINEERING_VERIFIED | CR-044 |
+| CR-046 | [CR-046_dependency-install-runtime-image-hardening.md](CR-046_dependency-install-runtime-image-hardening.md) | `build: harden dependency install and runtime image` | P1 supply chain | REMOTE_ENGINEERING_VERIFIED / REAL_STAGING_LOGS_BLOCKED_EXTERNAL | CR-045 |
+| CR-047 | [CR-047_overnight-fact-sync.md](CR-047_overnight-fact-sync.md) | `docs: close overnight evidence and handoff` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED | CR-046 |
+
+当前远端校准：CR-015 至 CR-046 的实现均已包含在运行时树 `5c16f3e`，该树的 Build and acceptance 与 CodeQL 已通过。CR-015 至 CR-038 行内保留的 `REMOTE_PUSH_BLOCKED_EXTERNAL` 是各审查文档提交时的历史状态，不代表当前分支仍未推送；真实样本、目标环境和 owner UAT 等业务门禁仍按各行原义保持开放。
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015/016 已推送但同一远端构建被新出现的高危依赖公告拦截；CR-017 至 CR-020 已在本地关闭 canonical review basis、依赖公告、审核真值和整批幂等完整性缺口，CR-021 已将完整 AI 审核摘要绑定到校验、批准与 Worker 发布链，CR-022 已在确认页显示并门禁同一摘要，CR-023 已增加数据库 append-only 与父对象 Restrict 门禁，同时保留周五 Demo，远端推送暂受网络阻塞。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011/012 建立可重复周五演示，CR-013 至 CR-023 把受控建议、完整人工决定、canonical basis、摘要绑定、幂等审核和 append-only 证据接入 Excel 批准链。当前树已推送并取得同 SHA Build/CodeQL 绿色；真实财务口径与负责人 UAT 仍未完成。
 - OCR 与报告财务复核：CR-024 至 CR-031 已建立 OCR 状态前置条件、原值保全、不可变审核证据、完整批次复核、摘要绑定、刷新恢复和测试清理；CR-032 已把该链路接入财务工作台并用合成 API E2E 验证换人复核、失败关闭和移动端边界；CR-033 已接入只读、分页、可筛选且绑定快照水位的报告来源明细；CR-034/035 已增加默认关闭、财务后老板两阶段、append-only 的 Narrative 文本复核后端与角色工作台。OQ-03 正式政策、真实 OCR/AI 准确率和负责人 UAT 仍未完成。
-- Staging、模型网络和发布证据：CR-036 已参数化目标边界；CR-037 已阻断 target 复用本地 CA/identity/seed/域名/初始化和 mutable image；CR-038 已增加 17 项只读、匿名目标预检及普通 CI 合成门禁；CR-040 已增加 target-only file-secret 告警路由、双重授权和本机 firing/resolved 合成送达。真实接收端和目标运行结果仍受 H13-H16 门禁约束，本机 Demo 保持不变。
+- Staging、模型网络和发布证据：CR-036 已参数化目标边界；CR-037 阻断 target 复用本地 CA/identity/seed/域名/初始化和 mutable image；CR-038 增加只读目标预检；CR-040 至 CR-043 增加告警、digest-only 签名、无值 secret 生命周期和异地备份证据契约；CR-044 至 CR-046 恢复远端门禁并收紧依赖/镜像。当前树远端合成验收通过，真实接收端、registry、目标运行和异地恢复仍受 H13-H16 门禁约束。
 
 ## 历史说明
 
