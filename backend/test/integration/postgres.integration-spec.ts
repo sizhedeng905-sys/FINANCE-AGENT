@@ -8044,6 +8044,7 @@ describe('real PostgreSQL integration', () => {
       const candidates = recognized.body.data.fields as Array<{
         fieldId: string;
         fieldName: string;
+        rawValue: unknown;
         normalizedValue: unknown;
         confidence: number;
         lowConfidence: boolean;
@@ -8054,6 +8055,7 @@ describe('real PostgreSQL integration', () => {
       expect(lowField).toMatchObject({ confidence: 0.55, lowConfidence: true });
       expect(amountField).toBeTruthy();
       expect(candidates.every((candidate) => candidate.evidenceRefs.length > 0)).toBe(true);
+      const originalRawValues = new Map(candidates.map((candidate) => [candidate.fieldId, candidate.rawValue]));
       const storedOcrIr = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
       expect(storedOcrIr).toMatchObject({
         sourceSha256: storedFile.sha256,
@@ -8177,6 +8179,22 @@ describe('real PostgreSQL integration', () => {
           overrideType: 'MANUAL_OVERRIDE'
         })
       ]));
+      const correctedLowField = corrected.body.data.fields.find(
+        (candidate: { fieldId: string }) => candidate.fieldId === lowField!.fieldId
+      );
+      const correctedAmountField = corrected.body.data.fields.find(
+        (candidate: { fieldId: string }) => candidate.fieldId === amountField!.fieldId
+      );
+      expect(correctedLowField).toMatchObject({
+        rawValue: originalRawValues.get(lowField!.fieldId),
+        normalizedValue: '2026-07-01',
+        valueSource: 'MANUAL_OVERRIDE'
+      });
+      expect(correctedAmountField).toMatchObject({
+        rawValue: originalRawValues.get(amountField!.fieldId),
+        normalizedValue: '1299.25',
+        valueSource: 'MANUAL_OVERRIDE'
+      });
       expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(2);
 
       await request(app.getHttpServer())

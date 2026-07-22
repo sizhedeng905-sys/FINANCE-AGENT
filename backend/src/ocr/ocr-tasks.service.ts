@@ -825,7 +825,6 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         }
         candidates[index] = {
           ...before,
-          rawValue: correction.correctedValue,
           normalizedValue: normalized,
           confidence: 1,
           evidence: reason,
