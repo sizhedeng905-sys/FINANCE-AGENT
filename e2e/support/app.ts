@@ -1,4 +1,4 @@
-import { expect, type Page, type Response } from '@playwright/test';
+import { expect, type APIResponse, type Page, type Response } from '@playwright/test';
 
 export const API_FRONTEND_URL = 'http://127.0.0.1:4173';
 export const MOCK_FRONTEND_URL = 'http://127.0.0.1:4174';
@@ -48,6 +48,14 @@ export async function completeApprovalModal(page: Page, title: string, comment: 
 
 export async function readEnvelope<T>(response: Response): Promise<Envelope<T>> {
   expect(response.ok(), `${response.request().method()} ${response.url()} should succeed`).toBeTruthy();
+  const body = await response.json() as Envelope<T>;
+  expect(body.code, `${response.url()} should return code=0`).toBe(0);
+  expect(body.message).toBe('success');
+  return body;
+}
+
+export async function readApiEnvelope<T>(response: APIResponse): Promise<Envelope<T>> {
+  expect(response.ok(), `${response.url()} should succeed`).toBeTruthy();
   const body = await response.json() as Envelope<T>;
   expect(body.code, `${response.url()} should return code=0`).toBe(0);
   expect(body.message).toBe('success');

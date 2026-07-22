@@ -5,10 +5,15 @@ import type {
   CreateOCRTaskPayload,
   OCRConfirmResult,
   OCRAiSuggestionResult,
+  OCRAiSuggestionHistory,
+  OCRAiReviewDecisionQuery,
   OCRTask,
   OCRTaskListQuery,
   PaginatedOCRTasks,
+  PaginatedOCRAiReviewDecisions,
   RevalidateOCRTaskPayload,
+  ReviewOCRAiSuggestionsPayload,
+  ReviewOCRAiSuggestionsResult,
 } from '@/types/dataCenter';
 import { httpClient } from './httpClient';
 import {
@@ -18,7 +23,10 @@ import {
   mockCreateOCRTask,
   mockGetOCRTask,
   mockGetOCRTasks,
+  mockGetOCRAiReviews,
+  mockGetOCRAiSuggestionHistory,
   mockRequestOCRAiSuggestions,
+  mockReviewOCRAiSuggestions,
   mockRevalidateOCRTask,
   mockRetryOCRTask,
   mockRunOCRTask,
@@ -101,6 +109,30 @@ export function requestOCRAiSuggestions(id: string): Promise<OCRAiSuggestionResu
   return runtimeConfig.dataMode === 'api'
     ? httpClient.post<OCRAiSuggestionResult>(`/ocr-tasks/${encodeURIComponent(id)}/ai-suggestions`)
     : mockRequestOCRAiSuggestions(id);
+}
+
+export function getOCRAiSuggestionHistory(id: string): Promise<OCRAiSuggestionHistory> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<OCRAiSuggestionHistory>(`/ocr-tasks/${encodeURIComponent(id)}/ai-suggestions`)
+    : mockGetOCRAiSuggestionHistory(id);
+}
+
+export function reviewOCRAiSuggestions(
+  id: string,
+  payload: ReviewOCRAiSuggestionsPayload,
+): Promise<ReviewOCRAiSuggestionsResult> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.put<ReviewOCRAiSuggestionsResult>(`/ocr-tasks/${encodeURIComponent(id)}/ai-reviews`, payload)
+    : mockReviewOCRAiSuggestions(id, payload);
+}
+
+export function getOCRAiReviews(
+  id: string,
+  query: OCRAiReviewDecisionQuery = {},
+): Promise<PaginatedOCRAiReviewDecisions> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedOCRAiReviewDecisions>(`/ocr-tasks/${encodeURIComponent(id)}/ai-reviews${queryString(query)}`)
+    : mockGetOCRAiReviews(id, query);
 }
 
 export function confirmOCRTask(id: string, payload: ConfirmOCRTaskPayload): Promise<OCRConfirmResult> {

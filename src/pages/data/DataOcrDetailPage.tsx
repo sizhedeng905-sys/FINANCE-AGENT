@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BulbOutlined,
   EditOutlined,
@@ -31,17 +31,29 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { requestOCRAiSuggestions } from '@/api/ocrApi';
+import {
+  getOCRAiReviews,
+  getOCRAiSuggestionHistory,
+  requestOCRAiSuggestions,
+} from '@/api/ocrApi';
+import OcrAiReviewEvidence from '@/components/data/OcrAiReviewEvidence';
+import OcrAiReviewWorkspace from '@/components/data/OcrAiReviewWorkspace';
 import OcrEvidencePreview from '@/components/data/OcrEvidencePreview';
 import PageHeader from '@/components/PageHeader';
 import AttachmentPreview from '@/components/workOrder/AttachmentPreview';
 import { useAuthStore } from '@/store/authStore';
 import { useOCRStore } from '@/store/ocrStore';
 import type {
+  OCRAiClassificationOutput,
+  OCRAiMappingOutput,
   OCRAiSuggestionResult,
+  OCRAiSuggestionHistory,
   OCRAttempt,
   OCRCorrection,
   OCRFieldCandidate,
+  OCRTask,
+  PaginatedOCRAiReviewDecisions,
+  ReviewOCRAiSuggestionsResult,
 } from '@/types/dataCenter';
 import { fieldTypeMap, ocrStatusMap } from '@/utils/dataCenterMaps';
 
@@ -51,7 +63,12 @@ interface CorrectionForm {
   evidenceRefs: string[];
 }
 
-type AiMapping = NonNullable<NonNullable<OCRAiSuggestionResult['mapping']>['output']>['mappings'][number];
+interface AiReviewLoadState {
+  requestKey: string;
+  loading: boolean;
+  data?: PaginatedOCRAiReviewDecisions;
+  error?: string;
+}
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === '') return '-';
@@ -74,7 +91,15 @@ export default function DataOcrDetailPage() {
   const [activeTab, setActiveTab] = useState('fields');
   const [acknowledged, setAcknowledged] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<OCRAiSuggestionResult>();
+  const [restoredAiSuggestion, setRestoredAiSuggestion] = useState<OCRAiSuggestionResult>();
+  const [aiHistoryError, setAiHistoryError] = useState<string>();
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiReviewPage, setAiReviewPage] = useState(1);
+  const [aiReviewPageSize, setAiReviewPageSize] = useState(20);
+  const [aiReviewRefresh, setAiReviewRefresh] = useState(0);
+  const [aiReviewState, setAiReviewState] = useState<AiReviewLoadState>();
+  const aiReviewRequestEpoch = useRef(0);
+  const aiHistoryRequestEpoch = useRef(0);
   const [form] = Form.useForm<CorrectionForm>();
   const currentUser = useAuthStore((state) => state.user);
   const task = useOCRStore((state) => state.currentTask?.id === id ? state.currentTask : undefined);
@@ -99,7 +124,57 @@ export default function DataOcrDetailPage() {
 
   useEffect(() => {
     setAiSuggestion(undefined);
+    setRestoredAiSuggestion(undefined);
+    setAcknowledged(false);
   }, [id, task?.reviewRevision]);
+
+  useEffect(() => {
+    setAiReviewPage(1);
+  }, [id, currentUser?.id]);
+
+  const aiReviewRequestKey = id && currentUser?.id
+    ? `${id}:${currentUser.id}:${task?.reviewRevision ?? 'unknown'}:${task?.validation?.snapshotHash ?? 'unvalidated'}:${aiReviewPage}:${aiReviewPageSize}:${aiReviewRefresh}`
+    : undefined;
+
+  useEffect(() => {
+    const epoch = ++aiReviewRequestEpoch.current;
+    if (!id || !currentUser?.id || !aiReviewRequestKey) return;
+    setAiReviewState({ requestKey: aiReviewRequestKey, loading: true });
+    void getOCRAiReviews(id, { page: aiReviewPage, pageSize: aiReviewPageSize })
+      .then((data) => {
+        if (aiReviewRequestEpoch.current !== epoch) return;
+        setAiReviewState({ requestKey: aiReviewRequestKey, loading: false, data });
+      })
+      .catch((nextError) => {
+        if (aiReviewRequestEpoch.current !== epoch) return;
+        setAiReviewState({
+          requestKey: aiReviewRequestKey,
+          loading: false,
+          error: nextError instanceof Error ? nextError.message : 'AI 审核证据加载失败',
+        });
+      });
+    return () => {
+      if (aiReviewRequestEpoch.current === epoch) aiReviewRequestEpoch.current += 1;
+    };
+  }, [aiReviewPage, aiReviewPageSize, aiReviewRequestKey, currentUser?.id, id]);
+
+  useEffect(() => {
+    const epoch = ++aiHistoryRequestEpoch.current;
+    if (!id || !currentUser?.id || !task) return;
+    setAiHistoryError(undefined);
+    void getOCRAiSuggestionHistory(id)
+      .then((history) => {
+        if (aiHistoryRequestEpoch.current !== epoch) return;
+        setRestoredAiSuggestion(restoreSuggestionFromHistory(history, task));
+      })
+      .catch((nextError) => {
+        if (aiHistoryRequestEpoch.current !== epoch) return;
+        setAiHistoryError(nextError instanceof Error ? nextError.message : 'AI 建议历史加载失败');
+      });
+    return () => {
+      if (aiHistoryRequestEpoch.current === epoch) aiHistoryRequestEpoch.current += 1;
+    };
+  }, [currentUser?.id, id, task?.id, task?.reviewRevision]);
 
   const unresolved = useMemo(
     () => task?.fields.filter((field) => (
@@ -131,13 +206,36 @@ export default function DataOcrDetailPage() {
   const validationWarnings = currentValidation?.snapshot.warnings ?? [];
   const needsAcknowledgement = unresolved.length > 0 || validationWarnings.length > 0;
   const isSelfApproval = Boolean(task?.uploadedById && task.uploadedById === currentUser?.id);
+  const currentAiReviewState = aiReviewState?.requestKey === aiReviewRequestKey ? aiReviewState : undefined;
+  const aiReviewEvidenceReady = Boolean(
+    aiReviewRequestKey
+    && currentAiReviewState?.data
+    && !currentAiReviewState.loading
+    && !currentAiReviewState.error,
+  );
+  const aiReviewDigestMatches = Boolean(
+    currentValidation
+    && currentAiReviewState?.data
+    && currentAiReviewState.data.digest.taskReviewRevision === task?.reviewRevision
+    && currentAiReviewState.data.digest.decisionCount === currentAiReviewState.data.total
+    && currentAiReviewState.data.digest.summary.pending === 0
+    && currentAiReviewState.data.digest.digestHash === currentValidation.snapshot.aiReview.digestHash,
+  );
   const canConfirm = task?.status === 'pending_confirm'
     && Boolean(currentValidation?.snapshot.valid)
     && (!needsAcknowledgement || acknowledged)
-    && !isSelfApproval;
+    && !isSelfApproval
+    && aiReviewEvidenceReady
+    && aiReviewDigestMatches;
   const confirmDisabledReason = isSelfApproval
     ? '上传者不能审批同一 OCR 任务，请由另一名财务人员复核。'
-    : '当前审核修订必须先通过确定性校验，并处理所有阻断问题。';
+    : !aiReviewEvidenceReady
+      ? 'AI/人工审核证据尚未安全加载，最终批准已暂停。'
+      : !aiReviewDigestMatches
+        ? '审核证据与当前校验快照不一致，请重新校验。'
+        : '当前审核修订必须先通过确定性校验，并处理所有阻断问题。';
+  const effectiveAiSuggestion = aiSuggestion
+    ?? (currentAiReviewState?.data?.total ? undefined : restoredAiSuggestion);
 
   const availableEvidenceRefs = useMemo(() => {
     if (!candidate) return [];
@@ -202,12 +300,23 @@ export default function DataOcrDetailPage() {
     try {
       const result = await requestOCRAiSuggestions(id);
       setAiSuggestion(result);
+      setRestoredAiSuggestion(undefined);
       setActiveTab('ai');
       if (result.mode === 'manual') message.warning('AI 建议不可用，已保留人工复核路径');
       else message.success('AI 建议已生成，尚未应用或入账');
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const savedAiReview = async (_result: ReviewOCRAiSuggestionsResult) => {
+    if (!id) return;
+    setAiSuggestion(undefined);
+    setRestoredAiSuggestion(undefined);
+    setAcknowledged(false);
+    await fetchTask(id);
+    setAiReviewPage(1);
+    setAiReviewRefresh((value) => value + 1);
   };
 
   const confirm = async () => {
@@ -326,18 +435,6 @@ export default function DataOcrDetailPage() {
     { title: '时间', dataIndex: 'correctedAt', render: (value: string) => new Date(value).toLocaleString('zh-CN') },
   ];
 
-  const aiMappingColumns: ColumnsType<AiMapping> = [
-    { title: '来源', dataIndex: 'sourceRef' },
-    { title: '目标字段', render: (_, item) => item.targetFieldName ?? item.targetFieldKey },
-    { title: '确定性转换', dataIndex: 'transformKey' },
-    { title: '证据', dataIndex: 'evidenceRefs', render: (refs: string[]) => refs.map((ref) => <Tag key={ref}>{ref}</Tag>) },
-    {
-      title: '置信度',
-      dataIndex: 'confidence',
-      render: (value: string) => <Tag color="gold">{confidencePercent(value)} · 仅供参考</Tag>,
-    },
-  ];
-
   if (!id) return <Card><Empty description="OCR任务不存在" /></Card>;
 
   return (
@@ -416,6 +513,26 @@ export default function DataOcrDetailPage() {
                   : validationWarnings.length ? `${validationWarnings.length} 个非阻断警告仍需人工确认` : `规则 ${currentValidation.ruleVersion}`}
               />
             ) : null}
+            {currentValidation && aiReviewEvidenceReady && !aiReviewDigestMatches ? (
+              <Alert
+                className="section-row"
+                type="error"
+                showIcon
+                message="审核证据与当前校验快照不一致"
+                description="请刷新证据并重新校验；最终批准已暂停。"
+              />
+            ) : null}
+
+            <OcrAiReviewEvidence
+              data={currentAiReviewState?.data}
+              loading={Boolean(aiReviewRequestKey) && (!currentAiReviewState || currentAiReviewState.loading)}
+              error={currentAiReviewState?.error}
+              fields={task.fields}
+              onPageChange={(nextPage, nextPageSize) => {
+                setAiReviewPage(nextPage);
+                setAiReviewPageSize(nextPageSize);
+              }}
+            />
 
             <Row gutter={[16, 16]} className="section-row">
               <Col xs={12} md={6}><Card><Statistic title="字段数" value={task.fields.length} /></Card></Col>
@@ -454,56 +571,32 @@ export default function DataOcrDetailPage() {
                   key: 'ai',
                   label: 'AI建议',
                   children: (
-                    <Card
-                      title="分类与字段映射建议"
-                      extra={task.status === 'pending_confirm' ? (
-                        <Button icon={<BulbOutlined />} loading={aiLoading} onClick={() => void requestSuggestions().catch((nextError) => message.error(nextError instanceof Error ? nextError.message : 'AI建议生成失败'))}>
-                          生成建议
-                        </Button>
+                    <>
+                      {aiHistoryError ? (
+                        <Alert
+                          className="section-row"
+                          type="warning"
+                          showIcon
+                          message="历史 AI 建议恢复失败"
+                          description={`${aiHistoryError}；可重新获取建议或继续人工纠错。`}
+                        />
                       ) : null}
-                    >
-                      {!aiSuggestion ? <Empty description="尚未生成 AI 建议" /> : aiSuggestion.mode === 'manual' ? (
-                        <Alert type="warning" showIcon message="已转人工复核" description={`${aiSuggestion.reasonCode ?? 'AI_UNAVAILABLE'}：${aiSuggestion.message ?? 'AI建议不可用'}`} />
-                      ) : (
-                        <Space direction="vertical" size="middle" className="full-width">
-                          <Alert type="info" showIcon message="AI 结果仅为建议，不会自动应用、批准或入账" />
-                          <Space wrap>
-                            {aiSuggestion.mock ? <Tag color="warning">Mock（仅测试）</Tag> : null}
-                            <Tag>{aiSuggestion.classification?.provider ?? '-'}</Tag>
-                            <Tag>{aiSuggestion.classification?.model ?? '-'}</Tag>
-                            <Tag>Prompt {aiSuggestion.classification?.promptVersion ?? '-'}</Tag>
-                            <Tag>{aiSuggestion.classification?.output?.decision ?? '-'}</Tag>
-                            <Tag color="gold">分类置信度 {confidencePercent(aiSuggestion.classification?.output?.confidence)} · 仅供参考</Tag>
-                          </Space>
-                          <Descriptions bordered size="small" column={{ xs: 1, md: 2 }}>
-                            <Descriptions.Item label="候选模板版本">
-                              {aiSuggestion.classification?.output?.selectedTemplateVersionId ?? '未选择'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="分类理由">
-                              {aiSuggestion.classification?.output?.reasonCodes.join('、') || '-'}
-                            </Descriptions.Item>
-                          </Descriptions>
-                          {(aiSuggestion.classification?.output?.warnings ?? []).map((warning) => <Alert key={warning} type="warning" showIcon message={warning} />)}
-                          <Table
-                            rowKey={(item) => `${item.sourceRef}:${item.targetFieldKey}`}
-                            columns={aiMappingColumns}
-                            dataSource={aiSuggestion.mapping?.output?.mappings ?? []}
-                            pagination={false}
-                            scroll={{ x: 760 }}
-                          />
-                          {(aiSuggestion.mapping?.output?.unresolvedRequiredFields.length ?? 0) > 0 ? (
-                            <Alert type="error" showIcon message={`未解决必填字段：${aiSuggestion.mapping?.output?.unresolvedRequiredFields.join('、')}`} />
-                          ) : null}
-                          {(aiSuggestion.mapping?.output?.unmappedSourceRefs.length ?? 0) > 0 ? (
-                            <Alert type="warning" showIcon message={`未映射来源：${aiSuggestion.mapping?.output?.unmappedSourceRefs.join('、')}`} />
-                          ) : null}
-                          {(aiSuggestion.conflicts?.length ?? 0) > 0 ? (
-                            <Alert type="error" showIcon message={`证据冲突：${aiSuggestion.conflicts?.map((item) => item.sourceRef).join('、')}`} />
-                          ) : null}
-                          {(aiSuggestion.mapping?.output?.warnings ?? []).map((warning) => <Alert key={warning} type="warning" showIcon message={warning} />)}
-                        </Space>
-                      )}
-                    </Card>
+                      <OcrAiReviewWorkspace
+                        task={task}
+                        suggestion={effectiveAiSuggestion}
+                        loading={aiLoading}
+                        reviewEvidenceReady={aiReviewEvidenceReady}
+                        persistedDecisionCount={currentAiReviewState?.data?.total ?? 0}
+                        onRequest={() => requestSuggestions().catch((nextError) => {
+                          message.error(nextError instanceof Error ? nextError.message : 'AI建议生成失败');
+                        })}
+                        onSaved={savedAiReview}
+                        onOpenEvidence={(fieldId) => {
+                          setEvidenceFieldId(fieldId);
+                          setActiveTab('evidence');
+                        }}
+                      />
+                    </>
                   ),
                 },
                 {
@@ -637,6 +730,68 @@ export default function DataOcrDetailPage() {
       </Modal>
     </div>
   );
+}
+
+function restoreSuggestionFromHistory(
+  history: OCRAiSuggestionHistory,
+  task: OCRTask,
+): OCRAiSuggestionResult | undefined {
+  const mappingItem = history.items.find((item) => (
+    item.taskType === 'ocr_field_mapping'
+    && item.status === 'succeeded'
+    && item.output
+    && item.outputHash
+    && item.versionVectorHash
+    && item.reviewBasis
+  ));
+  if (!mappingItem) return undefined;
+  const mappingOutput = mappingItem.output as OCRAiMappingOutput;
+  const reviewStateHash = mappingItem.reviewBasis!.reviewState.stateHash;
+  const classificationItem = history.items.find((item) => (
+    item.taskType === 'ocr_document_classification'
+    && item.status === 'succeeded'
+    && item.output
+    && item.reviewBasis?.reviewState.stateHash === reviewStateHash
+  ));
+  const fieldByKey = new Map(task.fields.map((field) => [field.fieldKey, field]));
+  const execution = <T,>(item: OCRAiSuggestionHistory['items'][number], output: T) => ({
+    status: item.status,
+    aiTaskId: item.id,
+    requestKey: item.requestKey,
+    reused: true,
+    provider: item.provenance?.provider ?? item.attempt?.provider,
+    providerClass: item.provenance?.providerClass,
+    model: item.provenance?.modelName ?? item.attempt?.model,
+    promptVersion: item.provenance
+      ? `${item.provenance.promptKey}:v${item.provenance.promptVersion ?? '?'}`
+      : undefined,
+    outputHash: item.outputHash,
+    versionVectorHash: item.versionVectorHash,
+    reviewBasis: item.reviewBasis,
+    output,
+  });
+  return {
+    status: 'needs_finance_review',
+    mode: 'suggest',
+    mock: mappingItem.provenance?.providerClass === 'mock',
+    businessRecordsCreated: 0,
+    classification: classificationItem
+      ? execution(classificationItem, classificationItem.output as OCRAiClassificationOutput)
+      : null,
+    mapping: execution(mappingItem, {
+      ...mappingOutput,
+      mappings: mappingOutput.mappings.map((mapping) => {
+        const field = fieldByKey.get(mapping.targetFieldKey);
+        return {
+          ...mapping,
+          targetFieldId: field?.fieldId,
+          targetFieldName: field?.fieldName,
+        };
+      }),
+    }),
+    conflicts: [],
+    aiCalls: 0,
+  };
 }
 
 function collectPageEvidenceRefs(textBlocks: Array<Record<string, unknown>>, page: number) {

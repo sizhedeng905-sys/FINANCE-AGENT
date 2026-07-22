@@ -5,6 +5,7 @@ import {
   isApiResponse,
   login,
   logout,
+  readApiEnvelope,
   readEnvelope,
   selectOption
 } from './support/app';
@@ -43,6 +44,15 @@ interface RecordDto {
   status: string;
 }
 
+interface OcrAiReviewResultDto {
+  taskId: string;
+  version: number;
+  reviewRevision: number;
+  decisionCount: number;
+  summary: { total: number; accept: number; edit: number; reject: number; ignore: number; pending: number };
+  businessRecordsCreated: number;
+}
+
 test('API mode: finance corrects OCR evidence before creating a business record', async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E OCR 标准票据.pdf');
@@ -76,8 +86,8 @@ test('API mode: finance corrects OCR evidence before creating a business record'
   const aiSuggestion = await readEnvelope<{ mode: string; mock: boolean; businessRecordsCreated: number }>(await aiResponse);
   expect(aiSuggestion.data).toMatchObject({ mode: 'suggest', mock: true, businessRecordsCreated: 0 });
   await expect(page.getByRole('tab', { name: 'AI建议' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('Mock（仅测试）')).toBeVisible();
-  await expect(page.getByText('AI 结果仅为建议，不会自动应用、批准或入账')).toBeVisible();
+  await expect(page.getByText('Mock Provider（仅测试）')).toBeVisible();
+  await expect(page.getByText('AI 结果仅为建议，必须由财务逐项决定')).toBeVisible();
   await expect(page.locator('.ant-tabs-tabpane-active .ant-table-row').filter({ hasText: '金额' }).first()).toBeVisible();
 
   await page.getByRole('tab', { name: '结构化字段' }).click();
@@ -169,4 +179,175 @@ test('API mode: finance corrects OCR evidence before creating a business record'
     expect.objectContaining({ sourceType: 'ocr', sourceId: created.data.id, amount: '1366.66' })
   ]));
   await expect(page.locator('.ant-table-row').filter({ hasText: '1,366.66' })).toContainText('OCR');
+});
+
+test('API mode: persisted OCR AI review survives finance handoff and binds approval', async ({ page }) => {
+  test.setTimeout(120_000);
+  const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E OCR 标准票据.pdf');
+
+  await login(page, 'finance', '/finance/home');
+  await page.goto(`${API_FRONTEND_URL}/data/ocr`);
+  await selectOption(page, '项目', '太和中转项目');
+  await selectOption(page, '模板', '报销工单模板');
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+
+  const createResponse = page.waitForResponse((response) => isApiResponse(response, 'POST', '/api/ocr-tasks/upload'));
+  await page.getByRole('button', { name: '上传并识别' }).click();
+  const created = await readEnvelope<OcrTaskDto>(await createResponse);
+  await expect(page.locator('.ant-table-row').filter({ hasText: '金额' }).first()).toBeVisible({ timeout: 30_000 });
+
+  const recordsBefore = await readApiEnvelope<{ items: RecordDto[] }>(await page.request.get(
+    'http://127.0.0.1:3101/api/records?page=1&pageSize=100'
+  ));
+  expect(recordsBefore.data.items.filter((record) => record.sourceId === created.data.id)).toHaveLength(0);
+
+  const aiResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/ocr-tasks/${created.data.id}/ai-suggestions`
+  ));
+  await page.getByRole('button', { name: /生成 AI 建议/ }).first().click();
+  const aiSuggestion = await readEnvelope<{ mode: string; mock: boolean; businessRecordsCreated: number }>(await aiResponse);
+  expect(aiSuggestion.data).toMatchObject({ mode: 'suggest', mock: true, businessRecordsCreated: 0 });
+  await expect(page.getByText('Mock Provider（仅测试）')).toBeVisible();
+  await expect(page.getByText('AI 结果仅为建议，必须由财务逐项决定')).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('tab', { name: 'AI建议' }).click();
+  await expect(page.getByText('Mock Provider（仅测试）')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: '保存完整复核' })).toBeVisible();
+
+  await page.getByRole('button', { name: '将已映射项设为采纳' }).click();
+  const amountReviewRow = page.locator('.ocr-ai-review-draft-row').filter({ hasText: '金额' }).first();
+  await amountReviewRow.locator('.ant-select-selector').first().click();
+  await page.locator('.ant-select-item-option').filter({ hasText: '人工修改' }).click();
+  await amountReviewRow.getByLabel('最终值-金额').fill('1366.66');
+  await amountReviewRow.getByLabel('复核理由-金额').fill('E2E 财务依据原票据修正 AI 金额');
+  await expect(page.getByText(/待处理 0/)).toBeVisible();
+  const reviewResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'PUT',
+    `/api/ocr-tasks/${created.data.id}/ai-reviews`
+  ));
+  await page.getByRole('button', { name: '保存完整复核' }).click();
+  const reviewed = await readEnvelope<OcrAiReviewResultDto>(await reviewResponse);
+  expect(reviewed.data).toMatchObject({
+    taskId: created.data.id,
+    decisionCount: reviewed.data.summary.total,
+    summary: { edit: 1, pending: 0 },
+    businessRecordsCreated: 0
+  });
+  await expect(page.getByText('AI 字段复核证据')).toBeVisible();
+  await expect(page.getByText(/证据摘要/)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText('AI 字段复核证据')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(`R${reviewed.data.reviewRevision} 已持久化`)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(
+    () => page.locator('.app-sider').evaluate((element) => element.getBoundingClientRect().width),
+    { timeout: 5_000 },
+  ).toBeLessThanOrEqual(1);
+  const mobileLayout = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    sider: (() => {
+      const element = document.querySelector<HTMLElement>('.app-sider');
+      if (!element) return null;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        className: element.className,
+        style: element.getAttribute('style'),
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        overflow: style.overflow,
+      };
+    })(),
+    offenders: [...document.querySelectorAll<HTMLElement>('body *')]
+      .map((element) => ({
+        tag: element.tagName,
+        className: element.className,
+        left: Math.round(element.getBoundingClientRect().left),
+        right: Math.round(element.getBoundingClientRect().right),
+        width: Math.round(element.getBoundingClientRect().width),
+      }))
+      .filter((element) => element.right > document.documentElement.clientWidth + 1 || element.left < -1)
+      .sort((left, right) => right.right - left.right)
+      .slice(0, 12),
+  }));
+  expect(mobileLayout.scrollWidth, JSON.stringify({ sider: mobileLayout.sider, offenders: mobileLayout.offenders }))
+    .toBeLessThanOrEqual(mobileLayout.clientWidth + 1);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const recordsAfterReview = await readApiEnvelope<{ items: RecordDto[] }>(await page.request.get(
+    'http://127.0.0.1:3101/api/records?page=1&pageSize=100'
+  ));
+  expect(recordsAfterReview.data.items.filter((record) => record.sourceId === created.data.id)).toHaveLength(0);
+
+  const usersResponse = await page.request.get('http://127.0.0.1:3101/api/users?page=1&pageSize=100&role=finance');
+  expect(usersResponse.ok()).toBeTruthy();
+  const usersEnvelope = await usersResponse.json() as {
+    code: number;
+    data: { items: Array<{ username: string; status: string }> };
+  };
+  const alternateFinance = usersEnvelope.data.items.find((user) => user.username !== 'finance' && user.status === 'active');
+  expect(alternateFinance, 'a second active finance account is required for separation of duties').toBeTruthy();
+  await logout(page);
+  await login(page, alternateFinance!.username, '/finance/home');
+  const reviewEvidencePattern = `**/api/ocr-tasks/${created.data.id}/ai-reviews*`;
+  await page.route(reviewEvidencePattern, (route) => route.abort('failed'));
+  await page.goto(`${API_FRONTEND_URL}/data/ocr/${created.data.id}`);
+  await expect(page.getByText('AI 审核证据加载失败，最终批准已暂停')).toBeVisible({ timeout: 30_000 });
+  const confirmButton = page.getByRole('button', { name: '确认并生成经营记录' });
+  await expect(confirmButton).toBeDisabled();
+  await page.unroute(reviewEvidencePattern);
+  await page.reload();
+  await expect(page.getByText('AI 字段复核证据')).toBeVisible({ timeout: 30_000 });
+  await expect(confirmButton).toBeDisabled();
+
+  const revalidateResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/ocr-tasks/${created.data.id}/revalidate`
+  ));
+  await page.getByRole('button', { name: '重新校验' }).click();
+  const revalidated = await readEnvelope<OcrTaskDto & {
+    validation: NonNullable<OcrTaskDto['validation']> & {
+      snapshot: NonNullable<OcrTaskDto['validation']>['snapshot'] & {
+        schemaVersion: 'ocr-validation/1.1';
+        aiReview: { digestHash: string; decisionCount: number; summary: { pending: number } };
+      };
+    };
+  }>(await revalidateResponse);
+  expect(revalidated.data.validation.snapshot).toMatchObject({
+    schemaVersion: 'ocr-validation/1.1',
+    valid: true,
+    aiReview: { decisionCount: reviewed.data.decisionCount, summary: { pending: 0 } }
+  });
+  await expect(confirmButton).toBeEnabled();
+
+  const confirmResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/ocr-tasks/${created.data.id}/confirm`
+  ));
+  await confirmButton.click();
+  const confirmed = await readEnvelope<{
+    task: OcrTaskDto & { approval: { snapshot: { schemaVersion: string; aiSuggestion: { reviewDigest: { digestHash: string } } } } };
+    record: RecordDto;
+    alreadyConfirmed: boolean;
+  }>(await confirmResponse);
+  expect(confirmed.data).toMatchObject({
+    task: { status: 'confirmed', approval: { snapshot: { schemaVersion: 'ocr-approval/1.1' } } },
+    record: { sourceType: 'ocr', sourceId: created.data.id, amount: '1366.66', status: 'confirmed' },
+    alreadyConfirmed: false
+  });
+  expect(confirmed.data.task.approval.snapshot.aiSuggestion.reviewDigest.digestHash)
+    .toBe(revalidated.data.validation.snapshot.aiReview.digestHash);
+
+  const recordsAfterApproval = await readApiEnvelope<{ items: RecordDto[] }>(await page.request.get(
+    'http://127.0.0.1:3101/api/records?page=1&pageSize=100'
+  ));
+  expect(recordsAfterApproval.data.items.filter((record) => record.sourceId === created.data.id)).toHaveLength(1);
 });

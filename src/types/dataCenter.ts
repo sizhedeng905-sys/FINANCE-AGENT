@@ -1016,7 +1016,7 @@ export interface OCRCorrection {
   originalConfidence?: number;
   reason: string;
   reviewRevision: number;
-  overrideType: 'MANUAL_OVERRIDE';
+  overrideType: 'MANUAL_OVERRIDE' | 'AI_ACCEPT' | 'AI_EDIT' | 'AI_REJECT' | 'AI_IGNORE';
   evidenceRefs: string[];
   correctedBy: string;
   correctedAt: string;
@@ -1063,9 +1063,10 @@ export interface OCRTask {
     snapshotHash: string;
     validatedAt: string;
     snapshot: {
-      schemaVersion: 'ocr-validation/1.0';
+      schemaVersion: 'ocr-validation/1.1';
       valid: boolean;
       candidatePayloadHash: string;
+      aiReview: OCRAiReviewDigest;
       blockingErrors: Array<{ issueId: string; code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
       warnings: Array<{ issueId: string; code: string; fieldId: string | null; message: string; evidenceRefs: string[] }>;
     };
@@ -1133,6 +1134,78 @@ export interface ConfirmOCRTaskPayload {
   acknowledgedWarningIds: string[];
 }
 
+export interface OCRAiReviewBasis {
+  schemaVersion: 'ai-review-basis/1.0';
+  taskType: string;
+  resourceType: 'ocr_task';
+  resourceId: string;
+  aiTaskId: string;
+  reviewState: {
+    schemaVersion: 'ocr-ai-review-state/1.0';
+    stateHash: string;
+  };
+  inputHash: string;
+  outputHash: string;
+  versionVectorHash: string;
+  basisHash: string;
+}
+
+export interface OCRAiClassificationOutput {
+  selectedTemplateVersionId: string | null;
+  candidateTemplateVersionIds: string[];
+  confidence: string;
+  evidenceRefs: string[];
+  reasonCodes: string[];
+  warnings: string[];
+  decision: 'NEEDS_FINANCE_REVIEW';
+}
+
+export interface OCRAiMappingItem {
+  sourceRef: string;
+  targetFieldKey: string;
+  targetFieldId?: string;
+  targetFieldName?: string;
+  transformKey: string;
+  confidence: string;
+  evidenceRefs: string[];
+  source?: {
+    sourceRef: string;
+    existingFieldKey: string;
+    sourceLabel: string;
+    fieldType: FieldType;
+    page: number;
+    confidence: string;
+    evidenceRefs: string[];
+    conflict: boolean;
+  };
+}
+
+export interface OCRAiMappingOutput {
+  templateVersionId?: string;
+  mappings: OCRAiMappingItem[];
+  unmappedSourceRefs: string[];
+  unresolvedRequiredFields: string[];
+  warnings: string[];
+  decision: 'NEEDS_FINANCE_REVIEW';
+}
+
+export interface OCRAiExecution<T> {
+  status: string;
+  aiTaskId?: string;
+  requestKey?: string;
+  reused?: boolean;
+  provider?: string;
+  providerClass?: 'mock' | 'local' | 'external';
+  model?: string;
+  promptVersion?: string;
+  promptExecutionHash?: string;
+  outputSchemaHash?: string;
+  outputHash?: string;
+  versionVectorHash?: string;
+  reviewBasis?: OCRAiReviewBasis;
+  output?: T;
+}
+
 export interface OCRAiSuggestionResult {
   status: 'needs_finance_review' | 'manual_required';
   mode: 'suggest' | 'manual';
@@ -1140,46 +1213,143 @@ export interface OCRAiSuggestionResult {
   reasonCode?: string;
   message?: string;
   businessRecordsCreated: 0;
-  classification?: {
-    status: string;
-    provider?: string;
-    providerClass?: string;
-    model?: string;
-    promptVersion?: string;
-    output?: {
-      selectedTemplateVersionId: string | null;
-      candidateTemplateVersionIds: string[];
-      confidence: string;
-      evidenceRefs: string[];
-      reasonCodes: string[];
-      warnings: string[];
-      decision: 'NEEDS_FINANCE_REVIEW';
-    };
-  } | null;
-  mapping?: {
-    status: string;
-    provider?: string;
-    providerClass?: string;
-    model?: string;
-    promptVersion?: string;
-    output?: {
-      mappings: Array<{
-        sourceRef: string;
-        targetFieldKey: string;
-        targetFieldId?: string;
-        targetFieldName?: string;
-        transformKey: string;
-        confidence: string;
-        evidenceRefs: string[];
-      }>;
-      unmappedSourceRefs: string[];
-      unresolvedRequiredFields: string[];
-      warnings: string[];
-      decision: 'NEEDS_FINANCE_REVIEW';
-    };
-  } | null;
+  classification?: OCRAiExecution<OCRAiClassificationOutput> | null;
+  mapping?: OCRAiExecution<OCRAiMappingOutput> | null;
   conflicts?: Array<{ sourceRef: string; evidenceRefs: string[] }>;
   aiCalls?: number;
+}
+
+export interface OCRAiSuggestionHistoryItem {
+  id: string;
+  taskType: 'ocr_document_classification' | 'ocr_field_mapping';
+  status: string;
+  requestKey: string;
+  inputHash: string;
+  versionVectorHash?: string;
+  outputHash?: string;
+  output?: OCRAiClassificationOutput | OCRAiMappingOutput;
+  reviewBasis?: OCRAiReviewBasis;
+  provenance?: {
+    providerClass: 'mock' | 'local' | 'external';
+    provider: string;
+    modelName: string;
+    modelRevision: string | null;
+    promptKey: string;
+    promptVersion: number | null;
+    promptContentSha256: string | null;
+    inputSchemaVersion: string;
+    outputSchemaVersion: string;
+  };
+  error?: string;
+  attempt?: {
+    attemptNo: number;
+    provider: string;
+    model: string;
+    status: string;
+    latencyMs?: number;
+    completedAt?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OCRAiSuggestionHistory {
+  items: OCRAiSuggestionHistoryItem[];
+}
+
+export type OCRAiReviewDecisionType = 'accept' | 'edit' | 'reject' | 'ignore';
+
+export interface OCRAiReviewDigest {
+  schemaVersion: 'ocr-ai-review-digest/1.0';
+  mode: 'manual' | 'ai_reviewed';
+  taskReviewRevision: number;
+  decisionCount: number;
+  summary: {
+    total: number;
+    accept: number;
+    edit: number;
+    reject: number;
+    ignore: number;
+    pending: number;
+  };
+  aiTaskIds: string[];
+  batches: ImportAiReviewDigestBatch[];
+  digestHash: string;
+}
+
+export interface OCRAiReviewDecision {
+  id: string;
+  ocrTaskId: string;
+  sourceFieldId: string;
+  aiTaskId: string;
+  outputHash: string;
+  versionVectorHash: string;
+  reviewStateHash: string;
+  reviewBasisHash: string;
+  sourceRef: string;
+  templateVersionId: string;
+  raw: { value: unknown; evidenceRefs: string[] };
+  suggested: {
+    targetFieldId: string | null;
+    targetFieldKey: string | null;
+    transformKey: string | null;
+    confidence: string | null;
+    value: unknown;
+    evidenceRefs: string[];
+  };
+  final: { targetFieldId: string | null; value: unknown; evidenceRefs: string[] };
+  decision: OCRAiReviewDecisionType;
+  reason: string;
+  reviewRevision: number;
+  actor: { id: string; username: string; name: string };
+  createdAt: string;
+}
+
+export interface OCRAiReviewDecisionQuery {
+  page?: number;
+  pageSize?: number;
+  reviewRevision?: number;
+}
+
+export interface PaginatedOCRAiReviewDecisions {
+  items: OCRAiReviewDecision[];
+  page: number;
+  pageSize: number;
+  total: number;
+  summary: OCRAiReviewDigest['summary'];
+  digest: OCRAiReviewDigest;
+}
+
+export interface ReviewOCRAiSuggestionsPayload {
+  expectedVersion: number;
+  expectedReviewRevision: number;
+  aiTaskId: string;
+  outputHash: string;
+  versionVectorHash: string;
+  reviewStateHash: string;
+  reviewBasisHash: string;
+  reviews: Array<{
+    sourceRef: string;
+    decision: OCRAiReviewDecisionType;
+    finalTargetFieldId?: string;
+    finalValue?: unknown;
+    evidenceRefs?: string[];
+    reason: string;
+  }>;
+}
+
+export interface ReviewOCRAiSuggestionsResult {
+  taskId: string;
+  version: number;
+  reviewRevision: number;
+  decisionCount: number;
+  summary: OCRAiReviewDigest['summary'];
+  aiTaskId: string;
+  outputHash: string;
+  versionVectorHash: string;
+  reviewStateHash: string;
+  reviewBasisHash: string;
+  businessRecordsCreated: 0;
 }
 
 export interface OCRConfirmResult {

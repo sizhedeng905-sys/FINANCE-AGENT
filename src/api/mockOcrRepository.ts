@@ -7,23 +7,90 @@ import type {
   CorrectOCRTaskPayload,
   CreateOCRTaskPayload,
   OCRConfirmResult,
+  OCRCorrection,
+  OCRAiReviewDecision,
+  OCRAiReviewDecisionQuery,
+  OCRAiReviewDigest,
+  OCRAiClassificationOutput,
+  OCRAiMappingOutput,
   OCRAiSuggestionResult,
+  OCRAiSuggestionHistory,
   OCRFieldCandidate,
   OCRTask,
   OCRTaskListQuery,
   PaginatedOCRTasks,
+  PaginatedOCRAiReviewDecisions,
   RevalidateOCRTaskPayload,
+  ReviewOCRAiSuggestionsPayload,
+  ReviewOCRAiSuggestionsResult,
   TemplateField,
 } from '@/types/dataCenter';
 
 const delay = (ms = 120) => new Promise((resolve) => window.setTimeout(resolve, ms));
 let tasks: OCRTask[] = [];
 const scenarios = new Map<string, CreateOCRTaskPayload['mockScenario']>();
+const aiSuggestionHistory = new Map<string, OCRAiSuggestionHistory>();
+const aiReviewDecisions = new Map<string, OCRAiReviewDecision[]>();
 
 function mockHash(value: unknown) {
   const source = JSON.stringify(value);
   return Array.from(source).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
     .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+}
+
+function displayMockValue(value: unknown) {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function aiReviewDigest(task: OCRTask): OCRAiReviewDigest {
+  const decisions = aiReviewDecisions.get(task.id) ?? [];
+  const summary = { total: decisions.length, accept: 0, edit: 0, reject: 0, ignore: 0, pending: decisions.length };
+  decisions.forEach((decision) => {
+    summary[decision.decision] += 1;
+    summary.pending -= 1;
+  });
+  const history = aiSuggestionHistory.get(task.id)?.items ?? [];
+  const batches = [...new Set(decisions.map((decision) => decision.aiTaskId))].map((aiTaskId) => {
+    const item = history.find((entry) => entry.id === aiTaskId)!;
+    const provenance = item.provenance!;
+    return {
+      aiTaskId,
+      inputHash: item.inputHash,
+      outputHash: item.outputHash!,
+      versionVectorHash: item.versionVectorHash!,
+      reviewStateHash: item.reviewBasis?.reviewState.stateHash ?? null,
+      reviewBasisHash: item.reviewBasis?.basisHash ?? null,
+      provider: {
+        providerClass: provenance.providerClass,
+        provider: provenance.provider,
+        modelName: provenance.modelName,
+        modelRevision: provenance.modelRevision,
+      },
+      prompt: {
+        promptKey: provenance.promptKey,
+        versionNo: provenance.promptVersion ?? 1,
+        contentSha256: provenance.promptContentSha256,
+      },
+      contracts: {
+        inputSchemaVersion: provenance.inputSchemaVersion,
+        outputSchemaVersion: provenance.outputSchemaVersion,
+      },
+      warnings: [],
+      generatedAt: item.createdAt,
+      completedAt: item.attempt?.completedAt ?? item.updatedAt,
+    };
+  });
+  const core = {
+    schemaVersion: 'ocr-ai-review-digest/1.0' as const,
+    mode: decisions.length ? 'ai_reviewed' as const : 'manual' as const,
+    taskReviewRevision: task.reviewRevision,
+    decisionCount: decisions.length,
+    summary,
+    aiTaskIds: batches.map((batch) => batch.aiTaskId),
+    batches,
+  };
+  return { ...core, digestHash: mockHash(core) };
 }
 
 async function assertFinance() {
@@ -313,7 +380,15 @@ export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTa
     ...issue,
     issueId: `error:${mockHash(issue)}`,
   }));
-  const hashSource = JSON.stringify({ id, reviewRevision: task.reviewRevision, fields: task.fields, blockingErrors, warnings });
+  const currentAiReview = aiReviewDigest(task);
+  const hashSource = JSON.stringify({
+    id,
+    reviewRevision: task.reviewRevision,
+    fields: task.fields,
+    blockingErrors,
+    warnings,
+    aiReviewDigestHash: currentAiReview.digestHash,
+  });
   const snapshotHash = mockHash(hashSource);
   const candidatePayloadHash = mockHash(task.fields);
   task.validation = {
@@ -322,9 +397,10 @@ export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTa
     snapshotHash,
     validatedAt: new Date().toISOString(),
     snapshot: {
-      schemaVersion: 'ocr-validation/1.0',
+      schemaVersion: 'ocr-validation/1.1',
       valid: blockingErrors.length === 0,
       candidatePayloadHash,
+      aiReview: currentAiReview,
       blockingErrors: identifiedBlockingErrors,
       warnings,
     },
@@ -339,51 +415,316 @@ export async function mockRequestOCRAiSuggestions(id: string): Promise<OCRAiSugg
   await delay();
   const task = findTask(id);
   if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以生成 AI 建议');
+  const now = new Date().toISOString();
+  const reviewStateHash = mockHash({
+    taskId: task.id,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
+    fields: task.fields,
+  });
+  const classificationOutput = {
+    selectedTemplateVersionId: `${task.templateId}:v1`,
+    candidateTemplateVersionIds: [`${task.templateId}:v1`],
+    confidence: '1.0',
+    evidenceRefs: task.fields.flatMap((field) => field.evidenceRefs),
+    reasonCodes: ['MOCK_CURRENT_TEMPLATE'],
+    warnings: ['Mock 建议仅供测试，仍需财务复核。'],
+    decision: 'NEEDS_FINANCE_REVIEW' as const,
+  };
+  const mappingOutput = {
+    templateVersionId: `${task.templateId}:v1`,
+    mappings: task.fields.filter((field) => field.fieldType !== 'file' && !field.missing).map((field) => ({
+      sourceRef: `candidate:${field.fieldId}`,
+      targetFieldKey: field.fieldKey,
+      targetFieldId: field.fieldId,
+      targetFieldName: field.fieldName,
+      transformKey: mockTransformKey(field.fieldType),
+      confidence: '1.0',
+      evidenceRefs: [...field.evidenceRefs],
+    })),
+    unmappedSourceRefs: [] as string[],
+    unresolvedRequiredFields: [] as string[],
+    warnings: ['Mock 建议不会自动批准或入账。'],
+    decision: 'NEEDS_FINANCE_REVIEW' as const,
+  };
+  const classificationTaskId = `mock-ai-classification-${task.id}-${task.reviewRevision}`;
+  const mappingTaskId = `mock-ai-mapping-${task.id}-${task.reviewRevision}`;
+  const execution = <T extends OCRAiClassificationOutput | OCRAiMappingOutput>(
+    taskType: string,
+    aiTaskId: string,
+    output: T,
+    outputSchemaVersion: string,
+  ) => {
+    const inputHash = mockHash({ taskId: task.id, taskType, reviewStateHash });
+    const outputHash = mockHash(output);
+    const versionVectorHash = mockHash({ taskType, inputHash, outputHash, reviewStateHash });
+    const reviewBasisCore = {
+      schemaVersion: 'ai-review-basis/1.0' as const,
+      taskType,
+      resourceType: 'ocr_task' as const,
+      resourceId: task.id,
+      aiTaskId,
+      reviewState: { schemaVersion: 'ocr-ai-review-state/1.0' as const, stateHash: reviewStateHash },
+      inputHash,
+      outputHash,
+      versionVectorHash,
+    };
+    return {
+      status: 'succeeded' as const,
+      aiTaskId,
+      requestKey: mockHash({ aiTaskId, inputHash }),
+      reused: false,
+      provider: 'mock',
+      providerClass: 'mock' as const,
+      model: 'mock-structured-v1',
+      promptVersion: `${taskType}:v1`,
+      promptExecutionHash: mockHash({ taskType, prompt: 1 }),
+      outputSchemaHash: mockHash(outputSchemaVersion),
+      outputHash,
+      versionVectorHash,
+      reviewBasis: { ...reviewBasisCore, basisHash: mockHash(reviewBasisCore) },
+      output,
+      inputHash,
+    };
+  };
+  const classification = execution(
+    'ocr_document_classification',
+    classificationTaskId,
+    classificationOutput,
+    'classification/1.0',
+  );
+  const mapping = execution('ocr_field_mapping', mappingTaskId, mappingOutput, 'mapping/1.0');
+  const provenance = (promptKey: string, outputSchemaVersion: string) => ({
+    providerClass: 'mock' as const,
+    provider: 'mock',
+    modelName: 'mock-structured-v1',
+    modelRevision: '1',
+    promptKey,
+    promptVersion: 1,
+    promptContentSha256: mockHash({ promptKey, version: 1 }),
+    inputSchemaVersion: `${promptKey}-input/1.0`,
+    outputSchemaVersion,
+  });
+  aiSuggestionHistory.set(task.id, {
+    items: [mapping, classification].map((item) => ({
+      id: item.aiTaskId,
+      taskType: item.reviewBasis.taskType as 'ocr_document_classification' | 'ocr_field_mapping',
+      status: item.status,
+      requestKey: item.requestKey,
+      inputHash: item.inputHash,
+      versionVectorHash: item.versionVectorHash,
+      outputHash: item.outputHash,
+      output: item.output,
+      reviewBasis: item.reviewBasis,
+      provenance: provenance(item.reviewBasis.taskType, item.reviewBasis.taskType === 'ocr_field_mapping' ? 'mapping/1.0' : 'classification/1.0'),
+      attempt: {
+        attemptNo: 1,
+        provider: 'mock',
+        model: 'mock-structured-v1',
+        status: 'succeeded',
+        latencyMs: 1,
+        completedAt: now,
+      },
+      createdAt: now,
+      updatedAt: now,
+    })),
+  });
   return {
     status: 'needs_finance_review',
     mode: 'suggest',
     mock: true,
     businessRecordsCreated: 0,
-    classification: {
-      status: 'succeeded',
-      provider: 'mock',
-      providerClass: 'mock',
-      model: 'mock-structured-v1',
-      promptVersion: '1',
-      output: {
-        selectedTemplateVersionId: `${task.templateId}:v1`,
-        candidateTemplateVersionIds: [`${task.templateId}:v1`],
-        confidence: '1.0',
-        evidenceRefs: task.fields.flatMap((field) => field.evidenceRefs),
-        reasonCodes: ['MOCK_CURRENT_TEMPLATE'],
-        warnings: ['Mock 建议仅供测试，仍需财务复核。'],
-        decision: 'NEEDS_FINANCE_REVIEW',
-      },
-    },
-    mapping: {
-      status: 'succeeded',
-      provider: 'mock',
-      providerClass: 'mock',
-      model: 'mock-structured-v1',
-      promptVersion: '1',
-      output: {
-        mappings: task.fields.filter((field) => field.fieldType !== 'file' && !field.missing).map((field) => ({
-          sourceRef: `candidate:${field.fieldId}`,
-          targetFieldKey: field.fieldKey,
-          targetFieldId: field.fieldId,
-          targetFieldName: field.fieldName,
-          transformKey: mockTransformKey(field.fieldType),
-          confidence: '1.0',
-          evidenceRefs: [...field.evidenceRefs],
-        })),
-        unmappedSourceRefs: [],
-        unresolvedRequiredFields: [],
-        warnings: ['Mock 建议不会自动批准或入账。'],
-        decision: 'NEEDS_FINANCE_REVIEW',
-      },
-    },
+    classification,
+    mapping,
     conflicts: [],
     aiCalls: 2,
+  };
+}
+
+export async function mockGetOCRAiSuggestionHistory(id: string): Promise<OCRAiSuggestionHistory> {
+  await assertFinance();
+  await delay();
+  findTask(id);
+  return structuredClone(aiSuggestionHistory.get(id) ?? { items: [] });
+}
+
+export async function mockReviewOCRAiSuggestions(
+  id: string,
+  payload: ReviewOCRAiSuggestionsPayload,
+): Promise<ReviewOCRAiSuggestionsResult> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以保存 AI 复核');
+  if (task.version !== payload.expectedVersion || task.reviewRevision !== payload.expectedReviewRevision) {
+    throw new Error('OCR 审核状态已变化，请刷新后重试');
+  }
+  if ((aiReviewDecisions.get(id) ?? []).some((decision) => decision.aiTaskId === payload.aiTaskId)) {
+    throw new Error('该 AI 建议已经完成复核');
+  }
+  const history = aiSuggestionHistory.get(id)?.items ?? [];
+  const mappingTask = history.find((item) => item.id === payload.aiTaskId && item.taskType === 'ocr_field_mapping');
+  if (
+    !mappingTask
+    || mappingTask.status !== 'succeeded'
+    || mappingTask.outputHash !== payload.outputHash
+    || mappingTask.versionVectorHash !== payload.versionVectorHash
+    || mappingTask.reviewBasis?.reviewState.stateHash !== payload.reviewStateHash
+    || mappingTask.reviewBasis?.basisHash !== payload.reviewBasisHash
+  ) throw new Error('Mock AI 复核依据已经变化');
+  const output = mappingTask.output as OCRAiMappingOutput;
+  const sourceFields = task.fields.filter((field) => !field.missing && field.fieldType !== 'file');
+  const expectedRefs = new Set(sourceFields.map((field) => `candidate:${field.fieldId}`));
+  if (
+    payload.reviews.length !== expectedRefs.size
+    || new Set(payload.reviews.map((review) => review.sourceRef)).size !== expectedRefs.size
+    || payload.reviews.some((review) => !expectedRefs.has(review.sourceRef))
+  ) throw new Error('必须完整复核每个 OCR 来源');
+
+  const nextRevision = task.reviewRevision + 1;
+  const now = new Date().toISOString();
+  const mappingBySource = new Map(output.mappings.map((mapping) => [mapping.sourceRef, mapping]));
+  const newDecisions: OCRAiReviewDecision[] = payload.reviews.map((review, index) => {
+    const sourceFieldId = review.sourceRef.slice('candidate:'.length);
+    const source = task.fields.find((field) => field.fieldId === sourceFieldId)!;
+    const sourceRawValue = structuredClone(source.rawValue);
+    const sourceNormalizedValue = structuredClone(source.normalizedValue);
+    const sourceEvidenceRefs = [...source.evidenceRefs];
+    const sourceConfidence = source.confidence;
+    const suggestion = mappingBySource.get(review.sourceRef);
+    if (review.decision === 'accept' && !suggestion) throw new Error('未映射来源不能采纳');
+    if (review.decision === 'reject' && !suggestion) throw new Error('没有 AI 映射可拒绝');
+    const finalTargetFieldId = review.decision === 'ignore'
+      ? null
+      : review.decision === 'edit'
+        ? review.finalTargetFieldId ?? null
+        : review.decision === 'accept'
+          ? suggestion?.targetFieldId ?? source.fieldId
+          : source.fieldId;
+    const target = finalTargetFieldId ? task.fields.find((field) => field.fieldId === finalTargetFieldId) : undefined;
+    if (finalTargetFieldId && !target) throw new Error('最终字段不属于当前模板');
+    const finalValue = review.decision === 'ignore'
+      ? null
+      : review.decision === 'edit'
+        ? review.finalValue
+        : source.normalizedValue;
+    const finalEvidenceRefs = review.decision === 'edit' && review.evidenceRefs?.length
+      ? [...review.evidenceRefs]
+      : suggestion?.evidenceRefs.length
+        ? [...suggestion.evidenceRefs]
+        : [...source.evidenceRefs];
+    if (review.reason.trim().length < 2 || finalEvidenceRefs.length === 0) throw new Error('复核理由和证据不能为空');
+    if (review.decision === 'ignore') {
+      Object.assign(source, {
+        normalizedValue: null,
+        missing: true,
+        corrected: true,
+        lowConfidence: false,
+        evidenceConflict: false,
+        valueSource: 'MANUAL_OVERRIDE',
+        reviewRevision: nextRevision,
+        evidence: review.reason,
+      });
+    } else if (target) {
+      Object.assign(target, {
+        normalizedValue: finalValue,
+        rawValue: target.rawValue,
+        confidence: 1,
+        missing: false,
+        corrected: true,
+        lowConfidence: false,
+        evidenceConflict: false,
+        valueSource: 'MANUAL_OVERRIDE',
+        reviewRevision: nextRevision,
+        evidence: review.reason,
+        evidenceRefs: finalEvidenceRefs,
+      });
+    }
+    task.corrections.unshift({
+      id: `mock-ai-correction-${Date.now()}-${index}`,
+      fieldId: finalTargetFieldId ?? source.fieldId,
+      fieldName: target?.fieldName ?? source.fieldName,
+      beforeValue: displayMockValue(sourceNormalizedValue),
+      afterValue: displayMockValue(finalValue),
+      originalConfidence: sourceConfidence,
+      reason: review.reason,
+      reviewRevision: nextRevision,
+      overrideType: `AI_${review.decision.toUpperCase()}` as OCRCorrection['overrideType'],
+      evidenceRefs: finalEvidenceRefs,
+      correctedBy: user.name,
+      correctedAt: now,
+    });
+    return {
+      id: `mock-ai-review-${Date.now()}-${index}`,
+      ocrTaskId: id,
+      sourceFieldId,
+      aiTaskId: mappingTask.id,
+      outputHash: mappingTask.outputHash!,
+      versionVectorHash: mappingTask.versionVectorHash!,
+      reviewStateHash: mappingTask.reviewBasis!.reviewState.stateHash,
+      reviewBasisHash: mappingTask.reviewBasis!.basisHash,
+      sourceRef: review.sourceRef,
+      templateVersionId: output.templateVersionId ?? `${task.templateId}:v1`,
+      raw: { value: sourceRawValue, evidenceRefs: sourceEvidenceRefs },
+      suggested: {
+        targetFieldId: suggestion?.targetFieldId ?? null,
+        targetFieldKey: suggestion?.targetFieldKey ?? null,
+        transformKey: suggestion?.transformKey ?? null,
+        confidence: suggestion?.confidence ?? null,
+        value: suggestion ? sourceNormalizedValue : null,
+        evidenceRefs: [...(suggestion?.evidenceRefs ?? [])],
+      },
+      final: { targetFieldId: finalTargetFieldId, value: finalValue, evidenceRefs: finalEvidenceRefs },
+      decision: review.decision,
+      reason: review.reason,
+      reviewRevision: nextRevision,
+      actor: { id: user.id, username: user.username, name: user.name },
+      createdAt: now,
+    };
+  });
+  aiReviewDecisions.set(id, [...(aiReviewDecisions.get(id) ?? []), ...newDecisions]);
+  task.extractedFields = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.normalizedValue]));
+  task.fieldConfidence = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.confidence]));
+  task.reviewRevision = nextRevision;
+  task.version += 1;
+  task.validation = null;
+  task.updatedAt = now;
+  const digest = aiReviewDigest(task);
+  return {
+    taskId: task.id,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
+    decisionCount: newDecisions.length,
+    summary: digest.summary,
+    aiTaskId: mappingTask.id,
+    outputHash: mappingTask.outputHash!,
+    versionVectorHash: mappingTask.versionVectorHash!,
+    reviewStateHash: mappingTask.reviewBasis!.reviewState.stateHash,
+    reviewBasisHash: mappingTask.reviewBasis!.basisHash,
+    businessRecordsCreated: 0,
+  };
+}
+
+export async function mockGetOCRAiReviews(
+  id: string,
+  query: OCRAiReviewDecisionQuery = {},
+): Promise<PaginatedOCRAiReviewDecisions> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  const filtered = (aiReviewDecisions.get(id) ?? [])
+    .filter((decision) => !query.reviewRevision || decision.reviewRevision === query.reviewRevision)
+    .sort((left, right) => right.reviewRevision - left.reviewRevision || left.sourceRef.localeCompare(right.sourceRef));
+  const digest = aiReviewDigest(task);
+  return {
+    items: structuredClone(filtered.slice((page - 1) * pageSize, page * pageSize)),
+    page,
+    pageSize,
+    total: filtered.length,
+    summary: digest.summary,
+    digest,
   };
 }
 
@@ -418,7 +759,14 @@ export async function mockConfirmOCRTask(id: string, payload: ConfirmOCRTaskPayl
     policyVersion: 'finance-ocr-approval/1.0-pending-h10',
     snapshotHash: mockHash({ id, reviewRevision: task.reviewRevision, approvedBy: user.id }),
     requestKeyHash: mockHash({ id, reviewRevision: task.reviewRevision }),
-    snapshot: { schemaVersion: 'ocr-approval/1.0', selfApproval: false },
+    snapshot: {
+      schemaVersion: 'ocr-approval/1.1',
+      selfApproval: false,
+      aiSuggestion: {
+        appliedToFormalData: false,
+        reviewDigest: task.validation.snapshot.aiReview,
+      },
+    },
   };
   task.version += 1;
   task.updatedAt = task.confirmedAt;
