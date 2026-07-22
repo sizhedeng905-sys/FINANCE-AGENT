@@ -355,6 +355,8 @@ export class OcrAiSuggestionService {
         versionVectorHash: item.versionVectorHash,
         outputHash: item.outputHash,
         output: this.outputValue(item.outputPayload),
+        reviewBasis: this.reviewBasisValue(item.outputPayload),
+        provenance: this.historyProvenance(item.versionVector),
         error: item.errorMessage ? 'AI suggestion is unavailable; manual review remains available' : undefined,
         attempt: item.attempts[0] ? {
           attemptNo: item.attempts[0].attemptNo,
@@ -818,9 +820,51 @@ export class OcrAiSuggestionService {
   }
 
   private outputValue(value: Prisma.JsonValue | null) {
-    const payload = value && typeof value === 'object' && !Array.isArray(value)
+    const payload = this.jsonObject(value);
+    return payload?.validatedOutput ?? undefined;
+  }
+
+  private reviewBasisValue(value: Prisma.JsonValue | null) {
+    const reviewBasis = this.jsonObject(this.jsonObject(value)?.reviewBasis);
+    return reviewBasis ?? undefined;
+  }
+
+  private historyProvenance(value: Prisma.JsonValue) {
+    const vector = this.jsonObject(value);
+    const provider = this.jsonObject(vector?.provider);
+    const prompt = this.jsonObject(vector?.prompt);
+    const contracts = this.jsonObject(vector?.contracts);
+    if (!provider || !prompt || !contracts) return undefined;
+    const providerClass = provider.providerClass;
+    const providerName = provider.provider;
+    const modelName = provider.modelName;
+    const promptKey = prompt.promptKey;
+    const inputSchemaVersion = contracts.inputSchemaVersion;
+    const outputSchemaVersion = contracts.outputSchemaVersion;
+    if (
+      typeof providerClass !== 'string'
+      || typeof providerName !== 'string'
+      || typeof modelName !== 'string'
+      || typeof promptKey !== 'string'
+      || typeof inputSchemaVersion !== 'string'
+      || typeof outputSchemaVersion !== 'string'
+    ) return undefined;
+    return {
+      providerClass,
+      provider: providerName,
+      modelName,
+      modelRevision: typeof provider.modelRevision === 'string' ? provider.modelRevision : null,
+      promptKey,
+      promptVersion: Number.isInteger(prompt.versionNo) ? Number(prompt.versionNo) : null,
+      promptContentSha256: typeof prompt.contentSha256 === 'string' ? prompt.contentSha256 : null,
+      inputSchemaVersion,
+      outputSchemaVersion
+    };
+  }
+
+  private jsonObject(value: Prisma.JsonValue | undefined | null) {
+    return value && typeof value === 'object' && !Array.isArray(value)
       ? value as Record<string, Prisma.JsonValue>
       : undefined;
-    return payload?.validatedOutput ?? undefined;
   }
 }

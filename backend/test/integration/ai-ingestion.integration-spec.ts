@@ -2139,6 +2139,33 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           reviewState: { stateHash: string };
         };
       };
+      const suggestionHistory = await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${taskId}/ai-suggestions`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(suggestionHistory.body.data.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: mappingExecution.aiTaskId,
+          taskType: 'ocr_field_mapping',
+          status: 'succeeded',
+          outputHash: mappingExecution.outputHash,
+          versionVectorHash: mappingExecution.versionVectorHash,
+          reviewBasis: expect.objectContaining({
+            basisHash: mappingExecution.reviewBasis.basisHash,
+            reviewState: expect.objectContaining({
+              stateHash: mappingExecution.reviewBasis.reviewState.stateHash
+            })
+          }),
+          provenance: expect.objectContaining({
+            providerClass: 'mock',
+            provider: 'mock',
+            modelName: 'mock-structured-v1',
+            promptKey: 'ocr_field_mapping',
+            inputSchemaVersion: expect.any(String),
+            outputSchemaVersion: 'mapping/1.0'
+          })
+        })
+      ]));
       const reviewDecisionData = {
         ocrTaskId: taskId,
         sourceFieldId: dateField.id,
