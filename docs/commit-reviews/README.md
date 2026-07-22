@@ -43,12 +43,13 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-029 | [CR-029_ocr-ai-review-digest-binding.md](CR-029_ocr-ai-review-digest-binding.md) | `fix: bind OCR approvals to review digest` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-028 |
 | CR-030 | [CR-030_ocr-ai-review-context-recovery.md](CR-030_ocr-ai-review-context-recovery.md) | `fix: restore OCR AI review context` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-029 |
 | CR-031 | [CR-031_ocr-ai-e2e-cleanup.md](CR-031_ocr-ai-e2e-cleanup.md) | `test: clean immutable OCR review fixtures` | P1 test isolation | LOCAL_ENGINEERING_VERIFIED / TEST_DATABASE_ONLY / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-030 |
+| CR-032 | [CR-032_ocr-ai-finance-review-workspace.md](CR-032_ocr-ai-finance-review-workspace.md) | `feat: add OCR AI finance review workspace` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED / OWNER_UAT_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-031 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
 - Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015/016 已推送但同一远端构建被新出现的高危依赖公告拦截；CR-017 至 CR-020 已在本地关闭 canonical review basis、依赖公告、审核真值和整批幂等完整性缺口，CR-021 已将完整 AI 审核摘要绑定到校验、批准与 Worker 发布链，CR-022 已在确认页显示并门禁同一摘要，CR-023 已增加数据库 append-only 与父对象 Restrict 门禁，同时保留周五 Demo，远端推送暂受网络阻塞。
-- OCR 与报告财务复核：CR-024 已强制 OCR 人工纠错携带当前 task/review revision；AI 建议逐字段 provenance 与报告文字复核仍在继续。
+- OCR 与报告财务复核：CR-024 至 CR-031 已建立 OCR 状态前置条件、原值保全、不可变审核证据、完整批次复核、摘要绑定、刷新恢复和测试清理；CR-032 已把该链路接入财务工作台并用合成 API E2E 验证换人复核、失败关闭和移动端边界。真实 OCR 准确率与报告文字复核仍在继续。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 
 ## 历史说明
