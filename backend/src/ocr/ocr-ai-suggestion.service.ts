@@ -28,6 +28,7 @@ import { CanonicalOcrFieldCandidate } from './ocr.types';
 
 export const OCR_AI_VALIDATION_RULE_VERSION = 'ocr-ai-mapping-validation/1.0';
 export const OCR_AI_AUTHORIZATION_POLICY_VERSION = 'finance-ocr-ai-authz/1.0';
+export const OCR_AI_REVIEW_STATE_SCHEMA_VERSION = 'ocr-ai-review-state/1.0';
 
 const CLASSIFICATION_INPUT_MAX_BYTES = 20_000;
 const MAPPING_INPUT_MAX_BYTES = 28_000;
@@ -176,6 +177,10 @@ export class OcrAiSuggestionService {
       validationRuleVersion: OCR_AI_VALIDATION_RULE_VERSION,
       mappingProfileVersion: null,
       authorizationPolicyVersion: OCR_AI_AUTHORIZATION_POLICY_VERSION,
+      reviewState: {
+        schemaVersion: OCR_AI_REVIEW_STATE_SCHEMA_VERSION,
+        stateHash: initialStateHash
+      },
       mockOutput: classificationMock,
       validate: (text) => this.validator.classification(text, {
         templateVersionIds: new Set(loaded.candidates.map((candidate) => candidate.versionId)),
@@ -263,6 +268,10 @@ export class OcrAiSuggestionService {
       validationRuleVersion: OCR_AI_VALIDATION_RULE_VERSION,
       mappingProfileVersion: null,
       authorizationPolicyVersion: OCR_AI_AUTHORIZATION_POLICY_VERSION,
+      reviewState: {
+        schemaVersion: OCR_AI_REVIEW_STATE_SCHEMA_VERSION,
+        stateHash: initialStateHash
+      },
       mockOutput: mappingMock,
       validate: (text) => this.validator.mapping(text, {
         templateVersionIds: new Set([selected.versionId]),
@@ -277,6 +286,15 @@ export class OcrAiSuggestionService {
     });
     if (mapping.status !== 'succeeded') {
       return this.manualFromExecution('MAPPING_UNAVAILABLE', mapping, classification);
+    }
+
+    const completedState = await this.loadSuggestionState(taskId);
+    if (
+      !completedState
+      || this.suggestionBlockReason(completedState.task)
+      || this.suggestionStateHash(completedState.task, completedState.candidates) !== initialStateHash
+    ) {
+      return this.manualFromExecution('SUGGESTION_OUTPUT_STALE', mapping, classification);
     }
 
     const fieldByKey = new Map(selected.fields.map((field) => [field.fieldKey, field]));
@@ -652,6 +670,9 @@ export class OcrAiSuggestionService {
         templateVersion: task.templateVersion,
         status: task.status,
         version: task.version,
+        reviewRevision: task.reviewRevision,
+        validationRevision: task.validationRevision,
+        validationSnapshotHash: task.validationSnapshotHash,
         sourceSha256: task.sourceSha256,
         irSchemaVersion: task.irSchemaVersion,
         irHash: task.irHash,
