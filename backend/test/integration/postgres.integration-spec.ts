@@ -8106,8 +8106,15 @@ describe('real PostgreSQL integration', () => {
           ruleVersion: 'ocr-deterministic-validation/1.0',
           snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           snapshot: {
-            schemaVersion: 'ocr-validation/1.0',
+            schemaVersion: 'ocr-validation/1.1',
             reviewRevision: 0,
+            aiReview: {
+              schemaVersion: 'ocr-ai-review-digest/1.0',
+              mode: 'manual',
+              decisionCount: 0,
+              summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
+              digestHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+            },
             valid: true,
             blockingErrors: [],
             warnings: [expect.objectContaining({ code: 'LOW_OCR_CONFIDENCE' })]
@@ -8241,7 +8248,15 @@ describe('real PostgreSQL integration', () => {
           reviewRevision: 1,
           snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           snapshot: {
+            schemaVersion: 'ocr-validation/1.1',
             candidatePayloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            aiReview: {
+              schemaVersion: 'ocr-ai-review-digest/1.0',
+              mode: 'manual',
+              taskReviewRevision: 1,
+              decisionCount: 0,
+              digestHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+            },
             valid: true,
             blockingErrors: [],
             warnings: []
@@ -8370,11 +8385,12 @@ describe('real PostgreSQL integration', () => {
         sourceId: taskId,
         confirmedBy: winningApprover.username,
         ingestionApproval: {
-          schemaVersion: 'ocr-approval/1.0',
+          schemaVersion: 'ocr-approval/1.1',
           snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/),
           validationSnapshotHash: approvalPayload.expectedValidationSnapshotHash,
           reviewRevision: 1,
-          normalizedOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+          normalizedOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          aiReviewDigestHash: finalValidation.body.data.validation.snapshot.aiReview.digestHash
         }
       });
       const storedApprovedTask = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
@@ -8387,12 +8403,21 @@ describe('real PostgreSQL integration', () => {
         confirmedBy: winningApprover.id
       });
       expect(storedApprovedTask.approvalSnapshot).toMatchObject({
-        schemaVersion: 'ocr-approval/1.0',
+        schemaVersion: 'ocr-approval/1.1',
+        aiSuggestion: {
+          appliedToFormalData: false,
+          reviewDigest: {
+            mode: 'manual',
+            decisionCount: 0,
+            digestHash: finalValidation.body.data.validation.snapshot.aiReview.digestHash
+          }
+        },
         approval: { approvedByUserId: winningApprover.id, selfApproval: false },
         review: {
           reviewRevision: 1,
           validationSnapshotHash: approvalPayload.expectedValidationSnapshotHash,
-          candidatePayloadHash: approvalPayload.expectedPayloadHash
+          candidatePayloadHash: approvalPayload.expectedPayloadHash,
+          aiReviewDigestHash: finalValidation.body.data.validation.snapshot.aiReview.digestHash
         },
         output: { recordCount: 1, normalizedOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
         snapshotHash: storedApprovedTask.approvalSnapshotHash

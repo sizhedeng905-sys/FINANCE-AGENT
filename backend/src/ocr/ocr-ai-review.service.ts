@@ -55,6 +55,10 @@ interface ReviewOutcome {
   finalEvidenceRefs: string[];
 }
 
+type ReviewReader = Prisma.TransactionClient | PrismaService;
+
+export const OCR_AI_REVIEW_DIGEST_SCHEMA_VERSION = 'ocr-ai-review-digest/1.0';
+
 @Injectable()
 export class OcrAiReviewService {
   constructor(
@@ -376,35 +380,93 @@ export class OcrAiReviewService {
   async findMany(taskId: string, query: QueryOcrAiReviewDecisionsDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const task = await this.prisma.ocrTask.findUnique({
-      where: { id: taskId },
-      select: { id: true }
+    return this.prisma.$transaction(async (tx) => {
+      const task = await tx.ocrTask.findUnique({
+        where: { id: taskId },
+        select: { id: true, reviewRevision: true }
+      });
+      if (!task) throw new NotFoundException('OCR task does not exist');
+      const where = {
+        ocrTaskId: taskId,
+        ...(query.reviewRevision ? { reviewRevision: query.reviewRevision } : {})
+      };
+      const [items, total, grouped, digest] = await Promise.all([
+        tx.ocrAiReviewDecision.findMany({
+          where,
+          include: { actor: { select: { id: true, username: true, name: true } } },
+          orderBy: [{ reviewRevision: 'desc' }, { sourceRef: 'asc' }, { id: 'asc' }],
+          skip: (page - 1) * pageSize,
+          take: pageSize
+        }),
+        tx.ocrAiReviewDecision.count({ where }),
+        tx.ocrAiReviewDecision.groupBy({
+          by: ['decision'],
+          where,
+          orderBy: { decision: 'asc' },
+          _count: { _all: true }
+        }),
+        this.canonicalDigest(tx, taskId, task.reviewRevision)
+      ]);
+      return {
+        items: items.map((item) => ({
+          id: item.id,
+          ocrTaskId: item.ocrTaskId,
+          sourceFieldId: item.sourceFieldId,
+          aiTaskId: item.aiTaskId,
+          outputHash: item.outputHash,
+          versionVectorHash: item.versionVectorHash,
+          reviewStateHash: item.reviewStateHash,
+          reviewBasisHash: item.reviewBasisHash,
+          sourceRef: item.sourceRef,
+          templateVersionId: item.templateVersionId,
+          raw: { value: item.rawOcrValue, evidenceRefs: item.rawEvidenceRefs },
+          suggested: {
+            targetFieldId: item.suggestedTargetFieldId,
+            targetFieldKey: item.suggestedTargetFieldKey,
+            transformKey: item.suggestedTransformKey,
+            confidence: item.suggestedConfidence,
+            value: item.suggestedValue,
+            evidenceRefs: item.suggestedEvidenceRefs
+          },
+          final: {
+            targetFieldId: item.finalTargetFieldId,
+            value: item.finalValue,
+            evidenceRefs: item.finalEvidenceRefs
+          },
+          decision: item.decision,
+          reason: item.reason,
+          reviewRevision: item.reviewRevision,
+          actor: item.actor,
+          createdAt: item.createdAt.toISOString()
+        })),
+        page,
+        pageSize,
+        total,
+        summary: this.summaryFromGroups(total, grouped.map((group) => ({
+          decision: group.decision,
+          count: typeof group._count === 'object' ? group._count._all ?? 0 : 0
+        }))),
+        digest
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
+  async canonicalDigest(reader: ReviewReader, taskId: string, taskReviewRevision: number) {
+    const decisions = await reader.ocrAiReviewDecision.findMany({
+      where: { ocrTaskId: taskId },
+      include: { aiTask: true },
+      orderBy: [{ reviewRevision: 'asc' }, { sourceRef: 'asc' }, { id: 'asc' }]
     });
-    if (!task) throw new NotFoundException('OCR task does not exist');
-    const where = {
-      ocrTaskId: taskId,
-      ...(query.reviewRevision ? { reviewRevision: query.reviewRevision } : {})
-    };
-    const [items, total, grouped] = await this.prisma.$transaction([
-      this.prisma.ocrAiReviewDecision.findMany({
-        where,
-        include: { actor: { select: { id: true, username: true, name: true } } },
-        orderBy: [{ reviewRevision: 'desc' }, { sourceRef: 'asc' }, { id: 'asc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize
-      }),
-      this.prisma.ocrAiReviewDecision.count({ where }),
-      this.prisma.ocrAiReviewDecision.groupBy({
-        by: ['decision'],
-        where,
-        orderBy: { decision: 'asc' },
-        _count: { _all: true }
-      })
-    ]);
-    return {
-      items: items.map((item) => ({
+    const batchByTaskId = new Map<string, ReturnType<OcrAiReviewService['aiBatchFact']>>();
+    const decisionFacts = decisions.map((item) => {
+      const batch = this.aiBatchFact(item);
+      const existing = batchByTaskId.get(item.aiTaskId);
+      if (existing && canonicalJsonSha256(existing) !== canonicalJsonSha256(batch)) {
+        throw this.provenanceConflict('OCR AI review provenance is inconsistent within one AI task');
+      }
+      batchByTaskId.set(item.aiTaskId, batch);
+      return {
         id: item.id,
-        ocrTaskId: item.ocrTaskId,
         sourceFieldId: item.sourceFieldId,
         aiTaskId: item.aiTaskId,
         outputHash: item.outputHash,
@@ -413,33 +475,54 @@ export class OcrAiReviewService {
         reviewBasisHash: item.reviewBasisHash,
         sourceRef: item.sourceRef,
         templateVersionId: item.templateVersionId,
-        raw: { value: item.rawOcrValue, evidenceRefs: item.rawEvidenceRefs },
+        raw: {
+          value: item.rawOcrValue,
+          evidenceRefs: this.strictStringArray(item.rawEvidenceRefs, 'Raw OCR evidence references are invalid')
+        },
         suggested: {
           targetFieldId: item.suggestedTargetFieldId,
           targetFieldKey: item.suggestedTargetFieldKey,
           transformKey: item.suggestedTransformKey,
           confidence: item.suggestedConfidence,
           value: item.suggestedValue,
-          evidenceRefs: item.suggestedEvidenceRefs
+          evidenceRefs: this.strictStringArray(
+            item.suggestedEvidenceRefs,
+            'Suggested OCR evidence references are invalid'
+          )
         },
         final: {
           targetFieldId: item.finalTargetFieldId,
           value: item.finalValue,
-          evidenceRefs: item.finalEvidenceRefs
+          evidenceRefs: this.strictStringArray(item.finalEvidenceRefs, 'Final OCR evidence references are invalid')
         },
         decision: item.decision,
         reason: item.reason,
         reviewRevision: item.reviewRevision,
-        actor: item.actor,
-        createdAt: item.createdAt.toISOString()
-      })),
-      page,
-      pageSize,
-      total,
-      summary: this.summaryFromGroups(total, grouped.map((group) => ({
-        decision: group.decision,
-        count: typeof group._count === 'object' ? group._count._all ?? 0 : 0
-      })))
+        actorId: item.actorId,
+        reviewedAt: item.createdAt.toISOString()
+      };
+    });
+    const batches = [...batchByTaskId.values()].sort((left, right) => left.aiTaskId.localeCompare(right.aiTaskId));
+    const summary = this.summary(decisions.map((item) => item.decision));
+    const core = {
+      schemaVersion: OCR_AI_REVIEW_DIGEST_SCHEMA_VERSION,
+      taskId,
+      taskReviewRevision,
+      mode: decisions.length > 0 ? 'ai_reviewed' as const : 'manual' as const,
+      decisionCount: decisions.length,
+      summary,
+      batches,
+      decisions: decisionFacts
+    };
+    return {
+      schemaVersion: core.schemaVersion,
+      mode: core.mode,
+      taskReviewRevision,
+      decisionCount: core.decisionCount,
+      summary,
+      aiTaskIds: batches.map((batch) => batch.aiTaskId),
+      batches,
+      digestHash: canonicalJsonSha256(core)
     };
   }
 
@@ -598,8 +681,11 @@ export class OcrAiReviewService {
   }
 
   private summary(decisions: Array<typeof ReviewOcrAiSuggestionsDto.prototype.reviews[number]['decision']>) {
-    const result = { total: decisions.length, accept: 0, edit: 0, reject: 0, ignore: 0 };
-    for (const decision of decisions) result[decision] += 1;
+    const result = { total: decisions.length, accept: 0, edit: 0, reject: 0, ignore: 0, pending: decisions.length };
+    for (const decision of decisions) {
+      result[decision] += 1;
+      result.pending -= 1;
+    }
     return result;
   }
 
@@ -607,9 +693,107 @@ export class OcrAiReviewService {
     total: number,
     groups: Array<{ decision: ImportAiReviewDecisionType; count: number }>
   ) {
-    const result = { total, accept: 0, edit: 0, reject: 0, ignore: 0 };
-    for (const group of groups) result[group.decision] = group.count;
+    const result = { total, accept: 0, edit: 0, reject: 0, ignore: 0, pending: total };
+    for (const group of groups) {
+      result[group.decision] = group.count;
+      result.pending -= group.count;
+    }
     return result;
+  }
+
+  private aiBatchFact(item: Prisma.OcrAiReviewDecisionGetPayload<{ include: { aiTask: true } }>) {
+    const task = item.aiTask;
+    if (
+      task.status !== AiTaskStatus.succeeded
+      || task.outputHash !== item.outputHash
+      || task.versionVectorHash !== item.versionVectorHash
+    ) {
+      throw this.provenanceConflict('OCR AI review references a changed AI task status or hash');
+    }
+    const versionVector = this.object(task.versionVector);
+    if (!versionVector || canonicalJsonSha256(versionVector) !== item.versionVectorHash) {
+      throw this.provenanceConflict('OCR AI review version vector does not match its persisted hash');
+    }
+    const outputContainer = this.outputContainer(task.outputPayload);
+    const output = this.object(outputContainer.validatedOutput);
+    if (!output || canonicalJsonSha256(output) !== item.outputHash) {
+      throw this.provenanceConflict('OCR AI review output does not match its persisted hash');
+    }
+    const reviewBasis = this.object(outputContainer.reviewBasis);
+    const reviewBasisHash = reviewBasis?.basisHash;
+    const reviewBasisCore = reviewBasis
+      ? Object.fromEntries(Object.entries(reviewBasis).filter(([key]) => key !== 'basisHash'))
+      : undefined;
+    const reviewState = this.object(reviewBasis?.reviewState);
+    if (
+      !reviewBasisCore
+      || reviewBasisHash !== item.reviewBasisHash
+      || canonicalJsonSha256(reviewBasisCore) !== item.reviewBasisHash
+      || reviewBasis?.taskType !== task.taskType
+      || reviewBasis.resourceType !== task.resourceType
+      || reviewBasis.resourceId !== task.resourceId
+      || reviewBasis.aiTaskId !== task.id
+      || reviewBasis.inputHash !== task.inputHash
+      || reviewBasis.outputHash !== item.outputHash
+      || reviewBasis.versionVectorHash !== item.versionVectorHash
+      || reviewState?.stateHash !== item.reviewStateHash
+    ) {
+      throw this.provenanceConflict('OCR AI review basis does not match its persisted hash');
+    }
+    const provider = this.object(versionVector.provider);
+    const prompt = this.object(versionVector.prompt);
+    const contracts = this.object(versionVector.contracts);
+    if (
+      !provider
+      || !prompt
+      || !contracts
+      || !['mock', 'local', 'external'].includes(String(provider.providerClass))
+      || typeof provider.provider !== 'string'
+      || typeof provider.modelName !== 'string'
+      || versionVector.inputSha256 !== task.inputHash
+      || versionVector.reviewStateSha256 !== item.reviewStateHash
+      || typeof prompt.promptKey !== 'string'
+      || !Number.isInteger(prompt.versionNo)
+      || typeof contracts.inputSchemaVersion !== 'string'
+      || typeof contracts.outputSchemaVersion !== 'string'
+    ) {
+      throw this.provenanceConflict('OCR AI review version vector lacks Provider, Prompt, or Schema facts');
+    }
+    return {
+      aiTaskId: task.id,
+      inputHash: task.inputHash,
+      outputHash: item.outputHash,
+      versionVectorHash: item.versionVectorHash,
+      reviewStateHash: item.reviewStateHash,
+      reviewBasisHash: item.reviewBasisHash,
+      provider: {
+        providerClass: String(provider.providerClass),
+        provider: provider.provider,
+        modelName: provider.modelName,
+        modelRevision: typeof provider.modelRevision === 'string' ? provider.modelRevision : null
+      },
+      prompt: {
+        promptKey: prompt.promptKey,
+        versionNo: Number(prompt.versionNo),
+        contentSha256: typeof prompt.contentSha256 === 'string' ? prompt.contentSha256 : null
+      },
+      contracts: {
+        inputSchemaVersion: contracts.inputSchemaVersion,
+        outputSchemaVersion: contracts.outputSchemaVersion
+      },
+      warnings: Array.isArray(output.warnings)
+        ? this.strictStringArray(output.warnings, 'OCR AI mapping warnings are invalid')
+        : [],
+      generatedAt: task.createdAt.toISOString(),
+      completedAt: task.completedAt?.toISOString() ?? null
+    };
+  }
+
+  private strictStringArray(value: Prisma.JsonValue, message: string) {
+    if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+      throw this.provenanceConflict(message);
+    }
+    return value;
   }
 
   private candidateArray(value: Prisma.JsonValue): CanonicalOcrFieldCandidate[] {

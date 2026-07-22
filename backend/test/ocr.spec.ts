@@ -191,6 +191,7 @@ describe('OCR phase 10 providers and preprocessing', () => {
       {} as any,
       idempotency as any,
       {} as any,
+      { canonicalDigest: jest.fn() } as any,
       config({})
     );
     jest.spyOn(service as any, 'createTaskWithinTransaction').mockResolvedValue({ id: 'ocr-test' });
@@ -220,9 +221,12 @@ describe('OCR phase 10 providers and preprocessing', () => {
       expect(service.normalizeFieldValue(moneyField, source, 'raw-test')).toBe(expected);
     }
     expect(service.normalizeFieldValue(numberField, '42.0001', 'raw-test')).toBe('42.0001');
-    expect(() => service.normalizeFieldValue(moneyField, 0.01, 'raw-test')).toThrow('字符串');
-    expect(() => service.normalizeFieldValue(numberField, '9007199254740991', 'raw-test')).toThrow('超出允许范围');
-    expect(() => service.normalizeFieldValue(numberField, '9007199254740993', 'raw-test')).toThrow('超出允许范围');
+    expect(() => service.normalizeFieldValue(moneyField, 0.01, 'raw-test'))
+      .toThrow('Precision-sensitive numbers must be submitted as strings');
+    expect(() => service.normalizeFieldValue(numberField, '9007199254740991', 'raw-test'))
+      .toThrow('Numeric value exceeds the allowed range');
+    expect(() => service.normalizeFieldValue(numberField, '9007199254740993', 'raw-test'))
+      .toThrow('Numeric value exceeds the allowed range');
   });
 
   it('preserves conflicting OCR candidates instead of silently choosing one value', () => {

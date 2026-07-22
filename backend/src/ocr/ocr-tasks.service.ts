@@ -55,6 +55,7 @@ import {
   OCR_IR_SCHEMA_VERSION,
   OCR_PREPROCESSING_VERSION
 } from './ocr-ir';
+import { OcrAiReviewService } from './ocr-ai-review.service';
 import { OcrProviderRegistry, ResolvedOcrProvider } from './ocr-provider.registry';
 import { normalizeOcrFieldValue } from './ocr-field-value';
 import {
@@ -80,9 +81,11 @@ type OcrValidationIssue = {
   message: string;
   evidenceRefs: string[];
 };
+type OcrAiReviewDigest = Awaited<ReturnType<OcrAiReviewService['canonicalDigest']>>;
 const MAX_OCR_RESULT_BYTES = 2 * 1024 * 1024;
 export const OCR_DETERMINISTIC_VALIDATION_RULE_VERSION = 'ocr-deterministic-validation/1.0';
-export const OCR_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'ocr-approval/1.0';
+export const OCR_VALIDATION_SNAPSHOT_SCHEMA_VERSION = 'ocr-validation/1.1';
+export const OCR_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'ocr-approval/1.1';
 export const OCR_APPROVAL_POLICY_VERSION = 'finance-ocr-approval/1.0-pending-h10';
 export const OCR_APPROVAL_AUTHORIZATION_POLICY_VERSION = 'finance-ocr-approval-authz/1.0';
 export const OCR_FIELD_TRANSFORM_REGISTRY_VERSION = 'ocr-field-normalization/1.0';
@@ -110,6 +113,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly recordPolicy: RecordPolicyService,
     private readonly idempotency: IdempotencyService,
     private readonly executionGate: ModelExecutionGateService,
+    private readonly aiReviews: OcrAiReviewService,
     config: ConfigService
   ) {
     this.lowConfidenceThreshold = config.get<number>('ocr.lowConfidenceThreshold') ?? 0.8;
@@ -895,7 +899,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       if (dto.expectedVersion !== task.version || dto.expectedReviewRevision !== task.reviewRevision) {
         throw new ConflictException('OCR review payload changed; refresh before revalidation');
       }
-      const snapshot = this.buildValidationSnapshot(task, actor.id);
+      const aiReview = await this.aiReviews.canonicalDigest(tx, id, task.reviewRevision);
+      const snapshot = this.buildValidationSnapshot(task, actor.id, aiReview);
       const validatedAt = new Date();
       await tx.ocrTask.update({
         where: { id },
@@ -911,6 +916,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       await this.auditLogs.write(tx, actor, 'ocr_task.revalidate', 'ocr_task', id, {
         reviewRevision: task.reviewRevision,
         snapshotHash: snapshot.snapshotHash,
+        aiReviewDigestHash: aiReview.digestHash,
         valid: snapshot.valid,
         blockingErrorCount: snapshot.blockingErrors.length,
         warningCount: snapshot.warnings.length
@@ -918,6 +924,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       await this.ledgerEvents.write(tx, actor, 'ocr_task_revalidated', 'ocr_task', id, {
         reviewRevision: task.reviewRevision,
         snapshotHash: snapshot.snapshotHash,
+        aiReviewDigestHash: aiReview.digestHash,
         valid: snapshot.valid
       });
     });
@@ -983,7 +990,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('OCR 任务引用的模板版本已变化，请重新创建任务');
       }
       const approver = await this.assertCurrentFinanceApprover(tx, task, actor);
-      const approvedValidation = this.assertApprovalValidation(task, dto);
+      const currentAiReview = await this.aiReviews.canonicalDigest(tx, id, task.reviewRevision);
+      const approvedValidation = this.assertApprovalValidation(task, dto, currentAiReview);
       this.reviewEvidenceIndex(task);
 
       const candidates = this.candidateArray(task.fieldCandidates);
@@ -1039,14 +1047,14 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         },
         aiSuggestion: {
           appliedToFormalData: false,
-          promptVersion: null,
-          outputSchemaVersion: null
+          reviewDigest: approvedValidation.aiReview
         },
         review: {
           reviewRevision: task.reviewRevision,
           validationSnapshotHash: task.validationSnapshotHash,
           validationRuleVersion: task.validationRuleVersion,
           candidatePayloadHash: approvedValidation.candidatePayloadHash,
+          aiReviewDigestHash: approvedValidation.aiReview.digestHash,
           acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds
         },
         versions: {
@@ -1107,7 +1115,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
               snapshotHash: approvalSnapshot.snapshotHash,
               validationSnapshotHash: task.validationSnapshotHash,
               reviewRevision: task.reviewRevision,
-              normalizedOutputHash
+              normalizedOutputHash,
+              aiReviewDigestHash: approvedValidation.aiReview.digestHash
             }
           }),
           recordType: task.template.recordType,
@@ -1170,18 +1179,21 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         validationSnapshotHash: task.validationSnapshotHash,
         approvalSnapshotHash: approvalSnapshot.snapshotHash,
         normalizedOutputHash,
+        aiReviewDigestHash: approvedValidation.aiReview.digestHash,
         acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds,
         selfApproval: false
       }, context);
       await this.auditLogs.write(tx, approver, 'business_record.create_from_ocr', 'business_record', record.id, {
         ocrTaskId: id,
         rawFileId: task.rawFileId,
-        approvalSnapshotHash: approvalSnapshot.snapshotHash
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        aiReviewDigestHash: approvedValidation.aiReview.digestHash
       }, context);
       await this.ledgerEvents.write(tx, approver, 'ocr_task_confirmed', 'ocr_task', id, {
         generatedRecordId: record.id,
         rawFileId: task.rawFileId,
-        approvalSnapshotHash: approvalSnapshot.snapshotHash
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        aiReviewDigestHash: approvedValidation.aiReview.digestHash
       });
       await this.ledgerEvents.write(tx, approver, 'business_record_created', 'business_record', record.id, {
         sourceType: RecordSourceType.ocr,
@@ -1189,7 +1201,8 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         rawFileId: task.rawFileId,
         accountingDirection: canonical.accountingDirection,
         amount: canonical.amount.toFixed(2),
-        approvalSnapshotHash: approvalSnapshot.snapshotHash
+        approvalSnapshotHash: approvalSnapshot.snapshotHash,
+        aiReviewDigestHash: approvedValidation.aiReview.digestHash
       }, `ocr_task:${id}:business_record_created`);
       return {
         task: toOcrTask(await this.findDetailOrThrow(id, tx)),
@@ -1497,7 +1510,11 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private assertApprovalValidation(task: OcrTaskDetail, dto: ConfirmOcrTaskDto) {
+  private assertApprovalValidation(
+    task: OcrTaskDetail,
+    dto: ConfirmOcrTaskDto,
+    currentAiReview: OcrAiReviewDigest
+  ) {
     if (
       task.validationRevision !== task.reviewRevision
       || task.validationSnapshotHash !== dto.expectedValidationSnapshotHash
@@ -1521,7 +1538,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       typeof embeddedHash === 'string'
       && embeddedHash === task.validationSnapshotHash
       && canonicalJsonSha256(snapshotCore) === task.validationSnapshotHash
-      && snapshot.schemaVersion === 'ocr-validation/1.0'
+      && snapshot.schemaVersion === OCR_VALIDATION_SNAPSHOT_SCHEMA_VERSION
       && snapshot.taskId === task.id
       && snapshot.projectId === task.projectId
       && snapshot.sourceSha256 === task.sourceSha256
@@ -1543,6 +1560,19 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       throw new ConflictException({
         message: 'OCR source, template, review values, or validation hash changed after revalidation',
         data: { reason: 'OCR_APPROVAL_PAYLOAD_STALE' }
+      });
+    }
+
+    const frozenAiReview = snapshot.aiReview;
+    if (
+      !frozenAiReview
+      || typeof frozenAiReview !== 'object'
+      || Array.isArray(frozenAiReview)
+      || canonicalJsonSha256(frozenAiReview) !== canonicalJsonSha256(currentAiReview)
+    ) {
+      throw new ConflictException({
+        message: 'OCR AI review evidence changed after deterministic revalidation',
+        data: { reason: 'OCR_AI_REVIEW_DIGEST_STALE' }
       });
     }
 
@@ -1591,6 +1621,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     return {
       candidatePayloadHash: currentCandidateHash,
       templateContentHash: currentTemplateContentHash,
+      aiReview: currentAiReview,
       acknowledgedWarningIds
     };
   }
@@ -1614,7 +1645,11 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
     })}`;
   }
 
-  private buildValidationSnapshot(task: OcrTaskDetail, validatedBy: string) {
+  private buildValidationSnapshot(
+    task: OcrTaskDetail,
+    validatedBy: string,
+    aiReview: OcrAiReviewDigest
+  ) {
     const candidates = this.candidateArray(task.fieldCandidates);
     const evidenceIndex = this.reviewEvidenceIndex(task);
     const activeFields = task.template.templateFields.filter((item) => item.isVisible && item.field.isActive);
@@ -1749,7 +1784,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       issueId: this.validationIssueId('warning', issue)
     }));
     const core = {
-      schemaVersion: 'ocr-validation/1.0',
+      schemaVersion: OCR_VALIDATION_SNAPSHOT_SCHEMA_VERSION,
       taskId: task.id,
       projectId: task.projectId,
       sourceSha256: task.sourceSha256,
@@ -1761,6 +1796,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       reviewRevision: task.reviewRevision,
       candidatePayloadHash: canonicalJsonSha256(candidates),
       validationRuleVersion: OCR_DETERMINISTIC_VALIDATION_RULE_VERSION,
+      aiReview,
       validatedBy,
       blockingErrors: identifiedBlockingErrors,
       warnings: identifiedWarnings,

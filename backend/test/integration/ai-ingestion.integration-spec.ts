@@ -8,6 +8,7 @@ import {
   FileScanStatus,
   FieldType,
   ImportTaskStatus,
+  OcrAttemptStatus,
   OcrTaskStatus,
   Prisma,
   RawFileStatus,
@@ -114,6 +115,30 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.allow_ocr_ai_review_purge', 'on', true)`;
       await tx.ocrAiReviewDecision.deleteMany({ where: { ocrTaskId } });
+    });
+  }
+
+  async function maintenanceReplaceOcrReviewReason(id: string, reason: string) {
+    const current = await prisma.ocrAiReviewDecision.findUniqueOrThrow({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.allow_ocr_ai_review_purge', 'on', true)`;
+      await tx.ocrAiReviewDecision.delete({ where: { id } });
+      await tx.ocrAiReviewDecision.create({
+        data: {
+          ...current,
+          rawOcrValue: current.rawOcrValue as Prisma.InputJsonValue,
+          rawEvidenceRefs: current.rawEvidenceRefs as Prisma.InputJsonValue,
+          suggestedValue: current.suggestedValue === null
+            ? Prisma.DbNull
+            : current.suggestedValue as Prisma.InputJsonValue,
+          suggestedEvidenceRefs: current.suggestedEvidenceRefs as Prisma.InputJsonValue,
+          finalValue: current.finalValue === null
+            ? Prisma.DbNull
+            : current.finalValue as Prisma.InputJsonValue,
+          finalEvidenceRefs: current.finalEvidenceRefs as Prisma.InputJsonValue,
+          reason
+        }
+      });
     });
   }
 
@@ -1815,7 +1840,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     let templateId: string | undefined;
 
     try {
-      const [financeLogin, employeeLogin] = await Promise.all([
+      const [financeLogin, employeeLogin, secondFinanceLogin] = await Promise.all([
         request(app.getHttpServer())
           .post('/api/auth/login')
           .send({ username: 'finance', password: '123456' })
@@ -1823,10 +1848,15 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         request(app.getHttpServer())
           .post('/api/auth/login')
           .send({ username: 'employee', password: '123456' })
+          .expect(200),
+        request(app.getHttpServer())
+          .post('/api/auth/login')
+          .send({ username: '财务', password: '123456' })
           .expect(200)
       ]);
       const financeToken = financeLogin.body.data.accessToken as string;
       const employeeToken = employeeLogin.body.data.accessToken as string;
+      const secondFinanceToken = secondFinanceLogin.body.data.accessToken as string;
       const finance = await prisma.user.findUniqueOrThrow({ where: { username: 'finance' } });
       const fields = await prisma.fieldDefinition.findMany({
         where: { fieldKey: { in: ['date', 'amount'] } }
@@ -2001,6 +2031,24 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           textBlocks: pages.flatMap((page) => page.blocks) as Prisma.InputJsonValue,
           pageCount: 2,
           uploadedBy: finance.id
+        }
+      });
+      await prisma.ocrAttempt.create({
+        data: {
+          ocrTaskId: taskId,
+          attemptNo: 1,
+          status: OcrAttemptStatus.succeeded,
+          provider: 'mock',
+          modelName: 'mock-ocr',
+          modelVersion: '1',
+          endpointSnapshot: 'in-process://synthetic',
+          providerConfigHash: canonicalJsonSha256({ provider: 'mock', modelName: 'mock-ocr', version: '1' }),
+          inputSha256: sourceSha256,
+          correlationId: `${requestPrefix}-ocr-attempt`,
+          startedAt: new Date('2026-07-18T00:00:00.000Z'),
+          completedAt: new Date('2026-07-18T00:00:00.100Z'),
+          latencyMs: 100,
+          pageCount: 2
         }
       });
 
@@ -2232,6 +2280,46 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         normalizedValue: '126.6',
         reviewRevision: reviewState.reviewRevision + 1
       });
+      const reviewedValidation = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          expectedVersion: reviewed.body.data.version,
+          expectedReviewRevision: reviewed.body.data.reviewRevision
+        })
+        .expect(201);
+      expect(reviewedValidation.body.data.validation.snapshot.aiReview).toMatchObject({
+        schemaVersion: 'ocr-ai-review-digest/1.0',
+        mode: 'ai_reviewed',
+        taskReviewRevision: reviewed.body.data.reviewRevision,
+        decisionCount: 2,
+        summary: { total: 2, accept: 1, edit: 1, reject: 0, ignore: 0, pending: 0 },
+        digestHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+      const reviewedDecision = await prisma.ocrAiReviewDecision.findFirstOrThrow({
+        where: { ocrTaskId: taskId },
+        orderBy: [{ reviewRevision: 'asc' }, { sourceRef: 'asc' }]
+      });
+      await maintenanceReplaceOcrReviewReason(
+        reviewedDecision.id,
+        'Synthetic maintenance tamper after deterministic validation'
+      );
+      await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${secondFinanceToken}`)
+        .set('Idempotency-Key', `${requestPrefix}-stale-review-approval`)
+        .send({
+          expectedVersion: reviewedValidation.body.data.version,
+          expectedReviewRevision: reviewedValidation.body.data.reviewRevision,
+          expectedValidationSnapshotHash: reviewedValidation.body.data.validation.snapshotHash,
+          expectedPayloadHash: reviewedValidation.body.data.validation.snapshot.candidatePayloadHash,
+          acknowledgedWarningIds: reviewedValidation.body.data.validation.snapshot.warnings
+            .map((warning: { issueId: string }) => warning.issueId)
+        })
+        .expect(409)
+        .expect(({ body }) => expect(body.data).toMatchObject({ reason: 'OCR_AI_REVIEW_DIGEST_STALE' }));
+      expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(0);
+      await maintenanceReplaceOcrReviewReason(reviewedDecision.id, reviewedDecision.reason);
       await request(app.getHttpServer())
         .get(`/api/ocr-tasks/${taskId}/ai-reviews?page=1&pageSize=1`)
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -2244,7 +2332,13 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         page: 1,
         pageSize: 10,
         total: 2,
-        summary: { total: 2, accept: 1, edit: 1, reject: 0, ignore: 0 }
+        summary: { total: 2, accept: 1, edit: 1, reject: 0, ignore: 0, pending: 0 },
+        digest: {
+          schemaVersion: 'ocr-ai-review-digest/1.0',
+          mode: 'ai_reviewed',
+          decisionCount: 2,
+          digestHash: reviewedValidation.body.data.validation.snapshot.aiReview.digestHash
+        }
       });
       expect(reviewHistory.body.data.items).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -2373,6 +2467,92 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         businessRecordsCreated: 0
       });
       expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(0);
+
+      const damagedTask = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      const repaired = await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/corrections`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          expectedVersion: damagedTask.version,
+          expectedReviewRevision: damagedTask.reviewRevision,
+          corrections: [
+            {
+              fieldId: dateField.id,
+              correctedValue: '2026-07-18',
+              evidenceRefs: ['p1-b1'],
+              reason: 'Restore the synthetic date evidence after attack testing'
+            },
+            {
+              fieldId: amountField.id,
+              correctedValue: '126.60',
+              evidenceRefs: ['p1-b2'],
+              reason: 'Restore the synthetic amount evidence after attack testing'
+            }
+          ]
+        })
+        .expect(200);
+      const approvalValidation = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          expectedVersion: repaired.body.data.version,
+          expectedReviewRevision: repaired.body.data.reviewRevision
+        })
+        .expect(201);
+      expect(approvalValidation.body.data.validation.snapshot).toMatchObject({
+        schemaVersion: 'ocr-validation/1.1',
+        valid: true,
+        blockingErrors: [],
+        aiReview: {
+          schemaVersion: 'ocr-ai-review-digest/1.0',
+          mode: 'ai_reviewed',
+          taskReviewRevision: repaired.body.data.reviewRevision,
+          decisionCount: 4,
+          digestHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }
+      });
+      expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(0);
+      const approval = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/confirm`)
+        .set('Authorization', `Bearer ${secondFinanceToken}`)
+        .set('Idempotency-Key', `${requestPrefix}-digest-bound-approval`)
+        .send({
+          expectedVersion: approvalValidation.body.data.version,
+          expectedReviewRevision: approvalValidation.body.data.reviewRevision,
+          expectedValidationSnapshotHash: approvalValidation.body.data.validation.snapshotHash,
+          expectedPayloadHash: approvalValidation.body.data.validation.snapshot.candidatePayloadHash,
+          acknowledgedWarningIds: approvalValidation.body.data.validation.snapshot.warnings
+            .map((warning: { issueId: string }) => warning.issueId)
+        })
+        .expect(201);
+      expect(approval.body.data).toMatchObject({
+        task: {
+          status: OcrTaskStatus.confirmed,
+          approval: {
+            snapshot: {
+              schemaVersion: 'ocr-approval/1.1',
+              aiSuggestion: {
+                appliedToFormalData: false,
+                reviewDigest: {
+                  digestHash: approvalValidation.body.data.validation.snapshot.aiReview.digestHash
+                }
+              },
+              review: {
+                aiReviewDigestHash: approvalValidation.body.data.validation.snapshot.aiReview.digestHash
+              }
+            }
+          }
+        },
+        record: { sourceType: 'ocr', sourceId: taskId, status: 'confirmed' }
+      });
+      expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(1);
+      const approvedRecord = await prisma.businessRecord.findFirstOrThrow({ where: { sourceId: taskId } });
+      expect(approvedRecord.confirmationSnapshot).toMatchObject({
+        ingestionApproval: {
+          schemaVersion: 'ocr-approval/1.1',
+          aiReviewDigestHash: approvalValidation.body.data.validation.snapshot.aiReview.digestHash
+        }
+      });
     } finally {
       providerSpy?.mockRestore();
       config.set('ai.ingestionMode', originalMode);
@@ -2380,7 +2560,32 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       await maintenancePurgeOcrAiReviews(taskId);
       await prisma.aiCallLog.deleteMany({ where: { correlationId: { startsWith: requestPrefix } } });
       await prisma.aiTask.deleteMany({ where: { resourceId: taskId } });
-      await prisma.auditLog.deleteMany({ where: { resourceId: taskId } });
+      const generatedRecords = await prisma.businessRecord.findMany({
+        where: { sourceType: 'ocr', sourceId: taskId },
+        select: { id: true }
+      });
+      const generatedRecordIds = generatedRecords.map(({ id }) => id);
+      await prisma.ledgerEvent.deleteMany({
+        where: {
+          OR: [
+            { aggregateId: taskId },
+            ...(generatedRecordIds.length > 0 ? [{ aggregateId: { in: generatedRecordIds } }] : [])
+          ]
+        }
+      });
+      await prisma.auditLog.deleteMany({
+        where: {
+          OR: [
+            { resourceId: taskId },
+            ...(generatedRecordIds.length > 0 ? [{ resourceId: { in: generatedRecordIds } }] : [])
+          ]
+        }
+      });
+      if (generatedRecordIds.length > 0) {
+        await prisma.recordValue.deleteMany({ where: { recordId: { in: generatedRecordIds } } });
+        await prisma.businessRecord.deleteMany({ where: { id: { in: generatedRecordIds } } });
+      }
+      await prisma.idempotencyKey.deleteMany({ where: { key: { startsWith: requestPrefix } } });
       await prisma.ocrTask.deleteMany({ where: { id: taskId } });
       await prisma.rawFile.deleteMany({ where: { id: rawFileId } });
       if (projectId && templateId) {
