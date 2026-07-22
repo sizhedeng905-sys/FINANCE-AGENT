@@ -2,7 +2,7 @@
 
 面向物流企业的 AI 财务运营系统。项目把员工工单、财务审核、复核、规则与 AI 辅助检查、老板审批、经营数据、通知、日报和老板 AI 助手连接为一个可审计的业务闭环。
 
-当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。周五 Demo 已形成“登录 -> Excel 导入 -> AI 建议 -> 财务复核 -> 幂等入账 -> ReportSnapshot -> 老板叙述依据”的可重置合成技术闭环；M0-M8 非生产工程边界保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。Draft PR #4 已推送至 CR-039（远端 SHA `4288253`）；CR-040 告警交付、CR-041 digest-only 签名验证和 CR-042 无值 secret 生命周期已在本地完成实现与独立审查提交，但 2026-07-22 无法连接 GitHub 443，尚待正常推送与同 SHA CI。目标 Linux Staging、真实 restore/RPO/RTO、正式 secret/provider、财务/OCR/AI 真值及负责人 UAT 均未完成，因此本项目**不是 production-ready**。
+当前仓库已经从前端原型推进到 React 前端、NestJS 后端、PostgreSQL、异步 Excel/OCR、结构化 AI Claim、本地模型控制面和 Staging 工程。周五 Demo 已形成“登录 -> Excel 导入 -> AI 建议 -> 财务复核 -> 幂等入账 -> ReportSnapshot -> 老板叙述依据”的可重置合成技术闭环；M0-M8 非生产工程边界保持有效：AI 只生成受控建议，财务批准前没有正式可见记录，报告数字只来自 canonical ReportSnapshot、Decimal 和固定查询。Draft PR #4 已推送至 CR-039（远端 SHA `4288253`）；CR-040 告警交付、CR-041 digest-only 签名、CR-042 无值 secret 生命周期和 CR-043 异地备份证据契约已在本地完成实现与独立审查提交，但 2026-07-22 无法连接 GitHub 443，尚待正常推送与同 SHA CI。目标 Linux Staging、真实 offsite restore/RPO/RTO、正式 secret/provider、财务/OCR/AI 真值及负责人 UAT 均未完成，因此本项目**不是 production-ready**。
 
 ## 项目状态
 
@@ -18,7 +18,7 @@
 | B8-09 Staging | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | 本机隔离 18 服务已真实 `up` 并完成 TLS/API/浏览器 smoke；目标 Linux Staging、restore、RPO/RTO 和 rollback 未验收 |
 | RC-00 至 RC-04 | `historical_baseline_passed / reopened` | 原门禁通过，但“无开放 P0/P1”结论已由 R0 撤回 |
 | R0-R10 修复与再验收 | `ENGINEERING_VERIFIED / EXTERNAL_RESOURCE_NEEDED` | R8.9 分层 CI、M8.1 Nginx Critical、R9 共享控制、Excel 暂存完整性重审和 R10 本地模型 L0 均有工程证据；L1 真值与目标 release 仍开放 |
-| R11 最终交接 | `in_progress` | Draft PR #4 已远端更新至 CR-039；CR-040 至 CR-042 本地完成但 GitHub 443 当前不可达，尚待推送和同 SHA CI；三次人工演练未执行，不 merge、不转 Ready |
+| R11 最终交接 | `in_progress` | Draft PR #4 已远端更新至 CR-039；CR-040 至 CR-043 本地完成但 GitHub 443 当前不可达，尚待推送和同 SHA CI；三次人工演练未执行，不 merge、不转 Ready |
 | AI 映射补充 M0-M8 | `ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED` | OCR/Excel 审核入账、canonical ReportSnapshot、严格 Claim grounding、攻击/资源/降级和最终证据已通过；真实口径/准确率和目标 Staging 尚未关闭 |
 | 发布结论 | `SAFE_DEFAULT_ACTIVE` | 目标环境、真实 Staging、恢复演练、独立安全复核、财务/OCR/AI 真值和 owner UAT 均未完成，发布失败关闭 |
 
@@ -483,11 +483,12 @@ npm run model:restore
 ```bash
 npm run staging:init
 npm run staging:secret:inventory
+npm run staging:offsite-backup:contract
 npm run staging:check
 npm run staging:release
 ```
 
-`staging:init` 只在被 Git 忽略的目录生成随机 secret、CA 和证书。`staging:secret:inventory` 只读取 20 个固定文件的 `lstat` 元数据并核对消费关系，不读取或哈希值；mtime 只是待 H14 定稿的工程新鲜度信号。`staging:release` 要求干净工作树，并在启动候选服务前完成配置、secret 新鲜度、镜像锁、SBOM/CVE、migration ledger 和 release plan 门禁，再执行权限、TLS/browser smoke、关联备份恢复与最终 manifest。已有 `.env` 不会被自动覆盖；旧镜像配置会失败关闭。
+`staging:init` 只在被 Git 忽略的目录生成随机 secret、CA 和证书。`staging:secret:inventory` 只读取 20 个固定文件的 `lstat` 元数据并核对消费关系，不读取或哈希值；mtime 只是待 H14 定稿的工程新鲜度信号。异地备份契约在本地固定 disabled，target 声明完整后仍需真实副本、加密/不可变与隔离恢复证据。`staging:release` 要求干净工作树，并在启动候选服务前完成配置、secret 新鲜度、镜像锁、SBOM/CVE、migration ledger 和 release plan 门禁，再执行权限、TLS/browser smoke、关联备份恢复与最终 manifest。已有 `.env` 不会被自动覆盖；旧镜像配置会失败关闭。
 
 当前已完成：
 
