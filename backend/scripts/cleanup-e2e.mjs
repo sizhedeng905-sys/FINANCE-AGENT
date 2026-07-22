@@ -96,6 +96,13 @@ async function main() {
       })
     : [];
   const importAiTaskIds = importAiTasks.map((item) => item.id);
+  const ocrAiTasks = ocrTaskIds.length > 0
+    ? await prisma.aiTask.findMany({
+        where: { resourceType: 'ocr_task', resourceId: { in: ocrTaskIds } },
+        select: { id: true }
+      })
+    : [];
+  const ocrAiTaskIds = ocrAiTasks.map((item) => item.id);
   const generatedRecordIds = workOrders
     .map((item) => item.generatedRecordId)
     .filter((id) => typeof id === 'string');
@@ -140,6 +147,7 @@ async function main() {
     ...rawFileIds,
     ...mappingProfileIds,
     ...importAiTaskIds,
+    ...ocrAiTaskIds,
     ...reportSnapshotIds,
     ...reportNarrativeIds
   ])];
@@ -147,6 +155,7 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.allow_report_audit_purge', 'on', true)`;
     await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
+    await tx.$executeRaw`SELECT set_config('app.allow_ocr_ai_review_purge', 'on', true)`;
     await tx.aiFinancialClaim.deleteMany({ where: { reportNarrativeId: { in: reportNarrativeIds } } });
     await tx.reportNarrative.deleteMany({ where: { id: { in: reportNarrativeIds } } });
     await tx.reportSnapshotSource.deleteMany({ where: { snapshotId: { in: reportSnapshotIds } } });
@@ -161,7 +170,9 @@ async function main() {
     await tx.importAiReviewDecision.deleteMany({ where: { importTaskId: { in: importTaskIds } } });
     await tx.importTask.deleteMany({ where: { id: { in: importTaskIds } } });
     await tx.aiTask.deleteMany({ where: { id: { in: importAiTaskIds } } });
+    await tx.ocrAiReviewDecision.deleteMany({ where: { ocrTaskId: { in: ocrTaskIds } } });
     await tx.ocrTask.deleteMany({ where: { id: { in: ocrTaskIds } } });
+    await tx.aiTask.deleteMany({ where: { id: { in: ocrAiTaskIds } } });
     await tx.rawFile.deleteMany({ where: { id: { in: rawFileIds } } });
     await tx.mappingProfileRule.deleteMany({ where: { mappingProfileId: { in: mappingProfileIds } } });
     await tx.mappingProfile.deleteMany({ where: { id: { in: mappingProfileIds } } });
@@ -182,7 +193,7 @@ async function main() {
   await rm(uploadRoot, { recursive: true, force: true });
 
   console.log(
-    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${mappingProfileIds.length} mapping profile(s), ${importAiTaskIds.length} import AI task(s), ${reportSnapshotIds.length} report snapshot(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
+    `Cleaned ${workOrderIds.length} E2E work order(s), ${importTaskIds.length} import task(s), ${ocrTaskIds.length} OCR task(s), ${recordIds.length} record(s), ${mappingProfileIds.length} mapping profile(s), ${importAiTaskIds.length + ocrAiTaskIds.length} ingestion AI task(s), ${reportSnapshotIds.length} report snapshot(s), ${rawFileIds.length} referenced file(s), and ${orphanFilesRemoved} remaining file artifact(s).`
   );
 }
 
