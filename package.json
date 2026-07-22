@@ -25,6 +25,8 @@
     "check:docs": "node backend/scripts/check-markdown-links.mjs",
     "check:hygiene": "node backend/scripts/check-repository-hygiene.mjs",
     "check:hygiene:staged": "node backend/scripts/check-repository-hygiene.mjs --staged",
+    "check:install-scripts": "node backend/scripts/check-install-script-policy.mjs",
+    "check:install-scripts:test": "node --test backend/scripts/check-install-script-policy.test.mjs",
     "realdata:scan": "npm --prefix backend run realdata:scan --",
     "realdata:xlsx-profile": "npm --prefix backend run realdata:xlsx-profile --",
     "realdata:large-xlsx-profile": "npm --prefix backend run realdata:large-xlsx-profile --",
@@ -87,5 +89,9 @@
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "~5.6.3",
     "vite": "^6.4.3"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents": false
   }
 }

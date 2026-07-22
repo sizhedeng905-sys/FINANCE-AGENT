@@ -202,6 +202,7 @@ jobs:
       - name: Check repository hygiene and production dependency risk
         run: |
           npm run check:hygiene
+          npm run check:install-scripts
           npm run staging:sbom:test
           npm run model:config:check --prefix backend
           npm run model:lock:test --prefix backend

@@ -20,7 +20,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build && npm prune --omit=dev
+RUN npm run build
+
+FROM node-base AS production-dependencies
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN npm ci --omit=dev && npm run prisma:generate
 
 FROM node-base AS runtime
 ARG BUILD_GIT_SHA
@@ -35,8 +41,8 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
     && useradd --uid 10001 --gid finance --no-create-home --shell /usr/sbin/nologin finance \
     && mkdir -p /app/.upload-quarantine \
     && chown -R finance:finance /app
-COPY --from=build --chown=finance:finance /app/package.json /app/package-lock.json ./
-COPY --from=build --chown=finance:finance /app/node_modules ./node_modules
+COPY --from=production-dependencies --chown=finance:finance /app/package.json /app/package-lock.json ./
+COPY --from=production-dependencies --chown=finance:finance /app/node_modules ./node_modules
 COPY --from=build --chown=finance:finance /app/dist ./dist
 COPY --from=build --chown=finance:finance /app/prisma ./prisma
 COPY --chmod=0555 docker/backend-entrypoint.sh /usr/local/bin/backend-entrypoint
