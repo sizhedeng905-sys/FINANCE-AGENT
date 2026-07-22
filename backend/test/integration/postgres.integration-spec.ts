@@ -8130,6 +8130,19 @@ describe('real PostgreSQL integration', () => {
         }));
       expect(await prisma.businessRecord.count({ where: { sourceType: RecordSourceType.ocr, sourceId: taskId } })).toBe(0);
 
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/corrections`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({
+          corrections: [{
+            fieldId: amountField!.fieldId,
+            correctedValue: '1299.25',
+            reason: '缺少服务器版本前提的纠错必须失败'
+          }]
+        })
+        .expect(400);
+      expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(0);
+
       const corrected = await request(app.getHttpServer())
         .put(`/api/ocr-tasks/${taskId}/corrections`)
         .set('Authorization', `Bearer ${tokens.finance}`)

@@ -44,17 +44,15 @@ export class OcrFieldCorrectionDto {
 }
 
 export class CorrectOcrTaskDto {
-  @ApiPropertyOptional({ minimum: 1 })
-  @IsOptional()
+  @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  expectedVersion?: number;
+  expectedVersion!: number;
 
-  @ApiPropertyOptional({ minimum: 0 })
-  @IsOptional()
+  @ApiProperty({ minimum: 0 })
   @IsInt()
   @Min(0)
-  expectedReviewRevision?: number;
+  expectedReviewRevision!: number;
 
   @ApiProperty({ type: [OcrFieldCorrectionDto] })
   @IsArray()

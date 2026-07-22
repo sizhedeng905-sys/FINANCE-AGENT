@@ -98,7 +98,11 @@ test('real Paddle provider completes queued UI flow without automatic posting', 
   if (corrections.length) {
     const correction = await request.put(`${API_URL}/ocr-tasks/${task.id}/corrections`, {
       headers,
-      data: { corrections }
+      data: {
+        expectedVersion: task.version,
+        expectedReviewRevision: task.reviewRevision,
+        corrections
+      }
     });
     expect(correction.ok()).toBeTruthy();
   }

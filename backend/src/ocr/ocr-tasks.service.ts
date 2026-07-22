@@ -791,13 +791,10 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
       await this.lockTask(tx, id);
       const task = await this.findDetailOrThrow(id, tx);
       if (task.status !== OcrTaskStatus.pending_confirm) throw new ConflictException('当前 OCR 状态不能人工纠错');
-      if (dto.expectedVersion !== undefined && dto.expectedVersion !== task.version) {
+      if (dto.expectedVersion !== task.version) {
         throw new ConflictException('OCR task version changed; refresh before saving corrections');
       }
-      if (
-        dto.expectedReviewRevision !== undefined
-        && dto.expectedReviewRevision !== task.reviewRevision
-      ) {
+      if (dto.expectedReviewRevision !== task.reviewRevision) {
         throw new ConflictException('OCR review revision changed; refresh before saving corrections');
       }
       const candidates = this.candidateArray(task.fieldCandidates);

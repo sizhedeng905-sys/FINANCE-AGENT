@@ -1115,8 +1115,8 @@ export interface CreateOCRTaskPayload {
 }
 
 export interface CorrectOCRTaskPayload {
-  expectedVersion?: number;
-  expectedReviewRevision?: number;
+  expectedVersion: number;
+  expectedReviewRevision: number;
   corrections: Array<{ fieldId: string; correctedValue: unknown; reason: string; evidenceRefs?: string[] }>;
 }
 

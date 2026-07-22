@@ -237,8 +237,8 @@ export async function mockCorrectOCRTask(id: string, payload: CorrectOCRTaskPayl
   await delay();
   const task = findTask(id);
   if (task.status !== 'pending_confirm') throw new Error('当前 OCR 状态不能人工纠错');
-  if (payload.expectedVersion !== undefined && payload.expectedVersion !== task.version) throw new Error('OCR 任务版本已变化，请刷新后重试');
-  if (payload.expectedReviewRevision !== undefined && payload.expectedReviewRevision !== task.reviewRevision) throw new Error('OCR 审核版本已变化，请刷新后重试');
+  if (payload.expectedVersion !== task.version) throw new Error('OCR 任务版本已变化，请刷新后重试');
+  if (payload.expectedReviewRevision !== task.reviewRevision) throw new Error('OCR 审核版本已变化，请刷新后重试');
   const nextReviewRevision = task.reviewRevision + 1;
   payload.corrections.forEach((correction) => {
     const index = task.fields.findIndex((field) => field.fieldId === correction.fieldId);
