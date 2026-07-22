@@ -171,6 +171,14 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
   await expect(firstRow.getByText('已采纳到草稿')).toBeVisible();
   await secondRow.getByRole('button', { name: '拒绝建议' }).click();
   await expect(secondRow.getByText('已拒绝')).toBeVisible();
+  const secondColumn = task.columns.find((column) => (
+    (column.sourceColumnId ?? `column:${column.columnIndex}`) === second.sourceRef
+  ));
+  expect(secondColumn).toBeDefined();
+  const secondMappingRow = page.locator('.excel-mapping-row').filter({ hasText: secondColumn!.sourceName });
+  await expect(
+    secondMappingRow.locator('.ant-select-selection-item').filter({ hasText: second.targetFieldName }),
+  ).toHaveCount(0);
   expect(mappingWrites).toBe(0);
   await expectNoOfficialRecords(page, task.id);
 

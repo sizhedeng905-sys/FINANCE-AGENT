@@ -14,6 +14,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested
 } from 'class-validator';
 
@@ -61,7 +62,8 @@ export class AiMappingReviewDto {
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
-  @MaxLength(500)
+  @MinLength(2)
+  @MaxLength(200)
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   reason!: string;
 }

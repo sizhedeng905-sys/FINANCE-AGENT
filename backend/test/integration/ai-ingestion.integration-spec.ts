@@ -988,6 +988,26 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         ignore: true
       };
       await putMappings(editedToIgnore).expect(400);
+      const editedWithoutChangingField = reviewPayload(currentTask);
+      editedWithoutChangingField.mappings[1].targetFieldId = fields[1].id;
+      editedWithoutChangingField.mappings[2].targetFieldId = fields[3].id;
+      await putMappings(editedWithoutChangingField).expect(400);
+      const rejectedWithoutChangingField = reviewPayload(currentTask);
+      rejectedWithoutChangingField.mappings[1].targetFieldId = fields[3].id;
+      rejectedWithoutChangingField.mappings[2].targetFieldId = fields[2].id;
+      await putMappings(rejectedWithoutChangingField).expect(400);
+      const ignoredWithField = reviewPayload(currentTask);
+      Object.assign(ignoredWithField.mappings[3], {
+        targetFieldId: fields[3].id,
+        ignore: true
+      });
+      await putMappings(ignoredWithField).expect(400);
+      const rejectedWithoutManualField = reviewPayload(currentTask);
+      Object.assign(rejectedWithoutManualField.mappings[2], { targetFieldId: undefined });
+      await putMappings(rejectedWithoutManualField).expect(400);
+      const excessiveRejectReason = reviewPayload(currentTask);
+      excessiveRejectReason.mappings[2].aiReview.reason = 'x'.repeat(201);
+      await putMappings(excessiveRejectReason).expect(400);
 
       await prisma.importSheet.update({
         where: { id: sheet.id },
@@ -1035,6 +1055,31 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         fields[1].id,
         null
       ]);
+      await expect(prisma.importAiReviewDecision.create({
+        data: {
+          importTaskId: task.id,
+          importColumnId: columns[0].id,
+          aiTaskId: approvedTask.id,
+          outputHash: approvedTask.outputHash!,
+          versionVectorHash: approvedTask.versionVectorHash!,
+          reviewStateHash: approvedTask.reviewBasis.reviewState.stateHash,
+          reviewBasisHash: approvedTask.reviewBasis.basisHash,
+          sourceRef: columns[0].sourceColumnId!,
+          templateVersionId,
+          suggestedTargetFieldId: fields[0].id,
+          suggestedTargetFieldKey: fields[0].fieldKey,
+          suggestedTransformKey: 'TRIM_TEXT_V1',
+          suggestedConfidence: '0.9',
+          evidenceRefs: [columns[0].sourceColumnId!],
+          finalTargetFieldId: fields[1].id,
+          finalIgnored: false,
+          decision: 'accept',
+          reason: 'invalid direct database write',
+          reviewRevision: 2,
+          actorId: finance.id
+        }
+      })).rejects.toThrow();
+      expect(await prisma.importAiReviewDecision.count({ where: { importTaskId: task.id } })).toBe(4);
       expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
       const listed = await request(app.getHttpServer())
         .get(`/api/import-tasks/${task.id}/ai-review-decisions?page=1&pageSize=2`)

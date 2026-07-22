@@ -212,12 +212,17 @@ export default function DataImportMappingPage() {
     setSelected((state) => ({ ...state, [column.id]: value }));
     const suggestion = aiMappingByColumnId.get(column.id);
     if (!suggestion) return;
-    const decision: AiDraftDecision = value === IGNORE_VALUE
-      ? 'ignored'
-      : value === suggestion.targetFieldId
-        ? 'accepted'
-        : 'edited';
-    setAiDraftDecisions((state) => ({ ...state, [sourceRefForColumn(column)]: decision }));
+    const sourceRef = sourceRefForColumn(column);
+    setAiDraftDecisions((state) => {
+      const decision: AiDraftDecision = value === IGNORE_VALUE
+        ? 'ignored'
+        : value === suggestion.targetFieldId
+          ? 'accepted'
+          : state[sourceRef] === 'rejected'
+            ? 'rejected'
+            : 'edited';
+      return { ...state, [sourceRef]: decision };
+    });
   };
 
   const canApplyAiMapping = (mapping: DisplayExcelAiMapping) => {
@@ -242,10 +247,14 @@ export default function DataImportMappingPage() {
     const column = columnBySourceRef.get(mapping.sourceRef);
     if (!column) return;
     setSelected((state) => {
-      if (aiDraftDecisions[mapping.sourceRef] !== 'accepted') return state;
-      const next = { ...state };
-      delete next[column.id];
-      return next;
+      const currentValue = Object.prototype.hasOwnProperty.call(state, column.id)
+        ? state[column.id]
+        : column.decision?.ignored
+          ? IGNORE_VALUE
+          : column.decision?.targetFieldId;
+      return currentValue === mapping.targetFieldId
+        ? { ...state, [column.id]: '' }
+        : state;
     });
     setAiDraftDecisions((state) => ({ ...state, [mapping.sourceRef]: 'rejected' }));
   };
@@ -315,6 +324,19 @@ export default function DataImportMappingPage() {
 
   const save = async () => {
     if (!task) return;
+    const invalidAiReview = aiMappings.some((mapping) => {
+      const column = columnBySourceRef.get(mapping.sourceRef);
+      const decision = aiDraftDecisions[mapping.sourceRef];
+      if (!column || !decision) return false;
+      const value = valueFor(column);
+      if (decision === 'accepted') return value !== mapping.targetFieldId;
+      if (decision === 'ignored') return value !== IGNORE_VALUE;
+      return !value || value === IGNORE_VALUE || value === mapping.targetFieldId;
+    });
+    if (invalidAiReview) {
+      message.warning('AI 审核决定与最终字段不一致，请重新选择后保存');
+      return;
+    }
     const mappings = task.columns.flatMap((column) => {
       const value = valueFor(column);
       if (!value) return [];

@@ -169,20 +169,21 @@ export class ImportAiReviewService {
         throw new ConflictException('AI 建议字段不属于任务冻结模板');
       }
       const finalIgnored = mapping.ignore === true;
+      const finalTargetFieldId = finalIgnored ? null : mapping.targetFieldId ?? null;
       if (
         review.decision === 'accept'
-        && (finalIgnored || mapping.targetFieldId !== suggestedField.id)
+        && (finalIgnored || finalTargetFieldId !== suggestedField.id)
       ) {
         throw new BadRequestException('采纳决定的最终字段必须与 AI 建议一致');
       }
-      if (review.decision === 'ignore' && !finalIgnored) {
+      if (review.decision === 'ignore' && (!finalIgnored || finalTargetFieldId !== null)) {
         throw new BadRequestException('忽略决定必须把当前来源列明确标记为忽略');
       }
       if (
-        review.decision === 'edit'
-        && (finalIgnored || mapping.targetFieldId === suggestedField.id)
+        (review.decision === 'edit' || review.decision === 'reject')
+        && (finalIgnored || finalTargetFieldId === null || finalTargetFieldId === suggestedField.id)
       ) {
-        throw new BadRequestException('人工编辑决定必须产生与 AI 建议不同的最终映射');
+        throw new BadRequestException('人工编辑或拒绝决定必须产生与 AI 建议不同的最终映射');
       }
       return {
         importTaskId: task.id,
@@ -199,7 +200,7 @@ export class ImportAiReviewService {
         suggestedTransformKey: suggestion.transformKey,
         suggestedConfidence: suggestion.confidence,
         evidenceRefs: suggestion.evidenceRefs,
-        finalTargetFieldId: finalIgnored ? null : mapping.targetFieldId ?? null,
+        finalTargetFieldId,
         finalIgnored,
         decision: review.decision as ImportAiReviewDecisionType,
         reason: review.reason,

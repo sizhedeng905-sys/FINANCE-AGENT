@@ -907,7 +907,7 @@ model ImportAiReviewDecision {
   finalTargetFieldId      String?                    @map("final_target_field_id")
   finalIgnored            Boolean                    @default(false) @map("final_ignored")
   decision                ImportAiReviewDecisionType
-  reason                  String                     @db.VarChar(500)
+  reason                  String                     @db.VarChar(200)
   reviewRevision          Int                        @map("review_revision")
   actorId                 String                     @map("actor_id")
   createdAt               DateTime                   @default(now()) @map("created_at")
