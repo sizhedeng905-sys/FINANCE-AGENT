@@ -12,7 +12,9 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('FILE_STORAGE_DRIVER: s3');
     expect(compose).toContain('S3_LOGICAL_QUOTA_BYTES: "1099511627776"');
     expect(compose).not.toContain('S3_CAPACITY_BYTES:');
-    expect(compose).toContain('S3_ENDPOINT: https://objects.finance-agent.local:9443');
+    expect(compose).toContain(
+      'S3_ENDPOINT: ${STAGING_OBJECT_BASE_URL:-https://objects.finance-agent.local:9443}'
+    );
     expect(compose).not.toContain('S3_ENDPOINT: https://objects.finance-agent.local:${STAGING_OBJECT_PORT');
     expect(compose).toContain('REQUEST_RATE_LIMIT_STORE: redis');
     expect(compose).toContain('LOGIN_RATE_LIMIT_STORE: redis');
@@ -33,7 +35,9 @@ describe('B8-09 staging deployment', () => {
     expect(compose).toContain('--collector.textfile.directory=/backup-metrics');
     expect(compose).toContain('--collector.textfile.directory=/tls-metrics');
     expect(compose).not.toContain(':/metrics/finance_agent_tls.prom:ro');
-    expect(compose).toContain('127.0.0.1:${STAGING_WEB_PORT:-8443}:8443');
+    expect(compose).toContain(
+      '${STAGING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STAGING_WEB_PORT:-8443}:8443'
+    );
     expect(compose).toMatch(/gateway:\s[\s\S]*?user: "101:101"[\s\S]*?cap_drop: \[ALL\]/);
     expect(gateway).toContain('client_max_body_size 52m');
     for (const port of ['5432:5432', '6379:6379', '9000:9000', '3310:3310']) {
@@ -252,8 +256,8 @@ describe('B8-09 staging deployment', () => {
     );
     expect(release).toContain("'build', '--provenance=mode=max'");
     expect(release).not.toContain("'--sbom=true'");
-    expect(release).toContain("POSTGRES_IMAGE: `finance-agent/staging-postgres:${shortSha}`");
-    expect(release).toContain("MINIO_IMAGE: `finance-agent/staging-minio:${shortSha}`");
+    expect(release).toContain("POSTGRES_IMAGE: `${settings.registryPrefix}/staging-postgres:${shortSha}`");
+    expect(release).toContain("MINIO_IMAGE: `${settings.registryPrefix}/staging-minio:${shortSha}`");
     for (const service of ['minio', 'prometheus', 'alertmanager', 'node-exporter', 'alloy', 'tempo']) {
       expect(release).toContain(`'${service}'`);
     }

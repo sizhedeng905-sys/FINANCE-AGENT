@@ -56,6 +56,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-042 | [CR-042_value-free-secret-lifecycle.md](CR-042_value-free-secret-lifecycle.md) | `feat: add value-free secret lifecycle gates` | P2 secret lifecycle | SYNTHETIC_ENGINEERING_VERIFIED / REAL_PROVIDER_ROTATION_BLOCKED_EXTERNAL / H14_POLICY_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-041 |
 | CR-043 | [CR-043_offsite-backup-evidence-contracts.md](CR-043_offsite-backup-evidence-contracts.md) | `feat: add offsite backup evidence contracts` | P2 disaster-recovery evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_OFFSITE_RESTORE_BLOCKED_EXTERNAL / H14_TARGETS_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-042 |
 | CR-044 | [CR-044_prisma-format-gate.md](CR-044_prisma-format-gate.md) | `fix: restore Prisma format gate` | P0 CI acceptance | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-043 |
+| CR-045 | [CR-045_staging-parameterization-regression.md](CR-045_staging-parameterization-regression.md) | `test: align staging parameterization assertions` | P0 CI regression | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-044 |
 
 ## 审查分组
 
