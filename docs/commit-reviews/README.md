@@ -36,6 +36,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-022 | [CR-022_excel-ai-approval-evidence-ui.md](CR-022_excel-ai-approval-evidence-ui.md) | `feat: expose digest-bound Excel approval evidence` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-021 |
 | CR-023 | [CR-023_excel-ai-review-append-only.md](CR-023_excel-ai-review-append-only.md) | `fix: make Excel AI review evidence append-only` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-022 |
 | CR-024 | [CR-024_ocr-correction-state-preconditions.md](CR-024_ocr-correction-state-preconditions.md) | `fix: require OCR correction state preconditions` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-023 |
+| CR-025 | [CR-025_ocr-ai-stale-output-fence.md](CR-025_ocr-ai-stale-output-fence.md) | `fix: reject stale OCR AI suggestion output` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-024 |
 
 ## 审查分组
 
