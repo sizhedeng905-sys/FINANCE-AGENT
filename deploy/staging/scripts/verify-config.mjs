@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+import { resolveOffsiteBackupContract } from './offsite-backup.mjs';
 import {
   assertSecretInventoryGate,
   buildSecretInventory,
@@ -20,6 +21,10 @@ const fileEnvironment = parseEnvironmentSource(
   'staging environment',
 );
 const settings = resolveDeploymentEnvironment({ ...fileEnvironment, ...process.env });
+const offsiteBackupContract = resolveOffsiteBackupContract({
+  settings,
+  environment: { ...fileEnvironment, ...process.env },
+});
 const secretPolicy = JSON.parse(await readFile(join(stagingRoot, 'secret-policy.json'), 'utf8'));
 const requiredSecrets = [...validateSecretPolicy(secretPolicy).secrets.keys()].sort();
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
@@ -239,6 +244,9 @@ const evidence = {
     secretPolicySha256: secretInventory.policySha256,
     secretInventorySha256: secretInventory.inventorySha256,
     secretFreshnessCounts: secretInventory.counts,
+    offsiteBackupContract: offsiteBackupContract.status,
+    offsiteBackupContractSha256: offsiteBackupContract.contractSha256,
+    offsiteBackupAcceptance: offsiteBackupContract.acceptanceStatus,
     certificatesVerified: true,
     fixedImageTags: true,
     immutableThirdPartyImages: true,

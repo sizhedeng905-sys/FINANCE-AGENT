@@ -113,7 +113,7 @@ npm run staging:secret:inventory
 | Redis | `STAGING_TARGET_REDIS_HOST`、`STAGING_TARGET_REDIS_PORT`；ACL 模式可加 `STAGING_TARGET_REDIS_USERNAME` |
 | S3 | `STAGING_TARGET_S3_HEALTH_URL`，仅 HTTPS、不得带凭据/query/fragment |
 | ClamAV | `STAGING_TARGET_CLAMAV_HOST`、`STAGING_TARGET_CLAMAV_PORT` |
-| 异地备份 | `STAGING_TARGET_BACKUP_DESTINATION_ID`、`STAGING_TARGET_BACKUP_HEALTH_URL` |
+| 异地备份 | `STAGING_TARGET_BACKUP_DESTINATION_ID`、`STAGING_TARGET_BACKUP_HEALTH_URL`；完整声明见第 8 节 |
 | 告警 | `STAGING_TARGET_ALERT_ROUTE_ID`、`STAGING_TARGET_ALERT_HEALTH_URL` |
 
 资源默认门槛为 4 CPU、12 GiB RAM、48 GiB 可用磁盘、TLS 至少剩余 14 天、单探针 5 秒；可用 `STAGING_TARGET_MIN_CPU_COUNT`、`STAGING_TARGET_MIN_MEMORY_GIB`、`STAGING_TARGET_MIN_DISK_GIB`、`STAGING_TARGET_TLS_MIN_VALID_DAYS` 和 `STAGING_TARGET_PROBE_TIMEOUT_MS` 显式收紧或按 H13 结果调整。非法值失败关闭。
@@ -286,6 +286,32 @@ docker compose --env-file .env -f deploy/staging/compose.yaml exec -T backup /op
 每次备份生成 `backup-manifest/1.0`，包含 PostgreSQL custom dump、规范化 schema、完整 migration ledger、活动 `raw_files` 引用、源对象清单、备份对象清单和 manifest 自身 SHA-256 sidecar。对象清单以 Base64 保存 key，并记录 size、ETag、version ID、metadata、encryption/retention 状态和流式计算的内容 SHA-256；ETag 明确不作为强哈希。数据库引用在 dump 前后和对象快照后必须保持一致，任一活动引用缺失、size/hash 不符或对象在复制期间变化都会使本次备份失败并进入 `failed/` 隔离目录。旧版只有对象数量的清单会报告未验证对象数并拒绝恢复，不会伪造强哈希覆盖。
 
 每天至少生成一次 `pg_basebackup`，PostgreSQL 同时归档 WAL。正式 SSE/KMS、不可变异地副本、保留和删除期限仍由 H13/H14 决定；private bucket、versioning 和本机 backup volume 不能替代这些审批。
+
+### 8.1 异地备份声明与计时证据
+
+本地 profile 固定 `STAGING_OFFSITE_BACKUP_MODE=disabled`。target 必须显式改为 `contract_only` 并提供以下非 secret 元数据，缺失或占位值会使 `staging:check` 失败关闭：
+
+| 类别 | 变量 |
+| --- | --- |
+| Provider/位置 | `STAGING_TARGET_BACKUP_PROVIDER_CLASS`、`STAGING_TARGET_BACKUP_DESTINATION_ID`、`STAGING_TARGET_BACKUP_OFFSITE_REGION`、`STAGING_TARGET_BACKUP_FAILURE_DOMAIN_ID` |
+| 加密 | `STAGING_TARGET_BACKUP_ENCRYPTION_MODE=sse_kms|client_side_envelope`、`STAGING_TARGET_BACKUP_KMS_KEY_ID` |
+| 不可变/复制 | `STAGING_TARGET_BACKUP_IMMUTABILITY_MODE`、`STAGING_TARGET_BACKUP_REPLICATION_MODE`、`STAGING_TARGET_BACKUP_VERSIONING=true`、`STAGING_TARGET_BACKUP_RETENTION_POLICY_ID` |
+| 目标 | `STAGING_TARGET_BACKUP_RPO_SECONDS`、`STAGING_TARGET_BACKUP_RTO_SECONDS` |
+
+异地区域必须不同于 `STAGING_TARGET_REGION`，故障域 ID 不能等于当前环境、区域或 destination。目标值和 retention policy 仍需 H14 定稿；配置通过只得到 `declared_unverified`，不会把字符串声明当成 provider 加密、Object Lock 或真实恢复证据。契约检查命令为：
+
+```bash
+npm run staging:offsite-backup:contract
+```
+
+在 `local_demo` 中它返回 `disabled_local_demo`；target 即使声明完整，也会以 `OFFSITE_BACKUP_REAL_REPLICATION_AND_RESTORE_EVIDENCE_REQUIRED`/退出码 2 保持阻断，直到具备真实 provider、强哈希副本和隔离恢复证据。
+
+`staging-offsite-replication-evidence/1.0` 只接受同一个 `backup-manifest/1.0` SHA-256、完全相等的对象数量/字节数、与契约一致的 KMS 标识哈希、版本化和不可变声明。`staging-recovery-timing-evidence/1.0` 使用 `recoverablePointAt <= failureDetectedAt <= recoveryStartedAt <= verificationCompletedAt` 计算：
+
+- RPO = failure detected - latest verified recoverable point；
+- RTO = restore verification complete - failure detected。
+
+两个 schema 只允许 `synthetic` 或 `target_isolated`，状态始终保留 `pending_h14_h15`；不接受 `target_live`，也不把“低于尚未批准的声明值”写成正式达标。`npm run staging:offsite-backup:test` 通过纯合成对象验证部分复制、manifest/count/bytes、KMS、不可变/版本化、时序、RPO 和 RTO 故障，不发起网络请求或写远端对象。
 
 非破坏性恢复演练：
 
