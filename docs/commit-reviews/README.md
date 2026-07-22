@@ -29,6 +29,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-015 | [CR-015_excel-ai-review-confirmation-ui.md](CR-015_excel-ai-review-confirmation-ui.md) | `feat: show Excel AI review evidence before approval` | P1 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-014 |
 | CR-016 | [CR-016_excel-approval-evidence-record-scope.md](CR-016_excel-approval-evidence-record-scope.md) | `feat: link Excel approval evidence to scoped records` | P1 delivery evidence | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-015 |
 | CR-017 | [CR-017_excel-ai-canonical-review-basis.md](CR-017_excel-ai-canonical-review-basis.md) | `feat: bind Excel AI reviews to canonical state` | P0 AI review integrity | LOCAL_ENGINEERING_VERIFIED / AWAITING_REMOTE_CI | CR-016 |
+| CR-018 | [CR-018_fast-uri-security-patch.md](CR-018_fast-uri-security-patch.md) | `fix: update fast-uri security patch` | P0 supply chain | LOCAL_ENGINEERING_VERIFIED / AWAITING_REMOTE_CI | CR-017 |
 
 ## 审查分组
 
