@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "restore-authorization/1.0",
+  "targetEnvironment": "finance-agent-staging",
+  "targetDatabase": "finance_agent_staging",
+  "targetBucket": "finance-agent-raw",
+  "backupId": "YYYYMMDDTHHMMSSZ",
+  "changeId": "CHANGE-ID-REQUIRED",
+  "nonce": "GENERATE-A-UNIQUE-RANDOM-NONCE",
+  "expiresAt": "RFC3339-WITHIN-24-HOURS",
+  "h13Approved": false,
+  "h13ApprovalId": "PENDING-H13",
+  "h14Approved": false,
+  "h14ApprovalId": "PENDING-H14"
+}

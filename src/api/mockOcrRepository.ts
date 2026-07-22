@@ -1,0 +1,831 @@
+import { getAccessToken } from './authSession';
+import { mockMe } from './mockIdentityRepository';
+import { mockDataProjects, mockDataTemplates, mockTemplateFields } from '@/mock/mockDataCenter';
+import type {
+  BusinessRecord,
+  ConfirmOCRTaskPayload,
+  CorrectOCRTaskPayload,
+  CreateOCRTaskPayload,
+  OCRConfirmResult,
+  OCRCorrection,
+  OCRAiReviewDecision,
+  OCRAiReviewDecisionQuery,
+  OCRAiReviewDigest,
+  OCRAiClassificationOutput,
+  OCRAiMappingOutput,
+  OCRAiSuggestionResult,
+  OCRAiSuggestionHistory,
+  OCRFieldCandidate,
+  OCRTask,
+  OCRTaskListQuery,
+  PaginatedOCRTasks,
+  PaginatedOCRAiReviewDecisions,
+  RevalidateOCRTaskPayload,
+  ReviewOCRAiSuggestionsPayload,
+  ReviewOCRAiSuggestionsResult,
+  TemplateField,
+} from '@/types/dataCenter';
+
+const delay = (ms = 120) => new Promise((resolve) => window.setTimeout(resolve, ms));
+let tasks: OCRTask[] = [];
+const scenarios = new Map<string, CreateOCRTaskPayload['mockScenario']>();
+const aiSuggestionHistory = new Map<string, OCRAiSuggestionHistory>();
+const aiReviewDecisions = new Map<string, OCRAiReviewDecision[]>();
+
+function mockHash(value: unknown) {
+  const source = JSON.stringify(value);
+  return Array.from(source).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
+    .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+}
+
+function displayMockValue(value: unknown) {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function aiReviewDigest(task: OCRTask): OCRAiReviewDigest {
+  const decisions = aiReviewDecisions.get(task.id) ?? [];
+  const summary = { total: decisions.length, accept: 0, edit: 0, reject: 0, ignore: 0, pending: decisions.length };
+  decisions.forEach((decision) => {
+    summary[decision.decision] += 1;
+    summary.pending -= 1;
+  });
+  const history = aiSuggestionHistory.get(task.id)?.items ?? [];
+  const batches = [...new Set(decisions.map((decision) => decision.aiTaskId))].map((aiTaskId) => {
+    const item = history.find((entry) => entry.id === aiTaskId)!;
+    const provenance = item.provenance!;
+    return {
+      aiTaskId,
+      inputHash: item.inputHash,
+      outputHash: item.outputHash!,
+      versionVectorHash: item.versionVectorHash!,
+      reviewStateHash: item.reviewBasis?.reviewState.stateHash ?? null,
+      reviewBasisHash: item.reviewBasis?.basisHash ?? null,
+      provider: {
+        providerClass: provenance.providerClass,
+        provider: provenance.provider,
+        modelName: provenance.modelName,
+        modelRevision: provenance.modelRevision,
+      },
+      prompt: {
+        promptKey: provenance.promptKey,
+        versionNo: provenance.promptVersion ?? 1,
+        contentSha256: provenance.promptContentSha256,
+      },
+      contracts: {
+        inputSchemaVersion: provenance.inputSchemaVersion,
+        outputSchemaVersion: provenance.outputSchemaVersion,
+      },
+      warnings: [],
+      generatedAt: item.createdAt,
+      completedAt: item.attempt?.completedAt ?? item.updatedAt,
+    };
+  });
+  const core = {
+    schemaVersion: 'ocr-ai-review-digest/1.0' as const,
+    mode: decisions.length ? 'ai_reviewed' as const : 'manual' as const,
+    taskReviewRevision: task.reviewRevision,
+    decisionCount: decisions.length,
+    summary,
+    aiTaskIds: batches.map((batch) => batch.aiTaskId),
+    batches,
+  };
+  return { ...core, digestHash: mockHash(core) };
+}
+
+async function assertFinance() {
+  const user = await mockMe(getAccessToken());
+  if (user.role !== 'finance') throw new Error('无权限');
+  return user;
+}
+
+async function assertReader() {
+  const user = await mockMe(getAccessToken());
+  if (user.role !== 'finance' && user.role !== 'boss') throw new Error('无权限');
+  return user;
+}
+
+function findTask(id: string) {
+  const task = tasks.find((item) => item.id === id);
+  if (!task) throw new Error('资源不存在');
+  return task;
+}
+
+function clone(task: OCRTask): OCRTask {
+  return {
+    ...task,
+    extractedFields: { ...task.extractedFields },
+    fieldConfidence: { ...task.fieldConfidence },
+    fields: task.fields.map((field) => ({
+      ...field,
+      boundingBox: field.boundingBox ? { ...field.boundingBox } : undefined,
+      evidenceRefs: [...field.evidenceRefs],
+      alternatives: field.alternatives.map((alternative) => ({
+        ...alternative,
+        evidenceRefs: [...alternative.evidenceRefs],
+        boundingBox: alternative.boundingBox ? { ...alternative.boundingBox } : undefined,
+      })),
+    })),
+    pages: task.pages.map((page) => ({ ...page })),
+    textBlocks: task.textBlocks.map((block) => ({ ...block })),
+    tables: task.tables.map((table) => ({ ...table })),
+    rawFile: { ...task.rawFile },
+    attempts: task.attempts.map((attempt) => ({ ...attempt })),
+    corrections: task.corrections.map((correction) => ({ ...correction, evidenceRefs: [...correction.evidenceRefs] })),
+    validation: task.validation ? {
+      ...task.validation,
+      snapshot: {
+        ...task.validation.snapshot,
+        blockingErrors: task.validation.snapshot.blockingErrors.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+        warnings: task.validation.snapshot.warnings.map((item) => ({ ...item, evidenceRefs: [...item.evidenceRefs] })),
+      },
+    } : null,
+    approval: task.approval ? { ...task.approval, snapshot: { ...task.approval.snapshot } } : null,
+  };
+}
+
+function valueFor(field: TemplateField, rawFileId: string): string | number | string[] {
+  if (field.field.fieldType === 'file') return [rawFileId];
+  if (field.field.fieldType === 'date') return new Date().toISOString().slice(0, 10);
+  if (field.field.fieldType === 'money') return 1280.5;
+  if (field.field.fieldType === 'number') return 3;
+  if (field.field.semanticType === 'person') return '临时仓库';
+  if (field.field.semanticType === 'category') return '票据费用';
+  return `Mock识别-${field.field.fieldName}`;
+}
+
+function candidate(field: TemplateField, rawFileId: string, index: number): OCRFieldCandidate {
+  const value = valueFor(field, rawFileId);
+  return {
+    fieldId: field.fieldId,
+    fieldKey: field.field.fieldKey,
+    fieldName: field.field.fieldName,
+    fieldType: field.field.fieldType,
+    semanticType: field.field.semanticType,
+    isRequired: field.isRequired,
+    sourceLabel: field.field.fieldName,
+    rawValue: value,
+    normalizedValue: value,
+    page: 1,
+    boundingBox: { x: 80, y: 80 + index * 70, width: 360, height: 48 },
+    confidence: Math.max(0.82, 0.98 - index * 0.01),
+    evidence: 'Mock OCR 第 1 页识别结果',
+    evidenceRefs: [`p1-b${index + 1}`],
+    valueSource: field.field.fieldType === 'file' ? 'SYSTEM_FILE_BINDING' : 'OCR_PROVIDER',
+    reviewRevision: 0,
+    evidenceConflict: false,
+    alternatives: [],
+    missing: false,
+    lowConfidence: false,
+    corrected: false,
+  };
+}
+
+export async function mockCreateOCRTask(payload: CreateOCRTaskPayload): Promise<OCRTask> {
+  const user = await assertFinance();
+  await delay();
+  const project = mockDataProjects.find((item) => item.id === payload.projectId);
+  const template = mockDataTemplates.find((item) => item.id === payload.templateId);
+  if (!project || !template) throw new Error('项目或模板不存在');
+  const id = `mock-ocr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const now = new Date().toISOString();
+  const task: OCRTask = {
+    id,
+    rawFileId: payload.rawFileId,
+    projectId: project.id,
+    projectName: project.name,
+    templateId: template.id,
+    templateName: template.name,
+    recordType: template.recordType,
+    status: 'uploaded',
+    version: 1,
+    reviewRevision: 0,
+    provider: 'mock',
+    modelName: 'mock-ocr-v1',
+    modelVersion: '1',
+    extractedText: '',
+    extractedFields: {},
+    fieldConfidence: {},
+    fields: [],
+    pages: [{ page: 1, width: 1000, height: 1400 }],
+    textBlocks: [],
+    tables: [],
+    pageCount: 1,
+    attemptCount: 0,
+    retryCount: 0,
+    uploadedBy: user.name,
+    uploadedById: user.id,
+    validation: null,
+    approval: null,
+    createdAt: now,
+    updatedAt: now,
+    rawFile: {
+      id: payload.rawFileId,
+      fileName: 'Mock OCR 票据.pdf',
+      fileSize: 1024,
+      mimeType: 'application/pdf',
+      sha256: 'mock-ocr'.padEnd(64, '0'),
+    },
+    attempts: [],
+    corrections: [],
+  };
+  tasks = [task, ...tasks];
+  scenarios.set(id, payload.mockScenario ?? 'normal');
+  return clone(task);
+}
+
+export async function mockGetOCRTasks(query: OCRTaskListQuery = {}): Promise<PaginatedOCRTasks> {
+  await assertReader();
+  await delay();
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  const filtered = tasks.filter((task) => (!query.projectId || task.projectId === query.projectId) && (!query.status || task.status === query.status));
+  return { items: filtered.slice((page - 1) * pageSize, page * pageSize).map(clone), page, pageSize, total: filtered.length };
+}
+
+export async function mockGetOCRTask(id: string): Promise<OCRTask> {
+  await assertReader();
+  await delay();
+  return clone(findTask(id));
+}
+
+export async function mockRunOCRTask(id: string): Promise<OCRTask> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status === 'pending_confirm' || task.status === 'confirmed') return clone(task);
+  const scenario = scenarios.get(id) ?? 'normal';
+  task.attemptCount += 1;
+  if (scenario === 'failure' || (scenario === 'failure_once' && task.attemptCount === 1)) {
+    task.status = 'failed';
+    task.errorMessage = 'Mock OCR 按测试场景返回识别失败';
+    task.attempts.unshift({ id: `attempt-${id}-${task.attemptCount}`, attemptNo: task.attemptCount, status: 'failed', provider: 'mock', modelName: task.modelName, correlationId: `mock-${Date.now()}`, errorMessage: task.errorMessage });
+    throw new Error(task.errorMessage);
+  }
+  const templateFields = mockTemplateFields.filter((field) => field.templateId === task.templateId && field.isVisible);
+  let fields = templateFields.map((field, index) => candidate(field, task.rawFileId, index));
+  if (scenario === 'missing_field') {
+    const required = fields.find((field) => field.isRequired);
+    if (required) fields = fields.map((field) => field.fieldId === required.fieldId ? { ...field, normalizedValue: null, rawValue: null, confidence: 0, missing: true, lowConfidence: true, validationError: '必填字段未识别' } : field);
+  }
+  if (scenario === 'low_confidence' && fields.length) fields[0] = { ...fields[0], confidence: 0.55, lowConfidence: true, evidence: 'Mock 模糊区域，需人工确认' };
+  task.fields = fields;
+  task.extractedFields = Object.fromEntries(fields.map((field) => [field.fieldId, field.normalizedValue]));
+  task.fieldConfidence = Object.fromEntries(fields.map((field) => [field.fieldId, field.confidence]));
+  task.extractedText = fields.filter((field) => !field.missing).map((field) => `${field.fieldName}：${String(field.normalizedValue)}`).join('\n');
+  task.textBlocks = fields.map((field, index) => ({
+    blockId: `p1-b${index + 1}`,
+    page: 1,
+    text: `${field.fieldName}：${String(field.normalizedValue ?? '')}`,
+    bbox: field.boundingBox
+      ? [
+        field.boundingBox.x,
+        field.boundingBox.y,
+        field.boundingBox.x + field.boundingBox.width,
+        field.boundingBox.y + field.boundingBox.height,
+      ]
+      : null,
+    confidence: String(field.confidence),
+    tokens: [],
+  }));
+  task.avgConfidence = fields.reduce((sum, field) => sum + field.confidence, 0) / Math.max(fields.length, 1);
+  task.status = 'pending_confirm';
+  task.version += 1;
+  task.reviewRevision = 0;
+  task.validation = null;
+  task.errorMessage = undefined;
+  task.attempts.unshift({ id: `attempt-${id}-${task.attemptCount}`, attemptNo: task.attemptCount, status: 'succeeded', provider: 'mock', modelName: task.modelName, correlationId: `mock-${Date.now()}`, latencyMs: 30, pageCount: 1 });
+  task.updatedAt = new Date().toISOString();
+  return clone(task);
+}
+
+export async function mockCorrectOCRTask(id: string, payload: CorrectOCRTaskPayload): Promise<OCRTask> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('当前 OCR 状态不能人工纠错');
+  if (payload.expectedVersion !== task.version) throw new Error('OCR 任务版本已变化，请刷新后重试');
+  if (payload.expectedReviewRevision !== task.reviewRevision) throw new Error('OCR 审核版本已变化，请刷新后重试');
+  const nextReviewRevision = task.reviewRevision + 1;
+  payload.corrections.forEach((correction) => {
+    const index = task.fields.findIndex((field) => field.fieldId === correction.fieldId);
+    if (index < 0) throw new Error('OCR 字段候选不存在');
+    const before = task.fields[index];
+    const evidenceRefs = correction.evidenceRefs?.length ? correction.evidenceRefs : before.evidenceRefs;
+    task.fields[index] = {
+      ...before,
+      rawValue: correction.correctedValue,
+      normalizedValue: correction.correctedValue,
+      confidence: 1,
+      evidence: correction.reason,
+      evidenceRefs,
+      valueSource: 'MANUAL_OVERRIDE',
+      reviewRevision: nextReviewRevision,
+      evidenceConflict: false,
+      alternatives: [],
+      missing: false,
+      lowConfidence: false,
+      corrected: true,
+      validationError: undefined,
+    };
+    task.corrections.unshift({
+      id: `mock-correction-${Date.now()}-${correction.fieldId}`,
+      fieldId: correction.fieldId,
+      fieldName: before.fieldName,
+      beforeValue: String(before.normalizedValue ?? ''),
+      afterValue: String(correction.correctedValue),
+      originalConfidence: before.confidence,
+      reason: correction.reason,
+      reviewRevision: nextReviewRevision,
+      overrideType: 'MANUAL_OVERRIDE',
+      evidenceRefs: [...evidenceRefs],
+      correctedBy: user.name,
+      correctedAt: new Date().toISOString(),
+    });
+  });
+  task.extractedFields = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.normalizedValue]));
+  task.fieldConfidence = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.confidence]));
+  task.reviewRevision = nextReviewRevision;
+  task.version += 1;
+  task.validation = null;
+  return clone(task);
+}
+
+export async function mockRevalidateOCRTask(id: string, payload: RevalidateOCRTaskPayload): Promise<OCRTask> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以重新校验');
+  if (payload.expectedVersion !== task.version || payload.expectedReviewRevision !== task.reviewRevision) {
+    throw new Error('OCR 审核内容已变化，请刷新后重新校验');
+  }
+  const blockingErrors = task.fields
+    .filter((field) => (field.isRequired && field.missing) || field.validationError || (!field.missing && field.evidenceRefs.length === 0))
+    .map((field) => ({
+      code: field.validationError ? 'FIELD_VALIDATION_ERROR' : field.missing ? 'REQUIRED_FIELD_MISSING' : 'EVIDENCE_MISSING',
+      fieldId: field.fieldId,
+      message: `${field.fieldName} 未通过确定性校验`,
+      evidenceRefs: [...field.evidenceRefs],
+    }));
+  const warnings = task.fields.filter((field) => field.lowConfidence).map((field) => {
+    const issue = {
+      code: 'LOW_OCR_CONFIDENCE',
+      fieldId: field.fieldId,
+      message: `${field.fieldName} 需要人工核对`,
+      evidenceRefs: [...field.evidenceRefs],
+    };
+    return { ...issue, issueId: `warning:${mockHash(issue)}` };
+  });
+  const identifiedBlockingErrors = blockingErrors.map((issue) => ({
+    ...issue,
+    issueId: `error:${mockHash(issue)}`,
+  }));
+  const currentAiReview = aiReviewDigest(task);
+  const hashSource = JSON.stringify({
+    id,
+    reviewRevision: task.reviewRevision,
+    fields: task.fields,
+    blockingErrors,
+    warnings,
+    aiReviewDigestHash: currentAiReview.digestHash,
+  });
+  const snapshotHash = mockHash(hashSource);
+  const candidatePayloadHash = mockHash(task.fields);
+  task.validation = {
+    reviewRevision: task.reviewRevision,
+    ruleVersion: 'ocr-deterministic-validation/1.0',
+    snapshotHash,
+    validatedAt: new Date().toISOString(),
+    snapshot: {
+      schemaVersion: 'ocr-validation/1.1',
+      valid: blockingErrors.length === 0,
+      candidatePayloadHash,
+      aiReview: currentAiReview,
+      blockingErrors: identifiedBlockingErrors,
+      warnings,
+    },
+  };
+  task.version += 1;
+  task.updatedAt = new Date().toISOString();
+  return clone(task);
+}
+
+export async function mockRequestOCRAiSuggestions(id: string): Promise<OCRAiSuggestionResult> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以生成 AI 建议');
+  const now = new Date().toISOString();
+  const reviewStateHash = mockHash({
+    taskId: task.id,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
+    fields: task.fields,
+  });
+  const classificationOutput = {
+    selectedTemplateVersionId: `${task.templateId}:v1`,
+    candidateTemplateVersionIds: [`${task.templateId}:v1`],
+    confidence: '1.0',
+    evidenceRefs: task.fields.flatMap((field) => field.evidenceRefs),
+    reasonCodes: ['MOCK_CURRENT_TEMPLATE'],
+    warnings: ['Mock 建议仅供测试，仍需财务复核。'],
+    decision: 'NEEDS_FINANCE_REVIEW' as const,
+  };
+  const mappingOutput = {
+    templateVersionId: `${task.templateId}:v1`,
+    mappings: task.fields.filter((field) => field.fieldType !== 'file' && !field.missing).map((field) => ({
+      sourceRef: `candidate:${field.fieldId}`,
+      targetFieldKey: field.fieldKey,
+      targetFieldId: field.fieldId,
+      targetFieldName: field.fieldName,
+      transformKey: mockTransformKey(field.fieldType),
+      confidence: '1.0',
+      evidenceRefs: [...field.evidenceRefs],
+    })),
+    unmappedSourceRefs: [] as string[],
+    unresolvedRequiredFields: [] as string[],
+    warnings: ['Mock 建议不会自动批准或入账。'],
+    decision: 'NEEDS_FINANCE_REVIEW' as const,
+  };
+  const classificationTaskId = `mock-ai-classification-${task.id}-${task.reviewRevision}`;
+  const mappingTaskId = `mock-ai-mapping-${task.id}-${task.reviewRevision}`;
+  const execution = <T extends OCRAiClassificationOutput | OCRAiMappingOutput>(
+    taskType: string,
+    aiTaskId: string,
+    output: T,
+    outputSchemaVersion: string,
+  ) => {
+    const inputHash = mockHash({ taskId: task.id, taskType, reviewStateHash });
+    const outputHash = mockHash(output);
+    const versionVectorHash = mockHash({ taskType, inputHash, outputHash, reviewStateHash });
+    const reviewBasisCore = {
+      schemaVersion: 'ai-review-basis/1.0' as const,
+      taskType,
+      resourceType: 'ocr_task' as const,
+      resourceId: task.id,
+      aiTaskId,
+      reviewState: { schemaVersion: 'ocr-ai-review-state/1.0' as const, stateHash: reviewStateHash },
+      inputHash,
+      outputHash,
+      versionVectorHash,
+    };
+    return {
+      status: 'succeeded' as const,
+      aiTaskId,
+      requestKey: mockHash({ aiTaskId, inputHash }),
+      reused: false,
+      provider: 'mock',
+      providerClass: 'mock' as const,
+      model: 'mock-structured-v1',
+      promptVersion: `${taskType}:v1`,
+      promptExecutionHash: mockHash({ taskType, prompt: 1 }),
+      outputSchemaHash: mockHash(outputSchemaVersion),
+      outputHash,
+      versionVectorHash,
+      reviewBasis: { ...reviewBasisCore, basisHash: mockHash(reviewBasisCore) },
+      output,
+      inputHash,
+    };
+  };
+  const classification = execution(
+    'ocr_document_classification',
+    classificationTaskId,
+    classificationOutput,
+    'classification/1.0',
+  );
+  const mapping = execution('ocr_field_mapping', mappingTaskId, mappingOutput, 'mapping/1.0');
+  const provenance = (promptKey: string, outputSchemaVersion: string) => ({
+    providerClass: 'mock' as const,
+    provider: 'mock',
+    modelName: 'mock-structured-v1',
+    modelRevision: '1',
+    promptKey,
+    promptVersion: 1,
+    promptContentSha256: mockHash({ promptKey, version: 1 }),
+    inputSchemaVersion: `${promptKey}-input/1.0`,
+    outputSchemaVersion,
+  });
+  aiSuggestionHistory.set(task.id, {
+    items: [mapping, classification].map((item) => ({
+      id: item.aiTaskId,
+      taskType: item.reviewBasis.taskType as 'ocr_document_classification' | 'ocr_field_mapping',
+      status: item.status,
+      requestKey: item.requestKey,
+      inputHash: item.inputHash,
+      versionVectorHash: item.versionVectorHash,
+      outputHash: item.outputHash,
+      output: item.output,
+      reviewBasis: item.reviewBasis,
+      provenance: provenance(item.reviewBasis.taskType, item.reviewBasis.taskType === 'ocr_field_mapping' ? 'mapping/1.0' : 'classification/1.0'),
+      attempt: {
+        attemptNo: 1,
+        provider: 'mock',
+        model: 'mock-structured-v1',
+        status: 'succeeded',
+        latencyMs: 1,
+        completedAt: now,
+      },
+      createdAt: now,
+      updatedAt: now,
+    })),
+  });
+  return {
+    status: 'needs_finance_review',
+    mode: 'suggest',
+    mock: true,
+    businessRecordsCreated: 0,
+    classification,
+    mapping,
+    conflicts: [],
+    aiCalls: 2,
+  };
+}
+
+export async function mockGetOCRAiSuggestionHistory(id: string): Promise<OCRAiSuggestionHistory> {
+  await assertFinance();
+  await delay();
+  findTask(id);
+  return structuredClone(aiSuggestionHistory.get(id) ?? { items: [] });
+}
+
+export async function mockReviewOCRAiSuggestions(
+  id: string,
+  payload: ReviewOCRAiSuggestionsPayload,
+): Promise<ReviewOCRAiSuggestionsResult> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status !== 'pending_confirm') throw new Error('只有待复核 OCR 任务可以保存 AI 复核');
+  if (task.version !== payload.expectedVersion || task.reviewRevision !== payload.expectedReviewRevision) {
+    throw new Error('OCR 审核状态已变化，请刷新后重试');
+  }
+  if ((aiReviewDecisions.get(id) ?? []).some((decision) => decision.aiTaskId === payload.aiTaskId)) {
+    throw new Error('该 AI 建议已经完成复核');
+  }
+  const history = aiSuggestionHistory.get(id)?.items ?? [];
+  const mappingTask = history.find((item) => item.id === payload.aiTaskId && item.taskType === 'ocr_field_mapping');
+  if (
+    !mappingTask
+    || mappingTask.status !== 'succeeded'
+    || mappingTask.outputHash !== payload.outputHash
+    || mappingTask.versionVectorHash !== payload.versionVectorHash
+    || mappingTask.reviewBasis?.reviewState.stateHash !== payload.reviewStateHash
+    || mappingTask.reviewBasis?.basisHash !== payload.reviewBasisHash
+  ) throw new Error('Mock AI 复核依据已经变化');
+  const output = mappingTask.output as OCRAiMappingOutput;
+  const sourceFields = task.fields.filter((field) => !field.missing && field.fieldType !== 'file');
+  const expectedRefs = new Set(sourceFields.map((field) => `candidate:${field.fieldId}`));
+  if (
+    payload.reviews.length !== expectedRefs.size
+    || new Set(payload.reviews.map((review) => review.sourceRef)).size !== expectedRefs.size
+    || payload.reviews.some((review) => !expectedRefs.has(review.sourceRef))
+  ) throw new Error('必须完整复核每个 OCR 来源');
+
+  const nextRevision = task.reviewRevision + 1;
+  const now = new Date().toISOString();
+  const mappingBySource = new Map(output.mappings.map((mapping) => [mapping.sourceRef, mapping]));
+  const newDecisions: OCRAiReviewDecision[] = payload.reviews.map((review, index) => {
+    const sourceFieldId = review.sourceRef.slice('candidate:'.length);
+    const source = task.fields.find((field) => field.fieldId === sourceFieldId)!;
+    const sourceRawValue = structuredClone(source.rawValue);
+    const sourceNormalizedValue = structuredClone(source.normalizedValue);
+    const sourceEvidenceRefs = [...source.evidenceRefs];
+    const sourceConfidence = source.confidence;
+    const suggestion = mappingBySource.get(review.sourceRef);
+    if (review.decision === 'accept' && !suggestion) throw new Error('未映射来源不能采纳');
+    if (review.decision === 'reject' && !suggestion) throw new Error('没有 AI 映射可拒绝');
+    const finalTargetFieldId = review.decision === 'ignore'
+      ? null
+      : review.decision === 'edit'
+        ? review.finalTargetFieldId ?? null
+        : review.decision === 'accept'
+          ? suggestion?.targetFieldId ?? source.fieldId
+          : source.fieldId;
+    const target = finalTargetFieldId ? task.fields.find((field) => field.fieldId === finalTargetFieldId) : undefined;
+    if (finalTargetFieldId && !target) throw new Error('最终字段不属于当前模板');
+    const finalValue = review.decision === 'ignore'
+      ? null
+      : review.decision === 'edit'
+        ? review.finalValue
+        : source.normalizedValue;
+    const finalEvidenceRefs = review.decision === 'edit' && review.evidenceRefs?.length
+      ? [...review.evidenceRefs]
+      : suggestion?.evidenceRefs.length
+        ? [...suggestion.evidenceRefs]
+        : [...source.evidenceRefs];
+    if (review.reason.trim().length < 2 || finalEvidenceRefs.length === 0) throw new Error('复核理由和证据不能为空');
+    if (review.decision === 'ignore') {
+      Object.assign(source, {
+        normalizedValue: null,
+        missing: true,
+        corrected: true,
+        lowConfidence: false,
+        evidenceConflict: false,
+        valueSource: 'MANUAL_OVERRIDE',
+        reviewRevision: nextRevision,
+        evidence: review.reason,
+      });
+    } else if (target) {
+      Object.assign(target, {
+        normalizedValue: finalValue,
+        rawValue: target.rawValue,
+        confidence: 1,
+        missing: false,
+        corrected: true,
+        lowConfidence: false,
+        evidenceConflict: false,
+        valueSource: 'MANUAL_OVERRIDE',
+        reviewRevision: nextRevision,
+        evidence: review.reason,
+        evidenceRefs: finalEvidenceRefs,
+      });
+    }
+    task.corrections.unshift({
+      id: `mock-ai-correction-${Date.now()}-${index}`,
+      fieldId: finalTargetFieldId ?? source.fieldId,
+      fieldName: target?.fieldName ?? source.fieldName,
+      beforeValue: displayMockValue(sourceNormalizedValue),
+      afterValue: displayMockValue(finalValue),
+      originalConfidence: sourceConfidence,
+      reason: review.reason,
+      reviewRevision: nextRevision,
+      overrideType: `AI_${review.decision.toUpperCase()}` as OCRCorrection['overrideType'],
+      evidenceRefs: finalEvidenceRefs,
+      correctedBy: user.name,
+      correctedAt: now,
+    });
+    return {
+      id: `mock-ai-review-${Date.now()}-${index}`,
+      ocrTaskId: id,
+      sourceFieldId,
+      aiTaskId: mappingTask.id,
+      outputHash: mappingTask.outputHash!,
+      versionVectorHash: mappingTask.versionVectorHash!,
+      reviewStateHash: mappingTask.reviewBasis!.reviewState.stateHash,
+      reviewBasisHash: mappingTask.reviewBasis!.basisHash,
+      sourceRef: review.sourceRef,
+      templateVersionId: output.templateVersionId ?? `${task.templateId}:v1`,
+      raw: { value: sourceRawValue, evidenceRefs: sourceEvidenceRefs },
+      suggested: {
+        targetFieldId: suggestion?.targetFieldId ?? null,
+        targetFieldKey: suggestion?.targetFieldKey ?? null,
+        transformKey: suggestion?.transformKey ?? null,
+        confidence: suggestion?.confidence ?? null,
+        value: suggestion ? sourceNormalizedValue : null,
+        evidenceRefs: [...(suggestion?.evidenceRefs ?? [])],
+      },
+      final: { targetFieldId: finalTargetFieldId, value: finalValue, evidenceRefs: finalEvidenceRefs },
+      decision: review.decision,
+      reason: review.reason,
+      reviewRevision: nextRevision,
+      actor: { id: user.id, username: user.username, name: user.name },
+      createdAt: now,
+    };
+  });
+  aiReviewDecisions.set(id, [...(aiReviewDecisions.get(id) ?? []), ...newDecisions]);
+  task.extractedFields = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.normalizedValue]));
+  task.fieldConfidence = Object.fromEntries(task.fields.map((field) => [field.fieldId, field.confidence]));
+  task.reviewRevision = nextRevision;
+  task.version += 1;
+  task.validation = null;
+  task.updatedAt = now;
+  const digest = aiReviewDigest(task);
+  return {
+    taskId: task.id,
+    version: task.version,
+    reviewRevision: task.reviewRevision,
+    decisionCount: newDecisions.length,
+    summary: digest.summary,
+    aiTaskId: mappingTask.id,
+    outputHash: mappingTask.outputHash!,
+    versionVectorHash: mappingTask.versionVectorHash!,
+    reviewStateHash: mappingTask.reviewBasis!.reviewState.stateHash,
+    reviewBasisHash: mappingTask.reviewBasis!.basisHash,
+    businessRecordsCreated: 0,
+  };
+}
+
+export async function mockGetOCRAiReviews(
+  id: string,
+  query: OCRAiReviewDecisionQuery = {},
+): Promise<PaginatedOCRAiReviewDecisions> {
+  await assertFinance();
+  await delay();
+  const task = findTask(id);
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  const filtered = (aiReviewDecisions.get(id) ?? [])
+    .filter((decision) => !query.reviewRevision || decision.reviewRevision === query.reviewRevision)
+    .sort((left, right) => right.reviewRevision - left.reviewRevision || left.sourceRef.localeCompare(right.sourceRef));
+  const digest = aiReviewDigest(task);
+  return {
+    items: structuredClone(filtered.slice((page - 1) * pageSize, page * pageSize)),
+    page,
+    pageSize,
+    total: filtered.length,
+    summary: digest.summary,
+    digest,
+  };
+}
+
+export async function mockConfirmOCRTask(id: string, payload: ConfirmOCRTaskPayload): Promise<OCRConfirmResult> {
+  const user = await assertFinance();
+  await delay();
+  const task = findTask(id);
+  if (task.status === 'confirmed') throw new Error('OCR 任务已经入账');
+  if (task.status !== 'pending_confirm') throw new Error('OCR 结果尚未进入人工确认状态');
+  if (task.uploadedById === user.id) throw new Error('上传者不能审批同一 OCR 任务');
+  if (!task.validation || task.validation.reviewRevision !== task.reviewRevision || !task.validation.snapshot.valid) {
+    throw new Error('当前审核版本尚未通过确定性校验');
+  }
+  if (
+    payload.expectedVersion !== task.version
+    || payload.expectedReviewRevision !== task.reviewRevision
+    || payload.expectedValidationSnapshotHash !== task.validation.snapshotHash
+    || payload.expectedPayloadHash !== task.validation.snapshot.candidatePayloadHash
+  ) throw new Error('OCR 审核内容或校验快照已经变化');
+  const warningIds = task.validation.snapshot.warnings.map((warning) => warning.issueId).sort();
+  const acknowledgedWarningIds = [...payload.acknowledgedWarningIds].sort();
+  if (JSON.stringify(warningIds) !== JSON.stringify(acknowledgedWarningIds)) throw new Error('必须逐项确认当前校验警告');
+  if (task.fields.some((field) => field.isRequired && (field.missing || field.normalizedValue == null))) throw new Error('必填字段缺失');
+  const recordId = `mock-ocr-record-${Date.now()}`;
+  task.status = 'confirmed';
+  task.generatedRecordId = recordId;
+  task.confirmedBy = user.name;
+  task.confirmedAt = new Date().toISOString();
+  task.approval = {
+    reviewRevision: task.reviewRevision,
+    validationSnapshotHash: task.validation.snapshotHash,
+    policyVersion: 'finance-ocr-approval/1.0-pending-h10',
+    snapshotHash: mockHash({ id, reviewRevision: task.reviewRevision, approvedBy: user.id }),
+    requestKeyHash: mockHash({ id, reviewRevision: task.reviewRevision }),
+    snapshot: {
+      schemaVersion: 'ocr-approval/1.1',
+      selfApproval: false,
+      aiSuggestion: {
+        appliedToFormalData: false,
+        reviewDigest: task.validation.snapshot.aiReview,
+      },
+    },
+  };
+  task.version += 1;
+  task.updatedAt = task.confirmedAt;
+  return { task: clone(task), record: mockRecord(task, recordId, user.name), alreadyConfirmed: false };
+}
+
+export async function mockRetryOCRTask(id: string): Promise<OCRTask> {
+  await assertFinance();
+  const task = findTask(id);
+  if (task.status !== 'failed') throw new Error('只有失败任务可以重试');
+  task.retryCount += 1;
+  task.status = 'queued';
+  return mockRunOCRTask(id);
+}
+
+export async function mockCancelOCRTask(id: string): Promise<OCRTask> {
+  await assertFinance();
+  const task = findTask(id);
+  if (task.status === 'confirmed') throw new Error('已确认任务不能取消');
+  task.status = 'cancelled';
+  return clone(task);
+}
+
+function mockRecord(task: OCRTask, id: string, actor: string): BusinessRecord {
+  const amountField = task.fields.find((field) => field.semanticType === 'amount');
+  const dateField = task.fields.find((field) => field.semanticType === 'date');
+  const now = new Date().toISOString();
+  return {
+    id,
+    projectId: task.projectId,
+    projectName: task.projectName,
+    templateId: task.templateId,
+    templateName: task.templateName,
+    recordType: task.recordType,
+    accountingDirection: task.recordType === 'revenue' ? 'income' : 'expense',
+    dataLayer: 'actual',
+    templateVersion: 1,
+    version: 1,
+    recordDate: String(dateField?.normalizedValue ?? now.slice(0, 10)),
+    amount: Number(amountField?.normalizedValue ?? 0).toFixed(2),
+    category: task.recordType === 'revenue' ? '收入' : '成本',
+    subCategory: task.templateName,
+    description: `${task.rawFile.fileName} OCR 人工确认记录`,
+    sourceType: 'ocr',
+    sourceId: task.id,
+    status: 'confirmed',
+    values: [],
+    attachments: [task.rawFileId],
+    createdBy: actor,
+    createdAt: now,
+    updatedAt: now,
+    confirmedAt: now,
+    confirmedBy: actor,
+  };
+}
+
+function mockTransformKey(fieldType: TemplateField['field']['fieldType']) {
+  if (fieldType === 'number' || fieldType === 'money') return 'DECIMAL_CANONICAL_V1';
+  if (fieldType === 'date') return 'DATE_ISO_WITH_LOCALE_V1';
+  if (fieldType === 'select') return 'ENUM_ALIAS_LOOKUP_V1';
+  return fieldType === 'text' || fieldType === 'textarea' ? 'TRIM_TEXT_V1' : 'IDENTITY_V1';
+}

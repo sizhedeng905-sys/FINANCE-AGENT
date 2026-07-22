@@ -1,0 +1,99 @@
+name: Local model runtime L0 acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_root:
+        description: Absolute path to the pre-provisioned, ignored model asset directory on the GPU runner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-agent-model-runtime
+  cancel-in-progress: false
+
+jobs:
+  model-runtime-l0:
+    name: Synthetic text and OCR runtime acceptance
+    runs-on: [self-hosted, linux, x64, finance-agent-gpu]
+    timeout-minutes: 180
+    env:
+      MODEL_ROOT: ${{ inputs.model_root }}
+    steps:
+      - name: Checkout without deleting model assets
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          clean: false
+          persist-credentials: false
+
+      - name: Setup deployed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Preflight GPU, Docker, and model root
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MODEL_ROOT" && test "${MODEL_ROOT#/}" != "$MODEL_ROOT" && test -d "$MODEL_ROOT"
+          docker info >/dev/null
+          docker compose version >/dev/null
+          nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+
+      - name: Install orchestration dependencies
+        run: |
+          npm ci
+          npm ci --prefix backend
+
+      - name: Initialize and verify all local model assets
+        run: |
+          npm run model:init
+          npm run model:check:all
+
+      - name: Start resident text and OCR services
+        run: npm run model:resident
+
+      - name: Exercise synthetic Paddle OCR inference
+        run: npm run model:ocr:acceptance --prefix backend
+
+      - name: Exercise on-demand model switching and restoration
+        run: npm run model:switch:acceptance --prefix backend
+
+      - name: Generate model image SBOM and CVE evidence
+        run: npm run model:security --prefix backend
+
+      - name: Restore required resident services
+        if: always()
+        run: npm run model:restore
+
+      - name: Verify final resident state
+        if: success()
+        run: npm run model:status
+
+      - name: Upload model security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: model-runtime-l0-security-evidence
+          path: deploy/model-services/.model-security/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Record L0 scope
+        if: success()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "status: passed" \
+            "scope: L0 engineering evidence only" \
+            "data: synthetic" \
+            "final resident services: qwen-text and paddle-ocr" \
+            "accuracy: not evaluated; H04-H09/H12/H13/H16 remain required" >> "$GITHUB_STEP_SUMMARY"

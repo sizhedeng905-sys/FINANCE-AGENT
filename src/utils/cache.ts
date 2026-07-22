@@ -1,4 +1,4 @@
-const APP_STORAGE_VERSION = '2026-07-09-v5';
+const APP_STORAGE_VERSION = '2026-07-11-v8';
 const VERSION_KEY = 'financial-agent-storage-version';
 
 const APP_KEYS = [
@@ -10,16 +10,25 @@ const APP_KEYS = [
   'audit-notification-store-v2',
   'audit-auth-store-v3',
   'audit-work-order-store-v3',
+  'audit-work-order-store-v4',
   'audit-notification-store-v3',
   'audit-data-center-store-v1',
   'audit-data-center-store-v2',
+  'audit-data-center-store-v3',
+  'audit-data-center-store-v4',
+  'audit-data-center-store-v5',
+  'audit-data-center-store-v6',
+  'audit-data-center-store-v7',
+  'audit-data-center-store-mock-v8',
+  'audit-data-center-store-api-v1',
   'audit-user-store-v1',
+  'finance-agent-access-token-v1',
 ];
 
 export function clearAppStorage() {
   try {
     APP_KEYS.forEach((key) => window.localStorage.removeItem(key));
-    window.localStorage.removeItem(VERSION_KEY);
+    window.sessionStorage.removeItem('finance-agent-access-token-v2');
   } catch {
     // localStorage can be blocked in some browser privacy modes.
   }

@@ -1,33 +1,85 @@
-import { mockBusinessRecords } from '@/mock/mockDataCenter';
-import type { BusinessRecord } from '@/types/dataCenter';
-import { delay, ok } from './dataApiUtils';
+import { runtimeConfig } from '@/config/runtime';
+import type {
+  BusinessRecord,
+  CreateRecordPayload,
+  PaginatedRecords,
+  RecordListQuery,
+  UpdateRecordPayload,
+} from '@/types/dataCenter';
+import { httpClient } from './httpClient';
+import {
+  mockConfirmRecord,
+  mockCreateRecord,
+  mockGetRecord,
+  mockGetRecords,
+  mockUpdateRecord,
+  mockVoidRecord,
+} from './mockRecordRepository';
 
-export async function getRecords(params?: Record<string, string>) {
-  await delay();
-  return ok({ params, records: mockBusinessRecords });
+function queryString(query: RecordListQuery): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+  const value = params.toString();
+  return value ? `?${value}` : '';
 }
 
-export async function createRecord(payload: Partial<BusinessRecord>) {
-  await delay();
-  return ok({ ...payload, id: `br-${Date.now()}` } as BusinessRecord, '记录已创建');
+function idempotencyKey(operation: 'create' | 'update' | 'confirm') {
+  const id = typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `record-${operation}-${id}`;
 }
 
-export async function getRecord(id: string) {
-  await delay();
-  return ok(mockBusinessRecords.find((item) => item.id === id));
+export function getRecords(query: RecordListQuery = {}): Promise<PaginatedRecords> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedRecords>(`/records${queryString(query)}`)
+    : mockGetRecords(query);
 }
 
-export async function updateRecord(id: string, payload: Partial<BusinessRecord>) {
-  await delay();
-  return ok({ id, ...payload } as BusinessRecord, '记录已更新');
+export function getProjectRecords(projectId: string, query: RecordListQuery = {}): Promise<PaginatedRecords> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedRecords>(`/projects/${encodeURIComponent(projectId)}/records${queryString(query)}`)
+    : mockGetRecords({ ...query, projectId });
 }
 
-export async function deleteRecord(id: string) {
-  await delay();
-  return ok({ id }, '记录已删除');
+export function createRecord(payload: CreateRecordPayload): Promise<BusinessRecord> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<BusinessRecord>(
+      '/records',
+      payload,
+      { headers: { 'Idempotency-Key': idempotencyKey('create') } },
+    )
+    : mockCreateRecord(payload);
 }
 
-export async function confirmRecord(id: string) {
-  await delay();
-  return ok({ id, status: 'confirmed' }, '记录已确认');
+export function getRecord(id: string): Promise<BusinessRecord> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<BusinessRecord>(`/records/${encodeURIComponent(id)}`)
+    : mockGetRecord(id);
+}
+
+export function updateRecord(id: string, payload: UpdateRecordPayload): Promise<BusinessRecord> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.patch<BusinessRecord>(`/records/${encodeURIComponent(id)}`, payload, {
+      headers: { 'Idempotency-Key': idempotencyKey('update') },
+    })
+    : mockUpdateRecord(id, payload);
+}
+
+export function deleteRecord(id: string): Promise<{ id: string; status: BusinessRecord['status'] }> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.delete<{ id: string; status: BusinessRecord['status'] }>(`/records/${encodeURIComponent(id)}`)
+    : mockVoidRecord(id);
+}
+
+export function confirmRecord(id: string): Promise<BusinessRecord> {
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.post<BusinessRecord>(
+      `/records/${encodeURIComponent(id)}/confirm`,
+      undefined,
+      { headers: { 'Idempotency-Key': idempotencyKey('confirm') } },
+    )
+    : mockConfirmRecord(id);
 }

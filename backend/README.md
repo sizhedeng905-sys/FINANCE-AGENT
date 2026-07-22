@@ -1,6 +1,6 @@
 # FINANCE-AGENT Backend
 
-Phase 0 through phase 3 backend for the logistics AI finance operations system.
+Phase 0 through phase 10 backend for the logistics AI finance operations system.
 
 ## Tech Stack
 
@@ -11,8 +11,13 @@ Phase 0 through phase 3 backend for the logistics AI finance operations system.
 - JWT
 - class-validator/class-transformer
 - Swagger/OpenAPI
+- Helmet, CORS allowlist, Redis-backed global/login/upload/model controls, requestId/traceId logging
+- S3-compatible private object storage, ClamAV, Prometheus metrics, OTLP traces
+- Split API/Worker production runtime with PostgreSQL durable task leases
 
 ## Setup
+
+Use Node.js 24.18.x. The package engine, CI, containers, and legacy `.xls` permission boundary are aligned to Node 24.18.
 
 ```bash
 cd backend
@@ -21,26 +26,111 @@ copy .env.example .env
 npm run prisma:generate
 ```
 
-Update `DATABASE_URL`, `JWT_SECRET`, and `PORT` in `.env` before connecting to PostgreSQL.
+Update `DATABASE_URL`, `JWT_SECRET`, `PORT`, and `CORS_ORIGINS` in `.env` before connecting to PostgreSQL. Startup rejects a non-PostgreSQL URL, a missing/low-entropy JWT secret, invalid HTTP/runtime limits, or an unsupported Provider. Production additionally requires `PROCESS_ROLE=api|worker`, verified PostgreSQL TLS, an explicit CORS allowlist, named proxies, `FILE_SCAN_MODE=clamav`, S3 storage, authenticated Redis, `REQUEST_RATE_LIMIT_STORE=redis`, `LOGIN_RATE_LIMIT_STORE=redis`, `UPLOAD_ADMISSION_STORE=redis`, `MODEL_EXECUTION_GATE_STORE=redis`, a Metrics token, and an OTLP trace endpoint; Swagger stays disabled unless explicitly enabled. For local development and synthetic demo data, initialize the database with:
+
+```bash
+npm run prisma:migrate
+npm run prisma:seed
+```
+
+Production and production-like environments must not run the demo seed. Apply migrations, bootstrap only the immutable system AI registry, and verify it before starting API or Worker processes:
+
+```bash
+npm run prisma:migrate:deploy
+npm run system:bootstrap
+npm run system:verify
+```
+
+Run migration and bootstrap with the deployment/migration database credential; API and Worker runtime credentials only need to verify the completed registry and must not receive schema or registry-maintenance grants. Set `AI_SYSTEM_REGISTRY_PROFILE` to `mock-safe-v1`, `development-local-v1`, or `custom`. Production requires an explicit profile and `AI_SYSTEM_REGISTRY_STARTUP_MODE=verify`; a custom profile is supplied through strict `AI_SYSTEM_REGISTRY_MANIFEST_JSON`, with credentials referenced by environment variable name through `secretRef`. Registry drift, unknown enabled routes/deployments, missing enabled secrets, or retired/drifted Prompt versions fail startup. `npm run system:acceptance` verifies a temporary blank `_test` database and refuses a non-test database.
 
 ## Scripts
 
 ```bash
 npm run dev
+npm run dev:worker
+npm run start:e2e
 npm run build
 npm run start
+npm run start:worker
 npm run test
+npm run test:integration
 npm run prisma:generate
 npm run prisma:migrate
+npm run prisma:migrate:deploy
 npm run prisma:seed
+npm run system:bootstrap
+npm run system:verify
+npm run system:verify:smoke
+npm run system:acceptance
+npm run db:verify
+npm run realdata:scan
+npm run realdata:xls-profile
+npm run realdata:resilience
+npm run realdata:model-resilience
+npm run model:routes -- list
+npm run model:check
+npm run model:services:init
+npm run model:services:resident
+npm run model:services:on-demand -- embedding
+npm run model:services:restore
+npm run model:services:status
+npm run model:lock:test
+npm run model:switch:acceptance -- vl
+npm run model:switch:acceptance -- embedding
+npm run model:ocr:acceptance
+npm run model:key:rotate
+npm run model:config:check
+npm run model:sbom
+npm run model:cve:offline
+npm run proxy:config:check
+npm run proxy:boundary:test
+npm run uat:init
+npm run uat:validate
+npm run uat:reconcile
 ```
+
+Root-level Playwright acceptance uses a dedicated PostgreSQL database:
+
+```bash
+cd ..
+npm run test:e2e
+```
+
+The preparation and cleanup scripts reject database names that do not end in `_test`. `npm run test:integration` resets only the verified dedicated test database before migration and seed so repeated 50,000-row profiles remain reproducible. See `docs/E2E_ACCEPTANCE.md` for covered role, workflow, file, report, Mock/API, and error scenarios.
+
+Current verification baseline (2026-07-23, CR-046 runtime `5c16f3e`):
+
+- Backend build and Prisma validation pass. Migration-path verification installs all 51 migrations on an empty database and upgrades the 50-migration predecessor to the current schema.
+- Jest: 51/51 suites and 473/473 tests.
+- Full PostgreSQL/Redis integration executes all 14/14 suites and 125/125 tests across the normal and Redis-required groups, including immutable ReportSnapshot/Claim evidence, strict Excel/OCR approval, source and identity changes, idempotent replay, project-template serialization, shared Redis login/upload/model controls, transient final-publication recovery, and 30,196/49,999-row accounting closure.
+- Root Playwright API-mode acceptance: 22/22 tests.
+- Backend and frontend production builds pass.
+- Root and backend production dependency audits report 0 vulnerabilities.
+- System acceptance verifies a fresh temporary `_test` database through 51 migrations, two concurrent bootstrap processes converging to one change and one zero-write replay, exact 11 Prompt / 1 Mock deployment / 7 route system counts, zero business/demo rows, a strict Mock mapping call, API and Worker startup verification, and deliberate configuration-drift startup rejection. The bootstrap uses the existing system tables, a serializable transaction, PostgreSQL advisory lock, bounded conflict retries, immutable content hashes, and one change audit.
+- Root/backend install scripts are explicit repository policy: approvals are exact-version, Scarf/`fsevents` remain denied, policy drift fails CI, and the runtime image is built from a clean production-only dependency stage.
+- R7.1 separates AI call metadata from conversation content and adds a bounded, leased, legal-hold-aware retention inventory. It is dry-run only; H12/H14 still block real deletion.
+- R7.2 adds session/action/resource-bound single-use step-up grants, atomic replay prevention, identity-change revocation, and a unified high-risk action guard. Enforcement remains disabled until H10 approves the action and MFA/SoD policy.
+- Immutable model snapshots, authenticated identity/capability probes, liveness/readiness separation, cross-process GPU switching, hardened model containers, SBOM/CVE scanning, and Nginx upload boundaries pass.
+- Live VL and Embedding transitions each admit one concurrent winner, avoid OOM, and restore resident text; live PaddleOCR accepts an authenticated synthetic PDF.
+- B8-08 provides an ignored anonymous eight-scenario manifest, `_test`-only cent reconciliation, issue tracking, and blank signoff templates. Blank input correctly remains `awaiting_input / external_unverified`.
+- B8-09 adds split API/Worker roles, Redis limiting/heartbeat, S3 storage and signed downloads, W3C/OTLP tracing, an 18-service TLS Staging topology, immutable runtime DB grants, linked backups, restore drills, and application/data/model rollback scripts.
+- R4 upgrades linked backups to `backup-manifest/1.0`, streamed per-object SHA-256, database/object reference checks, isolated database/bucket restore, fault injection, and one-time H13/H14 live-restore authorization. Local synthetic object and empty restore paths pass; target Linux restore, formal RPO/RTO, encryption/offsite retention, and live cutover remain `blocked_external`.
+- M5.1 makes OCR posting a strict finance command: a second active finance user must submit the current task/review/validation/payload versions, the exact warning acknowledgements, and a required idempotency key. The final transaction rechecks identity, role, project/file/template state, evidence and deterministic validation before freezing the approval snapshot and creating one record, audit entry, and ledger event.
+- M5.2 makes Excel posting whole-batch fail-closed. Each valid detail row creates one record; ordinary invalid detail rows cannot be excluded, summary candidates require a reasoned finance decision, and every review invalidates the old validation snapshot. A second active finance user submits exact versions/hashes/warnings and an idempotency key; staged records remain report-invisible until one final transaction rechecks identity, source, template, row-set and output hashes and publishes the complete batch.
+- M6 freezes confirmed actual report facts under PostgreSQL repeatable-read, uses Decimal and separate currency totals, stores immutable source/version hashes, and reuses a content-addressed canonical snapshot. Report AI uses the independent report policy and may only copy exact server-generated Claim catalog entries; invented entities, causes, comparisons, predictions, numbers, modified values, and hidden warnings are rejected. H06/H08 business truth and signoff remain external.
+- M7 adds bounded retry for concurrent identical ReportSnapshot transactions and verifies one immutable snapshot under six concurrent requests. Report narrative concurrency makes at most one Provider call; missing auth, wrong role, kill switch, timeout, truncated JSON, modified values, and hidden warnings fail closed without creating a narrative. R9.3B keeps deterministic integrity preflight outside the atomic publication transaction under a lease/version fence; the latest 30,196/49,999-row run completed in 25.502/42.954 seconds, but H13 target infrastructure must still establish p95/p99 and WAL/checkpoint capacity.
+- R9 moves login throttling, upload admission, and AI/OCR execution queues to Redis Lua controls with server-time leases, bounded FIFO waiting, crash recovery, and fail-closed behavior. The supplied Compose remains one API and one Worker until H13/H14 target-environment multi-instance release and recovery are exercised.
+- R10 L0 verifies all four local model asset sets, authenticated Qwen/Paddle synthetic inference, unauthorized 401 behavior, hardened deployment configuration, and the complete Paddle adapter contract. L1 business accuracy remains blocked on H04-H13 and H15/H16.
+- H-01 through H-16 as applicable, finance L3 reconciliation, reviewed OCR labels, target infrastructure, independent review, and final UAT remain external gates. See `docs/汇报/B8_09_STAGING_REPORT.md`.
 
 ## API
 
-- Health check: `GET /api/health`
+- Health checks: `GET /api/health`, `GET /api/health/live`, `GET /api/health/ready`
+- Authenticated Prometheus metrics: `GET /api/metrics`
 - Login: `POST /api/auth/login`
 - Current user: `GET /api/auth/me`
 - Logout: `POST /api/auth/logout`
+- Authentication capabilities and step-up: `GET /api/auth/security-capabilities`, `POST /api/auth/step-up`
 - User management: `GET/POST/PATCH/DELETE /api/users`
 - Projects: `GET/POST/PATCH/DELETE /api/projects`
 - Project structure: `GET /api/projects/:id/structure`
@@ -57,6 +147,27 @@ npm run prisma:seed
 - Business records: `GET/POST/PATCH/DELETE /api/records`
 - Record confirm: `POST /api/records/:id/confirm`
 - Project records: `GET /api/projects/:projectId/records`
+- Work orders: `GET/POST/PATCH /api/work-orders`
+- Approval actions: `POST /api/work-orders/:id/{finance-review|reviewer-review|run-rules|boss-approve}`
+- Work order timeline and urging: `GET /api/work-orders/:id/timeline`, `POST /api/work-orders/:id/urge`
+- File upload/preview/download/void and short signed object download: `/api/files`, `GET /api/files/:id/signed-download`
+- Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
+- Risk rules and anomalies: `/api/risk-rules`, `/api/reports/anomalies`, `/api/ai/anomalies`
+- Reports: `/api/reports/finance`, `/api/reports/boss`, `/api/reports/ranking`, `/api/reports/projects/:projectId/{daily|monthly}`
+- Immutable report snapshots: `POST /api/reports/snapshots`, `GET /api/reports/snapshots/:id`, `GET /api/reports/snapshots/:id/sources`
+- Grounded report narrative: `POST /api/ai/report-snapshots/:id/narrative`, `GET /api/ai/report-narratives/:id`
+- Boss AI assistant: `POST /api/ai/chat`
+- Boss AI conversations: `GET /api/ai/conversations`, `GET /api/ai/conversations/:id/messages`
+- Owner-scoped AI call logs: `GET /api/ai/call-logs`, `GET /api/ai/call-logs/:id`
+- Auditor-only redacted AI logs: `GET /api/ai/audit/call-logs`, `GET /api/ai/audit/call-logs/:id`
+- Excel import tasks: `GET/POST /api/import-tasks`, `POST /api/import-tasks/:id/inspect`, `POST /api/import-tasks/:id/parse`
+- Excel mapping and preview: `PUT /api/import-tasks/:id/mappings`, `GET /api/import-tasks/:id/{rows|errors|preview}`
+- Excel finance review: `PUT /api/import-tasks/:id/rows/:rowId/review`, `POST /api/import-tasks/:id/revalidate`
+- Excel confirmation: `POST /api/import-tasks/:id/confirm`; requires exact task/review/validation/payload versions, all warning IDs, a second active finance user, and `Idempotency-Key`. Any blocking detail error prevents the entire batch from being published. Field suggestions: `/api/field-suggestions`
+- OCR tasks: `GET/POST /api/ocr-tasks`, atomic file/task creation at `POST /api/ocr-tasks/upload`, and `POST /api/ocr-tasks/:id/{run|retry|cancel}`
+- OCR human review: `PUT /api/ocr-tasks/:id/corrections`, `POST /api/ocr-tasks/:id/revalidate`, `POST /api/ocr-tasks/:id/confirm`. Confirmation requires expected task/review/validation/payload versions, exact warning IDs, and `Idempotency-Key`; the uploader cannot approve their own task.
+- Model runtime metadata: `GET /api/model-runtime/deployments`, `/routes`, `/health`
+- Retention inventory: `GET /api/retention/classes`, `GET/POST /api/retention/runs`, `GET/POST /api/retention/legal-holds`
 - Swagger UI: `/api/docs`
 
 Successful responses use:
@@ -79,6 +190,12 @@ Errors use the same envelope:
 }
 ```
 
+Notification visibility is always derived from the authenticated user: a notification must target that user or the user's role. Read state is stored per user in `notification_receipts`, so one user cannot read a shared role notification on behalf of another. Repeated read and read-all requests are idempotent and do not duplicate audit logs.
+
+Reports are real-time views over confirmed `business_records`. Draft, pending-confirmation, reconciliation, and voided records are excluded from canonical actual snapshots; money is aggregated with `Prisma.Decimal`, currencies are never implicitly combined, and day/week/month boundaries use `Asia/Shanghai`. A canonical snapshot freezes query/canonicalization versions, source record versions and hashes, consistency watermarks, source digests, warnings, and the exact JSON facts. Report AI cannot query or write business records: it returns strict JSON and can only select exact server-generated Claim catalog entries whose `sourcePath` and value are revalidated before immutable persistence.
+
+All accounting amounts in JSON are fixed-decimal strings, not JavaScript numbers. Templates define immutable `accountingDirection`, `primaryAmountFieldId`, and `primaryDateFieldId`; manual entry, work orders, Excel, and OCR use the shared record policy so top-level amount/date and dynamic values cannot diverge.
+
 ## Seed Accounts
 
 Run:
@@ -99,6 +216,100 @@ Accounts:
 | `finance` | `123456` | `finance` |
 | `reviewer` | `123456` | `reviewer` |
 | `boss` | `123456` | `boss` |
+| `admin` | `123456` | `admin` |
+| `auditor` | `123456` | `auditor` |
+
+The seed also creates default projects, templates, fields, six risk rules, one pending high-risk work order, and model deployment/route metadata. Only the deterministic Mock deployment is enabled; local Qwen/Paddle/Embedding deployments remain disabled. Seed is intended for deterministic development/test databases and resets seeded account passwords, statuses, and token versions.
+
+## File Storage
+
+Development uploads are stored below `backend/uploads` and are ignored by Git. `UPLOAD_DIR` and `UPLOAD_QUARANTINE_DIR` are configurable. Production requires S3-compatible private storage; the backend can issue audited 30-300 second attachment URLs after resource authorization. `MAX_FILE_SIZE_MB` must be between 1 and 50 and is inclusive; larger uploads return the unified `41301` response. Uploads stream to a private `0700` quarantine directory with `0600` files, are authorized before scanning, and become usable only after a clean result. File, import, and OCR upload routes share per-user concurrency, in-flight byte, and rate admission controls. The API validates images, PDF, OOXML, CSV, Word, and legacy XLS content structurally; rejects active/forged documents and EICAR; limits image decoded memory and PDF pages/objects/time; records SHA-256 metadata; and enforces user/project quotas plus a storage waterline.
+
+S3 mode requires `S3_LOGICAL_QUOTA_BYTES`; the removed `S3_CAPACITY_BYTES` name is rejected because an S3 connectivity probe cannot prove physical free space. Logical admission uses committed, non-voided PostgreSQL file sizes and repeats the decision under a global transaction advisory lock. `GET /api/health/ready` and Prometheus identify the actual capacity source, freshness, limitations, and admission reason. Unknown, stale, estimated, contradictory, unavailable, or reserve-breaching capacity fails closed with `50301` or `50701`. MinIO physical capacity must be monitored independently; the supplied Staging topology scrapes its private v3 cluster-health metrics.
+
+## Staging
+
+The repository root exposes `staging:init`, `staging:check`, `staging:backup-integrity:test`, `staging:lock-images`, `staging:release`, `staging:smoke`, and `staging:rollback`. The 18-service Compose topology keeps PostgreSQL, Redis, MinIO, and ClamAV private; only the TLS gateway binds host ports. See `docs/B8_09_STAGING_RUNBOOK.md` and `docs/汇报/R4_BACKUP_RESTORE_INTEGRITY_REPORT_2026-07-18.md` for secret generation, least-privilege restore roles, strong-hash manifests, observability, pilot checks, and rollback safety gates.
+
+`FILE_SCAN_MODE=basic` is limited to development. Production startup requires `FILE_SCAN_MODE=clamav`; pending files return 423, failed files return 409, and infected files return 403 for preview/download/Excel/OCR. Originals are labeled `untrusted_original` and downloaded as `application/octet-stream` attachments with trust and no-sniff headers. Downloads and storage are streamed with backpressure, unreferenced voided files are physically removed, and evidence referenced by records/import/OCR is retained. Startup removes stale quarantine files and reconciles database records with the selected storage adapter. Development can use `LocalFileStorageService`; production requires the private S3-compatible adapter. Real ClamAV, object-storage backup, encryption/retention policy, and restore evidence remain deployment responsibilities.
+
+Production global request limiting, login throttling, upload admission, and model concurrency/queueing all use authenticated Redis shared controls and fail closed when Redis is unavailable. The supplied Staging topology intentionally remains one API and one Worker until H13/H14 provide a target topology and that environment passes multi-instance release, outage, recovery, and rollback tests.
+
+## Authentication Boundary
+
+Development accepts only `finance_agent_session` / `finance_agent_csrf`; production accepts only `__Host-finance_agent_session` / `__Host-finance_agent_csrf`. Mixed families, duplicate names (including malformed or empty first values), and environment-incompatible names are rejected and cleared. Cookie writes require exact double-submit CSRF matching. JWT verification is fixed to `HS256`, configured issuer/audience, and `typ=access`.
+
+The `admin` role manages privileged accounts. `finance` and `boss` can manage employee accounts only; `reviewer`, `employee`, and `auditor` cannot use user administration. Privileged role, password, and status changes are audited and notify the target user.
+
+Step-up is disabled by default. When H10 approves a concrete action policy, configure only actions reported as `attached` by `GET /api/auth/security-capabilities`:
+
+```env
+STEP_UP_MODE=disabled
+STEP_UP_TTL_SECONDS=300
+STEP_UP_ENFORCED_ACTIONS=
+```
+
+`POST /api/auth/step-up` requires the current password plus `action`, `resourceType`, and `resourceId`. The returned token is sent once in `X-Step-Up-Token`; it is bound to the current access-token session and is atomically consumed from PostgreSQL. Role, password, status, delete, and logout changes revoke active grants. Invalid modes, duplicate/unknown actions, and unattached candidates fail application startup. Access tokens issued before the R7.2 `sid` claim require a new login. MFA remains explicitly `reserved/enabled=false`, and self-approval, dual control, break-glass, and formal SoD remain pending H10. See `docs/汇报/R7_2_STEP_UP_AND_SOD_FRAMEWORK_REPORT_2026-07-18.md`.
+
+## Retention Boundary
+
+Retention is disabled by default. The only permitted enabled mode is non-destructive inventory:
+
+```env
+DATA_RETENTION_MODE=disabled
+DATA_RETENTION_BATCH_SIZE=100
+DATA_RETENTION_LEASE_MS=60000
+DATA_RETENTION_MAX_ATTEMPTS=3
+```
+
+Set `DATA_RETENTION_MODE=dry-run` only in a controlled environment to queue bounded inventory jobs. `execute`, unknown modes, `dryRun=false`, and future cutoffs are rejected. PostgreSQL constraints require every R7.1 run to remain a dry-run with `deletedCount=0`. Admin may create runs and legal holds; auditor has read-only access. Legal-hold release, actual retention days, Provider deletion guarantees, backup propagation, and destructive execution remain disabled pending H12/H14. See `docs/汇报/R7_1_DATA_RETENTION_DRY_RUN_REPORT_2026-07-18.md`.
+
+New AI call logs use `ai-call-audit/1.0` and store only hashes, sizes, tool names/field names, version metadata, claim counts, and fallback status. Full questions, tool values, and raw Provider responses are not copied into new `AiCallLog` records. Conversation content and OCR/import evidence remain in their dedicated content stores and are not deleted by R7.1.
+
+## AI Provider
+
+No local model or API key is required for acceptance. The default is deterministic structured-data mock mode:
+
+```env
+AI_PROVIDER=mock
+```
+
+OpenAI Responses API mode:
+
+```env
+AI_PROVIDER=openai
+AI_MODEL=gpt-5.4-mini
+AI_BASE_URL=https://api.openai.com/v1
+AI_API_KEY=your-key
+```
+
+Local or third-party OpenAI-compatible mode:
+
+```env
+AI_PROVIDER=openai_compatible
+AI_MODEL=your-model-name
+AI_BASE_URL=http://127.0.0.1:11434/v1
+AI_API_KEY=
+```
+
+The compatible endpoint must implement `POST /chat/completions`. The model never receives database access; the backend selects approved tools and sends only their structured results.
+
+The server loads a bounded persisted conversation history (16 messages / 12,000 characters), isolates conversations by boss user, treats tool data as untrusted content, and caps provider response bytes and output tokens. Conversation and message history APIs are paginated.
+
+OCR defaults to `OCR_PROVIDER=mock`. The repository now includes a buildable `local_paddle` adapter implementing the provider-neutral HTTP contract. Database model routes select the real AI/OCR providers only after `model:routes enable` passes an authenticated health check. Runtime timeout, retry, circuit breaker, queue, concurrency and deployment instructions are documented in `docs/MODEL_DEPLOYMENT.md`.
+
+## Runtime Security
+
+- `CORS_ORIGINS` is a comma-separated exact-origin allowlist.
+- Authentication defaults to an HttpOnly, SameSite=Strict session cookie; cookie-authenticated writes require the matching CSRF cookie/header. Bearer authentication remains available for API clients. Production cookie names use the `__Host-` prefix and `Secure`.
+- `REQUEST_RATE_LIMIT_WINDOW_MS` / `REQUEST_RATE_LIMIT_MAX` configure global per-IP limits. Login admission atomically limits IP, username, and pair keys, performs dummy password work for unknown users, and expires stale counters.
+- Keep `TRUST_PROXY_HOPS=0` for direct access. Production proxying requires exact `TRUSTED_PROXIES` IP/CIDR entries, and the Nest port must not be publicly reachable around the proxy.
+- `/api/health/ready` checks PostgreSQL; `/api/health` remains the phase 0 compatibility probe.
+- Structured logs include requestId, path, status, latency and authenticated actor, but not request bodies, Tokens, passwords or Provider keys.
+- Demo seed rejects production and ambiguous `NODE_ENV` values and requires an explicit database-bound confirmation before resetting demo users.
+- Use `npm run prisma:migrate:deploy` in deployment and allow NestJS shutdown hooks to close connections.
+
+See `docs/SECURITY.md` and `docs/LOCAL_SETUP.md` for the production gap list and repeatable Windows/cross-platform initialization.
 
 ## Phase Scope
 
@@ -108,13 +319,48 @@ Completed:
 - Phase 1: users, roles, login, JWT current user, finance/boss user management, and audit logs.
 - Phase 2: projects, templates, field definitions, template fields, project-enabled templates, project structure, and data center audit logs.
 - Phase 3: business records, dynamic record values, manual entry, record confirmation/voiding, and simplified ledger events.
+- Phase 4: work orders, role-scoped queries, approval state machine, timeline, approvals, and urging.
+- Phase 5: local file uploads, attachment authorization, SHA-256 metadata, soft deletion, and notifications.
+- Phase 6: configurable risk rules, rule run results, anomalies, and automatic rule review.
+- Phase 7: idempotent work-order record generation and real-time finance/boss/project reports.
+- Phase 8: boss-only AI chat, approved structured tools, mock/OpenAI-compatible providers, conversations, messages, prompt versions, and call logs.
+- Realization batch A: isolated PostgreSQL dev/test databases, repeatable migrations, guarded seed, and real database integration tests.
+- Realization batch B: token revocation, authentication audit/rate limiting, boss account protection, request IDs, and frontend real auth/user APIs.
+- Realization batch C: all ordered frontend domains through the boss AI assistant use explicit Mock/API repositories, with no API-to-Mock fallback.
+- Realization batch D: guarded PostgreSQL test initialization, 21 integration tests, 9 Playwright E2E tests, deterministic cleanup, and a PostgreSQL CI job.
+- Phase 9 / realization batch E: real `.xlsx` and isolated legacy `.xls` parsing, persistent task rows/columns, reusable reviewed mappings, field suggestions, and background import. The historical partial-row policy has been replaced by M5.2 whole-batch fail-closed approval.
+- Phase 10 / realization batch F: provider-neutral OCR tasks, PDF preprocessing checks, field evidence/confidence, human corrections, retry, and idempotent record generation.
+- Realization batch G: model deployment/route registry, provider contracts, JSON Schema validation, health checks, timeout/retry/circuit breaker and bounded concurrency.
+- Local model runtime follow-up: verified local asset indexes, buildable PaddleOCR-VL adapter, resident Qwen/OCR Compose services, on-demand VL/Embedding switching, and health-gated backend routing.
+- Realization batch H: PostgreSQL CI, repository hygiene, security headers, CORS, global rate limiting, readiness, structured logs and delivery documentation.
+- PR #2 audit remediation: accounting direction and primary fields, Decimal-string contracts, record/work-order concurrency and snapshots, immutable template versions, fail-closed files, import/OCR leases, atomic OCR upload, AI history and output bounds, anomaly handling, cookie/CSRF authentication, frontend route splitting, and supply-chain CI hardening.
+- Real business data B0-B2: read-only anonymous inventory, hardened image/PDF checks, explicit Sheet and 1-3 row header selection, opt-in cached formula results, background recovery, resource-limited `.xls` sanitization with audit/ledger provenance, and an inclusive 50 MiB upload boundary.
+- B8-01 to B8-07: terminal-state hardening, persistent idempotency, asynchronous Excel/OCR, strict financial Claim grounding, security boundaries, and an authenticated GPU/model control plane.
+- B8-08 engineering preparation: privacy-safe UAT manifests, integer-cent PostgreSQL reconciliation, issue tracking, and non-overwriting human signoff templates; human acceptance remains external.
+- B8-09 engineering implementation: split API/Worker runtime, Redis coordination, private S3 storage, PostgreSQL TLS/least privilege, centralized observability, linked backups, restore drills, and guarded application/data/model rollback; target-environment execution remains external.
+- M5.1 OCR approval hardening: immutable approval snapshots, stable validation issue IDs, exact warning acknowledgement, uploader self-approval rejection, final transaction authorization, optimistic concurrency, and request-body-bound idempotent posting.
+- M5.2 Excel approval hardening: H01 detail-row posting, summary-only review revisions, deterministic whole-batch revalidation, immutable approval snapshots, second-finance authorization, report-invisible staging, and atomic idempotent publication.
+- M6 report evidence: immutable canonical ReportSnapshot/source rows, Decimal and separate-currency metrics, deterministic source/canonical hashes, independent report AI policy, exact Claim catalog grounding, version-preserving narratives, and boss evidence UI.
+- M7 adversarial acceptance: report snapshot/narrative concurrency, authorization, kill switch, Provider timeout and malformed output, secret redaction, row/file resource boundaries, model health, migration paths, and Staging evidence gates.
 
-Not implemented yet:
+Explicitly deferred by the user:
 
-- Work orders
-- Attachments
-- Approval workflow
-- Notifications
-- Reports
-- AI assistant
-- Full raw file ledger and import task event flow
+- Cross-source duplicate-posting policy and idempotency across separate Excel uploads, OCR tasks, and manual retries (audit P1-07).
+
+Completed audit follow-up:
+
+- Background/chunked 5,000-row Excel processing with 4,999/5,000/5,001/30,196-row memory, persistence, cancellation, lease recovery, and uniqueness benchmarks (audit P1-08).
+- Complete 5,001/30,196/49,999-row Excel confirmation with BusinessRecord/RecordValue totals, Decimal sums, unique sources, reports, failure recovery, and bounded resource profiles (B8-03).
+- Mock and local Paddle OCR UI flows with Decimal strings, concurrency 1/3/5, queue/heartbeat/cancel/restart behavior, actual provider snapshots, and a measured zero-record delta before human confirmation (B8-04).
+- Strict AI Claim tuples, explicit project/customer and highest/lowest ranking, 3-project/2-customer API-built PostgreSQL golden data, owner-scoped boss logs, and 72-case Mock/local-Qwen benchmarks (B8-05).
+- Owner-scoped AI audit metadata, production Cookie/JWT separation, admin/auditor duties, active-content/resource/DLP gates, and storage reconciliation (B8-06).
+- Immutable model deployment hashes, authenticated identity probes, cross-process GPU state transitions, pinned/hardened model images, SPDX/Grype scanning, and the dynamic 50 MiB Nginx boundary (B8-07).
+- Legacy `.xls` conversion in a Node.js 24.18 permission-model child process; no Excel/COM dependency and no converted artifact at rest.
+
+Deployment or data work still required:
+
+- H06/H08 must supply signed real cent-level reconciliation, periods, formal metric definitions, and owner-approved question/answer truth before report correctness or business usefulness can be claimed.
+- Finance review of redacted company documents, L3 cent-level reconciliation, and OCR field labels before any production-accuracy claim.
+- GPU container startup, 30-minute residency, OOM/latency observation, text/VL/Embedding switching, service recovery, and simultaneous Qwen/OCR inference have been exercised; production monitoring thresholds still need operational ownership.
+- Object storage, a running ClamAV service, production backup/restore, and retention jobs.
+- Shared/distributed rate limiting, centralized observability, managed secrets and production infrastructure validation.

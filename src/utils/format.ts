@@ -1,9 +1,11 @@
-export function formatMoney(value: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-    maximumFractionDigits: 0,
-  }).format(value);
+export function formatMoney(value: string | number) {
+  const normalized = typeof value === 'number' ? value.toFixed(2) : value.trim();
+  const match = normalized.match(/^([+-]?)(\d+)(?:\.(\d{0,2}))?$/);
+  if (!match) return '¥--';
+  const sign = match[1] === '-' ? '-' : '';
+  const integer = match[2].replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fraction = (match[3] ?? '').padEnd(2, '0');
+  return `${sign}¥${integer}.${fraction}`;
 }
 
 export function formatPercent(value: number) {

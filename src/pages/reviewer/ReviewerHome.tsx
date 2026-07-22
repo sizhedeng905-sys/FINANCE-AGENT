@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Col, Row, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -13,10 +14,20 @@ import { workOrderTypeMap } from '@/utils/statusMap';
 export default function ReviewerHome() {
   const navigate = useNavigate();
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const pending = workOrders.filter((item) => ['reviewer_reviewing', 'finance_approved'].includes(item.status));
-  const reviewed = workOrders.filter((item) => ['ai_reviewing', 'boss_pending', 'completed'].includes(item.status)).length;
-  const highRisk = pending.filter((item) => item.riskLevel === 'high').length;
-  const returned = workOrders.filter((item) => item.status === 'reviewer_rejected').length;
+  const summary = useWorkOrderStore((state) => state.summary);
+  const fetchSummary = useWorkOrderStore((state) => state.fetchSummary);
+  const pending = workOrders.filter((item) => item.status === 'reviewer_reviewing');
+  const reviewed = summary
+    ? ['ai_reviewing', 'ai_passed', 'ai_flagged', 'boss_pending', 'boss_rejected', 'completed']
+      .reduce((total, status) => total + summary.byStatus[status as WorkOrder['status']], 0)
+    : '-';
+  const pendingCount = summary?.byStatus.reviewer_reviewing ?? '-';
+  const highRisk = summary?.byStatusAndRisk.reviewer_reviewing.high ?? '-';
+  const returned = summary?.byStatus.reviewer_rejected ?? '-';
+
+  useEffect(() => {
+    void fetchSummary().catch(() => undefined);
+  }, [fetchSummary]);
 
   const columns: ColumnsType<WorkOrder> = [
     { title: '工单编号', dataIndex: 'orderNo' },
@@ -32,8 +43,8 @@ export default function ReviewerHome() {
     <div>
       <PageHeader title="复核员首页" description="二次确认财务审核后的工单" />
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={6}><MetricCard title="待复核数量" value={pending.length} /></Col>
-        <Col xs={24} md={6}><MetricCard title="今日已复核" value={reviewed} color="#16a34a" /></Col>
+        <Col xs={24} md={6}><MetricCard title="待复核数量" value={pendingCount} /></Col>
+        <Col xs={24} md={6}><MetricCard title="已进入后续流程" value={reviewed} color="#16a34a" /></Col>
         <Col xs={24} md={6}><MetricCard title="高风险待复核" value={highRisk} color="#dc2626" /></Col>
         <Col xs={24} md={6}><MetricCard title="被退回数量" value={returned} color="#fa8c16" /></Col>
       </Row>

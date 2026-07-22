@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LogoutOutlined,
@@ -6,21 +6,29 @@ import {
   MenuUnfoldOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd';
+import { App, Avatar, Button, Layout, Menu, Space, Tag, Typography } from 'antd';
 import { useAuthStore } from '@/store/authStore';
+import { useWorkOrderStore } from '@/store/workOrderStore';
 import { findMenuKey, getDefaultPath, isValidRole, roleMenus, type RoleMenuItem } from '@/router/roleMenus';
 import { roleLabelMap } from '@/utils/statusMap';
 import NotificationBell from '@/components/notification/NotificationBell';
 
 export default function RoleBasedLayout() {
+  const { message } = App.useApp();
   const [collapsed, setCollapsed] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const fetchWorkOrders = useWorkOrderStore((state) => state.fetchWorkOrders);
   const navigate = useNavigate();
   const location = useLocation();
 
   const menus = useMemo(() => (user && isValidRole(user.role) ? roleMenus[user.role] : []), [user]);
   const selectedKey = user && isValidRole(user.role) ? findMenuKey(location.pathname, user.role) : undefined;
+
+  useEffect(() => {
+    if (user) void fetchWorkOrders({ page: 1, pageSize: 100 }).catch(() => undefined);
+  }, [fetchWorkOrders, user]);
 
   if (!user || !isValidRole(user.role)) {
     return null;
@@ -38,8 +46,10 @@ export default function RoleBasedLayout() {
     <Layout className="app-shell">
       <Layout.Sider
         width={236}
-        collapsedWidth={72}
+        collapsedWidth={0}
+        breakpoint="lg"
         collapsed={collapsed}
+        onBreakpoint={setCollapsed}
         trigger={null}
         className="app-sider"
       >
@@ -79,17 +89,25 @@ export default function RoleBasedLayout() {
             <Typography.Text className="header-title">物流企业 AI 财务运营系统</Typography.Text>
           </Space>
           <Space size={12}>
-            <NotificationBell role={user.role} />
+            <NotificationBell />
             <Avatar style={{ background: user.avatarColor }} icon={<UserOutlined />}>
               {user.name.slice(0, 1)}
             </Avatar>
-            <Typography.Text>{user.name}</Typography.Text>
-            <Tag color="blue">{roleLabelMap[user.role]}</Tag>
+            <Typography.Text className="header-user-name">{user.name}</Typography.Text>
+            <Tag className="header-role-tag" color="blue">{roleLabelMap[user.role]}</Tag>
             <Button
+              className="header-logout"
               icon={<LogoutOutlined />}
-              onClick={() => {
-                logout();
-                navigate('/login', { replace: true });
+              loading={loggingOut}
+              onClick={async () => {
+                setLoggingOut(true);
+                try {
+                  await logout();
+                } catch (error) {
+                  message.warning(error instanceof Error ? error.message : '退出请求失败，本地会话已清理');
+                } finally {
+                  setLoggingOut(false);
+                }
               }}
             >
               退出

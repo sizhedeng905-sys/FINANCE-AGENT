@@ -1,0 +1,45 @@
+loki.process "docker_json" {
+	forward_to = [loki.write.local.receiver]
+
+	stage.docker {}
+
+	stage.json {
+		expressions = {
+			request_id = "requestId",
+			trace_id   = "traceId",
+			type       = "type",
+		}
+	}
+
+	stage.labels {
+		values = {
+			type = "",
+		}
+	}
+
+	stage.structured_metadata {
+		values = {
+			request_id = "",
+			trace_id   = "",
+		}
+	}
+}
+
+loki.source.file "docker_json" {
+	targets = [{
+		__address__ = "localhost",
+		__path__    = "/var/lib/docker/containers/*/*-json.log",
+		job         = "finance-agent-staging",
+	}]
+	forward_to = [loki.process.docker_json.receiver]
+
+	file_match {
+		enabled = true
+	}
+}
+
+loki.write "local" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

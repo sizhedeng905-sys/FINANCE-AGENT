@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { App, Button, Card, Col, Form, Input, Modal, Row, Select, Space, Switch, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Col, Form, Input, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import { useDataCenterStore } from '@/store/dataCenterStore';
-import type { FieldDefinition, TemplateField } from '@/types/dataCenter';
+import type { CreateFieldPayload, TemplateField, UpdateTemplateFieldPayload } from '@/types/dataCenter';
 import { fieldTypeMap, recordTypeMap, semanticTypeMap } from '@/utils/dataCenterMaps';
-import { createSystemFieldName } from '@/utils/fieldName';
 
 export default function DataTemplateEditPage() {
   const { id } = useParams();
@@ -14,16 +13,68 @@ export default function DataTemplateEditPage() {
   const { message } = App.useApp();
   const [addOpen, setAddOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [operation, setOperation] = useState<string | null>(null);
   const [fieldId, setFieldId] = useState<string>();
-  const [fieldForm] = Form.useForm<Omit<FieldDefinition, 'id' | 'createdAt' | 'updatedAt' | 'isActive'>>();
+  const [fieldForm] = Form.useForm<CreateFieldPayload>();
   const templates = useDataCenterStore((state) => state.templates);
+  const templateLoading = useDataCenterStore((state) => state.templateLoading);
+  const templateError = useDataCenterStore((state) => state.templateError);
+  const fetchTemplate = useDataCenterStore((state) => state.fetchTemplate);
   const fields = useDataCenterStore((state) => state.fields);
   const templateFields = useDataCenterStore((state) => state.templateFields);
+  const fieldLoading = useDataCenterStore((state) => state.fieldLoading);
+  const fieldError = useDataCenterStore((state) => state.fieldError);
+  const templateFieldLoading = useDataCenterStore((state) => state.templateFieldLoading);
+  const templateFieldError = useDataCenterStore((state) => state.templateFieldError);
+  const fetchFields = useDataCenterStore((state) => state.fetchFields);
+  const fetchTemplateFields = useDataCenterStore((state) => state.fetchTemplateFields);
   const updateTemplateField = useDataCenterStore((state) => state.updateTemplateField);
   const removeTemplateField = useDataCenterStore((state) => state.removeTemplateField);
   const moveTemplateField = useDataCenterStore((state) => state.moveTemplateField);
   const addExistingFieldToTemplate = useDataCenterStore((state) => state.addExistingFieldToTemplate);
   const createField = useDataCenterStore((state) => state.createField);
+
+  useEffect(() => {
+    if (id) {
+      void fetchTemplate(id).catch(() => undefined);
+      void fetchTemplateFields(id).catch(() => undefined);
+    }
+    void fetchFields({ page: 1, pageSize: 100, isActive: true }).catch(() => undefined);
+  }, [fetchFields, fetchTemplate, fetchTemplateFields, id]);
+
+  const updateRelation = async (record: TemplateField, payload: UpdateTemplateFieldPayload) => {
+    try {
+      setOperation(`relation:${record.id}`);
+      await updateTemplateField(record.id, payload);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '模板字段更新失败');
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const moveRelation = async (record: TemplateField, direction: 'up' | 'down') => {
+    try {
+      setOperation(`move:${record.id}`);
+      await moveTemplateField(record.id, direction);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '字段排序失败');
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const removeRelation = async (record: TemplateField) => {
+    try {
+      setOperation(`remove:${record.id}`);
+      await removeTemplateField(record.id);
+      message.success('字段已从模板移除，字段字典定义仍保留');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '移除失败');
+    } finally {
+      setOperation(null);
+    }
+  };
 
   const template = templates.find((item) => item.id === id);
   const data = useMemo(
@@ -36,20 +87,30 @@ export default function DataTemplateEditPage() {
     { title: '字段名称', render: (_, record) => record.field.fieldName },
     { title: '系统识别名', render: (_, record) => record.field.fieldKey },
     { title: '字段类型', render: (_, record) => fieldTypeMap[record.field.fieldType] },
-    { title: '是否必填', dataIndex: 'isRequired', render: (value, record) => <Switch checked={value} onChange={(checked) => updateTemplateField(record.id, { isRequired: checked })} /> },
-    { title: '是否显示', dataIndex: 'isVisible', render: (value, record) => <Switch checked={value} onChange={(checked) => updateTemplateField(record.id, { isVisible: checked })} /> },
+    { title: '是否必填', dataIndex: 'isRequired', render: (value, record) => <Switch loading={operation === `relation:${record.id}`} checked={value} onChange={(checked) => void updateRelation(record, { isRequired: checked })} /> },
+    { title: '是否显示', dataIndex: 'isVisible', render: (value, record) => <Switch loading={operation === `relation:${record.id}`} checked={value} onChange={(checked) => void updateRelation(record, { isVisible: checked })} /> },
     { title: '排序', dataIndex: 'displayOrder' },
     {
       title: '操作',
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => moveTemplateField(record.id, 'up')}>上移</Button>
-          <Button size="small" onClick={() => moveTemplateField(record.id, 'down')}>下移</Button>
-          <Button size="small" danger onClick={() => removeTemplateField(record.id)}>移除</Button>
+          <Button size="small" loading={operation === `move:${record.id}`} onClick={() => void moveRelation(record, 'up')}>上移</Button>
+          <Button size="small" loading={operation === `move:${record.id}`} onClick={() => void moveRelation(record, 'down')}>下移</Button>
+          <Popconfirm title="从模板移除字段" description="字段字典定义和历史数据不会删除。" onConfirm={() => removeRelation(record)}>
+            <Button size="small" danger loading={operation === `remove:${record.id}`}>移除</Button>
+          </Popconfirm>
         </Space>
       ),
     },
   ];
+
+  if (templateLoading && !template) {
+    return <Card><Spin size="large" /></Card>;
+  }
+
+  if (templateError && !template) {
+    return <Alert type="error" showIcon message="模板加载失败" description={templateError} />;
+  }
 
   if (!template) {
     return <Card>模板不存在</Card>;
@@ -58,6 +119,9 @@ export default function DataTemplateEditPage() {
   return (
     <div>
       <PageHeader title="模板编辑" description="字段只从当前模板移除，不删除字段字典定义" extra={<Button onClick={() => navigate('/data/templates')}>返回</Button>} />
+      {fieldError || templateFieldError ? (
+        <Alert type="error" showIcon message="字段数据加载失败" description={fieldError || templateFieldError} style={{ marginBottom: 16 }} />
+      ) : null}
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={7}>
           <Card title="模板基本信息">
@@ -80,7 +144,7 @@ export default function DataTemplateEditPage() {
               </Space>
             }
           >
-            <Table rowKey="id" columns={columns} dataSource={data} pagination={false} scroll={{ x: 760 }} />
+            <Table rowKey="id" columns={columns} dataSource={data} loading={fieldLoading || templateFieldLoading} pagination={false} scroll={{ x: 760 }} />
           </Card>
         </Col>
       </Row>
@@ -89,12 +153,20 @@ export default function DataTemplateEditPage() {
         title="添加已有字段"
         open={addOpen}
         onCancel={() => setAddOpen(false)}
-        onOk={() => {
+        confirmLoading={operation === 'add-field'}
+        onOk={async () => {
           if (!fieldId || !id) return;
-          addExistingFieldToTemplate(id, fieldId);
-          message.success('字段已加入模板');
-          setAddOpen(false);
-          setFieldId(undefined);
+          try {
+            setOperation('add-field');
+            await addExistingFieldToTemplate(id, fieldId);
+            message.success('字段已加入模板');
+            setAddOpen(false);
+            setFieldId(undefined);
+          } catch (error) {
+            message.error(error instanceof Error ? error.message : '添加字段失败');
+          } finally {
+            setOperation(null);
+          }
         }}
       >
         <Select
@@ -110,18 +182,21 @@ export default function DataTemplateEditPage() {
         title="新建字段并加入模板"
         open={newOpen}
         onCancel={() => setNewOpen(false)}
-        onOk={() => {
-          fieldForm.validateFields().then((values) => {
-            const field = createField({
-              ...values,
-              fieldKey: values.fieldKey || createSystemFieldName(values.fieldName),
-              aliases: values.aliases ?? [],
-            });
-            addExistingFieldToTemplate(id!, field.id);
+        confirmLoading={operation === 'create-field'}
+        onOk={async () => {
+          try {
+            const values = await fieldForm.validateFields();
+            setOperation('create-field');
+            const field = await createField({ ...values, fieldKey: values.fieldKey || undefined, aliases: values.aliases ?? [] });
+            await addExistingFieldToTemplate(id!, field.id);
             message.success('字段已创建并加入模板');
             setNewOpen(false);
             fieldForm.resetFields();
-          });
+          } catch (error) {
+            if (error instanceof Error) message.error(error.message);
+          } finally {
+            setOperation(null);
+          }
         }}
       >
         <Form form={fieldForm} layout="vertical">

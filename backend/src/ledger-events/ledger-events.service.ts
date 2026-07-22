@@ -14,7 +14,8 @@ export class LedgerEventsService {
     eventType: string,
     aggregateType: string,
     aggregateId: string,
-    payload: Prisma.InputJsonValue
+    payload: Prisma.InputJsonValue,
+    idempotencyKey?: string
   ) {
     await prisma.ledgerEvent.create({
       data: {
@@ -23,6 +24,7 @@ export class LedgerEventsService {
         aggregateId,
         actorUserId: actor.id,
         actorUsername: actor.username,
+        idempotencyKey,
         payload
       }
     });

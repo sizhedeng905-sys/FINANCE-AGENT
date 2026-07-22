@@ -1,0 +1,16 @@
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON DATABASE finance_agent_staging FROM PUBLIC;
+GRANT CONNECT ON DATABASE finance_agent_staging TO finance_runtime;
+GRANT USAGE ON SCHEMA public TO finance_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO finance_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO finance_runtime;
+
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_logs FROM finance_runtime;
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE ledger_events FROM finance_runtime;
+GRANT SELECT, INSERT ON TABLE audit_logs TO finance_runtime;
+GRANT SELECT, INSERT ON TABLE ledger_events TO finance_runtime;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE finance_migrator IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO finance_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE finance_migrator IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO finance_runtime;

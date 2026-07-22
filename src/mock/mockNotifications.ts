@@ -9,7 +9,7 @@ export const mockNotifications: Notification[] = [
     sender: '陈明',
     targetRole: 'finance',
     read: false,
-    createdAt: '10分钟前',
+    createdAt: '2026-07-11T10:20:00.000Z',
     relatedWorkOrderId: 'wo-002',
   },
   {
@@ -20,7 +20,7 @@ export const mockNotifications: Notification[] = [
     sender: '系统',
     targetRole: 'finance',
     read: false,
-    createdAt: '18分钟前',
+    createdAt: '2026-07-11T10:12:00.000Z',
   },
   {
     id: 'n-003',
@@ -30,7 +30,7 @@ export const mockNotifications: Notification[] = [
     sender: 'AI复核',
     targetRole: 'finance',
     read: true,
-    createdAt: '35分钟前',
+    createdAt: '2026-07-11T09:55:00.000Z',
   },
   {
     id: 'n-004',
@@ -40,7 +40,7 @@ export const mockNotifications: Notification[] = [
     sender: '系统',
     targetRole: 'reviewer',
     read: false,
-    createdAt: '8分钟前',
+    createdAt: '2026-07-11T10:22:00.000Z',
   },
   {
     id: 'n-005',
@@ -50,7 +50,7 @@ export const mockNotifications: Notification[] = [
     sender: '系统',
     targetRole: 'boss',
     read: false,
-    createdAt: '5分钟前',
+    createdAt: '2026-07-11T10:25:00.000Z',
   },
   {
     id: 'n-006',
@@ -60,7 +60,7 @@ export const mockNotifications: Notification[] = [
     sender: '系统',
     targetRole: 'employee',
     read: false,
-    createdAt: '12分钟前',
+    createdAt: '2026-07-11T10:18:00.000Z',
     relatedWorkOrderId: 'wo-011',
   },
 ];

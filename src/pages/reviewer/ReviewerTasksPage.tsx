@@ -11,14 +11,18 @@ import { workOrderTypeMap } from '@/utils/statusMap';
 export default function ReviewerTasksPage() {
   const navigate = useNavigate();
   const workOrders = useWorkOrderStore((state) => state.workOrders);
-  const data = workOrders.filter((item) => ['reviewer_reviewing', 'finance_approved'].includes(item.status));
+  const data = workOrders.filter((item) => item.status === 'reviewer_reviewing');
 
   const columns: ColumnsType<WorkOrder> = [
     { title: '工单编号', dataIndex: 'orderNo' },
     { title: '类型', dataIndex: 'type', render: (value) => workOrderTypeMap[value as WorkOrder['type']] },
     { title: '项目', dataIndex: 'projectName' },
     { title: '金额', dataIndex: 'amount', render: (value) => formatMoney(value) },
-    { title: '财务审核人', render: () => '林雪' },
+    {
+      title: '财务审核人',
+      render: (_, record) =>
+        [...record.timeline].reverse().find((item) => item.role === 'finance')?.operator || '-',
+    },
     { title: '财务意见', dataIndex: 'financeOpinion', render: (value) => value || '-' },
     { title: '风险等级', dataIndex: 'riskLevel', render: (value) => <RiskTag risk={value} /> },
     { title: '创建时间', dataIndex: 'createdAt' },

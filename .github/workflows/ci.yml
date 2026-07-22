@@ -1,0 +1,319 @@
+name: Build and acceptance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  SYFT_VERSION: 1.44.0
+  SYFT_EXPECTED_VERSION: 1.44.0
+  SYFT_LINUX_AMD64_SHA256: 0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a
+
+jobs:
+  container-images:
+    name: Application container build and supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      APPLICATION_EVIDENCE_DIR: deploy/staging/.evidence/r8-application-images
+      BACKEND_CI_IMAGE: finance-agent/backend:ci-${{ github.sha }}
+      FRONTEND_CI_IMAGE: finance-agent/frontend:ci-${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup deployed Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+
+      - name: Build real backend and frontend images
+        run: |
+          docker build --file backend/Dockerfile --build-arg "BUILD_GIT_SHA=${GITHUB_SHA}" --tag "$BACKEND_CI_IMAGE" backend
+          docker build --file Dockerfile.frontend --build-arg "BUILD_GIT_SHA=${GITHUB_SHA}" --build-arg VITE_APP_DATA_MODE=api --build-arg VITE_API_BASE_URL=/api --build-arg VITE_API_TIMEOUT_MS=15000 --tag "$FRONTEND_CI_IMAGE" .
+
+      - name: Verify application image identity and runtime users
+        run: |
+          mkdir -p "$APPLICATION_EVIDENCE_DIR"
+          backend_user="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{.Config.User}}')"
+          frontend_user="$(docker image inspect "$FRONTEND_CI_IMAGE" --format '{{.Config.User}}')"
+          backend_revision="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          frontend_revision="$(docker image inspect "$FRONTEND_CI_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          test "$backend_user" = '10001:10001'
+          test "$frontend_user" = '101:101'
+          test "$backend_revision" = "$GITHUB_SHA"
+          test "$frontend_revision" = "$GITHUB_SHA"
+          backend_entrypoint="$(docker image inspect "$BACKEND_CI_IMAGE" --format '{{json .Config.Entrypoint}}')"
+          test "$backend_entrypoint" = '["backend-entrypoint"]'
+          backend_runtime_check="$(docker run --rm \
+            --env DATABASE_URL=postgresql://runtime-check:runtime-check@127.0.0.1:5432/runtime_check \
+            "$BACKEND_CI_IMAGE" sh -eu -c '
+              test ! -e /usr/local/lib/node_modules/npm
+              test ! -e /usr/local/lib/node_modules/corepack
+              ! command -v npm
+              ! command -v npx
+              ! command -v corepack
+              node --version
+              openssl version
+              ./node_modules/.bin/prisma -v
+              ./node_modules/.bin/prisma validate --schema prisma/schema.prisma
+              node --check dist/main.js
+              node --check dist/worker.js
+              node --check dist/system-bootstrap.js
+            ' 2>&1)"
+          if grep -qi 'failed to detect' <<<"$backend_runtime_check"; then
+            exit 1
+          fi
+          docker image inspect "$BACKEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/backend.identity.json"
+          docker image inspect "$FRONTEND_CI_IMAGE" | jq '.[0] | {Id, RepoTags, RepoDigests, Config: {User: .Config.User, Labels: .Config.Labels, ExposedPorts: .Config.ExposedPorts}}' > "$APPLICATION_EVIDENCE_DIR/frontend.identity.json"
+
+      - name: Install checksum-pinned Syft
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          install_dir="$RUNNER_TEMP/finance-agent-syft"
+          curl --fail --location --retry 1 --connect-timeout 15 --max-time 180 \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$SYFT_LINUX_AMD64_SHA256" "$archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir" syft
+          "$install_dir/syft" version
+          printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Generate application image SBOMs with pinned Syft
+        run: |
+          node deploy/staging/scripts/generate-sbom.mjs --source "docker:$BACKEND_CI_IMAGE" --output "$APPLICATION_EVIDENCE_DIR/backend.spdx.json"
+          node deploy/staging/scripts/generate-sbom.mjs --source "docker:$FRONTEND_CI_IMAGE" --output "$APPLICATION_EVIDENCE_DIR/frontend.spdx.json"
+
+      - name: Gate fixable critical application image CVEs
+        env:
+          GRYPE_ALLOW_NETWORK_UPDATE: "true"
+          GRYPE_DB_VOLUME: finance-agent-r8-application-grype-db
+        run: |
+          node deploy/staging/scripts/grype-sbom.mjs --sbom "$APPLICATION_EVIDENCE_DIR/backend.spdx.json" --output "$APPLICATION_EVIDENCE_DIR/backend.grype.sarif.json" --gate-output "$APPLICATION_EVIDENCE_DIR/backend.critical-fixed.txt"
+          node deploy/staging/scripts/grype-sbom.mjs --sbom "$APPLICATION_EVIDENCE_DIR/frontend.spdx.json" --output "$APPLICATION_EVIDENCE_DIR/frontend.grype.sarif.json" --gate-output "$APPLICATION_EVIDENCE_DIR/frontend.critical-fixed.txt"
+
+      - name: Upload application container evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: application-container-evidence
+          path: deploy/staging/.evidence/r8-application-images/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean application images
+        if: always()
+        run: docker image rm "$BACKEND_CI_IMAGE" "$FRONTEND_CI_IMAGE" || true
+
+  postgres-e2e:
+    name: PostgreSQL integration and E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: finance_agent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d finance_agent_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:8.2.3-alpine@sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/finance_agent_test?schema=public
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      REQUIRE_REDIS_INTEGRATION: "true"
+      JWT_SECRET: ci-only-finance-agent-jwt-secret-2026-07-11
+      JWT_ISSUER: finance-agent
+      JWT_AUDIENCE: finance-agent-api
+      JWT_ALGORITHM: HS256
+      PORT: 3101
+      SEED_ALLOW_NONSTANDARD_DATABASE: "false"
+      UPLOAD_DIR: test-uploads/ci
+      E2E_UPLOAD_DIR: test-uploads/e2e
+      MAX_FILE_SIZE_MB: 5
+      AI_PROVIDER: mock
+      AI_MODEL: mock-structured-v1
+      AI_TIMEOUT_MS: 5000
+      OCR_PROVIDER: mock
+      OCR_MODEL: mock-ocr-v1
+      OCR_TIMEOUT_MS: 5000
+      OCR_MAX_PDF_PAGES: 20
+      OCR_MAX_RETRIES: 2
+      MODEL_HTTP_MAX_RETRIES: 0
+      MODEL_CIRCUIT_FAILURE_THRESHOLD: 3
+      MODEL_CIRCUIT_RESET_MS: 30000
+      MODEL_MAX_QUEUE: 20
+      AI_MAX_CONCURRENCY: 1
+      OCR_MAX_CONCURRENCY: 1
+      CORS_ORIGINS: http://127.0.0.1:4173,http://127.0.0.1:4174
+      SWAGGER_ENABLED: "true"
+      TRUST_PROXY_HOPS: 0
+      REQUEST_RATE_LIMIT_WINDOW_MS: 60000
+      REQUEST_RATE_LIMIT_MAX: 5000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository history for secrets
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix backend
+
+      - name: Check repository hygiene and production dependency risk
+        run: |
+          npm run check:hygiene
+          npm run check:install-scripts
+          npm run staging:sbom:test
+          npm run model:config:check --prefix backend
+          npm run model:lock:test --prefix backend
+          npm run proxy:config:check --prefix backend
+          npm audit --omit=dev --audit-level=high
+          npm audit --prefix backend --omit=dev --audit-level=high
+
+      - name: Validate B8-09 staging topology and recovery scripts
+        run: |
+          npm run staging:init
+          npm run staging:config:test
+          npm run staging:preflight:test
+          npm run staging:alert:test
+          npm run staging:signature:test
+          npm run staging:secret:test
+          npm run staging:offsite-backup:test
+          npm run staging:check
+          npm run staging:logs:test
+          npm run staging:backup-integrity:test
+          npm run staging:image-integrity:test -- --defer-scan --retain-fixtures
+          find deploy/staging backend/docker -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Validate Prisma schema and migrations
+        working-directory: backend
+        run: |
+          npx prisma format --check
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+          npx prisma migrate status
+          npm run db:verify
+          npm run db:migration-paths
+
+      - name: Build frontend and backend
+        env:
+          VITE_APP_DATA_MODE: api
+          VITE_API_BASE_URL: /api
+          VITE_API_TIMEOUT_MS: "15000"
+        run: |
+          npm run test:runtime
+          npm run build
+          npm run staging:frontend:check
+          npm run build --prefix backend
+
+      - name: Run backend unit tests
+        run: npm test --prefix backend
+
+      - name: Run PostgreSQL integration tests
+        run: npm run test:integration --prefix backend
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser E2E
+        run: npm run test:e2e
+
+      - name: Install checksum-pinned Syft
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          install_dir="$RUNNER_TEMP/finance-agent-syft"
+          curl --fail --location --retry 1 --connect-timeout 15 --max-time 180 \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$SYFT_LINUX_AMD64_SHA256" "$archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir" syft
+          "$install_dir/syft" version
+          printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Generate R5 fixture image SBOM with pinned Syft
+        run: >-
+          node deploy/staging/scripts/generate-sbom.mjs
+          --source "docker:$R5_FIXTURE_IMAGE"
+          --output "$R5_EVIDENCE_DIR/fixture.spdx.json"
+
+      - name: Scan R5 fixture SBOM with pinned Grype
+        env:
+          GRYPE_ALLOW_NETWORK_UPDATE: "true"
+        run: >-
+          node deploy/staging/scripts/grype-sbom.mjs
+          --sbom "$R5_EVIDENCE_DIR/fixture.spdx.json"
+          --output "$R5_EVIDENCE_DIR/fixture.grype.sarif.json"
+          --gate-output "$R5_EVIDENCE_DIR/fixture.critical-fixed.txt"
+
+      - name: Finalize R5 supply-chain evidence
+        env:
+          R5_CRITICAL_GATE_PASSED: "true"
+        run: npm run staging:image-integrity:test -- --finalize-ci --retain-fixtures
+
+      - name: Clean R5 fixture images
+        if: always()
+        run: npm run staging:image-integrity:test -- --cleanup
+
+      - name: Upload R5 image identity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r5-image-identity-evidence
+          path: deploy/staging/.evidence/r5-image-integrity/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

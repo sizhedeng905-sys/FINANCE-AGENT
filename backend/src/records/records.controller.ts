@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
 import { getRequestContext } from '../common/utils/request-context';
+import { RequireStepUp } from '../step-up/require-step-up.decorator';
+import { StepUpGuard } from '../step-up/step-up.guard';
 import { CreateRecordDto } from './dto/create-record.dto';
 import { QueryRecordsDto } from './dto/query-records.dto';
 import { UpdateRecordDto } from './dto/update-record.dto';
@@ -16,7 +18,7 @@ import { RecordsService } from './records.service';
 @ApiTags('records')
 @ApiBearerAuth()
 @Controller('records')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StepUpGuard)
 export class RecordsController {
   constructor(private readonly recordsService: RecordsService) {}
 
@@ -30,10 +32,11 @@ export class RecordsController {
   @Roles(UserRole.finance)
   create(
     @Body() dto: CreateRecordDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.create(dto, user, getRequestContext(request));
+    return this.recordsService.create(dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Get(':id')
@@ -47,10 +50,11 @@ export class RecordsController {
   update(
     @Param('id') id: string,
     @Body() dto: UpdateRecordDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.update(id, dto, user, getRequestContext(request));
+    return this.recordsService.update(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Delete(':id')
@@ -65,11 +69,13 @@ export class RecordsController {
 
   @Post(':id/confirm')
   @Roles(UserRole.finance)
+  @RequireStepUp({ action: 'record.confirm', resourceType: 'business_record', resourceParam: 'id' })
   confirm(
     @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.recordsService.confirm(id, user, getRequestContext(request));
+    return this.recordsService.confirm(id, user, getRequestContext(request), idempotencyKey);
   }
 }

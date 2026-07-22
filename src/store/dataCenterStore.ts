@@ -1,38 +1,135 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { runtimeConfig } from '@/config/runtime';
 import {
-  mockBusinessRecords,
-  mockDataProjects,
-  mockDataTemplates,
+  createProject as createProjectRequest,
+  deleteProject as archiveProjectRequest,
+  disableProjectTemplate as disableProjectTemplateRequest,
+  enableProjectTemplate as enableProjectTemplateRequest,
+  getProject as getProjectRequest,
+  getProjectTemplates as getProjectTemplatesRequest,
+  getProjects,
+  updateProject as updateProjectRequest,
+  updateProjectTemplate as updateProjectTemplateRequest,
+} from '@/api/projectApi';
+import {
+  createField as createFieldRequest,
+  disableField as disableFieldRequest,
+  getField as getFieldRequest,
+  getFields,
+  getFieldUsage as getFieldUsageRequest,
+  updateField as updateFieldRequest,
+} from '@/api/fieldApi';
+import {
+  addTemplateField as addTemplateFieldRequest,
+  cloneTemplate as cloneTemplateRequest,
+  createTemplate as createTemplateRequest,
+  deleteTemplate as deleteTemplateRequest,
+  getTemplate as getTemplateRequest,
+  getTemplateFields as getTemplateFieldsRequest,
+  getTemplates,
+  updateTemplate as updateTemplateRequest,
+  updateTemplateField as updateTemplateFieldRequest,
+  removeTemplateField as removeTemplateFieldRequest,
+} from '@/api/templateApi';
+import {
+  confirmRecord as confirmRecordRequest,
+  createRecord as createRecordRequest,
+  deleteRecord as deleteRecordRequest,
+  getProjectRecords as getProjectRecordsRequest,
+  getRecord as getRecordRequest,
+  getRecords,
+  updateRecord as updateRecordRequest,
+} from '@/api/recordApi';
+import {
   mockExcelColumns,
-  mockFieldDefinitions,
   mockFieldSuggestions,
   mockImportRows,
   mockImportTasks,
   mockMappingRules,
-  mockProjectTemplates,
   mockRawFiles,
-  mockTemplateFields,
 } from '@/mock/mockDataCenter';
 import type {
   BusinessRecord,
+  CreateRecordPayload,
+  CreateFieldPayload,
+  CreateProjectTemplatePayload,
+  CreateTemplateFieldPayload,
+  CreateTemplatePayload,
   DataRecordType,
   DataTemplate,
   FieldDefinition,
+  FieldListQuery,
+  FieldUsage,
   FieldSuggestion,
   ImportRow,
   ImportTask,
   MappingRule,
   Project,
+  CreateProjectPayload,
+  ProjectListQuery,
   ProjectTemplate,
+  RecordListQuery,
   RawFile,
   RecordValue,
   TemplateField,
+  TemplateListQuery,
+  UpdateProjectPayload,
+  UpdateProjectTemplatePayload,
+  UpdateRecordPayload,
+  UpdateFieldPayload,
+  UpdateTemplatePayload,
+  UpdateTemplateFieldPayload,
 } from '@/types/dataCenter';
+
+if (runtimeConfig.dataMode === 'api' && typeof window !== 'undefined') {
+  for (const key of ['audit-data-center-store-v7', 'audit-data-center-store-mock-v8']) {
+    window.localStorage.removeItem(key);
+  }
+}
 
 type ExcelColumn = (typeof mockExcelColumns)[number];
 
 const now = () => new Date().toLocaleString('zh-CN', { hour12: false });
+
+const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : '请求失败');
+
+function projectMatchesQuery(project: Project, query: ProjectListQuery): boolean {
+  if (query.status && project.status !== query.status) return false;
+  const keyword = query.keyword?.trim().toLowerCase();
+  if (!keyword) return true;
+  return [project.name, project.customerName, project.ownerName].some((value) =>
+    value.toLowerCase().includes(keyword),
+  );
+}
+
+function templateMatchesQuery(template: DataTemplate, query: TemplateListQuery): boolean {
+  if (query.recordType && template.recordType !== query.recordType) return false;
+  const keyword = query.keyword?.trim().toLowerCase();
+  if (!keyword) return true;
+  return [template.name, template.description].some((value) => value.toLowerCase().includes(keyword));
+}
+
+function fieldMatchesQuery(field: FieldDefinition, query: FieldListQuery): boolean {
+  if (query.fieldType && field.fieldType !== query.fieldType) return false;
+  if (query.semanticType && field.semanticType !== query.semanticType) return false;
+  if (query.isActive !== undefined && field.isActive !== query.isActive) return false;
+  const keyword = query.keyword?.trim().toLowerCase();
+  if (!keyword) return true;
+  return [field.fieldKey, field.fieldName, field.description].some((value) => value.toLowerCase().includes(keyword));
+}
+
+function recordMatchesQuery(record: BusinessRecord, query: RecordListQuery): boolean {
+  if (query.projectId && record.projectId !== query.projectId) return false;
+  if (query.templateId && record.templateId !== query.templateId) return false;
+  if (query.recordType && record.recordType !== query.recordType) return false;
+  if (query.sourceType && record.sourceType !== query.sourceType) return false;
+  if (query.status && record.status !== query.status) return false;
+  const recordDate = record.recordDate.slice(0, 10);
+  if (query.dateFrom && recordDate < query.dateFrom.slice(0, 10)) return false;
+  if (query.dateTo && recordDate > query.dateTo.slice(0, 10)) return false;
+  return true;
+}
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -46,9 +143,12 @@ function createFieldKey(name: string) {
   return ascii ? `field_${ascii}` : `field_${Date.now()}`;
 }
 
-function normalizeValue(value: string | number | string[] | null | undefined): string | number | string[] | null {
-  if (value === undefined) return null;
-  return value;
+function normalizeValue(value: unknown): string | number | string[] | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' || typeof value === 'number') return value;
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }
 
 function inferFieldType(sourceName: string): FieldDefinition['fieldType'] {
@@ -66,39 +166,80 @@ function inferFieldType(sourceName: string): FieldDefinition['fieldType'] {
 
 interface DataCenterState {
   projects: Project[];
+  projectPage: number;
+  projectPageSize: number;
+  projectTotal: number;
+  projectLoading: boolean;
+  projectError: string | null;
+  lastProjectQuery: ProjectListQuery;
   templates: DataTemplate[];
+  templatePage: number;
+  templatePageSize: number;
+  templateTotal: number;
+  templateLoading: boolean;
+  templateError: string | null;
+  lastTemplateQuery: TemplateListQuery;
   fields: FieldDefinition[];
+  fieldPage: number;
+  fieldPageSize: number;
+  fieldTotal: number;
+  fieldLoading: boolean;
+  fieldError: string | null;
+  lastFieldQuery: FieldListQuery;
+  fieldUsage: Record<string, FieldUsage>;
   templateFields: TemplateField[];
+  templateFieldLoading: boolean;
+  templateFieldError: string | null;
   projectTemplates: ProjectTemplate[];
+  projectTemplateLoading: boolean;
+  projectTemplateError: string | null;
   records: BusinessRecord[];
+  recordPage: number;
+  recordPageSize: number;
+  recordTotal: number;
+  recordLoading: boolean;
+  recordError: string | null;
+  lastRecordQuery: RecordListQuery;
   rawFiles: RawFile[];
   importTasks: ImportTask[];
   importRows: ImportRow[];
   mappingRules: MappingRule[];
   fieldSuggestions: FieldSuggestion[];
   excelColumns: ExcelColumn[];
-  createProject: (payload: Pick<Project, 'name' | 'customerName' | 'description' | 'ownerName'>) => Project;
-  updateProject: (id: string, payload: Partial<Project>) => void;
-  archiveProject: (id: string) => void;
-  createTemplate: (payload: Pick<DataTemplate, 'name' | 'recordType' | 'description'>, createdBy: string) => DataTemplate;
-  cloneTemplate: (id: string, createdBy: string) => void;
-  deleteTemplate: (id: string) => void;
-  updateTemplate: (id: string, payload: Partial<DataTemplate>) => void;
-  enableTemplateForProject: (projectId: string, templateId: string, customName?: string) => ProjectTemplate | undefined;
-  disableTemplateForProject: (projectTemplateId: string) => void;
-  updateProjectTemplate: (projectTemplateId: string, payload: Partial<ProjectTemplate>) => void;
+  fetchProjects: (query?: ProjectListQuery) => Promise<void>;
+  fetchProject: (id: string) => Promise<Project>;
+  createProject: (payload: CreateProjectPayload) => Promise<Project>;
+  updateProject: (id: string, payload: UpdateProjectPayload) => Promise<Project>;
+  archiveProject: (id: string) => Promise<void>;
+  fetchTemplates: (query?: TemplateListQuery) => Promise<void>;
+  fetchTemplate: (id: string) => Promise<DataTemplate>;
+  createTemplate: (payload: CreateTemplatePayload) => Promise<DataTemplate>;
+  cloneTemplate: (id: string) => Promise<DataTemplate>;
+  deleteTemplate: (id: string) => Promise<void>;
+  updateTemplate: (id: string, payload: UpdateTemplatePayload) => Promise<DataTemplate>;
+  fetchProjectTemplates: (projectId: string) => Promise<void>;
+  enableTemplateForProject: (projectId: string, templateId: string, customName?: string) => Promise<ProjectTemplate>;
+  disableTemplateForProject: (projectTemplateId: string) => Promise<void>;
+  updateProjectTemplate: (projectTemplateId: string, payload: UpdateProjectTemplatePayload) => Promise<ProjectTemplate>;
   getProjectTemplates: (projectId: string) => ProjectTemplate[];
-  addExistingFieldToTemplate: (templateId: string, fieldId: string) => void;
-  createField: (payload: Omit<FieldDefinition, 'id' | 'createdAt' | 'updatedAt' | 'isActive'>) => FieldDefinition;
-  updateField: (id: string, payload: Partial<FieldDefinition>) => void;
-  deactivateField: (id: string) => void;
-  updateTemplateField: (id: string, payload: Partial<TemplateField>) => void;
-  removeTemplateField: (id: string) => void;
-  moveTemplateField: (id: string, direction: 'up' | 'down') => void;
-  createRecord: (payload: Omit<BusinessRecord, 'id' | 'createdAt' | 'updatedAt'>) => BusinessRecord;
-  updateRecord: (id: string, payload: Partial<BusinessRecord>) => void;
-  confirmRecord: (id: string, confirmedBy?: string) => void;
-  deleteRecord: (id: string) => void;
+  fetchFields: (query?: FieldListQuery) => Promise<void>;
+  fetchField: (id: string) => Promise<FieldDefinition>;
+  fetchFieldUsage: (id: string) => Promise<FieldUsage>;
+  fetchTemplateFields: (templateId: string) => Promise<void>;
+  addExistingFieldToTemplate: (templateId: string, fieldId: string) => Promise<TemplateField>;
+  createField: (payload: CreateFieldPayload) => Promise<FieldDefinition>;
+  updateField: (id: string, payload: UpdateFieldPayload) => Promise<FieldDefinition>;
+  deactivateField: (id: string) => Promise<void>;
+  updateTemplateField: (id: string, payload: UpdateTemplateFieldPayload) => Promise<TemplateField>;
+  removeTemplateField: (id: string) => Promise<void>;
+  moveTemplateField: (id: string, direction: 'up' | 'down') => Promise<void>;
+  createRecord: (payload: CreateRecordPayload) => Promise<BusinessRecord>;
+  fetchRecords: (query?: RecordListQuery) => Promise<void>;
+  fetchRecord: (id: string) => Promise<BusinessRecord>;
+  fetchProjectRecords: (projectId: string, query?: RecordListQuery) => Promise<void>;
+  updateRecord: (id: string, payload: UpdateRecordPayload) => Promise<BusinessRecord>;
+  confirmRecord: (id: string) => Promise<BusinessRecord>;
+  deleteRecord: (id: string) => Promise<void>;
   getRecordsByProject: (projectId: string) => BusinessRecord[];
   getImportTasksByProject: (projectId: string) => ImportTask[];
   getRawFilesByProject: (projectId: string) => RawFile[];
@@ -127,7 +268,7 @@ interface DataCenterState {
   createMappingRuleFromSuggestion: (suggestionId: string, targetFieldId: string) => MappingRule | undefined;
   confirmImportTask: (id: string) => BusinessRecord[];
   cancelImportTask: (id: string) => void;
-  approveSuggestion: (id: string, approvedBy: string) => void;
+  approveSuggestion: (id: string, approvedBy: string) => Promise<void>;
   mapSuggestion: (id: string, fieldId: string) => void;
   rejectSuggestion: (id: string) => void;
   getTemplateFields: (templateId: string) => TemplateField[];
@@ -136,176 +277,480 @@ interface DataCenterState {
 export const useDataCenterStore = create<DataCenterState>()(
   persist(
     (set, get) => ({
-      projects: mockDataProjects,
-      templates: mockDataTemplates,
-      fields: mockFieldDefinitions,
-      templateFields: mockTemplateFields,
-      projectTemplates: mockProjectTemplates,
-      records: mockBusinessRecords,
-      rawFiles: mockRawFiles,
-      importTasks: mockImportTasks,
-      importRows: mockImportRows,
-      mappingRules: mockMappingRules,
-      fieldSuggestions: mockFieldSuggestions,
-      excelColumns: mockExcelColumns,
+      projects: [],
+      projectPage: 1,
+      projectPageSize: 20,
+      projectTotal: 0,
+      projectLoading: false,
+      projectError: null,
+      lastProjectQuery: { page: 1, pageSize: 20 },
+      templates: [],
+      templatePage: 1,
+      templatePageSize: 20,
+      templateTotal: 0,
+      templateLoading: false,
+      templateError: null,
+      lastTemplateQuery: { page: 1, pageSize: 20 },
+      fields: [],
+      fieldPage: 1,
+      fieldPageSize: 20,
+      fieldTotal: 0,
+      fieldLoading: false,
+      fieldError: null,
+      lastFieldQuery: { page: 1, pageSize: 20 },
+      fieldUsage: {},
+      templateFields: [],
+      templateFieldLoading: false,
+      templateFieldError: null,
+      projectTemplates: [],
+      projectTemplateLoading: false,
+      projectTemplateError: null,
+      records: [],
+      recordPage: 1,
+      recordPageSize: 20,
+      recordTotal: 0,
+      recordLoading: false,
+      recordError: null,
+      lastRecordQuery: { page: 1, pageSize: 20 },
+      rawFiles: runtimeConfig.dataMode === 'mock' ? mockRawFiles : [],
+      importTasks: runtimeConfig.dataMode === 'mock' ? mockImportTasks : [],
+      importRows: runtimeConfig.dataMode === 'mock' ? mockImportRows : [],
+      mappingRules: runtimeConfig.dataMode === 'mock' ? mockMappingRules : [],
+      fieldSuggestions: runtimeConfig.dataMode === 'mock' ? mockFieldSuggestions : [],
+      excelColumns: runtimeConfig.dataMode === 'mock' ? mockExcelColumns : [],
 
-      createProject: (payload) => {
-        const project: Project = {
-          id: makeId('dp'),
-          status: 'active',
-          createdAt: now(),
-          updatedAt: now(),
-          ...payload,
+      fetchProjects: async (query = get().lastProjectQuery) => {
+        const normalizedQuery: ProjectListQuery = {
+          page: query.page ?? 1,
+          pageSize: query.pageSize ?? get().projectPageSize,
+          keyword: query.keyword,
+          status: query.status,
         };
-        set((state) => ({ projects: [project, ...state.projects] }));
-        return project;
-      },
-      updateProject: (id, payload) =>
-        set((state) => ({
-          projects: state.projects.map((item) => (item.id === id ? { ...item, ...payload, updatedAt: now() } : item)),
-        })),
-      archiveProject: (id) =>
-        set((state) => ({
-          projects: state.projects.map((item) =>
-            item.id === id ? { ...item, status: 'archived', updatedAt: now() } : item,
-          ),
-        })),
-      createTemplate: (payload, createdBy) => {
-        const template: DataTemplate = {
-          id: makeId('dt'),
-          isSystem: false,
-          createdBy,
-          createdAt: now(),
-          updatedAt: now(),
-          ...payload,
-        };
-        set((state) => ({ templates: [template, ...state.templates] }));
-        return template;
-      },
-      cloneTemplate: (id, createdBy) => {
-        const template = get().templates.find((item) => item.id === id);
-        if (!template) return;
-        const newTemplate: DataTemplate = {
-          ...template,
-          id: makeId('dt'),
-          name: `${template.name} 副本`,
-          isSystem: false,
-          createdBy,
-          createdAt: now(),
-          updatedAt: now(),
-        };
-        const newFields = get()
-          .templateFields.filter((item) => item.templateId === id)
-          .map((item, index) => ({
-            ...item,
-            id: `tf-${newTemplate.id}-${item.fieldId}-${index}`,
-            templateId: newTemplate.id,
-          }));
-        set((state) => ({
-          templates: [newTemplate, ...state.templates],
-          templateFields: [...newFields, ...state.templateFields],
-        }));
-      },
-      deleteTemplate: (id) =>
-        set((state) => ({
-          templates: state.templates.filter((item) => item.id !== id),
-          templateFields: state.templateFields.filter((item) => item.templateId !== id),
-          projectTemplates: state.projectTemplates.filter((item) => item.templateId !== id),
-        })),
-      updateTemplate: (id, payload) =>
-        set((state) => ({
-          templates: state.templates.map((item) => (item.id === id ? { ...item, ...payload, updatedAt: now() } : item)),
-        })),
-      enableTemplateForProject: (projectId, templateId, customName) => {
-        const template = get().templates.find((item) => item.id === templateId);
-        if (!template) return undefined;
-        const existing = get().projectTemplates.find(
-          (item) => item.projectId === projectId && item.templateId === templateId,
-        );
-        if (existing) {
-          const updated = {
-            ...existing,
-            isActive: true,
-            customName: customName || existing.customName || template.name,
-            updatedAt: now(),
-          };
-          set((state) => ({
-            projectTemplates: state.projectTemplates.map((item) => (item.id === existing.id ? updated : item)),
-          }));
-          return updated;
+        set({ projectLoading: true, projectError: null, lastProjectQuery: normalizedQuery });
+        try {
+          const result = await getProjects(normalizedQuery);
+          set({
+            projects: result.items,
+            projectPage: result.page,
+            projectPageSize: result.pageSize,
+            projectTotal: result.total,
+            projectLoading: false,
+          });
+        } catch (error) {
+          set({ projectLoading: false, projectError: getErrorMessage(error) });
+          throw error;
         }
-        const projectTemplate: ProjectTemplate = {
-          id: makeId('pt'),
-          projectId,
-          templateId,
-          customName: customName || template.name,
-          isActive: true,
-          createdAt: now(),
-          updatedAt: now(),
-        };
-        set((state) => ({ projectTemplates: [projectTemplate, ...state.projectTemplates] }));
-        return projectTemplate;
       },
-      disableTemplateForProject: (projectTemplateId) =>
-        set((state) => ({
-          projectTemplates: state.projectTemplates.map((item) =>
-            item.id === projectTemplateId ? { ...item, isActive: false, updatedAt: now() } : item,
-          ),
-        })),
-      updateProjectTemplate: (projectTemplateId, payload) =>
-        set((state) => ({
-          projectTemplates: state.projectTemplates.map((item) =>
-            item.id === projectTemplateId ? { ...item, ...payload, updatedAt: now() } : item,
-          ),
-        })),
+      fetchProject: async (id) => {
+        set({ projectLoading: true, projectError: null });
+        try {
+          const project = await getProjectRequest(id);
+          set((state) => ({
+            projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+            projectLoading: false,
+          }));
+          return project;
+        } catch (error) {
+          set({ projectLoading: false, projectError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      createProject: async (payload) => {
+        set({ projectError: null });
+        try {
+          const project = await createProjectRequest(payload);
+          set((state) => {
+            const matches = projectMatchesQuery(project, state.lastProjectQuery);
+            return {
+              projects: matches ? [project, ...state.projects] : state.projects,
+              projectTotal: matches ? state.projectTotal + 1 : state.projectTotal,
+            };
+          });
+          return project;
+        } catch (error) {
+          set({ projectError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateProject: async (id, payload) => {
+        set({ projectError: null });
+        try {
+          const project = await updateProjectRequest(id, payload);
+          set((state) => {
+            const existed = state.projects.some((item) => item.id === id);
+            const matches = projectMatchesQuery(project, state.lastProjectQuery);
+            return {
+              projects: matches
+                ? state.projects.map((item) => (item.id === id ? project : item))
+                : state.projects.filter((item) => item.id !== id),
+              projectTotal: existed && !matches ? Math.max(0, state.projectTotal - 1) : state.projectTotal,
+            };
+          });
+          return project;
+        } catch (error) {
+          set({ projectError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      archiveProject: async (id) => {
+        set({ projectError: null });
+        try {
+          const result = await archiveProjectRequest(id);
+          set((state) => {
+            const current = state.projects.find((item) => item.id === id);
+            if (!current) return state;
+            const project = { ...current, status: result.status, updatedAt: new Date().toISOString() };
+            const matches = projectMatchesQuery(project, state.lastProjectQuery);
+            return {
+              projects: matches
+                ? state.projects.map((item) => (item.id === id ? project : item))
+                : state.projects.filter((item) => item.id !== id),
+              projectTotal: matches ? state.projectTotal : Math.max(0, state.projectTotal - 1),
+            };
+          });
+        } catch (error) {
+          set({ projectError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchTemplates: async (query = get().lastTemplateQuery) => {
+        const normalizedQuery: TemplateListQuery = {
+          page: query.page ?? 1,
+          pageSize: query.pageSize ?? get().templatePageSize,
+          keyword: query.keyword,
+          recordType: query.recordType,
+        };
+        set({ templateLoading: true, templateError: null, lastTemplateQuery: normalizedQuery });
+        try {
+          const result = await getTemplates(normalizedQuery);
+          set({
+            templates: result.items,
+            templatePage: result.page,
+            templatePageSize: result.pageSize,
+            templateTotal: result.total,
+            templateLoading: false,
+          });
+        } catch (error) {
+          set({ templateLoading: false, templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchTemplate: async (id) => {
+        set({ templateLoading: true, templateError: null });
+        try {
+          const template = await getTemplateRequest(id);
+          set((state) => ({
+            templates: [template, ...state.templates.filter((item) => item.id !== id)],
+            templateLoading: false,
+          }));
+          return template;
+        } catch (error) {
+          set({ templateLoading: false, templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      createTemplate: async (payload) => {
+        set({ templateError: null });
+        try {
+          const template = await createTemplateRequest(payload);
+          set((state) => {
+            const matches = templateMatchesQuery(template, state.lastTemplateQuery);
+            return {
+              templates: matches ? [template, ...state.templates] : state.templates,
+              templateTotal: matches ? state.templateTotal + 1 : state.templateTotal,
+            };
+          });
+          return template;
+        } catch (error) {
+          set({ templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      cloneTemplate: async (id) => {
+        set({ templateError: null });
+        try {
+          const template = await cloneTemplateRequest(id);
+          set((state) => {
+            const matches = templateMatchesQuery(template, state.lastTemplateQuery);
+            return {
+              templates: matches ? [template, ...state.templates] : state.templates,
+              templateTotal: matches ? state.templateTotal + 1 : state.templateTotal,
+            };
+          });
+          return template;
+        } catch (error) {
+          set({ templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      deleteTemplate: async (id) => {
+        set({ templateError: null });
+        try {
+          await deleteTemplateRequest(id);
+          set((state) => ({
+            templates: state.templates.filter((item) => item.id !== id),
+            templateTotal: Math.max(0, state.templateTotal - 1),
+          }));
+        } catch (error) {
+          set({ templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateTemplate: async (id, payload) => {
+        set({ templateError: null });
+        try {
+          const template = await updateTemplateRequest(id, payload);
+          set((state) => {
+            const existed = state.templates.some((item) => item.id === id);
+            const matches = templateMatchesQuery(template, state.lastTemplateQuery);
+            return {
+              templates: matches
+                ? state.templates.map((item) => (item.id === id ? template : item))
+                : state.templates.filter((item) => item.id !== id),
+              templateTotal: existed && !matches ? Math.max(0, state.templateTotal - 1) : state.templateTotal,
+            };
+          });
+          return template;
+        } catch (error) {
+          set({ templateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchProjectTemplates: async (projectId) => {
+        set({ projectTemplateLoading: true, projectTemplateError: null });
+        try {
+          const items = await getProjectTemplatesRequest(projectId);
+          set((state) => ({
+            projectTemplates: [
+              ...state.projectTemplates.filter((item) => item.projectId !== projectId),
+              ...items,
+            ],
+            templates: [
+              ...state.templates,
+              ...items
+                .map((item) => item.template)
+                .filter((template): template is DataTemplate => Boolean(template))
+                .filter((template) => !state.templates.some((candidate) => candidate.id === template.id)),
+            ],
+            projectTemplateLoading: false,
+          }));
+        } catch (error) {
+          set({ projectTemplateLoading: false, projectTemplateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      enableTemplateForProject: async (projectId, templateId, customName) => {
+        set({ projectTemplateLoading: true, projectTemplateError: null });
+        try {
+          const payload: CreateProjectTemplatePayload = { templateId, customName };
+          const item = await enableProjectTemplateRequest(projectId, payload);
+          set((state) => ({
+            projectTemplates: [
+              item,
+              ...state.projectTemplates.filter(
+                (candidate) => candidate.id !== item.id &&
+                  !(candidate.projectId === projectId && candidate.templateId === templateId),
+              ),
+            ],
+            projectTemplateLoading: false,
+          }));
+          return item;
+        } catch (error) {
+          set({ projectTemplateLoading: false, projectTemplateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      disableTemplateForProject: async (projectTemplateId) => {
+        set({ projectTemplateLoading: true, projectTemplateError: null });
+        try {
+          const item = await disableProjectTemplateRequest(projectTemplateId);
+          set((state) => ({
+            projectTemplates: state.projectTemplates.map((candidate) => candidate.id === item.id ? item : candidate),
+            projectTemplateLoading: false,
+          }));
+        } catch (error) {
+          set({ projectTemplateLoading: false, projectTemplateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateProjectTemplate: async (projectTemplateId, payload) => {
+        set({ projectTemplateLoading: true, projectTemplateError: null });
+        try {
+          const item = await updateProjectTemplateRequest(projectTemplateId, payload);
+          set((state) => ({
+            projectTemplates: state.projectTemplates.map((candidate) => candidate.id === item.id ? item : candidate),
+            projectTemplateLoading: false,
+          }));
+          return item;
+        } catch (error) {
+          set({ projectTemplateLoading: false, projectTemplateError: getErrorMessage(error) });
+          throw error;
+        }
+      },
       getProjectTemplates: (projectId) => get().projectTemplates.filter((item) => item.projectId === projectId),
-      addExistingFieldToTemplate: (templateId, fieldId) => {
-        const field = get().fields.find((item) => item.id === fieldId);
-        if (!field) return;
-        const current = get().templateFields.filter((item) => item.templateId === templateId);
-        if (current.some((item) => item.fieldId === fieldId)) return;
-        const templateField: TemplateField = {
-          id: `tf-${templateId}-${fieldId}-${Date.now()}`,
-          templateId,
-          fieldId,
-          field,
-          isRequired: false,
-          isVisible: true,
-          displayOrder: current.length + 1,
-          defaultValue: '',
+      fetchFields: async (query = get().lastFieldQuery) => {
+        const normalizedQuery: FieldListQuery = {
+          page: query.page ?? 1,
+          pageSize: query.pageSize ?? get().fieldPageSize,
+          keyword: query.keyword,
+          fieldType: query.fieldType,
+          semanticType: query.semanticType,
+          isActive: query.isActive,
         };
-        set((state) => ({ templateFields: [...state.templateFields, templateField] }));
+        set({ fieldLoading: true, fieldError: null, lastFieldQuery: normalizedQuery });
+        try {
+          const result = await getFields(normalizedQuery);
+          set({
+            fields: result.items,
+            fieldPage: result.page,
+            fieldPageSize: result.pageSize,
+            fieldTotal: result.total,
+            fieldLoading: false,
+          });
+        } catch (error) {
+          set({ fieldLoading: false, fieldError: getErrorMessage(error) });
+          throw error;
+        }
       },
-      createField: (payload) => {
-        const field: FieldDefinition = {
-          id: makeId('f'),
-          isActive: true,
-          createdAt: now(),
-          updatedAt: now(),
-          ...payload,
-          fieldKey: payload.fieldKey || createFieldKey(payload.fieldName),
-        };
-        set((state) => ({ fields: [field, ...state.fields] }));
-        return field;
+      fetchField: async (id) => {
+        set({ fieldLoading: true, fieldError: null });
+        try {
+          const field = await getFieldRequest(id);
+          set((state) => ({
+            fields: [field, ...state.fields.filter((item) => item.id !== id)],
+            fieldLoading: false,
+          }));
+          return field;
+        } catch (error) {
+          set({ fieldLoading: false, fieldError: getErrorMessage(error) });
+          throw error;
+        }
       },
-      updateField: (id, payload) =>
-        set((state) => ({
-          fields: state.fields.map((item) => (item.id === id ? { ...item, ...payload, updatedAt: now() } : item)),
-          templateFields: state.templateFields.map((item) =>
-            item.fieldId === id ? { ...item, field: { ...item.field, ...payload, updatedAt: now() } } : item,
-          ),
-        })),
-      deactivateField: (id) =>
-        set((state) => ({
-          fields: state.fields.map((item) => (item.id === id ? { ...item, isActive: false, updatedAt: now() } : item)),
-        })),
-      updateTemplateField: (id, payload) =>
-        set((state) => ({
-          templateFields: state.templateFields.map((item) => (item.id === id ? { ...item, ...payload } : item)),
-        })),
-      removeTemplateField: (id) =>
-        set((state) => ({ templateFields: state.templateFields.filter((item) => item.id !== id) })),
-      moveTemplateField: (id, direction) => {
+      fetchFieldUsage: async (id) => {
+        set({ fieldError: null });
+        try {
+          const usage = await getFieldUsageRequest(id);
+          set((state) => ({ fieldUsage: { ...state.fieldUsage, [id]: usage } }));
+          return usage;
+        } catch (error) {
+          set({ fieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchTemplateFields: async (templateId) => {
+        set({ templateFieldLoading: true, templateFieldError: null });
+        try {
+          const items = await getTemplateFieldsRequest(templateId);
+          set((state) => ({
+            templateFields: [
+              ...state.templateFields.filter((item) => item.templateId !== templateId),
+              ...items,
+            ],
+            templateFieldLoading: false,
+          }));
+        } catch (error) {
+          set({ templateFieldLoading: false, templateFieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      addExistingFieldToTemplate: async (templateId, fieldId) => {
+        set({ templateFieldError: null });
+        try {
+          const item = await addTemplateFieldRequest(templateId, { fieldId } as CreateTemplateFieldPayload);
+          set((state) => ({ templateFields: [...state.templateFields, item] }));
+          return item;
+        } catch (error) {
+          set({ templateFieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      createField: async (payload) => {
+        set({ fieldError: null });
+        try {
+          const field = await createFieldRequest(payload);
+          set((state) => {
+            const matches = fieldMatchesQuery(field, state.lastFieldQuery);
+            return {
+              fields: matches ? [field, ...state.fields] : state.fields,
+              fieldTotal: matches ? state.fieldTotal + 1 : state.fieldTotal,
+            };
+          });
+          return field;
+        } catch (error) {
+          set({ fieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateField: async (id, payload) => {
+        set({ fieldError: null });
+        try {
+          const field = await updateFieldRequest(id, payload);
+          set((state) => {
+            const existed = state.fields.some((item) => item.id === id);
+            const matches = fieldMatchesQuery(field, state.lastFieldQuery);
+            return {
+              fields: matches
+                ? state.fields.map((item) => (item.id === id ? field : item))
+                : state.fields.filter((item) => item.id !== id),
+              fieldTotal: existed && !matches ? Math.max(0, state.fieldTotal - 1) : state.fieldTotal,
+              templateFields: state.templateFields.map((item) =>
+                item.fieldId === id ? { ...item, field } : item,
+              ),
+            };
+          });
+          return field;
+        } catch (error) {
+          set({ fieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      deactivateField: async (id) => {
+        set({ fieldError: null });
+        try {
+          const field = await disableFieldRequest(id);
+          set((state) => {
+            const matches = fieldMatchesQuery(field, state.lastFieldQuery);
+            return {
+              fields: matches
+                ? state.fields.map((item) => (item.id === id ? field : item))
+                : state.fields.filter((item) => item.id !== id),
+              fieldTotal: matches ? state.fieldTotal : Math.max(0, state.fieldTotal - 1),
+              templateFields: state.templateFields.map((item) =>
+                item.fieldId === id ? { ...item, field } : item,
+              ),
+            };
+          });
+        } catch (error) {
+          set({ fieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateTemplateField: async (id, payload) => {
+        set({ templateFieldError: null });
+        try {
+          const item = await updateTemplateFieldRequest(id, payload);
+          set((state) => ({
+            templateFields: state.templateFields.map((candidate) => candidate.id === id ? item : candidate),
+          }));
+          return item;
+        } catch (error) {
+          set({ templateFieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      removeTemplateField: async (id) => {
+        set({ templateFieldError: null });
+        try {
+          const target = get().templateFields.find((item) => item.id === id);
+          await removeTemplateFieldRequest(id);
+          set((state) => ({ templateFields: state.templateFields.filter((item) => item.id !== id) }));
+          if (target) await get().fetchTemplateFields(target.templateId);
+        } catch (error) {
+          set({ templateFieldError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      moveTemplateField: async (id, direction) => {
         const target = get().templateFields.find((item) => item.id === id);
         if (!target) return;
         const siblings = get()
@@ -314,44 +759,154 @@ export const useDataCenterStore = create<DataCenterState>()(
         const index = siblings.findIndex((item) => item.id === id);
         const swap = direction === 'up' ? siblings[index - 1] : siblings[index + 1];
         if (!swap) return;
-        set((state) => ({
-          templateFields: state.templateFields.map((item) => {
-            if (item.id === target.id) return { ...item, displayOrder: swap.displayOrder };
-            if (item.id === swap.id) return { ...item, displayOrder: target.displayOrder };
-            return item;
-          }),
-        }));
+        set({ templateFieldError: null });
+        try {
+          await updateTemplateFieldRequest(id, { displayOrder: swap.displayOrder });
+          await get().fetchTemplateFields(target.templateId);
+        } catch (error) {
+          set({ templateFieldError: getErrorMessage(error) });
+          throw error;
+        }
       },
-      createRecord: (payload) => {
-        const recordId = makeId('br');
-        const record: BusinessRecord = {
-          id: recordId,
-          createdAt: now(),
-          updatedAt: now(),
-          ...payload,
-          values: payload.values.map((item, index) => ({
-            ...item,
-            id: item.id || `rv-${recordId}-${index}`,
-            recordId,
-            value: normalizeValue(item.value),
-          })),
+      createRecord: async (payload) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const response = await createRecordRequest(payload);
+          const record: BusinessRecord = {
+            ...response,
+            projectName: response.projectName === response.projectId
+              ? get().projects.find((item) => item.id === response.projectId)?.name ?? response.projectName
+              : response.projectName,
+            templateName: response.templateName === response.templateId
+              ? get().templates.find((item) => item.id === response.templateId)?.name ?? response.templateName
+              : response.templateName,
+            values: response.values.map((value) => ({
+              ...value,
+              fieldName: value.fieldName === value.fieldId
+                ? get().fields.find((item) => item.id === value.fieldId)?.fieldName ?? value.fieldName
+                : value.fieldName,
+            })),
+          };
+          set((state) => {
+            const isVisible = recordMatchesQuery(record, state.lastRecordQuery);
+            return {
+              records: isVisible
+                ? [record, ...state.records.filter((item) => item.id !== record.id)]
+                : state.records,
+              recordTotal: state.recordTotal + (isVisible ? 1 : 0),
+              recordLoading: false,
+            };
+          });
+          return record;
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchRecords: async (query = get().lastRecordQuery) => {
+        const normalizedQuery: RecordListQuery = {
+          page: query.page ?? 1,
+          pageSize: query.pageSize ?? get().recordPageSize,
+          projectId: query.projectId,
+          templateId: query.templateId,
+          recordType: query.recordType,
+          sourceType: query.sourceType,
+          status: query.status,
+          dataLayer: query.dataLayer,
+          importTaskId: query.importTaskId,
+          dateFrom: query.dateFrom,
+          dateTo: query.dateTo,
         };
-        set((state) => ({ records: [record, ...state.records] }));
-        return record;
+        set({ recordLoading: true, recordError: null, lastRecordQuery: normalizedQuery });
+        try {
+          const result = await getRecords(normalizedQuery);
+          set({
+            records: result.items,
+            recordPage: result.page,
+            recordPageSize: result.pageSize,
+            recordTotal: result.total,
+            recordLoading: false,
+          });
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
       },
-      updateRecord: (id, payload) =>
-        set((state) => ({
-          records: state.records.map((item) => (item.id === id ? { ...item, ...payload, updatedAt: now() } : item)),
-        })),
-      confirmRecord: (id, confirmedBy = '财务') =>
-        set((state) => ({
-          records: state.records.map((item) =>
-            item.id === id
-              ? { ...item, status: 'confirmed', confirmedAt: now(), confirmedBy, updatedAt: now() }
-              : item,
-          ),
-        })),
-      deleteRecord: (id) => set((state) => ({ records: state.records.filter((item) => item.id !== id) })),
+      fetchRecord: async (id) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const record = await getRecordRequest(id);
+          set((state) => ({
+            records: [record, ...state.records.filter((item) => item.id !== id)],
+            recordLoading: false,
+          }));
+          return record;
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      fetchProjectRecords: async (projectId, query = {}) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const result = await getProjectRecordsRequest(projectId, {
+            ...query,
+            page: query.page ?? 1,
+            pageSize: query.pageSize ?? 100,
+          });
+          set((state) => ({
+            records: [
+              ...state.records.filter((item) => item.projectId !== projectId),
+              ...result.items,
+            ],
+            recordLoading: false,
+          }));
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      updateRecord: async (id, payload) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const record = await updateRecordRequest(id, payload);
+          set((state) => ({
+            records: state.records.map((item) => item.id === id ? record : item),
+            recordLoading: false,
+          }));
+          return record;
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      confirmRecord: async (id) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const record = await confirmRecordRequest(id);
+          set((state) => ({
+            records: state.records.map((item) => item.id === id ? record : item),
+            recordLoading: false,
+          }));
+          return record;
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
+      deleteRecord: async (id) => {
+        set({ recordLoading: true, recordError: null });
+        try {
+          const result = await deleteRecordRequest(id);
+          set((state) => ({
+            records: state.records.map((item) => item.id === id ? { ...item, status: result.status } : item),
+            recordLoading: false,
+          }));
+        } catch (error) {
+          set({ recordLoading: false, recordError: getErrorMessage(error) });
+          throw error;
+        }
+      },
       getRecordsByProject: (projectId) => get().records.filter((item) => item.projectId === projectId),
       getImportTasksByProject: (projectId) => get().importTasks.filter((item) => item.projectId === projectId),
       getRawFilesByProject: (projectId) => get().rawFiles.filter((item) => item.relatedProjectId === projectId),
@@ -410,8 +965,22 @@ export const useDataCenterStore = create<DataCenterState>()(
           templateName: template?.name ?? '-',
           importType,
           status: 'mapping',
+          version: 1,
+          reviewRevision: 0,
+          validation: null,
+          approval: null,
           uploadedBy,
           createdAt: now(),
+          counts: { total: 0, valid: 0, errors: 0, duplicates: 0, ignored: 0, imported: 0 },
+          rawFile: {
+            id: rawFile.id,
+            fileName,
+            fileSize: 0,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            sha256: '',
+          },
+          sheets: [],
+          columns: [],
         };
         set((state) => ({
           rawFiles: [rawFile, ...state.rawFiles],
@@ -556,7 +1125,7 @@ export const useDataCenterStore = create<DataCenterState>()(
         sourceRows.forEach((row, rowIndex) => {
           const recordId = `br-import-${Date.now()}-${rowIndex}`;
           const values: RecordValue[] = [];
-          let amount: number | undefined;
+          let amount: string | undefined;
           let recordDate: string | undefined;
 
           Object.entries(row.rawData).forEach(([sourceColumnName, rawValue], valueIndex) => {
@@ -573,8 +1142,8 @@ export const useDataCenterStore = create<DataCenterState>()(
               value,
             });
             if ((field.semanticType === 'amount' || field.fieldType === 'money') && amount === undefined) {
-              const parsed = Number(rawValue);
-              amount = Number.isFinite(parsed) ? parsed : undefined;
+              const parsed = String(rawValue).trim();
+              amount = /^\d+(?:\.\d{1,2})?$/.test(parsed) ? Number(parsed).toFixed(2) : undefined;
             }
             if ((field.semanticType === 'date' || field.fieldType === 'date') && !recordDate) {
               recordDate = String(rawValue);
@@ -590,6 +1159,10 @@ export const useDataCenterStore = create<DataCenterState>()(
             templateId: task.templateId,
             templateName: task.templateName,
             recordType: task.importType as DataRecordType,
+            accountingDirection: task.importType === 'revenue' ? 'income' : 'expense',
+            dataLayer: 'actual',
+            templateVersion: 1,
+            version: 1,
             recordDate: recordDate || task.createdAt.slice(0, 10),
             amount,
             category: task.importType === 'revenue' ? '收入' : '成本',
@@ -624,10 +1197,10 @@ export const useDataCenterStore = create<DataCenterState>()(
         set((state) => ({
           importTasks: state.importTasks.map((item) => (item.id === id ? { ...item, status: 'failed' } : item)),
         })),
-      approveSuggestion: (id, approvedBy) => {
+      approveSuggestion: async (id, approvedBy) => {
         const suggestion = get().fieldSuggestions.find((item) => item.id === id);
         if (!suggestion) return;
-        const field = get().createField({
+        const field = await get().createField({
           fieldKey: createFieldKey(suggestion.suggestedFieldName),
           fieldName: suggestion.suggestedFieldName,
           fieldType: suggestion.suggestedFieldType,
@@ -641,7 +1214,7 @@ export const useDataCenterStore = create<DataCenterState>()(
           aliases: [suggestion.sourceName],
           description: suggestion.reason,
         });
-        get().addExistingFieldToTemplate(suggestion.templateId, field.id);
+        await get().addExistingFieldToTemplate(suggestion.templateId, field.id);
         set((state) => ({
           fieldSuggestions: state.fieldSuggestions.map((item) =>
             item.id === id
@@ -680,21 +1253,18 @@ export const useDataCenterStore = create<DataCenterState>()(
           .sort((a, b) => a.displayOrder - b.displayOrder),
     }),
     {
-      name: 'audit-data-center-store-v2',
-      partialize: (state) => ({
-        projects: state.projects,
-        templates: state.templates,
-        fields: state.fields,
-        templateFields: state.templateFields,
-        projectTemplates: state.projectTemplates,
-        records: state.records,
-        rawFiles: state.rawFiles,
-        importTasks: state.importTasks,
-        importRows: state.importRows,
-        mappingRules: state.mappingRules,
-        fieldSuggestions: state.fieldSuggestions,
-        excelColumns: state.excelColumns,
-      }),
+      name: runtimeConfig.dataMode === 'mock' ? 'audit-data-center-store-mock-v8' : 'audit-data-center-store-api-v1',
+      partialize: (state) =>
+        runtimeConfig.dataMode === 'mock'
+          ? {
+              rawFiles: state.rawFiles,
+              importTasks: state.importTasks,
+              importRows: state.importRows,
+              mappingRules: state.mappingRules,
+              fieldSuggestions: state.fieldSuggestions,
+              excelColumns: state.excelColumns,
+            }
+          : {},
     },
   ),
 );

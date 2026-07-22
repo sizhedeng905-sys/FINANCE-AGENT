@@ -26,7 +26,34 @@ export class AuditLogsService {
         resourceId,
         metadata,
         ip: context?.ip,
-        userAgent: context?.userAgent
+        userAgent: context?.userAgent,
+        requestId: context?.requestId
+      }
+    });
+  }
+
+  async writeAuthentication(
+    prisma: PrismaWriter,
+    options: {
+      userId?: string;
+      username: string;
+      success: boolean;
+      failureReason?: string;
+    },
+    context?: RequestContext
+  ) {
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: options.userId,
+        actorUsername: options.username,
+        action: options.success ? 'auth.login.success' : 'auth.login.failure',
+        resourceType: 'auth_session',
+        resourceId: options.userId,
+        metadata: { success: options.success },
+        ip: context?.ip,
+        userAgent: context?.userAgent,
+        requestId: context?.requestId,
+        failureReason: options.failureReason
       }
     });
   }

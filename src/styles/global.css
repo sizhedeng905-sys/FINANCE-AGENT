@@ -25,9 +25,17 @@ select {
   min-height: 100vh;
 }
 
+.app-shell > .ant-layout {
+  min-width: 0;
+}
+
 .app-sider {
   background: #ffffff !important;
   border-right: 1px solid #e5e7eb;
+}
+
+.app-sider.ant-layout-sider-collapsed {
+  overflow: hidden;
 }
 
 .brand {
@@ -90,7 +98,7 @@ select {
 }
 
 .notification-panel {
-  width: 360px;
+  width: min(360px, calc(100vw - 24px));
   max-height: 460px;
   overflow: auto;
   padding: 10px;
@@ -107,6 +115,10 @@ select {
   padding: 4px 4px 8px;
 }
 
+.notification-error {
+  margin: 8px 12px;
+}
+
 .notification-item {
   margin-bottom: 8px;
   padding: 10px !important;
@@ -118,6 +130,12 @@ select {
 .notification-item.unread {
   border-color: #bfdbfe;
   background: #eff6ff;
+}
+
+@media (max-width: 480px) {
+  .notification-overlay {
+    inset-inline-end: 12px !important;
+  }
 }
 
 .app-content {
@@ -140,8 +158,92 @@ select {
   margin-top: 16px;
 }
 
+.excel-ai-review-evidence,
+.excel-ai-review-evidence .ant-card-body,
+.excel-ai-review-evidence .ant-descriptions,
+.excel-ai-review-evidence .ant-descriptions-view,
+.excel-ai-review-evidence .ant-descriptions-item-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ocr-ai-review-evidence,
+.ocr-ai-review-evidence .ant-card-body,
+.ocr-ai-review-evidence .ant-descriptions,
+.ocr-ai-review-evidence .ant-descriptions-view,
+.ocr-ai-review-evidence .ant-descriptions-item-content,
+.ocr-ai-review-workspace,
+.ocr-ai-review-workspace .ant-card-body,
+.ocr-ai-review-workspace .ant-table-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ocr-ai-review-evidence .ant-descriptions-item-content,
+.ocr-ai-review-evidence .ant-tag,
+.ocr-ai-review-workspace .ant-tag {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ocr-ai-review-evidence .ant-tag,
+.ocr-ai-review-workspace .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.report-narrative-review-panel,
+.report-narrative-review-panel .ant-alert,
+.report-narrative-review-panel .ant-descriptions,
+.report-narrative-review-panel .ant-descriptions-view,
+.report-narrative-review-panel .ant-descriptions-item-content,
+.report-narrative-review-panel .ant-table-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.report-narrative-review-panel + .report-narrative-review-panel {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 24px;
+}
+
+.report-narrative-review-panel .ant-descriptions-item-content,
+.report-narrative-review-panel .ant-tag,
+.report-narrative-review-panel code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.report-narrative-review-panel .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.excel-ai-review-evidence .ant-descriptions-item-content,
+.excel-ai-review-evidence .ant-tag {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.excel-ai-review-evidence .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .metric-card .ant-statistic-title {
   color: #64748b;
+}
+
+.structure-stat-card {
+  height: 100%;
+  min-height: 112px;
+}
+
+.structure-stat-card-text .ant-statistic-content {
+  font-size: 20px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .stacked-card {
@@ -243,6 +345,31 @@ select {
   background: #f8fafc;
 }
 
+.attachment-name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.attachment-actions {
+  flex: 0 0 auto;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  height: 70vh;
+  border: 0;
+}
+
 .ai-placeholder {
   display: flex;
   min-height: 160px;
@@ -331,8 +458,29 @@ select {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.boss-ai-card {
+  height: calc(100vh - 190px);
+  min-height: 560px;
+}
+
+.boss-ai-card .ant-card-body,
+.chat-box {
+  height: 100%;
+}
+
+.chat-box {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.chat-box.compact {
+  min-height: 500px;
+}
+
 .chat-list {
-  height: calc(100% - 146px);
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: 20px;
   background: #f8fafc;
@@ -371,6 +519,14 @@ select {
 
 .chat-bubble .ant-typography {
   margin-bottom: 4px;
+}
+
+.chat-message-meta {
+  margin-bottom: 4px;
+}
+
+.chat-error {
+  margin-top: 12px;
 }
 
 .chat-input {
@@ -530,8 +686,21 @@ select {
     display: none;
   }
 
+  .header-user-name,
+  .header-role-tag,
+  .header-logout > span:not(.ant-btn-icon) {
+    display: none;
+  }
+
+  .header-logout {
+    padding-inline: 8px;
+  }
+
   .app-content {
     padding: 14px;
+    min-width: 0;
+    max-width: 100vw;
+    overflow-x: hidden;
   }
 
   .page-header,
@@ -573,5 +742,97 @@ select {
 
   .account-hints {
     grid-template-columns: 1fr;
+  }
+}
+.app-route-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.ocr-evidence-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ocr-page-select {
+  width: 132px;
+  flex: 0 0 auto;
+}
+
+.ocr-evidence-stage {
+  position: relative;
+  width: 100%;
+  min-height: 260px;
+  max-width: 100% !important;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f4f6;
+}
+
+.ocr-evidence-document {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.ocr-evidence-box {
+  position: absolute;
+  min-width: 2px;
+  min-height: 2px;
+  border: 2px solid #dc2626;
+  background: rgba(254, 226, 226, 0.28);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+.ocr-evidence-box span {
+  position: absolute;
+  top: -24px;
+  left: -2px;
+  max-width: 180px;
+  overflow: hidden;
+  padding: 2px 5px;
+  color: #ffffff;
+  background: #b91c1c;
+  font-size: 11px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-alternative-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.ocr-alternative-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+@media (max-width: 760px) {
+  .ocr-evidence-toolbar,
+  .ocr-alternative-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ocr-page-select {
+    width: 100%;
+  }
+
+  .ocr-evidence-stage {
+    min-height: 180px;
   }
 }

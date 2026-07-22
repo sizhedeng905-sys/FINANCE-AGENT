@@ -1,14 +1,12 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class UpdateProjectTemplateDto {
-  @ApiPropertyOptional({ example: '太和运输费用' })
-  @IsOptional()
+  @ApiProperty({ example: '太和运输费用' })
   @IsString()
-  customName?: string;
-
-  @ApiPropertyOptional({ example: true })
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  @IsNotEmpty()
+  @MaxLength(100)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  customName!: string;
 }

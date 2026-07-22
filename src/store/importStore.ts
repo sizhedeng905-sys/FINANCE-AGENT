@@ -1,0 +1,340 @@
+import { create } from 'zustand';
+import {
+  approveFieldSuggestion as approveFieldSuggestionRequest,
+  autoMatchImportTask,
+  cancelImportTask as cancelImportTaskRequest,
+  confirmImportTask as confirmImportTaskRequest,
+  createImportTask,
+  generateFieldDefinitionCandidates,
+  getFieldSuggestions,
+  getImportAiSuggestionHistory,
+  getImportPreview,
+  getImportRows,
+  getImportTask,
+  getImportTasks,
+  inspectImportTask,
+  mapFieldSuggestion as mapFieldSuggestionRequest,
+  parseImportTask,
+  requestImportAiSuggestions,
+  revalidateImportTask,
+  rejectFieldSuggestion as rejectFieldSuggestionRequest,
+  reviewImportRow,
+  saveImportMappings,
+} from '@/api/importApi';
+import type {
+  CreateImportTaskPayload,
+  ConfirmImportTaskPayload,
+  ExcelAiSuggestionHistory,
+  ExcelAiSuggestionResult,
+  FieldSuggestion,
+  FieldSuggestionListQuery,
+  ImportConfirmResult,
+  ImportPreview,
+  ImportPreviewQuery,
+  ImportRowsQuery,
+  ImportTask,
+  ImportTaskListQuery,
+  ImportWorkbookInspection,
+  ParseImportTaskPayload,
+  RevalidateImportTaskPayload,
+  ReviewImportRowPayload,
+  SaveImportMappingsPayload,
+} from '@/types/dataCenter';
+
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : '请求失败';
+
+interface ImportState {
+  tasks: ImportTask[];
+  currentTask?: ImportTask;
+  inspection?: ImportWorkbookInspection;
+  inspectionTaskId?: string;
+  rows: ImportStateRow[];
+  preview?: ImportPreview;
+  suggestions: FieldSuggestion[];
+  aiSuggestionsByTask: Record<string, ExcelAiSuggestionResult | undefined>;
+  aiSuggestionHistoryByTask: Record<string, ExcelAiSuggestionHistory | undefined>;
+  aiSuggestionLoadingByTask: Record<string, boolean | undefined>;
+  aiSuggestionErrorByTask: Record<string, string | null | undefined>;
+  page: number;
+  pageSize: number;
+  total: number;
+  loading: boolean;
+  error: string | null;
+  fetchTasks: (query?: ImportTaskListQuery) => Promise<void>;
+  fetchTask: (id: string) => Promise<ImportTask>;
+  createAndParse: (file: File, payload: CreateImportTaskPayload) => Promise<ImportTask>;
+  inspectTask: (id: string) => Promise<ImportWorkbookInspection>;
+  parseTask: (id: string, payload?: ParseImportTaskPayload) => Promise<ImportTask>;
+  fetchRows: (id: string, query?: ImportRowsQuery) => Promise<void>;
+  saveMappings: (id: string, payload: SaveImportMappingsPayload) => Promise<ImportTask>;
+  autoMatch: (id: string) => Promise<ImportTask>;
+  generateFieldDefinitionCandidates: (id: string) => Promise<FieldSuggestion[]>;
+  requestAiSuggestions: (id: string) => Promise<ExcelAiSuggestionResult | undefined>;
+  fetchAiSuggestionHistory: (id: string) => Promise<ExcelAiSuggestionHistory>;
+  clearAiSuggestionState: (id: string) => void;
+  fetchPreview: (id: string, query?: ImportPreviewQuery) => Promise<ImportPreview>;
+  reviewRow: (id: string, rowId: string, payload: ReviewImportRowPayload) => Promise<ImportTask>;
+  revalidateTask: (id: string, payload: RevalidateImportTaskPayload) => Promise<ImportTask>;
+  confirmTask: (id: string, payload: ConfirmImportTaskPayload) => Promise<ImportConfirmResult>;
+  cancelTask: (id: string) => Promise<ImportTask>;
+  fetchSuggestions: (query?: FieldSuggestionListQuery) => Promise<void>;
+  approveSuggestion: (id: string, payload?: { fieldName?: string; fieldType?: FieldSuggestion['suggestedFieldType'] }) => Promise<void>;
+  mapSuggestion: (id: string, fieldId: string) => Promise<void>;
+  rejectSuggestion: (id: string) => Promise<void>;
+  clearError: () => void;
+}
+
+type ImportStateRow = Awaited<ReturnType<typeof getImportRows>>['items'][number];
+
+const aiSuggestionRequests = new Map<string, symbol>();
+const aiSuggestionHistoryRequests = new Map<string, symbol>();
+
+function withoutKey<T>(record: Record<string, T>, key: string) {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+export function resetImportRequestState() {
+  aiSuggestionRequests.clear();
+  aiSuggestionHistoryRequests.clear();
+}
+
+export const useImportStore = create<ImportState>((set, get) => {
+  const upsertTask = (task: ImportTask) => {
+    set((state) => ({
+      currentTask: task,
+      tasks: [task, ...state.tasks.filter((item) => item.id !== task.id)],
+      loading: false,
+      error: null,
+    }));
+    return task;
+  };
+
+  const runTask = async (request: () => Promise<ImportTask>) => {
+    set({ loading: true, error: null });
+    try {
+      return upsertTask(await request());
+    } catch (error) {
+      set({ loading: false, error: errorMessage(error) });
+      throw error;
+    }
+  };
+
+  return {
+    tasks: [],
+    currentTask: undefined,
+    inspection: undefined,
+    inspectionTaskId: undefined,
+    rows: [],
+    preview: undefined,
+    suggestions: [],
+    aiSuggestionsByTask: {},
+    aiSuggestionHistoryByTask: {},
+    aiSuggestionLoadingByTask: {},
+    aiSuggestionErrorByTask: {},
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    loading: false,
+    error: null,
+    fetchTasks: async (query = {}) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await getImportTasks({ page: 1, pageSize: 20, ...query });
+        set({ tasks: result.items, page: result.page, pageSize: result.pageSize, total: result.total, loading: false });
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    fetchTask: (id) => runTask(() => getImportTask(id)),
+    createAndParse: async (file, payload) => {
+      set({ loading: true, error: null, preview: undefined, inspection: undefined, inspectionTaskId: undefined });
+      try {
+        const created = await createImportTask(file, payload);
+        upsertTask(created);
+        const inspection = await inspectImportTask(created.id);
+        set({ inspection, inspectionTaskId: created.id });
+        if (inspection.requiresSheetSelection || !inspection.recommendedSelection) return created;
+        const recommendedSheet = inspection.sheets.find(
+          (sheet) => sheet.sheetIndex === inspection.recommendedSelection?.sheetIndex,
+        );
+        if ((recommendedSheet?.formulaCellCount ?? 0) > 0) return created;
+        const parsed = upsertTask(await parseImportTask(created.id, inspection.recommendedSelection));
+        set({ inspection: undefined, inspectionTaskId: undefined });
+        return parsed;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    inspectTask: async (id) => {
+      set({ loading: true, error: null });
+      try {
+        const inspection = await inspectImportTask(id);
+        set({ inspection, inspectionTaskId: id, loading: false });
+        return inspection;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    parseTask: async (id, payload = {}) => {
+      const task = await runTask(() => parseImportTask(id, payload));
+      set({ inspection: undefined, inspectionTaskId: undefined });
+      return task;
+    },
+    fetchRows: async (id, query = {}) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await getImportRows(id, { page: 1, pageSize: 100, ...query });
+        set({ rows: result.items, loading: false });
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    saveMappings: (id, payload) => runTask(() => saveImportMappings(id, payload)),
+    autoMatch: (id) => runTask(() => autoMatchImportTask(id)),
+    generateFieldDefinitionCandidates: async (id) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await generateFieldDefinitionCandidates(id);
+        set((state) => ({
+          suggestions: [...result.suggestions, ...state.suggestions.filter((item) => !result.suggestions.some((next) => next.id === item.id))],
+          loading: false,
+        }));
+        await get().fetchTask(id);
+        return result.suggestions;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    requestAiSuggestions: async (id) => {
+      const requestToken = Symbol(id);
+      aiSuggestionRequests.set(id, requestToken);
+      set((state) => ({
+        aiSuggestionLoadingByTask: { ...state.aiSuggestionLoadingByTask, [id]: true },
+        aiSuggestionErrorByTask: { ...state.aiSuggestionErrorByTask, [id]: null },
+      }));
+      try {
+        const result = await requestImportAiSuggestions(id);
+        if (aiSuggestionRequests.get(id) === requestToken) {
+          set((state) => ({
+            aiSuggestionsByTask: { ...state.aiSuggestionsByTask, [id]: result },
+            aiSuggestionLoadingByTask: { ...state.aiSuggestionLoadingByTask, [id]: false },
+          }));
+          return result;
+        }
+        return undefined;
+      } catch (error) {
+        if (aiSuggestionRequests.get(id) === requestToken) {
+          set((state) => ({
+            aiSuggestionLoadingByTask: { ...state.aiSuggestionLoadingByTask, [id]: false },
+            aiSuggestionErrorByTask: { ...state.aiSuggestionErrorByTask, [id]: errorMessage(error) },
+          }));
+        }
+        throw error;
+      } finally {
+        if (aiSuggestionRequests.get(id) === requestToken) aiSuggestionRequests.delete(id);
+      }
+    },
+    fetchAiSuggestionHistory: async (id) => {
+      const requestToken = Symbol(id);
+      aiSuggestionHistoryRequests.set(id, requestToken);
+      try {
+        const result = await getImportAiSuggestionHistory(id);
+        if (aiSuggestionHistoryRequests.get(id) === requestToken) {
+          set((state) => ({
+            aiSuggestionHistoryByTask: { ...state.aiSuggestionHistoryByTask, [id]: result },
+          }));
+        }
+        return result;
+      } finally {
+        if (aiSuggestionHistoryRequests.get(id) === requestToken) aiSuggestionHistoryRequests.delete(id);
+      }
+    },
+    clearAiSuggestionState: (id) => {
+      aiSuggestionRequests.delete(id);
+      aiSuggestionHistoryRequests.delete(id);
+      set((state) => ({
+        aiSuggestionsByTask: withoutKey(state.aiSuggestionsByTask, id),
+        aiSuggestionHistoryByTask: withoutKey(state.aiSuggestionHistoryByTask, id),
+        aiSuggestionLoadingByTask: withoutKey(state.aiSuggestionLoadingByTask, id),
+        aiSuggestionErrorByTask: withoutKey(state.aiSuggestionErrorByTask, id),
+      }));
+    },
+    fetchPreview: async (id, query = {}) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await getImportPreview(id, query);
+        set({ preview: result, currentTask: result.task, loading: false });
+        return result;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    reviewRow: (id, rowId, payload) => runTask(() => reviewImportRow(id, rowId, payload)),
+    revalidateTask: (id, payload) => runTask(() => revalidateImportTask(id, payload)),
+    confirmTask: async (id, payload) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await confirmImportTaskRequest(id, payload);
+        upsertTask(result.task);
+        set({ loading: false });
+        return result;
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    cancelTask: (id) => runTask(() => cancelImportTaskRequest(id)),
+    fetchSuggestions: async (query = {}) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await getFieldSuggestions({ page: 1, pageSize: 100, ...query });
+        set({ suggestions: result.items, loading: false });
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    approveSuggestion: async (id, payload = {}) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await approveFieldSuggestionRequest(id, payload);
+        set((state) => ({ suggestions: state.suggestions.map((item) => item.id === id ? result.suggestion : item), loading: false }));
+        if (result.suggestion.importTaskId) await get().fetchTask(result.suggestion.importTaskId);
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    mapSuggestion: async (id, fieldId) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await mapFieldSuggestionRequest(id, fieldId);
+        set((state) => ({ suggestions: state.suggestions.map((item) => item.id === id ? result : item), loading: false }));
+        if (result.importTaskId) await get().fetchTask(result.importTaskId);
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    rejectSuggestion: async (id) => {
+      set({ loading: true, error: null });
+      try {
+        const result = await rejectFieldSuggestionRequest(id);
+        set((state) => ({ suggestions: state.suggestions.map((item) => item.id === id ? result : item), loading: false }));
+        if (result.importTaskId) await get().fetchTask(result.importTaskId);
+      } catch (error) {
+        set({ loading: false, error: errorMessage(error) });
+        throw error;
+      }
+    },
+    clearError: () => set({ error: null }),
+  };
+});

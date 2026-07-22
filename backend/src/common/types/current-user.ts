@@ -9,6 +9,8 @@ export interface CurrentUser {
   department: string;
   phone: string;
   status: UserStatus;
+  tokenVersion: number;
+  sessionId?: string;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -18,4 +20,5 @@ export interface AuthenticatedRequest extends Request {
 export interface RequestContext {
   ip?: string;
   userAgent?: string;
+  requestId?: string;
 }

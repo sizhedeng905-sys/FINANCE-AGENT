@@ -1,41 +1,41 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOkResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { randomBytes } from 'node:crypto';
+import { Response } from 'express';
 
 import { CurrentUser as CurrentUserDecorator } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/types/current-user';
+import { AuthenticatedRequest, CurrentUser } from '../common/types/current-user';
+import { csrfCookieName, sessionCookieName } from '../common/utils/auth-cookies';
+import { getRequestContext } from '../common/utils/request-context';
+import { getRoleTitle } from '../common/utils/user-presenter';
+import { StepUpEnforcementService } from '../step-up/step-up-enforcement.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { StepUpDto } from './dto/step-up.dto';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly config: ConfigService,
+    private readonly stepUpEnforcement: StepUpEnforcementService
+  ) {}
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({
-    schema: {
-      example: {
-        code: 0,
-        message: 'success',
-        data: {
-          accessToken: 'jwt-token',
-          user: {
-            id: 'user-id',
-            username: 'finance',
-            name: '财务',
-            role: 'finance',
-            department: '财务部',
-            title: '财务审核'
-          }
-        }
-      }
-    }
-  })
-  @ApiUnauthorizedResponse({ description: '账号或密码错误' })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  @ApiOkResponse({ description: 'Returns an access token and the authenticated user.' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials or disabled account.' })
+  async login(
+    @Body() dto: LoginDto,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response
+  ) {
+    const session = await this.authService.login(dto, getRequestContext(request));
+    this.setSessionCookies(response, session.accessToken);
+    return session;
   }
 
   @Get('me')
@@ -48,26 +48,75 @@ export class AuthController {
       name: user.name,
       role: user.role,
       department: user.department,
-      title: this.getTitle(user.role)
+      title: getRoleTitle(user.role)
     };
+  }
+
+  @Get('security-capabilities')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  securityCapabilities() {
+    const stepUp = this.stepUpEnforcement.capabilities();
+    return {
+      mfa: stepUp.mfa,
+      stepUp: {
+        ...stepUp,
+        status: stepUp.mode === 'enforce' ? 'enforced_for_configured_actions' : 'available_disabled',
+        endpoint: '/api/auth/step-up'
+      }
+    };
+  }
+
+  @Post('step-up')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  stepUp(
+    @Body() dto: StepUpDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.authService.stepUp(dto, user, getRequestContext(request));
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  logout() {
-    return this.authService.logout();
+  async logout(
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response
+  ) {
+    const result = await this.authService.logout(user, getRequestContext(request));
+    this.clearSessionCookies(response);
+    return result;
   }
 
-  private getTitle(role: CurrentUser['role']): string {
-    const titleMap: Record<CurrentUser['role'], string> = {
-      employee: '员工',
-      finance: '财务审核',
-      reviewer: '复核员',
-      boss: '老板'
+  private setSessionCookies(response: Response, accessToken: string) {
+    const production = this.config.get<string>('nodeEnv') === 'production';
+    this.clearCookieFamily(response, !production);
+    const options = {
+      httpOnly: true,
+      secure: production,
+      sameSite: 'strict' as const,
+      path: '/'
     };
+    response.cookie(sessionCookieName(production), accessToken, options);
+    response.cookie(csrfCookieName(production), randomBytes(32).toString('base64url'), {
+      ...options,
+      httpOnly: false
+    });
+  }
 
-    return titleMap[role];
+  private clearSessionCookies(response: Response) {
+    this.clearCookieFamily(response, false);
+    this.clearCookieFamily(response, true);
+  }
+
+  private clearCookieFamily(response: Response, production: boolean) {
+    const options = { secure: production, sameSite: 'strict' as const, path: '/' };
+    response.clearCookie(sessionCookieName(production), { ...options, httpOnly: true });
+    response.clearCookie(csrfCookieName(production), { ...options, httpOnly: false });
   }
 }

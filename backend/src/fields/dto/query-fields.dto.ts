@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { FieldType, SemanticType } from '@prisma/client';
-import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { PaginationDto } from '../../data-center/pagination.dto';
 
@@ -9,6 +9,8 @@ export class QueryFieldsDto extends PaginationDto {
   @ApiPropertyOptional({ example: '金额' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   keyword?: string;
 
   @ApiPropertyOptional({ enum: FieldType })
@@ -23,7 +25,12 @@ export class QueryFieldsDto extends PaginationDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ obj, key, value }) => {
+    const rawValue = (obj as Record<string, unknown>)[key];
+    if (rawValue === true || rawValue === 'true') return true;
+    if (rawValue === false || rawValue === 'false') return false;
+    return rawValue ?? value;
+  })
   @IsBoolean()
   isActive?: boolean;
 }

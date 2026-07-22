@@ -4,7 +4,9 @@ const titleMap: Record<UserRole, string> = {
   employee: '员工',
   finance: '财务审核',
   reviewer: '复核员',
-  boss: '老板'
+  boss: '老板',
+  admin: '系统管理员',
+  auditor: '安全审计员'
 };
 
 export function getRoleTitle(role: UserRole): string {

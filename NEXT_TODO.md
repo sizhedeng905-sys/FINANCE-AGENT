@@ -1,79 +1,66 @@
-# 后续功能 TODO List
+# FINANCE-AGENT 下一步执行清单
 
-当前项目仍是前端原型，已为主要功能预留 `src/api` mock Promise 接口。下一阶段建议按下面顺序推进。
+更新日期：2026-07-23 交接基线
 
-## 1. 后端接口
+分支：`agent/b8-stable-hardening`
 
-- 登录认证：接入 `POST /api/auth/login`，返回用户、角色、token、权限菜单。
-- 工单列表：接入 `GET /api/work-orders`，支持角色、状态、项目、创建人、时间范围筛选。
-- 工单详情：接入 `GET /api/work-orders/:id`。
-- 新建工单：接入 `POST /api/work-orders`。
-- 更新工单：接入 `PUT /api/work-orders/:id`。
-- 审核流转：接入 `POST /api/work-orders/:id/status`，统一处理财务审核、复核员审核、AI复核、老板审批。
-- 员工催办：接入 `POST /api/work-orders/:id/urge`，同时生成通知和时间线。
-- 附件上传：接入 `POST /api/work-orders/:id/attachments`，支持发票、回单、图片、PDF。
-- 通知列表：接入 `GET /api/notifications?targetRole=finance`。
-- 通知已读：接入 `PATCH /api/notifications/:id/read` 和 `PATCH /api/notifications/read-all`。
-- AI聊天：接入 `POST /api/ai/chat`，仅老板完整聊天页面可用。
-- AI异常：接入 `GET /api/reports/anomalies`，供财务异常提示页展示。
-- 财务日报：接入 `GET /api/reports/finance?period=today|week|month`。
-- 老板经营日报：接入 `GET /api/reports/boss?period=daily|weekly|monthly`。
-- 项目概览：接入 `GET /api/projects` 和 `GET /api/projects/:id/summary`。
+最后运行时代码：`5c16f3e114adf4be59c8dd629827970225de51f5`
 
-## 2. 数据库设计
+Draft PR：[#4](https://github.com/sizhedeng905-sys/FINANCE-AGENT/pull/4)
 
-- `users`：用户账号、姓名、角色、部门、职位、状态。
-- `roles`：角色定义，包含 employee、finance、reviewer、boss。
-- `permissions`：页面和操作权限。
-- `projects`：客户/项目、负责人、收入、成本、状态、AI摘要。
-- `work_orders`：工单主表，保存类型、项目、客户、金额、收入、成本、利润、状态、风险等级、加急字段。
-- `work_order_transport`：运输订单扩展字段，保存车牌、司机、起终点、公里数、油费、过路费等。
-- `work_order_expense`：费用报销和其他支出扩展字段，保存费用类型、金额、日期、付款方式、说明。
-- `attachments`：附件表，关联工单，保存文件名、URL、类型、上传人。
-- `audit_timeline`：审核时间线，记录操作人、角色、动作、意见、时间。
-- `notifications`：通知表，保存类型、发送人、目标角色、已读状态、关联工单。
-- `reports`：日报/周报/月报汇总数据。
-- `ai_anomalies`：AI异常检测结果，关联工单和风险原因。
-- `ai_conversations`：AI对话会话，仅老板可创建。
-- `ai_messages`：AI对话消息明细。
-- `audit_logs`：系统操作日志，便于追踪审批和权限变更。
+## 当前结论
 
-## 3. 权限和安全
+- 周五合成 Demo 技术闭环为 `CONDITIONAL_GO`：登录、Excel 导入、AI 建议、财务修改、第二财务批准、3 条正式记录、ReportSnapshot 与叙述依据均有自动化证据。
+- 运行时代码 `5c16f3e` 的本机回归、GitHub Build and acceptance 与 CodeQL 均通过；PR #4 保持 Draft，可供人工审查。
+- 当前不是 production-ready。目标 Linux Staging、真实告警、真实镜像签名、真实异地恢复、真实 OCR/AI 真值、三次人工彩排、独立审查和 owner UAT 均未完成。
+- AI 只提供受控建议；财务批准前不生成正式可见记录；报告金额只来自固定查询、Decimal 与 canonical ReportSnapshot。这些安全边界不得为演示或赶进度放宽。
 
-- 后端必须校验角色权限，前端 403 只作为体验层控制。
-- 员工只能访问自己创建的工单。
-- 财务可查看全部业务工单和财务日报，但不可访问老板 AI 助手。
-- 复核员只能访问复核任务和审核历史，不可访问财务日报和老板 AI 助手。
-- 老板可访问最终审批、经营日报、财务日报、AI助手、项目分析。
-- 所有审批操作需要记录操作日志和时间线。
+## 已完成工程基线
 
-## 4. 业务流程
+- Prisma：51 个 migration；空库安装与 50→51 升级路径通过。
+- 后端单元：51/51 suites、473/473 tests。
+- PostgreSQL/Redis 集成：14/14 suites、125/125 tests；覆盖 30,196 与 49,999 行边界。
+- Playwright API 模式：22/22；包含 Excel AI、OCR、报告与周五 Demo。
+- Friday Demo 专项：1/1；恰好生成 3 条正式记录，金额 `1250.25`、`8765.43`、`3406.53`，合计 `13422.21`。
+- 供应链：根目录和后端完整/生产 `npm audit` 均为 0 个已知漏洞；install script 精确批准/拒绝检查 7/7；后端 runtime 镜像无 npm/npx/corepack 且以非 root 用户运行。
+- 远端：[`Build and acceptance #46`](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561659) 与 [`CodeQL #43`](https://github.com/sizhedeng905-sys/FINANCE-AGENT/actions/runs/29915561810) 在同一运行时 SHA 上成功。
 
-- 明确工单状态机，禁止非法状态跳转。
-- 财务通过后进入复核员复核。
-- 复核通过后进入 AI 自动复核。
-- AI复核结果只作为流程步骤，不作为登录角色。
-- AI通过或标记异常后进入老板待审批。
-- 老板通过后归档完成，老板驳回后进入驳回状态。
-- 待补充材料状态下，员工补充后重新提交财务审核。
-- 催办需要限制频率，例如同一工单 30 分钟内只能催办一次。
+以上证据只证明仓库代码与合成/匿名测试行为，不代表真实财务口径、真实模型准确率、目标环境或生产发布已通过。
 
-## 5. 前端后续优化
+## 明早优先级
 
-- 将页面中的部分直接 mock 读取逐步切换为 `src/api` 调用。
-- 增加加载态、空状态、错误态。
-- 增加列表分页、排序、搜索条件持久化。
-- 增加附件真实预览组件。
-- 增加工单详情打印或导出 PDF。
-- 增加更多表单校验，例如金额必须大于 0、运输订单收入不能为空。
-- 优化大包体，按角色页面做路由懒加载。
-- 增加单元测试和关键流程 E2E 测试。
+1. 完成三次人工周五 Demo 彩排。
+   - 每次按 [`docs/deliveries/2026-07-24/DEMO_RUNBOOK.md`](docs/deliveries/2026-07-24/DEMO_RUNBOOK.md) 从 reset 开始。
+   - 记录总耗时、投屏可读性、关键页面停留点和任何偏差；任一金额、记录数或角色不一致立即停止，不现场改数据掩盖问题。
+2. 审查 Draft PR #4。
+   - 先看 CR-044 至 CR-047，再按功能分组回看 CR-017 至 CR-043。
+   - 核对同 SHA CI、供应链 artifact、未决门禁和回滚说明；保持 Draft，不 merge、不标记 Ready。
+3. 准备下一轮真实验收输入。
+   - 只在仓库外准备已授权、可脱敏且带人工真值的最小 Excel/OCR/财务样本。
+   - 同时列出目标 Staging、registry、告警接收端与异地备份目标的负责人和可用时间；凭据不得写入 Git 或问卷。
 
-## 6. 当前已预留的前端 API 文件
+## 后续必须由负责人或真实环境完成
 
-- `src/api/authApi.ts`
-- `src/api/workOrderApi.ts`
-- `src/api/notificationApi.ts`
-- `src/api/projectApi.ts`
-- `src/api/reportApi.ts`
-- `src/api/aiApi.ts`
+| 工作 | 当前状态 | 最小输入 | 未提供时的安全行为 |
+| --- | --- | --- | --- |
+| 三次人工 Demo 彩排 | `NOT_RUN` | 负责人亲自按 runbook 操作并记录 | 只保留 `CONDITIONAL_GO`，不宣称演示验收完成 |
+| OCR/AI 真实准确率 | `REAL_SAMPLE_NEEDED` | 已授权真值样本与人工标签 | 继续标明 Mock/合成，仅允许建议和人工复核 |
+| 财务口径逐分核对 | `AWAITING_HUMAN_SIGNOFF` | 收入、成本、利润、冲销/重复规则真值 | 只声明框架与合成 Decimal 结果，不固化正式口径 |
+| 目标 Linux Staging | `BLOCKED_EXTERNAL` | 主机、域名、证书、对象存储、授权配置 | 不运行会读取本地私密资产的目标命令，不声称部署通过 |
+| 告警、registry 签名、异地恢复 | `BLOCKED_EXTERNAL` | 真实接收端、可信根/凭据、独立故障域与 RPO/RTO | 保持合成契约，发布失败关闭 |
+| 独立审查、owner UAT、Go Live | `AWAITING_HUMAN_SIGNOFF` | 独立审查结论与负责人明确签收 | PR 保持 Draft，不 merge、不转 Ready、不生产部署 |
+
+## Codex 可继续自主维护
+
+- 修复新出现且可本地复现的 P0/P1 回归，并为每个独立修改建立 commit-review。
+- 保持依赖、Prisma、单元、集成、E2E、镜像和文档门禁；不以删除断言或静默 Mock 获取绿色。
+- 在收到经授权真值或目标环境后执行对应验收，原样记录失败、耗时和限制。
+- 更新 README、汇报、Draft PR 和阻断矩阵，但不替代负责人作业务签收或生产授权。
+
+## 每个后续提交的门禁
+
+- 一个独立主题对应一个 `docs/commit-reviews/CR-XXX_*.md` 并更新索引。
+- 只暂存有意文件；不提交 `.env`、secrets、模型权重、真实数据、备份、上传文件或受保护的未跟踪资产。
+- 先跑定向测试，再跑受影响的单元、PostgreSQL/Redis、Playwright、Prisma、build、audit、docs、hygiene 与 `git diff --check`。
+- 未运行写 `NOT_RUN`，外部阻塞写 `BLOCKED_EXTERNAL`，真实样本不足写 `REAL_SAMPLE_NEEDED`。
+- 正常 push 当前分支；不使用 `reset --hard`、force push 或历史改写；不合并、不标记 Ready。

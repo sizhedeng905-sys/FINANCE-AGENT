@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Public deterministic identifiers in demo seed history"
+  condition = "AND"
+  regexTarget = "secret"
+  regexes = ['''^(?:cost_increasing_7d|qwen3-vl-8b-instruct)$''']
+  paths = ['''^backend/prisma/seed\.ts$''']
