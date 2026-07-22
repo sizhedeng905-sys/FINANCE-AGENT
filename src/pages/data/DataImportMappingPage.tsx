@@ -271,6 +271,12 @@ export default function DataImportMappingPage() {
     aiMappings.forEach(applyAiMapping);
   };
   const unresolved = task?.columns.filter((column) => !valueFor(column)) ?? [];
+  const reviewedAiMappingCount = templateMismatch
+    ? 0
+    : aiMappings.filter((mapping) => Boolean(aiDraftDecisions[mapping.sourceRef])).length;
+  const pendingAiReviewCount = reviewedAiMappingCount > 0
+    ? aiMappings.length - reviewedAiMappingCount
+    : 0;
   const selectedSheet = inspection?.sheets.find((item) => item.sheetIndex === sheetIndex);
   const [headerStartRowIndex, headerRowIndex] = (headerRange ?? '')
     .split(':')
@@ -324,6 +330,10 @@ export default function DataImportMappingPage() {
 
   const save = async () => {
     if (!task) return;
+    if (pendingAiReviewCount > 0) {
+      message.warning(`还有 ${pendingAiReviewCount} 条 AI 建议需要逐项处理`);
+      return;
+    }
     const invalidAiReview = aiMappings.some((mapping) => {
       const column = columnBySourceRef.get(mapping.sourceRef);
       const decision = aiDraftDecisions[mapping.sourceRef];
@@ -577,6 +587,14 @@ export default function DataImportMappingPage() {
             ) : task.columns.length > 0 ? (
               <Alert className="section-row" type="success" showIcon message="所有列均已有明确处理决定" />
             ) : null}
+            {pendingAiReviewCount > 0 ? (
+              <Alert
+                className="section-row"
+                type="warning"
+                showIcon
+                message={`还有 ${pendingAiReviewCount} 条 AI 建议需要逐项处理`}
+              />
+            ) : null}
             {task.columns.length > 0 ? (
               <ExcelAiSuggestionPanel
                 suggestion={aiSuggestion}
@@ -613,7 +631,7 @@ export default function DataImportMappingPage() {
                 <Button onClick={() => navigate('/data/field-suggestions')}>查看新字段定义候选</Button>
                 <Button
                   type="primary"
-                  disabled={unresolved.length > 0}
+                  disabled={unresolved.length > 0 || pendingAiReviewCount > 0}
                   loading={loading}
                   onClick={() => void save()
                     .then(() => navigate(`/data/import/${task.id}/confirm`))

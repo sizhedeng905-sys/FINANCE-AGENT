@@ -103,9 +103,13 @@ export function getImportRows(id: string, query: ImportRowsQuery = {}): Promise<
 }
 
 export function saveImportMappings(id: string, payload: SaveImportMappingsPayload): Promise<ImportTask> {
-  return runtimeConfig.dataMode === 'api'
-    ? httpClient.put<ImportTask>(`/import-tasks/${encodeURIComponent(id)}/mappings`, payload)
-    : mockSaveImportMappings(id, payload);
+  if (runtimeConfig.dataMode !== 'api') return mockSaveImportMappings(id, payload);
+  const aiTaskId = payload.mappings.find((mapping) => mapping.aiReview)?.aiReview?.aiTaskId;
+  return httpClient.put<ImportTask>(
+    `/import-tasks/${encodeURIComponent(id)}/mappings`,
+    payload,
+    aiTaskId ? { headers: { 'Idempotency-Key': `import-ai-review-${aiTaskId}` } } : undefined,
+  );
 }
 
 export function autoMatchImportTask(id: string): Promise<ImportTask> {
@@ -154,6 +158,7 @@ export function getImportAiReviewDecisions(
     page: query.page ?? 1,
     pageSize: query.pageSize ?? 20,
     total: 0,
+    summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
   });
 }
 

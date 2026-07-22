@@ -53,7 +53,11 @@ export class ImportAiReviewService {
   ) {
     const reviewedMappings = mappings.filter((mapping) => mapping.aiReview);
     if (reviewedMappings.length === 0) {
-      return { count: 0, reviewRevision: task.reviewRevision + 1, decisionCounts: {} };
+      return {
+        count: 0,
+        reviewRevision: task.reviewRevision + 1,
+        decisionCounts: this.decisionCounts(0, [])
+      };
     }
 
     const aiTaskIds = new Set(reviewedMappings.map((mapping) => mapping.aiReview!.aiTaskId));
@@ -147,6 +151,31 @@ export class ImportAiReviewService {
     if (suggestionBySourceRef.size !== suggestions.length) {
       throw new ConflictException('AI 映射输出包含重复来源引用');
     }
+    const submittedSourceRefs = reviewedMappings.map((mapping) => mapping.aiReview!.sourceRef);
+    const submittedSourceRefSet = new Set(submittedSourceRefs);
+    const missingSourceRefs = suggestions
+      .map((suggestion) => suggestion.sourceRef)
+      .filter((sourceRef) => !submittedSourceRefSet.has(sourceRef));
+    const unexpectedSourceRefs = [...submittedSourceRefSet]
+      .filter((sourceRef) => !suggestionBySourceRef.has(sourceRef));
+    if (
+      submittedSourceRefSet.size !== submittedSourceRefs.length
+      || reviewedMappings.length !== suggestions.length
+      || missingSourceRefs.length > 0
+      || unexpectedSourceRefs.length > 0
+    ) {
+      throw new BadRequestException({
+        message: 'AI 映射审核必须一次完整处理全部建议来源',
+        data: {
+          reason: 'AI_REVIEW_BATCH_INCOMPLETE',
+          total: suggestions.length,
+          submitted: reviewedMappings.length,
+          missing: missingSourceRefs.length,
+          unexpected: unexpectedSourceRefs.length,
+          duplicate: submittedSourceRefs.length - submittedSourceRefSet.size
+        }
+      });
+    }
     const columnById = new Map(columns.map((column) => [column.id, column]));
     const fieldByKey = new Map(targetFields.map((field) => [field.fieldKey, field]));
     const nextReviewRevision = task.reviewRevision + 1;
@@ -210,10 +239,7 @@ export class ImportAiReviewService {
     });
 
     await tx.importAiReviewDecision.createMany({ data: decisions });
-    const decisionCounts = decisions.reduce<Record<string, number>>((counts, item) => {
-      counts[item.decision] = (counts[item.decision] ?? 0) + 1;
-      return counts;
-    }, {});
+    const decisionCounts = this.decisionCounts(suggestions.length, decisions.map((item) => item.decision));
     return {
       count: decisions.length,
       aiTaskId,
@@ -236,16 +262,25 @@ export class ImportAiReviewService {
       importTaskId: taskId,
       ...(query.reviewRevision ? { reviewRevision: query.reviewRevision } : {})
     };
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.importAiReviewDecision.findMany({
-        where,
-        include: { actor: { select: { id: true, username: true, name: true } } },
-        orderBy: [{ reviewRevision: 'desc' }, { sourceRef: 'asc' }, { id: 'asc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize
-      }),
-      this.prisma.importAiReviewDecision.count({ where })
-    ]);
+    const { items, total, grouped } = await this.prisma.$transaction(async (tx) => {
+      const [items, total, grouped] = await Promise.all([
+        tx.importAiReviewDecision.findMany({
+          where,
+          include: { actor: { select: { id: true, username: true, name: true } } },
+          orderBy: [{ reviewRevision: 'desc' }, { sourceRef: 'asc' }, { id: 'asc' }],
+          skip: (page - 1) * pageSize,
+          take: pageSize
+        }),
+        tx.importAiReviewDecision.count({ where }),
+        tx.importAiReviewDecision.groupBy({
+          by: ['decision'],
+          where,
+          orderBy: { decision: 'asc' },
+          _count: { _all: true }
+        })
+      ]);
+      return { items, total, grouped };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     return {
       items: items.map((item) => ({
         id: item.id,
@@ -274,8 +309,34 @@ export class ImportAiReviewService {
       })),
       page,
       pageSize,
-      total
+      total,
+      summary: this.decisionCountsFromGroups(total, grouped)
     };
+  }
+
+  private decisionCounts(total: number, decisions: ImportAiReviewDecisionType[]) {
+    const counts = {
+      total,
+      accept: 0,
+      edit: 0,
+      reject: 0,
+      ignore: 0,
+      pending: total - decisions.length
+    };
+    for (const decision of decisions) counts[decision] += 1;
+    return counts;
+  }
+
+  private decisionCountsFromGroups(
+    total: number,
+    groups: Array<{ decision: ImportAiReviewDecisionType; _count: { _all: number } }>
+  ) {
+    const counts = this.decisionCounts(total, []);
+    for (const group of groups) {
+      counts[group.decision] = group._count._all;
+      counts.pending -= group._count._all;
+    }
+    return counts;
   }
 
   private async currentReviewStateHash(tx: Prisma.TransactionClient, taskId: string) {

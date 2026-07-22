@@ -585,6 +585,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     const suffix = randomUUID().slice(0, 8);
     const requestPrefix = `ai-review-${suffix}`;
     const aiTaskIds: string[] = [];
+    const idempotencyKeys: string[] = [];
     let projectId: string | undefined;
     let templateId: string | undefined;
     let taskId: string | undefined;
@@ -612,7 +613,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       });
       templateId = template.id;
       const fields: Array<{ id: string; fieldKey: string }> = [];
-      for (const key of ['a', 'b', 'c', 'd']) {
+      for (const key of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) {
         const field = await prisma.fieldDefinition.create({
           data: {
             fieldKey: `${requestPrefix}_${key}`,
@@ -896,19 +897,71 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
               decision: 'ignore',
               reason: '财务明确忽略该来源列'
             }
-          }
+          },
+          ...columns.slice(4).map((column, index) => ({
+            columnId: column.id,
+            targetFieldId: fields[index + 4].id,
+            aiReview: {
+              aiTaskId: aiTask.id,
+              outputHash: aiTask.outputHash,
+              versionVectorHash: aiTask.versionVectorHash,
+              reviewStateHash: aiTask.reviewBasis.reviewState.stateHash,
+              reviewBasisHash: aiTask.reviewBasis.basisHash,
+              sourceRef: column.sourceColumnId,
+              decision: 'accept',
+              reason: '财务采纳 AI 字段映射建议'
+            }
+          }))
         ],
         ...overrides
       });
-      const putMappings = (payload: Record<string, unknown>) => request(app.getHttpServer())
-        .put(`/api/import-tasks/${task.id}/mappings`)
-        .set('Authorization', `Bearer ${token}`)
-        .send(payload);
+      const putMappings = (
+        payload: Record<string, unknown>,
+        idempotencyKey: string | null | undefined = undefined
+      ) => {
+        const requestMappings = Array.isArray(payload.mappings)
+          ? payload.mappings as Array<{ aiReview?: { aiTaskId?: string } }>
+          : [];
+        const aiTaskId = requestMappings.find((mapping) => mapping.aiReview)?.aiReview?.aiTaskId;
+        const effectiveKey = idempotencyKey === undefined && aiTaskId
+          ? `import-ai-review-${aiTaskId}`
+          : idempotencyKey;
+        const operation = request(app.getHttpServer())
+          .put(`/api/import-tasks/${task.id}/mappings`)
+          .set('Authorization', `Bearer ${token}`);
+        if (effectiveKey) operation.set('Idempotency-Key', effectiveKey);
+        return operation.send(payload);
+      };
 
       await putMappings({ mappings: reviewPayload(currentTask).mappings }).expect(400);
+      await putMappings(reviewPayload(currentTask), null).expect(400);
       await putMappings(reviewPayload(currentTask, { expectedVersion: currentState.version + 1 })).expect(409);
       await putMappings(reviewPayload(oldTask)).expect(409);
       await putMappings(reviewPayload(crossTask)).expect(409);
+      const partialReview = reviewPayload(currentTask);
+      partialReview.mappings = [partialReview.mappings[0]];
+      await putMappings(partialReview).expect(400);
+      const sameSourceConcurrent = await Promise.all([
+        putMappings(partialReview, `partial-same-a-${suffix}`),
+        putMappings(partialReview, `partial-same-b-${suffix}`)
+      ]);
+      expect(sameSourceConcurrent.map((response) => response.status)).toEqual([400, 400]);
+      const secondPartialReview = reviewPayload(currentTask);
+      secondPartialReview.mappings = [secondPartialReview.mappings[1]];
+      const differentSourceConcurrent = await Promise.all([
+        putMappings(partialReview, `partial-different-a-${suffix}`),
+        putMappings(secondPartialReview, `partial-different-b-${suffix}`)
+      ]);
+      expect(differentSourceConcurrent.map((response) => response.status)).toEqual([400, 400]);
+      const missingReviewDecision = reviewPayload(currentTask);
+      Object.assign(missingReviewDecision.mappings[4], { aiReview: undefined });
+      await putMappings(missingReviewDecision).expect(400);
+      const duplicateReviewSource = reviewPayload(currentTask);
+      duplicateReviewSource.mappings[1].aiReview.sourceRef = columns[0].sourceColumnId;
+      await putMappings(duplicateReviewSource).expect(400);
+      const unknownReviewSource = reviewPayload(currentTask);
+      unknownReviewSource.mappings[1].aiReview.sourceRef = 'sheet0:unknown';
+      await putMappings(unknownReviewSource).expect(400);
       await prisma.projectTemplate.updateMany({
         where: { projectId: project.id, templateId: template.id },
         data: { isActive: false }
@@ -1028,18 +1081,33 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       );
       await putMappings(reviewPayload(crossTemplateTask)).expect(409);
       const approvedTask = await createAiTask('approved', mappingOutput('approved'));
+      const approvedPayload = reviewPayload(approvedTask);
+      const approvedIdempotencyKey = `import-ai-review-${approvedTask.id}`;
+      idempotencyKeys.push(approvedIdempotencyKey);
       const concurrent = await Promise.all([
-        putMappings(reviewPayload(approvedTask)),
-        putMappings(reviewPayload(approvedTask))
+        putMappings(approvedPayload, approvedIdempotencyKey),
+        putMappings(approvedPayload, approvedIdempotencyKey)
       ]);
-      expect(concurrent.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(concurrent.map((response) => response.status)).toEqual([200, 200]);
+      expect(concurrent[0].body.data).toEqual(concurrent[1].body.data);
 
       const stored = await prisma.importAiReviewDecision.findMany({
         where: { importTaskId: task.id },
         orderBy: { sourceRef: 'asc' }
       });
-      expect(stored).toHaveLength(4);
-      expect(stored.map((item) => item.decision)).toEqual(['accept', 'edit', 'reject', 'ignore']);
+      expect(stored).toHaveLength(10);
+      expect(stored.map((item) => item.decision)).toEqual([
+        'accept',
+        'edit',
+        'reject',
+        'ignore',
+        'accept',
+        'accept',
+        'accept',
+        'accept',
+        'accept',
+        'accept'
+      ]);
       expect(stored.every((item) => (
         item.aiTaskId === approvedTask.id
         && item.outputHash === approvedTask.outputHash
@@ -1053,8 +1121,33 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         fields[0].id,
         fields[2].id,
         fields[1].id,
-        null
+        null,
+        ...fields.slice(4).map((field) => field.id)
       ]);
+      await expect(prisma.importAiReviewDecision.create({
+        data: {
+          importTaskId: task.id,
+          importColumnId: columns[0].id,
+          aiTaskId: currentTask.id,
+          outputHash: currentTask.outputHash!,
+          versionVectorHash: currentTask.versionVectorHash!,
+          reviewStateHash: currentTask.reviewBasis.reviewState.stateHash,
+          reviewBasisHash: currentTask.reviewBasis.basisHash,
+          sourceRef: columns[0].sourceColumnId!,
+          templateVersionId,
+          suggestedTargetFieldId: fields[0].id,
+          suggestedTargetFieldKey: fields[0].fieldKey,
+          suggestedTransformKey: 'TRIM_TEXT_V1',
+          suggestedConfidence: '0.9',
+          evidenceRefs: [columns[0].sourceColumnId!],
+          finalTargetFieldId: fields[1].id,
+          finalIgnored: false,
+          decision: 'accept',
+          reason: 'invalid direct database write',
+          reviewRevision: 2,
+          actorId: finance.id
+        }
+      })).rejects.toThrow();
       await expect(prisma.importAiReviewDecision.create({
         data: {
           importTaskId: task.id,
@@ -1071,21 +1164,26 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           suggestedTransformKey: 'TRIM_TEXT_V1',
           suggestedConfidence: '0.9',
           evidenceRefs: [columns[0].sourceColumnId!],
-          finalTargetFieldId: fields[1].id,
+          finalTargetFieldId: fields[0].id,
           finalIgnored: false,
           decision: 'accept',
-          reason: 'invalid direct database write',
+          reason: 'duplicate direct database write',
           reviewRevision: 2,
           actorId: finance.id
         }
       })).rejects.toThrow();
-      expect(await prisma.importAiReviewDecision.count({ where: { importTaskId: task.id } })).toBe(4);
+      expect(await prisma.importAiReviewDecision.count({ where: { importTaskId: task.id } })).toBe(10);
       expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
       const listed = await request(app.getHttpServer())
         .get(`/api/import-tasks/${task.id}/ai-review-decisions?page=1&pageSize=2`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      expect(listed.body.data).toMatchObject({ page: 1, pageSize: 2, total: 4 });
+      expect(listed.body.data).toMatchObject({
+        page: 1,
+        pageSize: 2,
+        total: 10,
+        summary: { total: 10, accept: 7, edit: 1, reject: 1, ignore: 1, pending: 0 }
+      });
       expect(listed.body.data.items).toHaveLength(2);
       expect(listed.body.data.items[0]).toMatchObject({
         aiTaskId: approvedTask.id,
@@ -1098,21 +1196,35 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       });
       expect(audit.metadata).toMatchObject({
         aiReview: {
-          count: 4,
+          count: 10,
           aiTaskId: approvedTask.id,
           outputHash: approvedTask.outputHash,
           reviewStateHash: approvedTask.reviewBasis.reviewState.stateHash,
           reviewBasisHash: approvedTask.reviewBasis.basisHash,
           reviewRevision: 1,
-          decisionCounts: { accept: 1, edit: 1, reject: 1, ignore: 1 }
+          decisionCounts: { total: 10, accept: 7, edit: 1, reject: 1, ignore: 1, pending: 0 }
         }
       });
-      const afterApproval = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
-      await putMappings(reviewPayload(approvedTask, {
-        expectedVersion: afterApproval.version,
-        expectedReviewRevision: afterApproval.reviewRevision
-      })).expect(409);
+      const replay = await putMappings(approvedPayload, approvedIdempotencyKey).expect(200);
+      expect(replay.body.data).toEqual(concurrent[0].body.data);
+      const changedReplay = reviewPayload(approvedTask);
+      changedReplay.mappings[0].aiReview.reason = '同一 key 下的不同审核载荷';
+      await putMappings(changedReplay, approvedIdempotencyKey).expect(409);
+      await putMappings(approvedPayload, `${approvedIdempotencyKey}-different`).expect(409);
+      expect(await prisma.importAiReviewDecision.count({ where: { importTaskId: task.id } })).toBe(10);
+      expect(await prisma.auditLog.count({
+        where: { action: 'import_task.mappings_saved', resourceId: task.id }
+      })).toBe(1);
+      expect(await prisma.ledgerEvent.count({
+        where: { eventType: 'mapping_rules_saved', aggregateId: task.id }
+      })).toBe(1);
+      expect(await prisma.idempotencyKey.count({
+        where: { key: approvedIdempotencyKey, status: 'completed' }
+      })).toBe(1);
     } finally {
+      if (idempotencyKeys.length) {
+        await prisma.idempotencyKey.deleteMany({ where: { key: { in: idempotencyKeys } } });
+      }
       if (taskId) await prisma.importTask.deleteMany({ where: { id: taskId } });
       if (aiTaskIds.length) await prisma.aiTask.deleteMany({ where: { id: { in: aiTaskIds } } });
       if (rawFileId) await prisma.rawFile.deleteMany({ where: { id: rawFileId } });

@@ -121,20 +121,22 @@ export class ImportTasksController {
   saveMappings(
     @Param('id') id: string,
     @Body() dto: SaveMappingsDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.imports.saveMappings(id, dto, user, getRequestContext(request));
+    return this.imports.saveMappings(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Post(':id/mapping-rules')
   saveMappingRules(
     @Param('id') id: string,
     @Body() dto: SaveMappingsDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUserDecorator() user: CurrentUser,
     @Req() request: AuthenticatedRequest
   ) {
-    return this.imports.saveMappings(id, dto, user, getRequestContext(request));
+    return this.imports.saveMappings(id, dto, user, getRequestContext(request), idempotencyKey);
   }
 
   @Post(':id/auto-match')

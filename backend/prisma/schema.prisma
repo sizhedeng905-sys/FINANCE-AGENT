@@ -918,6 +918,7 @@ model ImportAiReviewDecision {
   actor        User         @relation("ImportAiReviewActor", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@unique([importTaskId, reviewRevision, sourceRef])
+  @@unique([aiTaskId, sourceRef])
   @@index([importTaskId, createdAt])
   @@index([importColumnId])
   @@index([aiTaskId])

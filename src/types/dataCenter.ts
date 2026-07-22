@@ -845,6 +845,14 @@ export interface PaginatedImportAiReviewDecisions {
   page: number;
   pageSize: number;
   total: number;
+  summary: {
+    total: number;
+    accept: number;
+    edit: number;
+    reject: number;
+    ignore: number;
+    pending: number;
+  };
 }
 
 export interface ReviewImportRowPayload {

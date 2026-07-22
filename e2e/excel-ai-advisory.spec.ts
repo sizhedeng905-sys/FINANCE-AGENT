@@ -179,6 +179,12 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
   await expect(
     secondMappingRow.locator('.ant-select-selection-item').filter({ hasText: second.targetFieldName }),
   ).toHaveCount(0);
+  if (suggestion.data.mapping.output.mappings.length > 2) {
+    await expect(page.getByText(
+      `还有 ${suggestion.data.mapping.output.mappings.length - 2} 条 AI 建议需要逐项处理`,
+    )).toBeVisible();
+    await expect(page.getByRole('button', { name: '下一步确认' })).toBeDisabled();
+  }
   expect(mappingWrites).toBe(0);
   await expectNoOfficialRecords(page, task.id);
 

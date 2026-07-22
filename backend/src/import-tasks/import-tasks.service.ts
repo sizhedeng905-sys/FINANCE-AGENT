@@ -1263,8 +1263,27 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     return toImportTask(await this.findDetailOrThrow(id));
   }
 
-  async saveMappings(id: string, dto: SaveMappingsDto, actor: CurrentUser, context: RequestContext) {
-    await this.prisma.$transaction(async (tx) => {
+  async saveMappings(
+    id: string,
+    dto: SaveMappingsDto,
+    actor: CurrentUser,
+    context: RequestContext,
+    idempotencyKey?: string
+  ) {
+    const hasAiReview = dto.mappings.some((mapping) => Boolean(mapping.aiReview));
+    const idempotencyScope = this.idempotency.prepare(
+      actor.id,
+      'PUT',
+      `/api/import-tasks/${id}/mappings`,
+      idempotencyKey,
+      dto,
+      hasAiReview
+    );
+    return this.prisma.$transaction(async (tx) => this.idempotency.execute(
+      tx,
+      idempotencyScope,
+      200,
+      async () => {
       await this.lockTask(tx, id);
       const task = await tx.importTask.findUnique({ where: { id } });
       if (!task) throw new NotFoundException('资源不存在');
@@ -1387,8 +1406,14 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         aiReviewBasisHash: aiReview.reviewBasisHash,
         aiDecisionCounts: aiReview.decisionCounts
       });
-    });
-    return toImportTask(await this.findDetailOrThrow(id));
+      const detail = await tx.importTask.findUnique({
+        where: { id },
+        include: importTaskDetailInclude
+      });
+      if (!detail) throw new NotFoundException('资源不存在');
+      return toImportTask(detail);
+      }
+    ));
   }
 
   async generateSuggestions(id: string, actor: CurrentUser, context: RequestContext) {
