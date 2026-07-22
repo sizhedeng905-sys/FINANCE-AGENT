@@ -56,6 +56,7 @@ import {
   OCR_PREPROCESSING_VERSION
 } from './ocr-ir';
 import { OcrProviderRegistry, ResolvedOcrProvider } from './ocr-provider.registry';
+import { normalizeOcrFieldValue } from './ocr-field-value';
 import {
   MockOcrScenario,
   OcrFieldCandidate,
@@ -1867,31 +1868,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
   }
 
   private normalizeFieldValue(field: FieldDefinition, raw: unknown, rawFileId: string): string | string[] {
-    if (this.isEmpty(raw)) throw new BadRequestException('值不能为空');
-    if (field.fieldType === FieldType.number || field.fieldType === FieldType.money) {
-      if (typeof raw !== 'string') throw new BadRequestException('精度敏感数字必须使用字符串传输并人工纠错');
-      const text = raw.trim().replace(/,/g, '');
-      if (!/^-?(?:\d+|\d*\.\d+)$/.test(text)) throw new BadRequestException('数字格式错误');
-      const decimal = new Prisma.Decimal(text);
-      if (field.fieldType === FieldType.money && decimal.decimalPlaces() > 2) throw new BadRequestException('金额最多保留两位小数');
-      if (decimal.abs().greaterThan('99999999999999.99')) throw new BadRequestException('数字超出允许范围');
-      return decimal.toString();
-    }
-    if (field.fieldType === FieldType.date) {
-      if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new BadRequestException('日期格式必须为 YYYY-MM-DD');
-      const date = new Date(`${raw}T00:00:00.000Z`);
-      if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) throw new BadRequestException('日期无效');
-      return raw;
-    }
-    if (field.fieldType === FieldType.file) {
-      if (!Array.isArray(raw) || raw.length !== 1 || raw[0] !== rawFileId) throw new BadRequestException('附件字段必须引用当前 OCR 原文件');
-      return [rawFileId];
-    }
-    if (typeof raw !== 'string') throw new BadRequestException('文本字段必须是字符串');
-    const value = raw.trim();
-    const maxLength = field.fieldType === FieldType.textarea ? 5000 : 1000;
-    if (!value || value.length > maxLength) throw new BadRequestException(`文本长度必须为 1-${maxLength}`);
-    return value;
+    return normalizeOcrFieldValue(field, raw, rawFileId);
   }
 
   private buildRecordValue(field: FieldDefinition, value: string | string[]) {

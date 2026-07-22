@@ -12,6 +12,7 @@ import { DocumentPreprocessorService } from './document-preprocessor.service';
 import { LocalPaddleOcrProvider } from './local-paddle-ocr.provider';
 import { MockOcrProvider } from './mock-ocr.provider';
 import { OcrAiSuggestionService } from './ocr-ai-suggestion.service';
+import { OcrAiReviewService } from './ocr-ai-review.service';
 import { OcrProviderRegistry } from './ocr-provider.registry';
 import { OcrTasksController } from './ocr-tasks.controller';
 import { OcrTasksService } from './ocr-tasks.service';
@@ -22,6 +23,7 @@ import { OcrTasksService } from './ocr-tasks.service';
   providers: [
     OcrTasksService,
     OcrAiSuggestionService,
+    OcrAiReviewService,
     DocumentPreprocessorService,
     MockOcrProvider,
     LocalPaddleOcrProvider,

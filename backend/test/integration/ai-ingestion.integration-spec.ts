@@ -2139,6 +2139,195 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         where: { id: recreatedDecision.id }
       })).rejects.toThrow(/immutable OCR AI review decisions/);
       expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(0);
+      await maintenancePurgeOcrAiReviews(taskId);
+
+      const reviewState = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      const reviewPayload = {
+        expectedVersion: reviewState.version,
+        expectedReviewRevision: reviewState.reviewRevision,
+        aiTaskId: mappingExecution.aiTaskId,
+        outputHash: mappingExecution.outputHash,
+        versionVectorHash: mappingExecution.versionVectorHash,
+        reviewStateHash: mappingExecution.reviewBasis.reviewState.stateHash,
+        reviewBasisHash: mappingExecution.reviewBasis.basisHash,
+        reviews: [
+          {
+            sourceRef: `candidate:${dateField.id}`,
+            decision: 'accept',
+            reason: 'Synthetic date evidence accepted'
+          },
+          {
+            sourceRef: `candidate:${amountField.id}`,
+            decision: 'edit',
+            finalTargetFieldId: amountField.id,
+            finalValue: '126.60',
+            evidenceRefs: ['p1-b2'],
+            reason: 'Synthetic amount corrected against evidence'
+          }
+        ]
+      };
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({ ...reviewPayload, outputHash: '0'.repeat(64) })
+        .expect(409);
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({ ...reviewPayload, reviews: reviewPayload.reviews.slice(0, 1) })
+        .expect(400)
+        .expect(({ body }) => expect(body.data).toMatchObject({
+          reason: 'OCR_AI_REVIEW_BATCH_INCOMPLETE',
+          total: 2,
+          submitted: 1,
+          missing: 1
+        }));
+      expect(await prisma.ocrAiReviewDecision.count({ where: { ocrTaskId: taskId } })).toBe(0);
+      expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(0);
+
+      const concurrentReviews = await Promise.all([
+        request(app.getHttpServer())
+          .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .set('X-Request-Id', `${requestPrefix}-finance-review-a`)
+          .send(reviewPayload),
+        request(app.getHttpServer())
+          .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+          .set('Authorization', `Bearer ${financeToken}`)
+          .set('X-Request-Id', `${requestPrefix}-finance-review-b`)
+          .send(reviewPayload)
+      ]);
+      expect(concurrentReviews.map(({ status }) => status).sort()).toEqual([200, 409]);
+      const reviewed = concurrentReviews.find(({ status }) => status === 200);
+      expect(reviewed).toBeDefined();
+      if (!reviewed) {
+        throw new Error('Concurrent OCR AI review did not produce a successful result.');
+      }
+      expect(reviewed.body.data).toMatchObject({
+        taskId,
+        reviewRevision: reviewState.reviewRevision + 1,
+        decisionCount: 2,
+        summary: { total: 2, accept: 1, edit: 1, reject: 0, ignore: 0 },
+        aiTaskId: mappingExecution.aiTaskId,
+        outputHash: mappingExecution.outputHash,
+        reviewBasisHash: mappingExecution.reviewBasis.basisHash,
+        businessRecordsCreated: 0
+      });
+      expect(await prisma.ocrAiReviewDecision.count({ where: { ocrTaskId: taskId } })).toBe(2);
+      expect(await prisma.ocrCorrection.count({ where: { ocrTaskId: taskId } })).toBe(2);
+      const reviewedTask = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      expect(reviewedTask).toMatchObject({
+        reviewRevision: reviewState.reviewRevision + 1,
+        validationRevision: null,
+        validationSnapshotHash: null
+      });
+      const reviewedCandidates = reviewedTask.fieldCandidates as unknown as Array<{
+        fieldId: string;
+        rawValue: unknown;
+        normalizedValue: unknown;
+        reviewRevision: number;
+      }>;
+      expect(reviewedCandidates.find((candidate) => candidate.fieldId === amountField.id)).toMatchObject({
+        rawValue: '125.60',
+        normalizedValue: '126.6',
+        reviewRevision: reviewState.reviewRevision + 1
+      });
+      await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${taskId}/ai-reviews?page=1&pageSize=1`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+      const reviewHistory = await request(app.getHttpServer())
+        .get(`/api/ocr-tasks/${taskId}/ai-reviews?page=1&pageSize=10`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .expect(200);
+      expect(reviewHistory.body.data).toMatchObject({
+        page: 1,
+        pageSize: 10,
+        total: 2,
+        summary: { total: 2, accept: 1, edit: 1, reject: 0, ignore: 0 }
+      });
+      expect(reviewHistory.body.data.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sourceRef: `candidate:${amountField.id}`,
+          raw: expect.objectContaining({ value: '125.60', evidenceRefs: ['p1-b2'] }),
+          suggested: expect.objectContaining({ value: '125.60', evidenceRefs: ['p1-b2'] }),
+          final: expect.objectContaining({ value: '126.6', evidenceRefs: ['p1-b2'] }),
+          decision: 'edit',
+          reviewRevision: reviewState.reviewRevision + 1,
+          actor: expect.objectContaining({ id: finance.id, username: 'finance' })
+        })
+      ]));
+      await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send(reviewPayload)
+        .expect(409);
+
+      const secondSuggestion = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/ai-suggestions`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('X-Request-Id', `${requestPrefix}-second-suggestion`)
+        .expect(201);
+      const secondMapping = secondSuggestion.body.data.mapping as typeof mappingExecution;
+      const secondReviewState = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      const secondReview = await request(app.getHttpServer())
+        .put(`/api/ocr-tasks/${taskId}/ai-reviews`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('X-Request-Id', `${requestPrefix}-second-review`)
+        .send({
+          expectedVersion: secondReviewState.version,
+          expectedReviewRevision: secondReviewState.reviewRevision,
+          aiTaskId: secondMapping.aiTaskId,
+          outputHash: secondMapping.outputHash,
+          versionVectorHash: secondMapping.versionVectorHash,
+          reviewStateHash: secondMapping.reviewBasis.reviewState.stateHash,
+          reviewBasisHash: secondMapping.reviewBasis.basisHash,
+          reviews: [
+            {
+              sourceRef: `candidate:${dateField.id}`,
+              decision: 'reject',
+              reason: 'Keep the provider date mapping instead of relying on AI'
+            },
+            {
+              sourceRef: `candidate:${amountField.id}`,
+              decision: 'ignore',
+              reason: 'Synthetic amount evidence intentionally excluded'
+            }
+          ]
+        })
+        .expect(200);
+      expect(secondReview.body.data).toMatchObject({
+        reviewRevision: secondReviewState.reviewRevision + 1,
+        summary: { total: 2, accept: 0, edit: 0, reject: 1, ignore: 1 },
+        businessRecordsCreated: 0
+      });
+      const ignoredTask = await prisma.ocrTask.findUniqueOrThrow({ where: { id: taskId } });
+      const ignoredCandidates = ignoredTask.fieldCandidates as unknown as Array<{
+        fieldId: string;
+        rawValue: unknown;
+        normalizedValue: unknown;
+        missing: boolean;
+      }>;
+      expect(ignoredCandidates.find((candidate) => candidate.fieldId === amountField.id)).toMatchObject({
+        rawValue: '125.60',
+        normalizedValue: null,
+        missing: true
+      });
+      const invalidValidation = await request(app.getHttpServer())
+        .post(`/api/ocr-tasks/${taskId}/revalidate`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .send({
+          expectedVersion: secondReview.body.data.version,
+          expectedReviewRevision: secondReview.body.data.reviewRevision
+        })
+        .expect(201);
+      expect(invalidValidation.body.data.validation.snapshot).toMatchObject({
+        valid: false,
+        blockingErrors: expect.arrayContaining([
+          expect.objectContaining({ code: 'REQUIRED_FIELD_MISSING', fieldId: amountField.id })
+        ])
+      });
+      expect(await prisma.businessRecord.count({ where: { sourceId: taskId } })).toBe(0);
 
       const conflicted = structuredClone(fieldCandidates) as Array<typeof fieldCandidates[number] & {
         evidenceConflict?: boolean;

@@ -31,7 +31,10 @@ import { CorrectOcrTaskDto } from './dto/correct-ocr-task.dto';
 import { CreateOcrTaskDto } from './dto/create-ocr-task.dto';
 import { CreateOcrUploadDto } from './dto/create-ocr-upload.dto';
 import { QueryOcrTasksDto } from './dto/query-ocr-tasks.dto';
+import { QueryOcrAiReviewDecisionsDto } from './dto/query-ocr-ai-review-decisions.dto';
 import { RevalidateOcrTaskDto } from './dto/revalidate-ocr-task.dto';
+import { ReviewOcrAiSuggestionsDto } from './dto/review-ocr-ai-suggestions.dto';
+import { OcrAiReviewService } from './ocr-ai-review.service';
 import { OcrAiSuggestionService } from './ocr-ai-suggestion.service';
 import { OcrTasksService } from './ocr-tasks.service';
 
@@ -42,7 +45,8 @@ import { OcrTasksService } from './ocr-tasks.service';
 export class OcrTasksController {
   constructor(
     private readonly tasks: OcrTasksService,
-    private readonly aiSuggestions: OcrAiSuggestionService
+    private readonly aiSuggestions: OcrAiSuggestionService,
+    private readonly aiReviews: OcrAiReviewService
   ) {}
 
   @Post()
@@ -95,6 +99,26 @@ export class OcrTasksController {
   @Roles(UserRole.finance)
   aiSuggestionHistory(@Param('id') id: string) {
     return this.aiSuggestions.latest(id);
+  }
+
+  @Put(':id/ai-reviews')
+  @Roles(UserRole.finance)
+  reviewAiSuggestions(
+    @Param('id') id: string,
+    @Body() dto: ReviewOcrAiSuggestionsDto,
+    @CurrentUserDecorator() user: CurrentUser,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.aiReviews.review(id, dto, user, getRequestContext(request));
+  }
+
+  @Get(':id/ai-reviews')
+  @Roles(UserRole.finance)
+  aiReviewDecisions(
+    @Param('id') id: string,
+    @Query() query: QueryOcrAiReviewDecisionsDto
+  ) {
+    return this.aiReviews.findMany(id, query);
   }
 
   @Post(':id/run')

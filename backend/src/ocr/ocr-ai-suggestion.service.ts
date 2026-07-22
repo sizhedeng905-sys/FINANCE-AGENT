@@ -60,7 +60,8 @@ const suggestionTaskInclude = {
   }
 } satisfies Prisma.OcrTaskInclude;
 
-type SuggestionTask = Prisma.OcrTaskGetPayload<{ include: typeof suggestionTaskInclude }>;
+export type OcrAiSuggestionTask = Prisma.OcrTaskGetPayload<{ include: typeof suggestionTaskInclude }>;
+type SuggestionTask = OcrAiSuggestionTask;
 type CandidateTemplate = Prisma.TemplateGetPayload<{ include: typeof candidateTemplateInclude }>;
 type StoredCandidate = CanonicalOcrFieldCandidate & {
   evidenceConflict?: boolean;
@@ -77,7 +78,7 @@ interface EvidenceSummary {
   confidence: string | null;
 }
 
-interface OcrSourceUnit {
+export interface OcrSourceUnit {
   sourceRef: string;
   existingFieldKey: string;
   sourceLabel: string;
@@ -89,11 +90,14 @@ interface OcrSourceUnit {
   conflict: boolean;
 }
 
-interface PreparedSuggestionState {
+export interface PreparedOcrSuggestionState {
   ir: NormalizedOcrIr;
   sourceUnits: OcrSourceUnit[];
   evidenceRefs: Set<string>;
+  allEvidenceRefs: Set<string>;
 }
+
+type PreparedSuggestionState = PreparedOcrSuggestionState;
 
 @Injectable()
 export class OcrAiSuggestionService {
@@ -366,6 +370,19 @@ export class OcrAiSuggestionService {
     };
   }
 
+  async currentReviewContext(tx: Prisma.TransactionClient, taskId: string) {
+    const task = await tx.ocrTask.findUnique({ where: { id: taskId }, include: suggestionTaskInclude });
+    if (!task) throw new NotFoundException('OCR task does not exist');
+    const candidates = await this.loadCandidates(task.projectId, tx);
+    return {
+      task,
+      candidates,
+      prepared: this.prepareState(task),
+      blockedReason: this.suggestionBlockReason(task),
+      stateHash: this.suggestionStateHash(task, candidates)
+    };
+  }
+
   private async loadSuggestionState(taskId: string) {
     return this.prisma.$transaction(async (tx) => {
       const task = await tx.ocrTask.findUnique({ where: { id: taskId }, include: suggestionTaskInclude });
@@ -457,7 +474,7 @@ export class OcrAiSuggestionService {
       });
     }
     const evidenceRefs = new Set(sourceUnits.flatMap((unit) => unit.evidenceRefs));
-    return { ir, sourceUnits, evidenceRefs };
+    return { ir, sourceUnits, evidenceRefs, allEvidenceRefs: new Set(evidence.keys()) };
   }
 
   private readIr(task: SuggestionTask): NormalizedOcrIr | undefined {
