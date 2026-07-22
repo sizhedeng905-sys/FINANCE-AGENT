@@ -50,6 +50,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-036 | [CR-036_parameterized-staging-topology.md](CR-036_parameterized-staging-topology.md) | `feat: parameterize staging deployment topology` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_ENVIRONMENT_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-035 |
 | CR-037 | [CR-037_fail-closed-target-profile.md](CR-037_fail-closed-target-profile.md) | `feat: enforce fail-closed staging target profile` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_RESOURCES_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-036 |
 | CR-038 | [CR-038_read-only-target-preflight.md](CR-038_read-only-target-preflight.md) | `feat: add read-only staging target preflight` | P2 deployment evidence | SYNTHETIC_ENGINEERING_VERIFIED / REAL_TARGET_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-037 |
+| CR-039 | [CR-039_progress-checkpoint-one.md](CR-039_progress-checkpoint-one.md) | `docs: add progress checkpoint one` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED / REMOTE_PUSH_PENDING | CR-038 |
 
 ## 审查分组
 
