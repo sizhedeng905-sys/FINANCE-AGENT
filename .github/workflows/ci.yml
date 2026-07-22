@@ -213,6 +213,7 @@ jobs:
         run: |
           npm run staging:init
           npm run staging:config:test
+          npm run staging:preflight:test
           npm run staging:check
           npm run staging:logs:test
           npm run staging:backup-integrity:test
