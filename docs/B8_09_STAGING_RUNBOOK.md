@@ -53,6 +53,28 @@ npm run staging:check
 
 `STAGING_APP_BASE_URL` 必须出现在 CORS 白名单中，应用和对象 URL 必须与各自域名、端口完全一致。registry 前缀只接受不带 tag/digest 的小写 OCI 路径。`provided` 模式不会生成或覆盖证书；缺少 CA、gateway 或 PostgreSQL TLS 文件时初始化立即失败。这里完成的是参数化底座，不代表目标环境已经通过：目标 profile 的更严格失败关闭门禁、真实 DNS/TLS/registry/secret 和预检证据仍受 H13/H14 约束。
 
+### 3.1 Target profile 失败关闭契约
+
+`staging:init` 只服务 `local_demo`。目标环境的 `.env`、secret 和证书必须由运维在仓库外供应，不能用初始化脚本生成。准备好非敏感配置和本机私有材料挂载后执行：
+
+```bash
+npm run staging:target:check
+```
+
+target 还必须显式提供以下非 secret 元数据；证据只保存其存在性或 SHA-256，不输出原值：
+
+| 变量 | 含义 |
+| --- | --- |
+| `STAGING_TARGET_REGION` | 经 H13 确认的地域/机房标识 |
+| `STAGING_TARGET_OWNER_ID` | 运维责任主体稳定标识，不写个人联系方式 |
+| `STAGING_TARGET_CHANGE_ID` | 本次受控变更或部署单号 |
+| `STAGING_TARGET_SECRET_PROVIDER` | `docker_secret_files`、`vault` 或受支持云 secret manager 类别 |
+| `STAGING_TARGET_CERTIFICATE_ISSUER` | 已批准证书签发体系的稳定标识 |
+
+命令在下列任一条件出现时退出码为 `2`，输出 `status=blocked_external` 和稳定错误码：本地/测试/示例域名、本地环境 ID、loopback-only bind、全网 trusted proxy、`local_ca`、本机初始化痕迹、合成 seed、`local_identity`、非远程 registry、任一服务镜像不是 `@sha256`、证书文件缺失或 target 元数据缺失/仍是占位符。`staging:check` 在 profile 为 `target` 时也执行同一契约，发布脚本无法绕过。
+
+本机默认运行该命令会得到 `TARGET_PROFILE_REQUIRED`，这是预期的失败关闭，不是目标环境已经存在。通过该静态契约也只表示配置具备预检资格；DNS/TLS 公信链、网络、registry 签名、依赖服务、告警与灾备仍由后续只读预检和 H13/H14 验证。
+
 初始化脚本只创建缺失文件，不覆盖已有 secret。它会生成：
 
 - 随机数据库、JWT、Redis、MinIO、S3、Metrics、Grafana 和合成 UAT 密码；

@@ -37,6 +37,9 @@ const settings = resolveDeploymentEnvironment({
   ...parseEnvironmentSource(await readFile(environmentPath, 'utf8'), 'staging environment'),
   ...process.env,
 });
+if (settings.profile === 'target') {
+  throw new Error('staging:init is local-demo only; target secrets and certificates must be operator-provisioned');
+}
 
 const hex = (bytes = 48) => randomBytes(bytes).toString('hex');
 const secrets = {

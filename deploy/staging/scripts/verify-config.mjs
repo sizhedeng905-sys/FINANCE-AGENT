@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+import { validateTargetProfile } from './target-profile.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fileEnvironment = parseEnvironmentSource(
@@ -22,19 +23,19 @@ const requiredSecrets = [
 ];
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
 const expectedCustomImages = {
-  'backend-api': `${settings.registryPrefix}/backend:`,
-  worker: `${settings.registryPrefix}/backend:`,
-  migrate: `${settings.registryPrefix}/backend:`,
-  frontend: `${settings.registryPrefix}/frontend:`,
-  backup: `${settings.registryPrefix}/staging-backup:`,
-  'minio-init': `${settings.registryPrefix}/staging-backup:`,
-  postgres: `${settings.registryPrefix}/staging-postgres:`,
-  minio: `${settings.registryPrefix}/staging-minio:`,
-  prometheus: `${settings.registryPrefix}/staging-prometheus:`,
-  alertmanager: `${settings.registryPrefix}/staging-alertmanager:`,
-  'node-exporter': `${settings.registryPrefix}/staging-node-exporter:`,
-  alloy: `${settings.registryPrefix}/staging-alloy:`,
-  tempo: `${settings.registryPrefix}/staging-tempo:`
+  'backend-api': `${settings.registryPrefix}/backend`,
+  worker: `${settings.registryPrefix}/backend`,
+  migrate: `${settings.registryPrefix}/backend`,
+  frontend: `${settings.registryPrefix}/frontend`,
+  backup: `${settings.registryPrefix}/staging-backup`,
+  'minio-init': `${settings.registryPrefix}/staging-backup`,
+  postgres: `${settings.registryPrefix}/staging-postgres`,
+  minio: `${settings.registryPrefix}/staging-minio`,
+  prometheus: `${settings.registryPrefix}/staging-prometheus`,
+  alertmanager: `${settings.registryPrefix}/staging-alertmanager`,
+  'node-exporter': `${settings.registryPrefix}/staging-node-exporter`,
+  alloy: `${settings.registryPrefix}/staging-alloy`,
+  tempo: `${settings.registryPrefix}/staging-tempo`
 };
 const digestPinnedRuntimeServices = ['redis', 'clamav', 'gateway', 'loki', 'grafana'];
 
@@ -118,9 +119,10 @@ for (const [name, service] of Object.entries(services)) {
     throw new Error(`Only gateway may publish host ports, but ${name} publishes ports`);
   }
 }
-for (const [name, prefix] of Object.entries(expectedCustomImages)) {
-  if (!String(services[name]?.image ?? '').startsWith(prefix)) {
-    throw new Error(`Service ${name} must use the repository-built ${prefix} image`);
+for (const [name, repository] of Object.entries(expectedCustomImages)) {
+  const image = String(services[name]?.image ?? '');
+  if (!image.startsWith(`${repository}:`) && !image.startsWith(`${repository}@sha256:`)) {
+    throw new Error(`Service ${name} must use the repository-built ${repository} image`);
   }
 }
 for (const name of digestPinnedRuntimeServices) {
@@ -164,6 +166,22 @@ for (const requirement of [
 const tracked = run('git', ['ls-files', '--', 'deploy/staging/.secrets', 'deploy/staging/.runtime'], { cwd: resolve(stagingRoot, '../..') });
 if (tracked.stdout.trim()) throw new Error('Generated staging secrets or TLS material are tracked by Git');
 
+let targetProfile = null;
+if (settings.profile === 'target') {
+  const initializationPath = join(stagingRoot, '.runtime', 'initialization.json');
+  const initialization = existsSync(initializationPath)
+    ? JSON.parse(await readFile(initializationPath, 'utf8'))
+    : null;
+  targetProfile = validateTargetProfile({
+    settings,
+    environment: { ...fileEnvironment, ...process.env },
+    compose,
+    initialization,
+    certificateFilesPresent: requiredTls,
+    caSubject: new X509Certificate(await readFile(join(stagingRoot, '.runtime', 'tls', 'ca.crt'))).subject,
+  });
+}
+
 const imageReferences = Object.fromEntries(
   Object.entries(services).map(([name, service]) => [name, service.image]).sort(([left], [right]) => left.localeCompare(right))
 );
@@ -179,6 +197,7 @@ const evidence = {
     environmentId: settings.environmentId,
     registryPrefix: settings.registryPrefix,
     parameterizedTopology: true,
+    targetProfile: targetProfile?.status ?? 'not_applicable',
     secretsPresent: requiredSecrets.length,
     certificatesVerified: true,
     fixedImageTags: true,
