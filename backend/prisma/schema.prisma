@@ -310,27 +310,27 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  auditLogs            AuditLog[]
-  createdWorkOrders    WorkOrder[]              @relation("WorkOrderCreator")
-  approvals            Approval[]
-  timelineEntries      WorkOrderTimeline[]
-  uploadedFiles        RawFile[]
-  uploadedImportTasks  ImportTask[]             @relation("ImportTaskUploader")
-  confirmedImportTasks ImportTask[]             @relation("ImportTaskConfirmer")
-  uploadedOcrTasks     OcrTask[]                @relation("OcrTaskUploader")
-  confirmedOcrTasks    OcrTask[]                @relation("OcrTaskConfirmer")
-  ocrCorrections       OcrCorrection[]
-  aiConversations      AiConversation[]
-  aiTasks              AiTask[]
-  notificationReceipts NotificationReceipt[]
-  retentionRuns        RetentionRun[]           @relation("RetentionRunRequester")
-  retentionLegalHolds  RetentionLegalHold[]     @relation("RetentionLegalHoldCreator")
-  stepUpGrants         StepUpGrant[]
-  reportSnapshots      ReportSnapshot[]         @relation("ReportSnapshotCreator")
-  reportNarratives     ReportNarrative[]        @relation("ReportNarrativeCreator")
+  auditLogs              AuditLog[]
+  createdWorkOrders      WorkOrder[]                     @relation("WorkOrderCreator")
+  approvals              Approval[]
+  timelineEntries        WorkOrderTimeline[]
+  uploadedFiles          RawFile[]
+  uploadedImportTasks    ImportTask[]                    @relation("ImportTaskUploader")
+  confirmedImportTasks   ImportTask[]                    @relation("ImportTaskConfirmer")
+  uploadedOcrTasks       OcrTask[]                       @relation("OcrTaskUploader")
+  confirmedOcrTasks      OcrTask[]                       @relation("OcrTaskConfirmer")
+  ocrCorrections         OcrCorrection[]
+  aiConversations        AiConversation[]
+  aiTasks                AiTask[]
+  notificationReceipts   NotificationReceipt[]
+  retentionRuns          RetentionRun[]                  @relation("RetentionRunRequester")
+  retentionLegalHolds    RetentionLegalHold[]            @relation("RetentionLegalHoldCreator")
+  stepUpGrants           StepUpGrant[]
+  reportSnapshots        ReportSnapshot[]                @relation("ReportSnapshotCreator")
+  reportNarratives       ReportNarrative[]               @relation("ReportNarrativeCreator")
   reportNarrativeReviews ReportNarrativeReviewDecision[] @relation("ReportNarrativeReviewActor")
-  importAiReviews      ImportAiReviewDecision[] @relation("ImportAiReviewActor")
-  ocrAiReviews         OcrAiReviewDecision[]    @relation("OcrAiReviewActor")
+  importAiReviews        ImportAiReviewDecision[]        @relation("ImportAiReviewActor")
+  ocrAiReviews           OcrAiReviewDecision[]           @relation("OcrAiReviewActor")
 
   @@map("users")
 }
@@ -1630,9 +1630,9 @@ model ReportNarrative {
   createdBy         String                @map("created_by")
   createdAt         DateTime              @default(now()) @map("created_at")
 
-  snapshot ReportSnapshot     @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
-  aiTask   AiTask             @relation(fields: [aiTaskId], references: [id], onDelete: Restrict)
-  creator  User               @relation("ReportNarrativeCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  snapshot ReportSnapshot                  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  aiTask   AiTask                          @relation(fields: [aiTaskId], references: [id], onDelete: Restrict)
+  creator  User                            @relation("ReportNarrativeCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   claims   AiFinancialClaim[]
   reviews  ReportNarrativeReviewDecision[]
 
@@ -1643,18 +1643,18 @@ model ReportNarrative {
 }
 
 model ReportNarrativeReviewDecision {
-  id               String                       @id @default(cuid())
-  narrativeId      String                       @map("narrative_id")
-  reviewVersion    Int                          @map("review_version")
-  stage            ReportNarrativeReviewStage
-  command          ReportNarrativeReviewCommand
-  fromStatus       ReportNarrativeReviewStatus  @map("from_status")
-  toStatus         ReportNarrativeReviewStatus  @map("to_status")
-  reason           String                       @db.VarChar(500)
-  actorUserId      String                       @map("actor_user_id")
-  actorUsername    String                       @map("actor_username")
-  actorName        String                       @map("actor_name")
-  createdAt        DateTime                     @default(now()) @map("created_at")
+  id            String                       @id @default(cuid())
+  narrativeId   String                       @map("narrative_id")
+  reviewVersion Int                          @map("review_version")
+  stage         ReportNarrativeReviewStage
+  command       ReportNarrativeReviewCommand
+  fromStatus    ReportNarrativeReviewStatus  @map("from_status")
+  toStatus      ReportNarrativeReviewStatus  @map("to_status")
+  reason        String                       @db.VarChar(500)
+  actorUserId   String                       @map("actor_user_id")
+  actorUsername String                       @map("actor_username")
+  actorName     String                       @map("actor_name")
+  createdAt     DateTime                     @default(now()) @map("created_at")
 
   narrative ReportNarrative @relation(fields: [narrativeId], references: [id], onDelete: Restrict, map: "fk_report_narrative_review_narrative")
   actor     User            @relation("ReportNarrativeReviewActor", fields: [actorUserId], references: [id], onDelete: Restrict, map: "fk_report_narrative_review_actor")
