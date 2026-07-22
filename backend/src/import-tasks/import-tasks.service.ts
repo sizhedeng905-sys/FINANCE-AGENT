@@ -126,6 +126,7 @@ const stagedRecordIntegrityInclude = {
 type PreviewTask = Prisma.ImportTaskGetPayload<{ include: typeof previewTaskInclude }>;
 type PreviewImportRow = Prisma.ImportRowGetPayload<Record<string, never>>;
 type PreviewField = FieldDefinition;
+type ExcelAiReviewDigest = Awaited<ReturnType<ImportAiReviewService['canonicalDigest']>>;
 
 interface PreviewValue {
   field: PreviewField;
@@ -203,9 +204,9 @@ const IMPORT_PREVIEW_MAX_RESPONSE_BYTES = 1024 * 1024;
 const IMPORT_ROW_BATCH_SIZE = 500;
 const IMPORT_MAX_PARSE_ATTEMPTS = 3;
 const WORKER_HANDOFF_LEASE_PREFIX = 'worker-handoff:';
-export const EXCEL_VALIDATION_SCHEMA_VERSION = 'excel-validation/1.0';
+export const EXCEL_VALIDATION_SCHEMA_VERSION = 'excel-validation/1.1';
 export const EXCEL_DETERMINISTIC_VALIDATION_RULE_VERSION = 'excel-deterministic-validation/1.0';
-export const EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'excel-approval/1.0';
+export const EXCEL_APPROVAL_SNAPSHOT_SCHEMA_VERSION = 'excel-approval/1.1';
 export const EXCEL_APPROVAL_POLICY_VERSION = 'finance-excel-approval/1.0-pending-h10';
 export const EXCEL_APPROVAL_AUTHORIZATION_POLICY_VERSION = 'finance-excel-approval-authz/1.0';
 export const EXCEL_ROW_REVIEW_POLICY_VERSION = 'excel-row-review-h01/1.0';
@@ -1676,7 +1677,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const rowSetHash = rowSetDigest.digest('hex');
     const mappingPayloadHash = this.importMappingHash(task);
     const templateContentHash = this.importTemplateContentHash(task);
-    const core = {
+    const validationCore = {
       schemaVersion: EXCEL_VALIDATION_SCHEMA_VERSION,
       taskId: task.id,
       projectId: task.projectId,
@@ -1704,10 +1705,12 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       valid: blockingErrorCount === 0,
       validatedBy: actor.id
     };
-    const snapshot = { ...core, snapshotHash: canonicalJsonSha256(core) };
     const validatedAt = new Date();
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.lockTask(tx, id);
+      const aiReview = await this.importAiReviews.canonicalDigest(tx, id, task.reviewRevision);
+      const core = { ...validationCore, aiReview };
+      const snapshot = { ...core, snapshotHash: canonicalJsonSha256(core) };
       const result = await tx.importTask.updateMany({
         where: {
           id,
@@ -1736,6 +1739,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         snapshotHash: snapshot.snapshotHash,
         normalizedOutputHash,
         rowSetHash,
+        aiReviewDigestHash: aiReview.digestHash,
         valid: snapshot.valid,
         counts: snapshot.counts
       }, context);
@@ -1743,6 +1747,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         reviewRevision: task.reviewRevision,
         snapshotHash: snapshot.snapshotHash,
         normalizedOutputHash,
+        aiReviewDigestHash: aiReview.digestHash,
         valid: snapshot.valid
       });
       return result;
@@ -1815,7 +1820,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('导入任务引用的模板版本已变化，请重新创建任务');
       }
       const approver = await this.assertCurrentFinanceApprover(tx, current, actor);
-      const approvedValidation = this.assertImportApprovalValidation(current, dto);
+      const currentAiReview = await this.importAiReviews.canonicalDigest(tx, id, current.reviewRevision);
+      const approvedValidation = this.assertImportApprovalValidation(current, dto, currentAiReview);
       const [columnCount, decisionCount, totalRows] = await Promise.all([
         tx.importColumn.count({ where: { importTaskId: id } }),
         tx.mappingDecision.count({ where: { importTaskId: id } }),
@@ -1868,7 +1874,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           profileSnapshotHash: current.mappingProfileSnapshotHash
         },
         aiSuggestion: {
-          appliedToFormalData: false
+          appliedToFormalData: false,
+          reviewDigest: approvedValidation.aiReview
         },
         review: {
           reviewRevision: current.reviewRevision,
@@ -1876,6 +1883,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
           validationRuleVersion: current.validationRuleVersion,
           rowSetHash: approvedValidation.rowSetHash,
           normalizedOutputHash: approvedValidation.normalizedOutputHash,
+          aiReviewDigestHash: approvedValidation.aiReview.digestHash,
           acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds
         },
         versions: {
@@ -1946,6 +1954,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         validationSnapshotHash: current.validationSnapshotHash,
         approvalSnapshotHash: approvalSnapshot.snapshotHash,
         normalizedOutputHash: approvedValidation.normalizedOutputHash,
+        aiReviewDigestHash: approvedValidation.aiReview.digestHash,
         acknowledgedWarningIds: approvedValidation.acknowledgedWarningIds,
         selfApproval: false
       }, context);
@@ -2170,7 +2179,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         include: previewTaskInclude
       });
       if (!task) throw new NotFoundException('资源不存在');
-      this.assertImportApprovalSnapshotCurrent(task, job.approvalSnapshotHash);
+      await this.assertImportApprovalSnapshotCurrent(tx, task, job.approvalSnapshotHash);
       this.assertImportSourceEligible(task);
       const activeTemplate = await this.recordPolicy.getWritableTemplate(
         tx,
@@ -2258,6 +2267,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
               snapshotHash: task.approvalSnapshotHash,
               validationSnapshotHash: task.validationSnapshotHash,
               reviewRevision: task.reviewRevision,
+              aiReviewDigestHash: this.approvalAiReviewDigestHash(task),
               normalizedOutputHash: this.approvalOutputHash(task)
             }
           }),
@@ -2368,7 +2378,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
       const current = await tx.importTask.findUnique({ where: { id: job.taskId }, include: previewTaskInclude });
       if (!current) throw new NotFoundException('Import task not found');
-      this.assertImportApprovalSnapshotCurrent(current, job.approvalSnapshotHash);
+      await this.assertImportApprovalSnapshotCurrent(tx, current, job.approvalSnapshotHash);
       const renewed = await tx.importTask.updateMany({
         where: {
           id: job.taskId,
@@ -2411,7 +2421,7 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       await this.assertOwnedConfirmation(tx, job.taskId, job.leaseToken);
       const task = await tx.importTask.findUnique({ where: { id: job.taskId }, include: previewTaskInclude });
       if (!task) throw new NotFoundException('资源不存在');
-      this.assertImportApprovalSnapshotCurrent(task, job.approvalSnapshotHash);
+      await this.assertImportApprovalSnapshotCurrent(tx, task, job.approvalSnapshotHash);
       if (task.version !== integrity.taskVersion) throw new ImportConfirmationLeaseLostError();
       await acquireProjectWriteLock(tx, task.projectId);
       this.assertImportSourceEligible(task);
@@ -2957,7 +2967,11 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private assertImportApprovalValidation(task: PreviewTask, dto: ConfirmImportTaskDto) {
+  private assertImportApprovalValidation(
+    task: PreviewTask,
+    dto: ConfirmImportTaskDto,
+    currentAiReview: ExcelAiReviewDigest
+  ) {
     if (
       task.validationRevision !== task.reviewRevision
       || task.validationSnapshotHash !== dto.expectedValidationSnapshotHash
@@ -3021,6 +3035,18 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       throw new ConflictException({
         message: 'Excel 来源、模板、映射、行审核或规范输出在重新校验后发生变化',
         data: { reason: 'IMPORT_APPROVAL_PAYLOAD_STALE' }
+      });
+    }
+    const frozenAiReview = snapshot.aiReview;
+    if (
+      !frozenAiReview
+      || typeof frozenAiReview !== 'object'
+      || Array.isArray(frozenAiReview)
+      || canonicalJsonSha256(frozenAiReview) !== canonicalJsonSha256(currentAiReview)
+    ) {
+      throw new ConflictException({
+        message: 'Excel AI 审核证据在重新校验后发生变化',
+        data: { reason: 'IMPORT_AI_REVIEW_DIGEST_STALE' }
       });
     }
     if (
@@ -3089,12 +3115,17 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
       templateContentHash: currentTemplateHash,
       rowSetHash: rowSetHash as string,
       normalizedOutputHash: normalizedOutputHash as string,
+      aiReview: currentAiReview,
       acknowledgedWarningIds,
       counts: { total: Number(total), recordCount: Number(recordCount) }
     };
   }
 
-  private assertImportApprovalSnapshotCurrent(task: PreviewTask, expectedSnapshotHash: string) {
+  private async assertImportApprovalSnapshotCurrent(
+    tx: Prisma.TransactionClient,
+    task: PreviewTask,
+    expectedSnapshotHash: string
+  ) {
     if (
       task.approvalSnapshotHash !== expectedSnapshotHash
       || task.approvalReviewRevision !== task.reviewRevision
@@ -3125,6 +3156,16 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         data: { reason: 'IMPORT_APPROVAL_SNAPSHOT_TAMPERED' }
       });
     }
+    const currentAiReview = await this.importAiReviews.canonicalDigest(tx, task.id, task.reviewRevision);
+    if (
+      this.approvalAiReviewDigestHash(task) !== currentAiReview.digestHash
+      || this.validationAiReviewDigestHash(task) !== currentAiReview.digestHash
+    ) {
+      throw new ConflictException({
+        message: 'Excel AI 审核证据与批准快照不再一致',
+        data: { reason: 'IMPORT_AI_REVIEW_DIGEST_STALE' }
+      });
+    }
   }
 
   private approvalOutputHash(task: PreviewTask) {
@@ -3141,6 +3182,15 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const value = review.rowSetHash;
     if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
       throw new ConflictException('Excel 批准快照缺少行集合哈希');
+    }
+    return value;
+  }
+
+  private approvalAiReviewDigestHash(task: PreviewTask) {
+    const review = this.approvalSection(task, 'review');
+    const value = review.aiReviewDigestHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 批准快照缺少 AI 审核摘要哈希');
     }
     return value;
   }
@@ -3179,6 +3229,19 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
     const value = snapshot.rowSetHash;
     if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
       throw new ConflictException('Excel 校验快照缺少行集合哈希');
+    }
+    return value;
+  }
+
+  private validationAiReviewDigestHash(task: PreviewTask) {
+    const snapshot = this.validationSnapshotObject(task);
+    const aiReview = snapshot.aiReview;
+    if (!aiReview || typeof aiReview !== 'object' || Array.isArray(aiReview)) {
+      throw new ConflictException('Excel 校验快照缺少 AI 审核摘要');
+    }
+    const value = (aiReview as Prisma.JsonObject).digestHash;
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+      throw new ConflictException('Excel 校验快照缺少 AI 审核摘要哈希');
     }
     return value;
   }

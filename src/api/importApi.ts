@@ -159,6 +159,16 @@ export function getImportAiReviewDecisions(
     pageSize: query.pageSize ?? 20,
     total: 0,
     summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
+    digest: {
+      schemaVersion: 'excel-ai-review-digest/1.0',
+      mode: 'manual',
+      taskReviewRevision: query.reviewRevision ?? 0,
+      decisionCount: 0,
+      summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
+      aiTaskIds: [],
+      batches: [],
+      digestHash: '0'.repeat(64),
+    },
   });
 }
 

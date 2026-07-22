@@ -30,6 +30,9 @@ import { isRegisteredImportTransformKey } from './import-transform-registry';
 
 type ReviewTask = Pick<ImportTask, 'id' | 'templateId' | 'templateVersion' | 'reviewRevision'>;
 type ReviewColumn = Pick<ImportColumn, 'id' | 'sourceColumnId' | 'columnIndex'>;
+type ReviewReader = Prisma.TransactionClient | PrismaService;
+
+export const EXCEL_AI_REVIEW_DIGEST_SCHEMA_VERSION = 'excel-ai-review-digest/1.0';
 
 interface VerifiedMappingSuggestion {
   sourceRef: string;
@@ -253,17 +256,19 @@ export class ImportAiReviewService {
   }
 
   async findMany(taskId: string, query: QueryAiReviewDecisionsDto) {
-    if (!await this.prisma.importTask.count({ where: { id: taskId } })) {
-      throw new NotFoundException('导入任务不存在');
-    }
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const where = {
       importTaskId: taskId,
       ...(query.reviewRevision ? { reviewRevision: query.reviewRevision } : {})
     };
-    const { items, total, grouped } = await this.prisma.$transaction(async (tx) => {
-      const [items, total, grouped] = await Promise.all([
+    const { items, total, grouped, digest } = await this.prisma.$transaction(async (tx) => {
+      const task = await tx.importTask.findUnique({
+        where: { id: taskId },
+        select: { reviewRevision: true }
+      });
+      if (!task) throw new NotFoundException('导入任务不存在');
+      const [items, total, grouped, digest] = await Promise.all([
         tx.importAiReviewDecision.findMany({
           where,
           include: { actor: { select: { id: true, username: true, name: true } } },
@@ -277,9 +282,10 @@ export class ImportAiReviewService {
           where,
           orderBy: { decision: 'asc' },
           _count: { _all: true }
-        })
+        }),
+        this.canonicalDigest(tx, taskId, task.reviewRevision)
       ]);
-      return { items, total, grouped };
+      return { items, total, grouped, digest };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     return {
       items: items.map((item) => ({
@@ -310,7 +316,80 @@ export class ImportAiReviewService {
       page,
       pageSize,
       total,
-      summary: this.decisionCountsFromGroups(total, grouped)
+      summary: this.decisionCountsFromGroups(total, grouped),
+      digest
+    };
+  }
+
+  async canonicalDigest(reader: ReviewReader, taskId: string, taskReviewRevision: number) {
+    const decisions = await reader.importAiReviewDecision.findMany({
+      where: { importTaskId: taskId },
+      include: { aiTask: true },
+      orderBy: [
+        { reviewRevision: 'asc' },
+        { sourceRef: 'asc' },
+        { id: 'asc' }
+      ]
+    });
+    const batchByTaskId = new Map<string, ReturnType<ImportAiReviewService['aiBatchFact']>>();
+    const decisionFacts = decisions.map((item) => {
+      const batch = this.aiBatchFact(item);
+      const existing = batchByTaskId.get(item.aiTaskId);
+      if (existing && canonicalJsonSha256(existing) !== canonicalJsonSha256(batch)) {
+        throw this.provenanceConflict('同一 AI 任务的审核 provenance 不一致');
+      }
+      batchByTaskId.set(item.aiTaskId, batch);
+      return {
+        id: item.id,
+        importColumnId: item.importColumnId,
+        aiTaskId: item.aiTaskId,
+        outputHash: item.outputHash,
+        versionVectorHash: item.versionVectorHash,
+        reviewStateHash: item.reviewStateHash,
+        reviewBasisHash: item.reviewBasisHash,
+        sourceRef: item.sourceRef,
+        templateVersionId: item.templateVersionId,
+        suggested: {
+          targetFieldId: item.suggestedTargetFieldId,
+          targetFieldKey: item.suggestedTargetFieldKey,
+          transformKey: item.suggestedTransformKey,
+          confidence: item.suggestedConfidence,
+          evidenceRefs: this.strictStringArray(item.evidenceRefs, 'AI 审核证据引用无效')
+        },
+        final: {
+          targetFieldId: item.finalTargetFieldId,
+          ignored: item.finalIgnored
+        },
+        decision: item.decision,
+        reason: item.reason,
+        reviewRevision: item.reviewRevision,
+        actorId: item.actorId,
+        reviewedAt: item.createdAt.toISOString()
+      };
+    });
+    const batches = [...batchByTaskId.values()].sort((left, right) => (
+      left.aiTaskId.localeCompare(right.aiTaskId)
+    ));
+    const summary = this.decisionCounts(decisionFacts.length, decisions.map((item) => item.decision));
+    const core = {
+      schemaVersion: EXCEL_AI_REVIEW_DIGEST_SCHEMA_VERSION,
+      taskId,
+      taskReviewRevision,
+      mode: decisions.length > 0 ? 'ai_reviewed' as const : 'manual' as const,
+      decisionCount: decisions.length,
+      summary,
+      batches,
+      decisions: decisionFacts
+    };
+    return {
+      schemaVersion: core.schemaVersion,
+      mode: core.mode,
+      taskReviewRevision,
+      decisionCount: core.decisionCount,
+      summary,
+      aiTaskIds: batches.map((batch) => batch.aiTaskId),
+      batches,
+      digestHash: canonicalJsonSha256(core)
     };
   }
 
@@ -337,6 +416,100 @@ export class ImportAiReviewService {
       counts.pending -= group._count._all;
     }
     return counts;
+  }
+
+  private aiBatchFact(item: Prisma.ImportAiReviewDecisionGetPayload<{ include: { aiTask: true } }>) {
+    const task = item.aiTask;
+    if (
+      task.status !== AiTaskStatus.succeeded
+      || task.outputHash !== item.outputHash
+      || task.versionVectorHash !== item.versionVectorHash
+    ) {
+      throw this.provenanceConflict('AI 审核引用的任务状态或哈希已变化');
+    }
+    const versionVector = this.object(task.versionVector);
+    if (!versionVector || canonicalJsonSha256(versionVector) !== item.versionVectorHash) {
+      throw this.provenanceConflict('AI 审核版本向量与持久化哈希不一致');
+    }
+    const outputContainer = this.outputContainer(task.outputPayload);
+    const output = this.validatedOutput(outputContainer);
+    if (canonicalJsonSha256(output) !== item.outputHash) {
+      throw this.provenanceConflict('AI 审核输出与持久化哈希不一致');
+    }
+    const reviewBasis = this.object(outputContainer.reviewBasis);
+    const persistedBasisHash = reviewBasis?.basisHash;
+    const reviewBasisCore = reviewBasis
+      ? Object.fromEntries(Object.entries(reviewBasis).filter(([key]) => key !== 'basisHash'))
+      : undefined;
+    if (
+      item.reviewBasisHash
+      && (
+        !reviewBasisCore
+        || persistedBasisHash !== item.reviewBasisHash
+        || canonicalJsonSha256(reviewBasisCore) !== item.reviewBasisHash
+      )
+    ) {
+      throw this.provenanceConflict('AI 审核基线与持久化哈希不一致');
+    }
+    const provider = this.object(versionVector.provider);
+    const prompt = this.object(versionVector.prompt);
+    const contracts = this.object(versionVector.contracts);
+    if (
+      !provider
+      || !prompt
+      || !contracts
+      || !['mock', 'local', 'external'].includes(String(provider.providerClass))
+      || typeof provider.provider !== 'string'
+      || typeof provider.modelName !== 'string'
+      || typeof prompt.promptKey !== 'string'
+      || !Number.isInteger(prompt.versionNo)
+      || typeof contracts.inputSchemaVersion !== 'string'
+      || typeof contracts.outputSchemaVersion !== 'string'
+    ) {
+      throw this.provenanceConflict('AI 审核版本向量缺少 Provider、Prompt 或 Schema 事实');
+    }
+    return {
+      aiTaskId: task.id,
+      inputHash: task.inputHash,
+      outputHash: item.outputHash,
+      versionVectorHash: item.versionVectorHash,
+      reviewStateHash: item.reviewStateHash,
+      reviewBasisHash: item.reviewBasisHash,
+      provider: {
+        providerClass: String(provider.providerClass),
+        provider: provider.provider,
+        modelName: provider.modelName,
+        modelRevision: typeof provider.modelRevision === 'string' ? provider.modelRevision : null
+      },
+      prompt: {
+        promptKey: prompt.promptKey,
+        versionNo: Number(prompt.versionNo),
+        contentSha256: typeof prompt.contentSha256 === 'string' ? prompt.contentSha256 : null
+      },
+      contracts: {
+        inputSchemaVersion: contracts.inputSchemaVersion,
+        outputSchemaVersion: contracts.outputSchemaVersion
+      },
+      warnings: Array.isArray(output.warnings)
+        ? this.strictStringArray(output.warnings, 'AI 审核输出 warning 集合无效')
+        : [],
+      generatedAt: task.createdAt.toISOString(),
+      completedAt: task.completedAt?.toISOString() ?? null
+    };
+  }
+
+  private strictStringArray(value: Prisma.JsonValue, message: string) {
+    if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+      throw this.provenanceConflict(message);
+    }
+    return value;
+  }
+
+  private provenanceConflict(message: string) {
+    return new ConflictException({
+      message,
+      data: { reason: 'IMPORT_AI_REVIEW_PROVENANCE_INVALID' }
+    });
   }
 
   private async currentReviewStateHash(tx: Prisma.TransactionClient, taskId: string) {

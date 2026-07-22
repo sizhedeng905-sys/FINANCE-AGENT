@@ -44,6 +44,7 @@ import {
   toExcelAiCandidate
 } from '../../src/import-tasks/excel-ai-review-basis';
 import { IMPORT_TRANSFORM_REGISTRY_VERSION } from '../../src/import-tasks/import-transform-registry';
+import { ImportTasksService } from '../../src/import-tasks/import-tasks.service';
 import {
   aiInvocationVersionVectorContent,
   buildAiInvocationVersionVector
@@ -613,22 +614,27 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       });
       templateId = template.id;
       const fields: Array<{ id: string; fieldKey: string }> = [];
-      for (const key of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) {
+      for (const [index, key] of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].entries()) {
         const field = await prisma.fieldDefinition.create({
           data: {
             fieldKey: `${requestPrefix}_${key}`,
             fieldName: `AI review ${key}`,
-            fieldType: FieldType.text,
-            semanticType: SemanticType.remark
+            fieldType: index === 0 ? FieldType.date : index === 1 ? FieldType.money : FieldType.text,
+            semanticType: index === 0 ? SemanticType.date : index === 1 ? SemanticType.amount : SemanticType.remark
           }
         });
         fields.push(field);
         fieldIds.push(field.id);
       }
+      await prisma.template.update({
+        where: { id: template.id },
+        data: { primaryDateFieldId: fields[0].id, primaryAmountFieldId: fields[1].id }
+      });
       await prisma.templateField.createMany({
         data: fields.map((field, index) => ({
           templateId: template.id,
           fieldId: field.id,
+          isRequired: index < 2,
           displayOrder: index + 1
         }))
       });
@@ -695,6 +701,18 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       const columns = await prisma.importColumn.findMany({
         where: { importTaskId: task.id },
         orderBy: { columnIndex: 'asc' }
+      });
+      await prisma.importRow.create({
+        data: {
+          importTaskId: task.id,
+          sheetId: sheet.id,
+          rowNumber: 2,
+          rawData: Object.fromEntries(columns.map((column, index) => [
+            column.sourceKey,
+            index === 0 ? '2026-07-22' : index === 2 ? '88.80' : `value-${index}`
+          ])),
+          rowHash: canonicalJsonSha256({ requestPrefix, rowNumber: 2 })
+        }
       });
       const templateVersionId = `${template.id}:v${template.version}`;
       const mappingOutput = (label: string, versionId = templateVersionId) => ({
@@ -1182,7 +1200,14 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         page: 1,
         pageSize: 2,
         total: 10,
-        summary: { total: 10, accept: 7, edit: 1, reject: 1, ignore: 1, pending: 0 }
+        summary: { total: 10, accept: 7, edit: 1, reject: 1, ignore: 1, pending: 0 },
+        digest: {
+          schemaVersion: 'excel-ai-review-digest/1.0',
+          mode: 'ai_reviewed',
+          decisionCount: 10,
+          summary: { total: 10, accept: 7, edit: 1, reject: 1, ignore: 1, pending: 0 },
+          digestHash: expect.stringMatching(/^[0-9a-f]{64}$/)
+        }
       });
       expect(listed.body.data.items).toHaveLength(2);
       expect(listed.body.data.items[0]).toMatchObject({
@@ -1221,6 +1246,97 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       expect(await prisma.idempotencyKey.count({
         where: { key: approvedIdempotencyKey, status: 'completed' }
       })).toBe(1);
+
+      const beforeValidation = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
+      const revalidated = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${task.id}/revalidate`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          expectedVersion: beforeValidation.version,
+          expectedReviewRevision: beforeValidation.reviewRevision
+        })
+        .expect(201);
+      expect(revalidated.body.data.validation.snapshot.aiReview).toMatchObject({
+        schemaVersion: 'excel-ai-review-digest/1.0',
+        mode: 'ai_reviewed',
+        decisionCount: 10,
+        digestHash: expect.stringMatching(/^[0-9a-f]{64}$/)
+      });
+      expect(revalidated.body.data.validation.snapshot.aiReview.digestHash)
+        .toBe(listed.body.data.digest.digestHash);
+
+      await prisma.importAiReviewDecision.update({
+        where: { id: stored[0].id },
+        data: { reason: '重新校验后被篡改的审核理由' }
+      });
+      const secondFinanceLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ username: '财务', password: '123456' })
+        .expect(200);
+      const validation = revalidated.body.data.validation;
+      const staleApproval = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${task.id}/confirm`)
+        .set('Authorization', `Bearer ${secondFinanceLogin.body.data.accessToken}`)
+        .set('Idempotency-Key', `ai-review-digest-stale-${suffix}`)
+        .send({
+          expectedVersion: revalidated.body.data.version,
+          expectedReviewRevision: revalidated.body.data.reviewRevision,
+          expectedValidationSnapshotHash: validation.snapshotHash,
+          expectedPayloadHash: validation.snapshot.normalizedOutputHash,
+          acknowledgedWarningIds: validation.snapshot.warnings.map((warning: { issueId: string }) => warning.issueId)
+        })
+        .expect(409);
+      expect(staleApproval.body.data.reason).toBe('IMPORT_AI_REVIEW_DIGEST_STALE');
+      expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
+
+      await prisma.importAiReviewDecision.update({
+        where: { id: stored[0].id },
+        data: { reason: stored[0].reason }
+      });
+      const workerRaceKey = `ai-review-digest-worker-${suffix}`;
+      idempotencyKeys.push(workerRaceKey);
+      const service = app.get(ImportTasksService) as unknown as {
+        scheduleBackgroundConfirmation(job: unknown): Promise<void>;
+        recoverExpiredConfirmations(): Promise<number>;
+      };
+      const scheduler = jest.spyOn(service, 'scheduleBackgroundConfirmation').mockResolvedValue();
+      try {
+        await request(app.getHttpServer())
+          .post(`/api/import-tasks/${task.id}/confirm`)
+          .set('Authorization', `Bearer ${secondFinanceLogin.body.data.accessToken}`)
+          .set('Idempotency-Key', workerRaceKey)
+          .send({
+            expectedVersion: revalidated.body.data.version,
+            expectedReviewRevision: revalidated.body.data.reviewRevision,
+            expectedValidationSnapshotHash: validation.snapshotHash,
+            expectedPayloadHash: validation.snapshot.normalizedOutputHash,
+            acknowledgedWarningIds: validation.snapshot.warnings.map((warning: { issueId: string }) => warning.issueId)
+          })
+          .expect(201);
+      } finally {
+        scheduler.mockRestore();
+      }
+      await prisma.importAiReviewDecision.update({
+        where: { id: stored[0].id },
+        data: { reason: '批准调度后被篡改的审核理由' }
+      });
+      await prisma.importTask.update({
+        where: { id: task.id },
+        data: { leaseUntil: new Date(Date.now() - 1_000) }
+      });
+      expect(await service.recoverExpiredConfirmations()).toBe(1);
+      const deadline = Date.now() + 10_000;
+      let failedTask = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
+      while (failedTask.status === ImportTaskStatus.confirming && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        failedTask = await prisma.importTask.findUniqueOrThrow({ where: { id: task.id } });
+      }
+      expect(failedTask).toMatchObject({
+        status: ImportTaskStatus.confirmation_failed,
+        importedRows: 0
+      });
+      expect(failedTask.errorMessage).toContain('Excel AI 审核证据与批准快照不再一致');
+      expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
     } finally {
       if (idempotencyKeys.length) {
         await prisma.idempotencyKey.deleteMany({ where: { key: { in: idempotencyKeys } } });

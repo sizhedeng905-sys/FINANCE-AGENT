@@ -363,7 +363,7 @@ export interface ImportTask {
 }
 
 export interface ImportApprovalSnapshot {
-  schemaVersion: 'excel-approval/1.0';
+  schemaVersion: 'excel-approval/1.1';
   taskId: string;
   taskVersion: number;
   projectId: string;
@@ -373,7 +373,12 @@ export interface ImportApprovalSnapshot {
     validationRuleVersion: string;
     rowSetHash: string;
     normalizedOutputHash: string;
+    aiReviewDigestHash: string;
     acknowledgedWarningIds: string[];
+  };
+  aiSuggestion: {
+    appliedToFormalData: false;
+    reviewDigest: ImportAiReviewDigest;
   };
   approval: {
     approvedByUserId: string;
@@ -577,7 +582,7 @@ export interface ImportValidationIssue {
 }
 
 export interface ImportValidationSnapshot {
-  schemaVersion: 'excel-validation/1.0';
+  schemaVersion: 'excel-validation/1.1';
   taskId: string;
   projectId: string;
   reviewRevision: number;
@@ -596,6 +601,7 @@ export interface ImportValidationSnapshot {
   };
   blockingErrors: ImportValidationIssue[];
   warnings: ImportValidationIssue[];
+  aiReview: ImportAiReviewDigest;
   valid: boolean;
   snapshotHash: string;
 }
@@ -801,6 +807,51 @@ export interface ExcelAiSuggestionHistory {
 
 export type ImportAiReviewDecisionType = 'accept' | 'edit' | 'reject' | 'ignore';
 
+export interface ImportAiReviewDigestBatch {
+  aiTaskId: string;
+  inputHash: string;
+  outputHash: string;
+  versionVectorHash: string;
+  reviewStateHash: string | null;
+  reviewBasisHash: string | null;
+  provider: {
+    providerClass: 'mock' | 'local' | 'external';
+    provider: string;
+    modelName: string;
+    modelRevision: string | null;
+  };
+  prompt: {
+    promptKey: string;
+    versionNo: number;
+    contentSha256: string | null;
+  };
+  contracts: {
+    inputSchemaVersion: string;
+    outputSchemaVersion: string;
+  };
+  warnings: string[];
+  generatedAt: string;
+  completedAt: string | null;
+}
+
+export interface ImportAiReviewDigest {
+  schemaVersion: 'excel-ai-review-digest/1.0';
+  mode: 'manual' | 'ai_reviewed';
+  taskReviewRevision: number;
+  decisionCount: number;
+  summary: {
+    total: number;
+    accept: number;
+    edit: number;
+    reject: number;
+    ignore: number;
+    pending: number;
+  };
+  aiTaskIds: string[];
+  batches: ImportAiReviewDigestBatch[];
+  digestHash: string;
+}
+
 export interface ImportAiReviewDecision {
   id: string;
   importTaskId: string;
@@ -853,6 +904,7 @@ export interface PaginatedImportAiReviewDecisions {
     ignore: number;
     pending: number;
   };
+  digest: ImportAiReviewDigest;
 }
 
 export interface ReviewImportRowPayload {

@@ -461,8 +461,28 @@ export async function mockRevalidateImportTask(id: string, payload: RevalidateIm
       sampleRowNumbers: [],
     });
   }
+  const aiReviewCore = {
+    schemaVersion: 'excel-ai-review-digest/1.0' as const,
+    taskId: task.id,
+    taskReviewRevision: task.reviewRevision,
+    mode: 'manual' as const,
+    decisionCount: 0,
+    summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
+    batches: [],
+    decisions: [],
+  };
+  const aiReview = {
+    schemaVersion: aiReviewCore.schemaVersion,
+    mode: aiReviewCore.mode,
+    taskReviewRevision: task.reviewRevision,
+    decisionCount: 0,
+    summary: aiReviewCore.summary,
+    aiTaskIds: [],
+    batches: [],
+    digestHash: mockHash(aiReviewCore),
+  };
   const core = {
-    schemaVersion: 'excel-validation/1.0' as const,
+    schemaVersion: 'excel-validation/1.1' as const,
     taskId: task.id,
     projectId: task.projectId,
     reviewRevision: task.reviewRevision,
@@ -472,6 +492,7 @@ export async function mockRevalidateImportTask(id: string, payload: RevalidateIm
     counts,
     blockingErrors,
     warnings,
+    aiReview,
     valid: blockingErrors.length === 0,
   };
   task.version += 1;
@@ -529,7 +550,7 @@ export async function mockConfirmImportTask(id: string, payload: ConfirmImportTa
     snapshotHash: approvalHash,
     requestKeyHash,
     snapshot: {
-      schemaVersion: 'excel-approval/1.0',
+      schemaVersion: 'excel-approval/1.1',
       taskId: task.id,
       taskVersion: task.version,
       projectId: task.projectId,
@@ -539,7 +560,12 @@ export async function mockConfirmImportTask(id: string, payload: ConfirmImportTa
         validationRuleVersion: validation.ruleVersion,
         rowSetHash: validation.snapshot.rowSetHash,
         normalizedOutputHash: validation.snapshot.normalizedOutputHash,
+        aiReviewDigestHash: validation.snapshot.aiReview.digestHash,
         acknowledgedWarningIds: payload.acknowledgedWarningIds,
+      },
+      aiSuggestion: {
+        appliedToFormalData: false,
+        reviewDigest: validation.snapshot.aiReview,
       },
       approval: {
         approvedByUserId: approver.id,
