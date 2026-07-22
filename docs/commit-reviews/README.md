@@ -41,6 +41,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-027 | [CR-027_ocr-ai-review-immutable-evidence.md](CR-027_ocr-ai-review-immutable-evidence.md) | `feat: add immutable OCR AI review evidence` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / API_NOT_YET_WIRED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-026 |
 | CR-028 | [CR-028_ocr-ai-complete-batch-review.md](CR-028_ocr-ai-complete-batch-review.md) | `feat: persist complete OCR AI reviews` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / APPROVAL_DIGEST_PENDING / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-027 |
 | CR-029 | [CR-029_ocr-ai-review-digest-binding.md](CR-029_ocr-ai-review-digest-binding.md) | `fix: bind OCR approvals to review digest` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-028 |
+| CR-030 | [CR-030_ocr-ai-review-context-recovery.md](CR-030_ocr-ai-review-context-recovery.md) | `fix: restore OCR AI review context` | P1 OCR review integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / REAL_SAMPLE_NEEDED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-029 |
 
 ## 审查分组
 
