@@ -146,6 +146,7 @@ async function main() {
 
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.allow_report_audit_purge', 'on', true)`;
+    await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
     await tx.aiFinancialClaim.deleteMany({ where: { reportNarrativeId: { in: reportNarrativeIds } } });
     await tx.reportNarrative.deleteMany({ where: { id: { in: reportNarrativeIds } } });
     await tx.reportSnapshotSource.deleteMany({ where: { snapshotId: { in: reportSnapshotIds } } });
@@ -157,6 +158,7 @@ async function main() {
     });
     await tx.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
     await tx.businessRecord.deleteMany({ where: { id: { in: recordIds } } });
+    await tx.importAiReviewDecision.deleteMany({ where: { importTaskId: { in: importTaskIds } } });
     await tx.importTask.deleteMany({ where: { id: { in: importTaskIds } } });
     await tx.aiTask.deleteMany({ where: { id: { in: importAiTaskIds } } });
     await tx.ocrTask.deleteMany({ where: { id: { in: ocrTaskIds } } });

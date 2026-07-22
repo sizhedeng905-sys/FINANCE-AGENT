@@ -88,6 +88,28 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     if (app) await app.close();
   });
 
+  async function maintenanceReplaceReviewReason(id: string, reason: string) {
+    const current = await prisma.importAiReviewDecision.findUniqueOrThrow({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
+      await tx.importAiReviewDecision.delete({ where: { id } });
+      await tx.importAiReviewDecision.create({
+        data: {
+          ...current,
+          evidenceRefs: current.evidenceRefs as Prisma.InputJsonValue,
+          reason
+        }
+      });
+    });
+  }
+
+  async function maintenancePurgeTaskReviews(importTaskId: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
+      await tx.importAiReviewDecision.deleteMany({ where: { importTaskId } });
+    });
+  }
+
   it('keeps classification and mapping advisory, idempotent, allowlisted, and kill-switchable', async () => {
     const suffix = randomUUID().slice(0, 8);
     const requestPrefix = `m3-ai-${suffix}`;
@@ -1142,6 +1164,23 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         null,
         ...fields.slice(4).map((field) => field.id)
       ]);
+      await expect(prisma.importAiReviewDecision.update({
+        where: { id: stored[0].id },
+        data: { reason: '普通运行时不应修改不可变审核证据' }
+      })).rejects.toThrow(/immutable import AI review decisions/);
+      await expect(prisma.importAiReviewDecision.delete({
+        where: { id: stored[0].id }
+      })).rejects.toThrow(/immutable import AI review decisions/);
+      await expect(prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.allow_import_ai_review_purge', 'on', true)`;
+        await tx.importAiReviewDecision.update({
+          where: { id: stored[0].id },
+          data: { reason: 'maintenance 也不得原位修改审核证据' }
+        });
+      })).rejects.toThrow(/immutable import AI review decisions/);
+      await expect(prisma.importTask.delete({
+        where: { id: task.id }
+      })).rejects.toThrow();
       await expect(prisma.importAiReviewDecision.create({
         data: {
           importTaskId: task.id,
@@ -1265,10 +1304,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       expect(revalidated.body.data.validation.snapshot.aiReview.digestHash)
         .toBe(listed.body.data.digest.digestHash);
 
-      await prisma.importAiReviewDecision.update({
-        where: { id: stored[0].id },
-        data: { reason: '重新校验后被篡改的审核理由' }
-      });
+      await maintenanceReplaceReviewReason(stored[0].id, '重新校验后被替换的审核理由');
       const secondFinanceLogin = await request(app.getHttpServer())
         .post('/api/auth/login')
         .send({ username: '财务', password: '123456' })
@@ -1288,11 +1324,11 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         .expect(409);
       expect(staleApproval.body.data.reason).toBe('IMPORT_AI_REVIEW_DIGEST_STALE');
       expect(await prisma.businessRecord.count({ where: { importTaskId: task.id } })).toBe(0);
+      await expect(prisma.importAiReviewDecision.delete({
+        where: { id: stored[0].id }
+      })).rejects.toThrow(/immutable import AI review decisions/);
 
-      await prisma.importAiReviewDecision.update({
-        where: { id: stored[0].id },
-        data: { reason: stored[0].reason }
-      });
+      await maintenanceReplaceReviewReason(stored[0].id, stored[0].reason);
       const workerRaceKey = `ai-review-digest-worker-${suffix}`;
       idempotencyKeys.push(workerRaceKey);
       const service = app.get(ImportTasksService) as unknown as {
@@ -1316,10 +1352,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       } finally {
         scheduler.mockRestore();
       }
-      await prisma.importAiReviewDecision.update({
-        where: { id: stored[0].id },
-        data: { reason: '批准调度后被篡改的审核理由' }
-      });
+      await maintenanceReplaceReviewReason(stored[0].id, '批准调度后被替换的审核理由');
       await prisma.importTask.update({
         where: { id: task.id },
         data: { leaseUntil: new Date(Date.now() - 1_000) }
@@ -1341,6 +1374,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       if (idempotencyKeys.length) {
         await prisma.idempotencyKey.deleteMany({ where: { key: { in: idempotencyKeys } } });
       }
+      if (taskId) await maintenancePurgeTaskReviews(taskId);
       if (taskId) await prisma.importTask.deleteMany({ where: { id: taskId } });
       if (aiTaskIds.length) await prisma.aiTask.deleteMany({ where: { id: { in: aiTaskIds } } });
       if (rawFileId) await prisma.rawFile.deleteMany({ where: { id: rawFileId } });

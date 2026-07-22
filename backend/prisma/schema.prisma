@@ -912,8 +912,8 @@ model ImportAiReviewDecision {
   actorId                 String                     @map("actor_id")
   createdAt               DateTime                   @default(now()) @map("created_at")
 
-  importTask   ImportTask   @relation(fields: [importTaskId], references: [id], onDelete: Cascade)
-  importColumn ImportColumn @relation(fields: [importColumnId], references: [id], onDelete: Cascade)
+  importTask   ImportTask   @relation(fields: [importTaskId], references: [id], onDelete: Restrict)
+  importColumn ImportColumn @relation(fields: [importColumnId], references: [id], onDelete: Restrict)
   aiTask       AiTask       @relation(fields: [aiTaskId], references: [id], onDelete: Restrict)
   actor        User         @relation("ImportAiReviewActor", fields: [actorId], references: [id], onDelete: Restrict)
 
