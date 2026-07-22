@@ -150,6 +150,26 @@ select {
   margin-top: 16px;
 }
 
+.excel-ai-review-evidence,
+.excel-ai-review-evidence .ant-card-body,
+.excel-ai-review-evidence .ant-descriptions,
+.excel-ai-review-evidence .ant-descriptions-view,
+.excel-ai-review-evidence .ant-descriptions-item-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.excel-ai-review-evidence .ant-descriptions-item-content,
+.excel-ai-review-evidence .ant-tag {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.excel-ai-review-evidence .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .metric-card .ant-statistic-title {
   color: #64748b;
 }

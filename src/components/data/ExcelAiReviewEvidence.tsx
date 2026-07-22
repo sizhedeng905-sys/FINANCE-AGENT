@@ -1,4 +1,4 @@
-import { AuditOutlined } from '@ant-design/icons';
+import { AuditOutlined, RobotOutlined } from '@ant-design/icons';
 import { Alert, Card, Descriptions, Empty, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMemo } from 'react';
@@ -38,6 +38,12 @@ function formatDateTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
 }
+
+const providerLabels = {
+  mock: { color: 'warning', text: 'Mock Provider' },
+  local: { color: 'processing', text: '本地 Provider' },
+  external: { color: 'error', text: '外部 Provider' },
+} as const;
 
 function CopyableValue({ value }: { value: string }) {
   return (
@@ -118,12 +124,20 @@ export default function ExcelAiReviewEvidence({
       render: (value: string) => formatDateTime(value),
     },
   ], [columnById]);
+  const summary = data?.digest.summary;
 
   return (
     <Card
-      className="section-row"
+      className="section-row excel-ai-review-evidence"
       title={<Space><AuditOutlined />AI 映射审核证据</Space>}
-      extra={data ? <Tag color="blue">共 {data.total} 条</Tag> : undefined}
+      extra={data ? (
+        <Space wrap>
+          <Tag color={data.digest.mode === 'ai_reviewed' ? 'blue' : undefined}>
+            {data.digest.mode === 'ai_reviewed' ? 'AI 建议已人工复核' : '纯人工路径'}
+          </Tag>
+          <Tag>共 {data.total} 条</Tag>
+        </Space>
+      ) : undefined}
       loading={loading && !data}
     >
       {error ? (
@@ -134,7 +148,56 @@ export default function ExcelAiReviewEvidence({
           description={error}
         />
       ) : null}
-      {!error && data?.total === 0 ? <Empty description="本任务未使用 AI 映射建议" /> : null}
+      {!error && data ? (
+        <>
+          <Descriptions bordered size="small" column={{ xs: 2, md: 6 }}>
+            <Descriptions.Item label="总数">{summary?.total ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="采纳">{summary?.accept ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="修改">{summary?.edit ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="拒绝">{summary?.reject ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="忽略">{summary?.ignore ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="待处理">{summary?.pending ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="证据摘要" span={6}>
+              <CopyableValue value={data.digest.digestHash} />
+            </Descriptions.Item>
+          </Descriptions>
+          {data.digest.batches.map((batch) => {
+            const provider = providerLabels[batch.provider.providerClass];
+            return (
+              <Descriptions
+                key={batch.aiTaskId}
+                className="section-row excel-ai-provenance"
+                bordered
+                size="small"
+                column={{ xs: 1, md: 2 }}
+                title={<Space><RobotOutlined /><span>AI 调用事实</span><Tag color={provider.color}>{provider.text}</Tag></Space>}
+              >
+                <Descriptions.Item label="Provider / 模型">
+                  {batch.provider.provider} / {batch.provider.modelName}
+                  {batch.provider.modelRevision ? ` @ ${batch.provider.modelRevision}` : ''}
+                </Descriptions.Item>
+                <Descriptions.Item label="Prompt">
+                  {batch.prompt.promptKey}:v{batch.prompt.versionNo}
+                </Descriptions.Item>
+                <Descriptions.Item label="Schema">
+                  {batch.contracts.inputSchemaVersion} → {batch.contracts.outputSchemaVersion}
+                </Descriptions.Item>
+                <Descriptions.Item label="建议生成时间">{formatDateTime(batch.completedAt ?? batch.generatedAt)}</Descriptions.Item>
+                <Descriptions.Item label="AI Task"><CopyableValue value={batch.aiTaskId} /></Descriptions.Item>
+                <Descriptions.Item label="输出哈希"><CopyableValue value={batch.outputHash} /></Descriptions.Item>
+                <Descriptions.Item label="版本向量哈希"><CopyableValue value={batch.versionVectorHash} /></Descriptions.Item>
+                <Descriptions.Item label="审核基线哈希">
+                  {batch.reviewBasisHash ? <CopyableValue value={batch.reviewBasisHash} /> : '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="AI warning" span={2}>
+                  {batch.warnings.length ? batch.warnings.map((warning) => <Tag color="warning" key={warning}>{warning}</Tag>) : '无'}
+                </Descriptions.Item>
+              </Descriptions>
+            );
+          })}
+        </>
+      ) : null}
+      {!error && data?.total === 0 ? <Empty description="本任务未使用 AI 映射建议，按纯人工路径复核" /> : null}
       {!error && data && data.total > 0 ? (
         <Table
           rowKey="id"

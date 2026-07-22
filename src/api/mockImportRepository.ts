@@ -16,6 +16,8 @@ import type {
   FieldSuggestionListQuery,
   ImportColumn,
   ImportConfirmResult,
+  ImportAiReviewDecisionQuery,
+  ImportAiReviewDigest,
   ImportPreview,
   ImportPreviewQuery,
   ImportPreviewRow,
@@ -25,6 +27,7 @@ import type {
   ImportWorkbookInspection,
   ParseImportTaskPayload,
   PaginatedFieldSuggestions,
+  PaginatedImportAiReviewDecisions,
   PaginatedImportRows,
   PaginatedImportTasks,
   RevalidateImportTaskPayload,
@@ -39,6 +42,30 @@ function mockHash(value: unknown) {
   const source = JSON.stringify(value);
   return Array.from(source).reduce((hash, character) => ((hash * 31 + character.charCodeAt(0)) >>> 0), 0)
     .toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+}
+
+function mockManualAiReviewDigest(task: Pick<ImportTask, 'id' | 'reviewRevision'>): ImportAiReviewDigest {
+  const summary = { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 };
+  const core = {
+    schemaVersion: 'excel-ai-review-digest/1.0' as const,
+    taskId: task.id,
+    taskReviewRevision: task.reviewRevision,
+    mode: 'manual' as const,
+    decisionCount: 0,
+    summary,
+    batches: [],
+    decisions: [],
+  };
+  return {
+    schemaVersion: core.schemaVersion,
+    mode: core.mode,
+    taskReviewRevision: task.reviewRevision,
+    decisionCount: 0,
+    summary,
+    aiTaskIds: [],
+    batches: [],
+    digestHash: mockHash(core),
+  };
 }
 
 function detailedTask(task: Omit<ImportTask, 'counts' | 'rawFile' | 'sheets' | 'columns'> & Partial<ImportTask>): ImportTask {
@@ -284,6 +311,25 @@ export async function mockGetImportRows(id: string, query: ImportRowsQuery = {})
   return { items: filtered.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: filtered.length };
 }
 
+export async function mockGetImportAiReviewDecisions(
+  id: string,
+  query: ImportAiReviewDecisionQuery = {},
+): Promise<PaginatedImportAiReviewDecisions> {
+  await delay();
+  const task = findTask(id);
+  const digest = task.validation?.reviewRevision === task.reviewRevision
+    ? task.validation.snapshot.aiReview
+    : mockManualAiReviewDigest(task);
+  return {
+    items: [],
+    page: query.page ?? 1,
+    pageSize: query.pageSize ?? 20,
+    total: 0,
+    summary: digest.summary,
+    digest,
+  };
+}
+
 export async function mockSaveImportMappings(id: string, payload: SaveImportMappingsPayload) {
   await assertFinance();
   await delay();
@@ -461,26 +507,7 @@ export async function mockRevalidateImportTask(id: string, payload: RevalidateIm
       sampleRowNumbers: [],
     });
   }
-  const aiReviewCore = {
-    schemaVersion: 'excel-ai-review-digest/1.0' as const,
-    taskId: task.id,
-    taskReviewRevision: task.reviewRevision,
-    mode: 'manual' as const,
-    decisionCount: 0,
-    summary: { total: 0, accept: 0, edit: 0, reject: 0, ignore: 0, pending: 0 },
-    batches: [],
-    decisions: [],
-  };
-  const aiReview = {
-    schemaVersion: aiReviewCore.schemaVersion,
-    mode: aiReviewCore.mode,
-    taskReviewRevision: task.reviewRevision,
-    decisionCount: 0,
-    summary: aiReviewCore.summary,
-    aiTaskIds: [],
-    batches: [],
-    digestHash: mockHash(aiReviewCore),
-  };
+  const aiReview = mockManualAiReviewDigest(task);
   const core = {
     schemaVersion: 'excel-validation/1.1' as const,
     taskId: task.id,

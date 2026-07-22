@@ -63,7 +63,7 @@ export default function DataImportConfirmPage() {
   }, [id, currentUser?.id]);
 
   const aiReviewRequestKey = id && currentUser?.id
-    ? `${id}:${currentUser.id}:${aiReviewPage}:${aiReviewPageSize}`
+    ? `${id}:${currentUser.id}:${task?.reviewRevision ?? 'unknown'}:${task?.validation?.snapshotHash ?? 'unvalidated'}:${aiReviewPage}:${aiReviewPageSize}`
     : undefined;
 
   useEffect(() => {
@@ -134,11 +134,20 @@ export default function DataImportConfirmPage() {
     && !currentAiReviewState.loading
     && !currentAiReviewState.error,
   );
+  const aiReviewDigestMatches = Boolean(
+    currentValidation
+    && currentAiReviewState?.data
+    && currentAiReviewState.data.digest.taskReviewRevision === task?.reviewRevision
+    && currentAiReviewState.data.digest.decisionCount === currentAiReviewState.data.total
+    && currentAiReviewState.data.digest.summary.pending === 0
+    && currentAiReviewState.data.digest.digestHash === currentValidation.snapshot.aiReview.digestHash,
+  );
   const canApproveStatus = task?.status === 'pending_confirm' || task?.status === 'confirmation_failed';
   const canConfirm = canApproveStatus
     && Boolean(currentValidation?.snapshot.valid)
     && !isSelfApproval
     && aiReviewEvidenceReady
+    && aiReviewDigestMatches
     && (warnings.length === 0 || acknowledged);
   const recordCount = currentValidation?.snapshot.counts.recordCount ?? preview?.summary.valid ?? 0;
 
@@ -273,6 +282,14 @@ export default function DataImportConfirmPage() {
                 showIcon
                 message="整批校验未通过"
                 description={`${currentValidation.snapshot.counts.blockingErrorCount} 个阻断问题；正式记录尚未发布。`}
+              />
+            ) : null}
+            {currentValidation && aiReviewEvidenceReady && !aiReviewDigestMatches ? (
+              <Alert
+                type="error"
+                showIcon
+                message="AI 审核证据与当前校验快照不一致"
+                description="请刷新证据并重新校验；最终批准已暂停。"
               />
             ) : null}
             {task?.status === 'confirming' ? (

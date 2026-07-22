@@ -42,6 +42,7 @@ export default function ExcelApprovalEvidence({ approval, onOpenRecords }: Excel
         <Descriptions.Item label="批准快照哈希"><CopyableValue value={approval.snapshotHash} /></Descriptions.Item>
         <Descriptions.Item label="验证快照哈希"><CopyableValue value={approval.validationSnapshotHash} /></Descriptions.Item>
         <Descriptions.Item label="规范输出哈希"><CopyableValue value={snapshot.output.normalizedOutputHash} /></Descriptions.Item>
+        <Descriptions.Item label="AI 审核摘要"><CopyableValue value={snapshot.review.aiReviewDigestHash} /></Descriptions.Item>
         <Descriptions.Item label="请求键哈希"><CopyableValue value={approval.requestKeyHash} /></Descriptions.Item>
       </Descriptions>
       <Button className="section-row" icon={<DatabaseOutlined />} onClick={onOpenRecords}>

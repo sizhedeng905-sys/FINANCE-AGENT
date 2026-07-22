@@ -77,6 +77,29 @@ interface AiReviewDecisionDto {
   actor: { id: string; username: string; name: string };
 }
 
+interface AiReviewEvidenceDto {
+  items: AiReviewDecisionDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+  summary: { total: number; accept: number; edit: number; reject: number; ignore: number; pending: number };
+  digest: {
+    schemaVersion: 'excel-ai-review-digest/1.0';
+    mode: 'manual' | 'ai_reviewed';
+    taskReviewRevision: number;
+    decisionCount: number;
+    digestHash: string;
+    batches: Array<{
+      aiTaskId: string;
+      provider: { providerClass: 'mock' | 'local' | 'external'; provider: string; modelName: string };
+      prompt: { promptKey: string; versionNo: number };
+      contracts: { inputSchemaVersion: string; outputSchemaVersion: string };
+      generatedAt: string;
+      completedAt: string | null;
+    }>;
+  };
+}
+
 async function createMappingTask(page: Page) {
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E Stage9 标准费用导入.xlsx');
   await login(page, 'finance', '/finance/home');
@@ -211,7 +234,7 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
   await expect(page.getByText(suggestion.data.classification.aiTaskId)).toHaveCount(0);
 });
 
-test('API mode: a second finance user sees verified AI review evidence and approval fails closed when it is unavailable', async ({ page }) => {
+test('API mode: a second finance user approves only the same verified AI review evidence', async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = resolve(import.meta.dirname, '../backend/test-uploads/e2e-fixtures/E2E AI审核证据费用导入.xlsx');
   await login(page, 'finance', '/finance/home');
@@ -273,12 +296,7 @@ test('API mode: a second finance user sees verified AI review evidence and appro
   const saved = await readEnvelope<ImportTaskDto>(await saveResponse);
   expect(saved.data.status).toBe('pending_confirm');
   await readEnvelope(await previewResponse);
-  const evidence = await readEnvelope<{
-    items: AiReviewDecisionDto[];
-    page: number;
-    pageSize: number;
-    total: number;
-  }>(await evidenceResponse);
+  const evidence = await readEnvelope<AiReviewEvidenceDto>(await evidenceResponse);
   expect(evidence.data.total).toBe(suggestion.data.mapping.output.mappings.length);
   expect(evidence.data.items.every((item) => (
     item.aiTaskId === suggestion.data.mapping.aiTaskId
@@ -289,6 +307,26 @@ test('API mode: a second finance user sees verified AI review evidence and appro
     && item.decision === 'accept'
     && item.actor.username === 'finance'
   ))).toBe(true);
+  expect(evidence.data).toMatchObject({
+    summary: {
+      total: suggestion.data.mapping.output.mappings.length,
+      accept: suggestion.data.mapping.output.mappings.length,
+      edit: 0,
+      reject: 0,
+      ignore: 0,
+      pending: 0,
+    },
+    digest: {
+      mode: 'ai_reviewed',
+      decisionCount: suggestion.data.mapping.output.mappings.length,
+      digestHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      batches: [{
+        aiTaskId: suggestion.data.mapping.aiTaskId,
+        provider: { providerClass: 'mock' },
+        prompt: { promptKey: 'excel_column_mapping', versionNo: expect.any(Number) },
+      }],
+    },
+  });
   await expectNoOfficialRecords(page, created.data.id);
 
   const evidenceCard = page.locator('.ant-card').filter({ hasText: 'AI 映射审核证据' });
@@ -297,6 +335,10 @@ test('API mode: a second finance user sees verified AI review evidence and appro
   await expect(evidenceCard.locator('.excel-ai-review-row')).toHaveCount(evidence.data.total);
   await expect(evidenceCard.locator('.excel-ai-review-row').first()).toContainText('采纳');
   await expect(evidenceCard.locator('.excel-ai-review-row').first()).toContainText('finance');
+  await expect(evidenceCard.getByText('Mock Provider', { exact: true })).toBeVisible();
+  await expect(evidenceCard.getByText('AI 调用事实')).toBeVisible();
+  await expect(evidenceCard.getByText('建议生成时间')).toBeVisible();
+  await expect(evidenceCard.getByText(/excel_column_mapping:v\d+/)).toBeVisible();
   await evidenceCard.locator('.ant-table-row-expand-icon').first().click();
   const compactOutputHash = `${suggestion.data.mapping.outputHash.slice(0, 12)}...${suggestion.data.mapping.outputHash.slice(-6)}`;
   await expect(evidenceCard.getByText(compactOutputHash)).toBeVisible();
@@ -377,18 +419,29 @@ test('API mode: a second finance user sees verified AI review evidence and appro
         valid: boolean;
         warnings: Array<{ issueId: string }>;
         counts: { blockingErrorCount: number; recordCount: number };
+        aiReview: {
+          mode: 'manual' | 'ai_reviewed';
+          decisionCount: number;
+          digestHash: string;
+        };
       };
     };
   }>(await revalidateResponse);
   expect(validated.data.validation.snapshot).toMatchObject({
     valid: true,
     counts: { blockingErrorCount: 0, recordCount: 1 },
+    aiReview: {
+      mode: 'ai_reviewed',
+      decisionCount: evidence.data.total,
+      digestHash: evidence.data.digest.digestHash,
+    },
   });
   await page.getByRole('checkbox', { name: /已复核当前/ }).check();
   const approveButton = page.getByRole('button', { name: '批准并入库 1 条' });
   await expect(approveButton).toBeEnabled();
 
-  await page.route(`**/api/import-tasks/${created.data.id}/ai-review-decisions*`, async (route) => {
+  const evidenceRoute = `**/api/import-tasks/${created.data.id}/ai-review-decisions*`;
+  await page.route(evidenceRoute, async (route) => {
     await route.fulfill({
       status: 503,
       contentType: 'application/json',
@@ -400,6 +453,76 @@ test('API mode: a second finance user sees verified AI review evidence and appro
   await page.getByRole('checkbox', { name: /已复核当前/ }).check();
   await expect(approveButton).toBeDisabled();
   await expectNoOfficialRecords(page, created.data.id);
+
+  await page.unroute(evidenceRoute);
+  const restoredEvidenceResponse = page.waitForResponse((response) => isApiResponse(
+    response,
+    'GET',
+    `/api/import-tasks/${created.data.id}/ai-review-decisions`,
+  ));
+  await page.reload();
+  const restoredEvidence = await readEnvelope<AiReviewEvidenceDto>(await restoredEvidenceResponse);
+  expect(restoredEvidence.data.digest.digestHash).toBe(validated.data.validation.snapshot.aiReview.digestHash);
+  await expect(page.getByText('AI 审核证据加载失败，最终批准已暂停')).toHaveCount(0);
+  await page.getByRole('checkbox', { name: /已复核当前/ }).check();
+  await expect(approveButton).toBeEnabled();
+
+  const confirmResponsePromise = page.waitForResponse((response) => isApiResponse(
+    response,
+    'POST',
+    `/api/import-tasks/${created.data.id}/confirm`,
+  ));
+  await approveButton.click();
+  const confirmResponse = await confirmResponsePromise;
+  const firstConfirmation = await readEnvelope<{
+    task: { id: string; status: string };
+    importedRows: number;
+    alreadyConfirmed: boolean;
+  }>(confirmResponse);
+  expect(firstConfirmation.data).toMatchObject({
+    task: { id: created.data.id, status: 'confirming' },
+    importedRows: 0,
+    alreadyConfirmed: false,
+  });
+
+  const confirmHeaders = await confirmResponse.request().allHeaders();
+  const idempotencyKey = confirmHeaders['idempotency-key'];
+  const csrfToken = confirmHeaders['x-csrf-token'];
+  expect(idempotencyKey).toBeTruthy();
+  expect(csrfToken).toBeTruthy();
+  const replayResponse = await page.request.post(
+    `http://127.0.0.1:3101/api/import-tasks/${created.data.id}/confirm`,
+    {
+      headers: {
+        'X-CSRF-Token': csrfToken,
+        'Idempotency-Key': idempotencyKey,
+      },
+      data: confirmResponse.request().postDataJSON(),
+    },
+  );
+  expect(replayResponse.status()).toBe(201);
+  expect((await replayResponse.json()).data).toEqual(firstConfirmation.data);
+
+  let confirmedTask: {
+    status: string;
+    approval?: { snapshot: { review: { aiReviewDigestHash: string }; aiSuggestion: { reviewDigest: { digestHash: string } } } };
+  } | undefined;
+  await expect.poll(async () => {
+    const response = await page.request.get(`http://127.0.0.1:3101/api/import-tasks/${created.data.id}`);
+    const payload = await response.json() as { data: typeof confirmedTask };
+    confirmedTask = payload.data;
+    return confirmedTask?.status;
+  }, { timeout: 30_000 }).toBe('confirmed');
+  expect(confirmedTask?.approval?.snapshot.review.aiReviewDigestHash).toBe(evidence.data.digest.digestHash);
+  expect(confirmedTask?.approval?.snapshot.aiSuggestion.reviewDigest.digestHash).toBe(evidence.data.digest.digestHash);
+
+  const recordsResponse = await page.request.get(
+    `http://127.0.0.1:3101/api/records?page=1&pageSize=20&importTaskId=${encodeURIComponent(created.data.id)}`,
+  );
+  const records = await recordsResponse.json() as { data: { items: Array<{ importTaskId: string }>; total: number } };
+  expect(records.data.total).toBe(1);
+  expect(records.data.items).toHaveLength(1);
+  expect(records.data.items[0].importTaskId).toBe(created.data.id);
 });
 
 test('API mode: cross-template and unavailable AI responses fail closed without erasing manual work', async ({ page }) => {
