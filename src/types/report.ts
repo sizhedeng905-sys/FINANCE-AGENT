@@ -178,6 +178,42 @@ export interface ReportSnapshotResult {
   sourceCount: number;
 }
 
+export type ReportAccountingDirection = 'income' | 'expense';
+
+export interface ReportSnapshotSource {
+  recordId: string;
+  recordVersion: number;
+  recordHash: string;
+  projectId: string;
+  projectName: string;
+  recordDate: string;
+  currency: string;
+  accountingDirection: ReportAccountingDirection;
+  amount: string;
+}
+
+export interface ReportSnapshotSourceQuery {
+  page?: number;
+  pageSize?: number;
+  projectId?: string;
+  currency?: string;
+  accountingDirection?: ReportAccountingDirection;
+}
+
+export interface PaginatedReportSnapshotSources {
+  items: ReportSnapshotSource[];
+  page: number;
+  pageSize: number;
+  total: number;
+  snapshot: {
+    snapshotId: string;
+    snapshotHash: string;
+    sourceDigest: string;
+    dataWatermark: string;
+    sourceCount: number;
+  };
+}
+
 export interface ReportNarrativeClaim {
   claimId: string;
   claimType: 'MONEY' | 'COUNT' | 'PERCENT' | 'DATE' | 'TEXT' | 'COMPARISON' | 'WARNING';

@@ -4,6 +4,7 @@ import { Alert, Button, Card, Col, Descriptions, Empty, List, Row, Space, Spin, 
 import type { ColumnsType } from 'antd/es/table';
 import PageHeader from '@/components/PageHeader';
 import MetricCard from '@/components/MetricCard';
+import ReportSnapshotSources from '@/components/reports/ReportSnapshotSources';
 import { useReportStore } from '@/store/reportStore';
 import { createReportSnapshotApi, generateReportNarrativeApi } from '@/api/reportApi';
 import type {
@@ -185,6 +186,7 @@ export default function BossReportsPage() {
                       </List.Item>
                     )}
                   />
+                  <ReportSnapshotSources snapshot={snapshotResult.snapshot} />
                 </>
               ) : null}
               {narrativeResult && !narrativeResult.narrative ? (

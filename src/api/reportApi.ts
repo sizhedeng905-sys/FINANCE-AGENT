@@ -4,9 +4,11 @@ import type {
   BossReportPeriod,
   FinanceReport,
   FinanceReportPeriod,
+  PaginatedReportSnapshotSources,
   ProjectReport,
   ReportNarrativeGenerationResult,
   ReportSnapshotResult,
+  ReportSnapshotSourceQuery,
   ReportSnapshotType,
 } from '@/types/report';
 import { httpClient } from './httpClient';
@@ -16,6 +18,7 @@ import {
   mockFetchProjectDailyReport,
   mockFetchProjectMonthlyReport,
   mockCreateReportSnapshot,
+  mockFetchReportSnapshotSources,
   mockGenerateReportNarrative,
 } from './mockReportRepository';
 
@@ -83,6 +86,22 @@ export function createReportSnapshotApi(
       ...(projectIds?.length ? { projectIds } : {}),
     })
     : mockCreateReportSnapshot(period);
+}
+
+export function fetchReportSnapshotSourcesApi(
+  snapshotId: string,
+  query: ReportSnapshotSourceQuery = {},
+): Promise<PaginatedReportSnapshotSources> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+  const suffix = params.size ? `?${params.toString()}` : '';
+  return runtimeConfig.dataMode === 'api'
+    ? httpClient.get<PaginatedReportSnapshotSources>(
+      `/reports/snapshots/${encodeURIComponent(snapshotId)}/sources${suffix}`,
+    )
+    : mockFetchReportSnapshotSources(snapshotId, query);
 }
 
 export function generateReportNarrativeApi(snapshotId: string): Promise<ReportNarrativeGenerationResult> {

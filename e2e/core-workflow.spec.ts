@@ -125,6 +125,10 @@ test('API mode: employee submission reaches a confirmed record and boss report',
   const snapshotResponse = page.waitForResponse((response) => (
     response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/reports/snapshots'
   ));
+  const snapshotSourcesResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && /\/api\/reports\/snapshots\/[^/]+\/sources$/.test(new URL(response.url()).pathname)
+  ));
   await page.getByRole('button', { name: '生成审计快照' }).click();
   const snapshot = await readEnvelope<{
     snapshot: { snapshotId: string; snapshotHash: string; warnings: Array<{ code: string }> };
@@ -132,6 +136,43 @@ test('API mode: employee submission reaches a confirmed record and boss report',
   }>(await snapshotResponse);
   expect(snapshot.data.snapshot.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
   expect(snapshot.data.sourceCount).toBeGreaterThanOrEqual(1);
+  const snapshotSources = await readEnvelope<{
+    items: Array<{
+      projectName: string;
+      recordHash: string;
+      accountingDirection: string;
+      amount: string;
+      currency: string;
+    }>;
+    total: number;
+    snapshot: { snapshotId: string; snapshotHash: string; sourceDigest: string };
+  }>(await snapshotSourcesResponse);
+  expect(snapshotSources.data.total).toBe(snapshot.data.sourceCount);
+  expect(snapshotSources.data.snapshot).toMatchObject({
+    snapshotId: snapshot.data.snapshot.snapshotId,
+    snapshotHash: snapshot.data.snapshot.snapshotHash,
+  });
+  expect(snapshotSources.data.snapshot.sourceDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(snapshotSources.data.items.length).toBeGreaterThanOrEqual(1);
+  expect(snapshotSources.data.items.every((item) => /^[a-f0-9]{64}$/.test(item.recordHash))).toBe(true);
+  await expect(page.getByRole('region', { name: '报告快照来源明细' })).toBeVisible();
+  await expect(page.getByText('来源明细（只读）', { exact: true })).toBeVisible();
+  const filteredSourcesResponse = page.waitForResponse((response) => {
+    if (response.request().method() !== 'GET') return false;
+    const url = new URL(response.url());
+    return /\/api\/reports\/snapshots\/[^/]+\/sources$/.test(url.pathname)
+      && url.searchParams.get('accountingDirection') === 'expense';
+  });
+  const sourceRegion = page.getByRole('region', { name: '报告快照来源明细' });
+  await sourceRegion.getByRole('combobox', { name: '来源方向筛选' }).click();
+  await page.locator('.ant-select-dropdown:visible').getByText('支出', { exact: true }).click();
+  await sourceRegion.getByRole('button', { name: /查询/ }).click();
+  const filteredSources = await readEnvelope<{
+    items: Array<{ accountingDirection: string }>;
+    total: number;
+  }>(await filteredSourcesResponse);
+  expect(filteredSources.data.total).toBeGreaterThanOrEqual(1);
+  expect(filteredSources.data.items.every((item) => item.accountingDirection === 'expense')).toBe(true);
   await expect(page.getByText('FORMAL_METRIC_POLICY_PENDING', { exact: true })).toBeVisible();
 
   const narrativeResponse = page.waitForResponse((response) => (

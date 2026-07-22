@@ -234,10 +234,25 @@ export class ReportSnapshotsService {
   }
 
   async sources(id: string, query: QueryReportSnapshotSourcesDto) {
-    await this.getStored(id);
+    const storedSnapshot = await this.getStored(id);
+    const canonicalSnapshot = storedSnapshot.snapshotJson as unknown as CanonicalReportSnapshot;
+    if (
+      canonicalSnapshot.snapshotId !== storedSnapshot.id
+      || canonicalSnapshot.snapshotHash !== storedSnapshot.snapshotHash
+    ) {
+      throw new Error('报告快照完整性校验失败');
+    }
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const where: Prisma.ReportSnapshotSourceWhereInput = { snapshotId: id };
+    const where: Prisma.ReportSnapshotSourceWhereInput = {
+      snapshotId: id,
+      projectId: query.projectId,
+      currency: query.currency,
+      accountingDirection: query.accountingDirection
+    };
+    const projectNames = new Map(
+      canonicalSnapshot.breakdowns.map((breakdown) => [breakdown.projectId, breakdown.projectName])
+    );
     const [items, total] = await Promise.all([
       this.prisma.reportSnapshotSource.findMany({
         where,
@@ -253,6 +268,7 @@ export class ReportSnapshotsService {
         recordVersion: item.recordVersion,
         recordHash: item.recordHash,
         projectId: item.projectId,
+        projectName: projectNames.get(item.projectId) ?? item.projectId,
         recordDate: item.recordDate.toISOString(),
         currency: item.currency,
         accountingDirection: item.accountingDirection,
@@ -260,7 +276,14 @@ export class ReportSnapshotsService {
       })),
       page,
       pageSize,
-      total
+      total,
+      snapshot: {
+        snapshotId: storedSnapshot.id,
+        snapshotHash: storedSnapshot.snapshotHash,
+        sourceDigest: storedSnapshot.sourceDigest,
+        dataWatermark: storedSnapshot.dataWatermark,
+        sourceCount: storedSnapshot.sourceCount
+      }
     };
   }
 

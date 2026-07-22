@@ -5,17 +5,22 @@ import type {
   BossReportPeriod,
   FinanceReport,
   FinanceReportPeriod,
+  PaginatedReportSnapshotSources,
   ProjectReport,
+  ReportAccountingDirection,
   ReportNarrativeGenerationResult,
   ReportSnapshot,
   ReportSnapshotResult,
+  ReportSnapshotSource,
+  ReportSnapshotSourceQuery,
 } from '@/types/report';
 import { mockGetProject } from './mockProjectRepository';
 import { mockRecordSnapshot } from './mockRecordRepository';
-import { subtractMoney, sumMoney } from '@/utils/money';
+import { centsToMoney, moneyToCents, subtractMoney, sumMoney } from '@/utils/money';
 
 const delay = (ms = 140) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const reportSnapshots = new Map<string, ReportSnapshot>();
+const reportSnapshotSources = new Map<string, ReportSnapshotSource[]>();
 
 function mockHash(value: unknown) {
   const source = JSON.stringify(value);
@@ -27,6 +32,43 @@ function nextDate(value: string) {
   const date = new Date(`${value}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + 1);
   return date.toISOString().slice(0, 10);
+}
+
+function splitMockAmount(total: string, index: number, count: number) {
+  if (count === 0) return '0.00';
+  const cents = moneyToCents(total);
+  const divisor = BigInt(count);
+  const base = cents / divisor;
+  const remainder = cents % divisor;
+  return centsToMoney(base + (BigInt(index) < remainder ? 1n : 0n));
+}
+
+function buildMockSnapshotSources(snapshot: ReportSnapshot, report: BossReport): ReportSnapshotSource[] {
+  const count = report.recordCount;
+  const incomeCount = Math.ceil(count / 2);
+  const expenseCount = count - incomeCount;
+  return Array.from({ length: count }, (_, index) => {
+    const accountingDirection: ReportAccountingDirection = index < incomeCount ? 'income' : 'expense';
+    const directionIndex = accountingDirection === 'income' ? index : index - incomeCount;
+    const directionCount = accountingDirection === 'income' ? incomeCount : expenseCount;
+    const amount = splitMockAmount(
+      accountingDirection === 'income' ? report.income : report.expense,
+      directionIndex,
+      directionCount,
+    );
+    const core = {
+      snapshotId: snapshot.snapshotId,
+      recordId: `mock-report-record-${snapshot.reportType.toLowerCase()}-${index + 1}`,
+      recordVersion: 1,
+      projectId: 'mock-company-scope',
+      projectName: 'Mock 公司范围',
+      recordDate: `${snapshot.period.start}T04:00:00.000Z`,
+      currency: 'CNY',
+      accountingDirection,
+      amount,
+    };
+    return { ...core, recordHash: mockHash(core) };
+  });
 }
 
 function cloneFinance(report: FinanceReport): FinanceReport {
@@ -162,7 +204,12 @@ export async function mockCreateReportSnapshot(period: BossReportPeriod): Promis
   const sourceDigest = mockHash({ period, recordCount: report.recordCount, mock: true });
   const snapshotHash = mockHash({ ...facts, sourceDigest, queryVersion: 'confirmed-actual-report/1.0' });
   const existing = reportSnapshots.get(snapshotId);
-  if (existing?.snapshotHash === snapshotHash) return { snapshot: existing, reused: true, sourceCount: report.recordCount };
+  if (existing?.snapshotHash === snapshotHash) {
+    if (!reportSnapshotSources.has(snapshotId)) {
+      reportSnapshotSources.set(snapshotId, buildMockSnapshotSources(existing, report));
+    }
+    return { snapshot: existing, reused: true, sourceCount: report.recordCount };
+  }
   const snapshot: ReportSnapshot = {
     schemaVersion: 'report-snapshot/1.0',
     snapshotId,
@@ -188,7 +235,37 @@ export async function mockCreateReportSnapshot(period: BossReportPeriod): Promis
     retentionClass: 'REPORT_AUDIT_PENDING_H14',
   };
   reportSnapshots.set(snapshotId, snapshot);
+  reportSnapshotSources.set(snapshotId, buildMockSnapshotSources(snapshot, report));
   return { snapshot, reused: false, sourceCount: report.recordCount };
+}
+
+export async function mockFetchReportSnapshotSources(
+  snapshotId: string,
+  query: ReportSnapshotSourceQuery = {},
+): Promise<PaginatedReportSnapshotSources> {
+  await delay();
+  const snapshot = reportSnapshots.get(snapshotId);
+  if (!snapshot) throw new Error('请先生成报告快照');
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  const items = (reportSnapshotSources.get(snapshotId) ?? [])
+    .filter((item) => !query.projectId || item.projectId === query.projectId)
+    .filter((item) => !query.currency || item.currency === query.currency)
+    .filter((item) => !query.accountingDirection || item.accountingDirection === query.accountingDirection)
+    .sort((left, right) => left.recordDate.localeCompare(right.recordDate) || left.recordId.localeCompare(right.recordId));
+  return {
+    items: structuredClone(items.slice((page - 1) * pageSize, page * pageSize)),
+    page,
+    pageSize,
+    total: items.length,
+    snapshot: {
+      snapshotId,
+      snapshotHash: snapshot.snapshotHash,
+      sourceDigest: snapshot.sourceDigest,
+      dataWatermark: snapshot.dataWatermark,
+      sourceCount: reportSnapshotSources.get(snapshotId)?.length ?? 0,
+    },
+  };
 }
 
 export async function mockGenerateReportNarrative(snapshotId: string): Promise<ReportNarrativeGenerationResult> {

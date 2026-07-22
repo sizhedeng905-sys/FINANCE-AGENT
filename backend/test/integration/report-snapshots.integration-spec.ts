@@ -189,17 +189,66 @@ describe('ReportSnapshot PostgreSQL integration', () => {
       .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=1&pageSize=2`)
       .set('Authorization', `Bearer ${bossToken}`)
       .expect(200);
-    expect(sources.body.data).toMatchObject({ page: 1, pageSize: 2, total: 3 });
+    expect(sources.body.data).toMatchObject({
+      page: 1,
+      pageSize: 2,
+      total: 3,
+      snapshot: {
+        snapshotId: result.snapshot.snapshotId,
+        snapshotHash: result.snapshot.snapshotHash,
+        sourceDigest: result.snapshot.sourceDigest,
+        dataWatermark: result.snapshot.dataWatermark,
+        sourceCount: 3
+      }
+    });
     expect(sources.body.data.items).toHaveLength(2);
     expect(sources.body.data.items.every((item: { recordHash: string }) => /^[a-f0-9]{64}$/.test(item.recordHash))).toBe(true);
+    expect(sources.body.data.items.every((item: { projectName: string }) => item.projectName === project.name)).toBe(true);
+    const repeatedSources = await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=1&pageSize=2`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+    expect(repeatedSources.body.data.items).toEqual(sources.body.data.items);
     const remainingSources = await request(app.getHttpServer())
       .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=2&pageSize=2`)
       .set('Authorization', `Bearer ${bossToken}`)
       .expect(200);
     expect(remainingSources.body.data).toMatchObject({ page: 2, pageSize: 2, total: 3 });
     expect(remainingSources.body.data.items).toHaveLength(1);
+    const expenseSources = await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?projectId=${project.id}&currency=CNY&accountingDirection=expense`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+    expect(expenseSources.body.data).toMatchObject({ page: 1, pageSize: 20, total: 1 });
+    expect(expenseSources.body.data.items).toEqual([
+      expect.objectContaining({
+        projectId: project.id,
+        projectName: project.name,
+        currency: 'CNY',
+        accountingDirection: 'expense',
+        amount: '400.05'
+      })
+    ]);
+    const usdSources = await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?currency=USD`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(200);
+    expect(usdSources.body.data).toMatchObject({ total: 1 });
+    expect(usdSources.body.data.items[0]).toMatchObject({ currency: 'USD', amount: '7.25' });
+    await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
     await request(app.getHttpServer())
       .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?page=1&pageSize=101`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(400);
+    await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?currency=cny`)
+      .set('Authorization', `Bearer ${bossToken}`)
+      .expect(400);
+    await request(app.getHttpServer())
+      .get(`/api/reports/snapshots/${result.snapshot.snapshotId}/sources?accountingDirection=unknown`)
       .set('Authorization', `Bearer ${bossToken}`)
       .expect(400);
 
