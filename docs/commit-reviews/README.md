@@ -48,13 +48,14 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-034 | [CR-034_report-narrative-review-workflow.md](CR-034_report-narrative-review-workflow.md) | `feat: add report narrative review workflow` | P2 report narrative integrity | SYNTHETIC_ENGINEERING_VERIFIED / UI_NOT_YET_WIRED / OQ03_POLICY_PENDING / OWNER_UAT_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-033 |
 | CR-035 | [CR-035_report-narrative-review-workspaces.md](CR-035_report-narrative-review-workspaces.md) | `feat: connect report narrative review workspaces` | P2 report narrative integrity | SYNTHETIC_ENGINEERING_VERIFIED / OQ03_POLICY_PENDING / REAL_MODEL_QUALITY_NOT_TESTED / OWNER_UAT_PENDING / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-034 |
 | CR-036 | [CR-036_parameterized-staging-topology.md](CR-036_parameterized-staging-topology.md) | `feat: parameterize staging deployment topology` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_ENVIRONMENT_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-035 |
+| CR-037 | [CR-037_fail-closed-target-profile.md](CR-037_fail-closed-target-profile.md) | `feat: enforce fail-closed staging target profile` | P2 deployment safety | LOCAL_ENGINEERING_VERIFIED / TARGET_RESOURCES_BLOCKED_EXTERNAL / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-036 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
 - Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015/016 已推送但同一远端构建被新出现的高危依赖公告拦截；CR-017 至 CR-020 已在本地关闭 canonical review basis、依赖公告、审核真值和整批幂等完整性缺口，CR-021 已将完整 AI 审核摘要绑定到校验、批准与 Worker 发布链，CR-022 已在确认页显示并门禁同一摘要，CR-023 已增加数据库 append-only 与父对象 Restrict 门禁，同时保留周五 Demo，远端推送暂受网络阻塞。
 - OCR 与报告财务复核：CR-024 至 CR-031 已建立 OCR 状态前置条件、原值保全、不可变审核证据、完整批次复核、摘要绑定、刷新恢复和测试清理；CR-032 已把该链路接入财务工作台并用合成 API E2E 验证换人复核、失败关闭和移动端边界；CR-033 已接入只读、分页、可筛选且绑定快照水位的报告来源明细；CR-034/035 已增加默认关闭、财务后老板两阶段、append-only 的 Narrative 文本复核后端与角色工作台。OQ-03 正式政策、真实 OCR/AI 准确率和负责人 UAT 仍未完成。
-- Staging、模型网络和发布证据：CR-036 已将域名、URL、CORS、代理、端口、证书模式、环境 ID 与 registry 前缀纳入同一参数化配置边界，并保持本机 Demo 不变；target 失败关闭契约与目标预检仍待后续 CR，真实环境继续受 H13-H16 门禁约束。
+- Staging、模型网络和发布证据：CR-036 已将域名、URL、CORS、代理、端口、证书模式、环境 ID 与 registry 前缀纳入同一参数化配置边界；CR-037 已阻断 target 复用本地 CA/identity/seed/域名/初始化和 mutable image，并提供哈希化失败关闭检查。只读目标预检及真实环境仍受 H13-H16 门禁约束，本机 Demo 保持不变。
 
 ## 历史说明
 
