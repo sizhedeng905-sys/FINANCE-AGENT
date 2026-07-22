@@ -31,11 +31,12 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-017 | [CR-017_excel-ai-canonical-review-basis.md](CR-017_excel-ai-canonical-review-basis.md) | `feat: bind Excel AI reviews to canonical state` | P0 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-016 |
 | CR-018 | [CR-018_fast-uri-security-patch.md](CR-018_fast-uri-security-patch.md) | `fix: update fast-uri security patch` | P0 supply chain | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-017 |
 | CR-019 | [CR-019_excel-ai-review-truth-table.md](CR-019_excel-ai-review-truth-table.md) | `fix: enforce Excel AI review truth table` | P0 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-018 |
+| CR-020 | [CR-020_excel-ai-review-batch-integrity.md](CR-020_excel-ai-review-batch-integrity.md) | `fix: require complete idempotent Excel AI reviews` | P0 AI review integrity | LOCAL_ENGINEERING_VERIFIED / REMOTE_PUSH_BLOCKED_EXTERNAL | CR-019 |
 
 ## 审查分组
 
 - P0 Excel staging 隔离与发布完整性：从 CR-002 开始。
-- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015/016 已推送但同一远端构建被新出现的高危依赖公告拦截；CR-017 至 CR-019 已在本地关闭 canonical review basis、依赖公告和审核真值缺口，远端推送暂受网络阻塞。
+- Prompt、生产初始化与 Excel AI：CR-006 已关闭 Prompt 真执行/provenance，CR-007 已统一负责人决定与开放问题，CR-008 已整理文档信息架构，CR-009 已关闭 production-safe system registry bootstrap，CR-010 已恢复运行镜像供应链绿色基线。CR-011 已建立周五演示 E2E，CR-012 已整理演示交付包，CR-013 已把受控建议接入财务本页草稿，CR-014 已远端验证服务端人工审核决定与 provenance，CR-015/016 已推送但同一远端构建被新出现的高危依赖公告拦截；CR-017 至 CR-020 已在本地关闭 canonical review basis、依赖公告、审核真值和整批幂等完整性缺口，远端推送暂受网络阻塞。
 - OCR 与报告财务复核：前序 P1 契约稳定后开始。
 - Staging、模型网络和发布证据：代码路径可本地验证；目标环境仍受 H13-H16 门禁约束。
 
