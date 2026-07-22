@@ -15,8 +15,17 @@ import {
 import { CurrentUser } from '../common/types/current-user';
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildAiReviewBasis } from '../ai/ai-review-basis';
 import { MappingInputDto } from './dto/save-mappings.dto';
 import { QueryAiReviewDecisionsDto } from './dto/query-ai-review-decisions.dto';
+import {
+  EXCEL_AI_MAX_CANDIDATE_TEMPLATES,
+  EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+  excelAiCandidateTemplateInclude,
+  excelAiReviewStateHash,
+  excelAiReviewTaskInclude,
+  toExcelAiCandidate
+} from './excel-ai-review-basis';
 import { isRegisteredImportTransformKey } from './import-transform-registry';
 
 type ReviewTask = Pick<ImportTask, 'id' | 'templateId' | 'templateVersion' | 'reviewRevision'>;
@@ -71,18 +80,58 @@ export class ImportAiReviewService {
     }
 
     const submittedHashes = new Set(reviewedMappings.map((mapping) => (
-      `${mapping.aiReview!.outputHash}:${mapping.aiReview!.versionVectorHash}`
+      [
+        mapping.aiReview!.outputHash,
+        mapping.aiReview!.versionVectorHash,
+        mapping.aiReview!.reviewStateHash,
+        mapping.aiReview!.reviewBasisHash
+      ].join(':')
     )));
-    if (
-      submittedHashes.size !== 1
-      || !submittedHashes.has(`${latest.outputHash}:${latest.versionVectorHash}`)
-    ) {
-      throw new ConflictException('AI 映射输出哈希或版本向量已变化');
+    if (submittedHashes.size !== 1) {
+      throw new ConflictException('AI 映射输出的审核基线不一致');
     }
 
-    const output = this.validatedOutput(latest.outputPayload);
+    const versionVector = this.object(latest.versionVector);
+    if (
+      !versionVector
+      || canonicalJsonSha256(versionVector) !== latest.versionVectorHash
+      || versionVector.inputSha256 !== latest.inputHash
+    ) {
+      throw new ConflictException('AI 映射版本向量内容与持久化哈希不一致');
+    }
+
+    const outputContainer = this.outputContainer(latest.outputPayload);
+    const output = this.validatedOutput(outputContainer);
     if (canonicalJsonSha256(output) !== latest.outputHash) {
       throw new ConflictException('AI 映射输出内容与持久化哈希不一致');
+    }
+    const currentReviewStateHash = await this.currentReviewStateHash(tx, task.id);
+    const expectedReviewBasis = buildAiReviewBasis({
+      taskType: latest.taskType,
+      resourceType: latest.resourceType!,
+      resourceId: latest.resourceId!,
+      aiTaskId: latest.id,
+      reviewState: {
+        schemaVersion: EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+        stateHash: currentReviewStateHash
+      },
+      inputHash: latest.inputHash,
+      outputHash: latest.outputHash,
+      versionVectorHash: latest.versionVectorHash
+    });
+    const persistedReviewBasis = this.object(outputContainer.reviewBasis);
+    if (
+      versionVector.reviewStateSha256 !== currentReviewStateHash
+      || !persistedReviewBasis
+      || canonicalJsonSha256(persistedReviewBasis) !== canonicalJsonSha256(expectedReviewBasis)
+      || !submittedHashes.has([
+        latest.outputHash,
+        latest.versionVectorHash,
+        currentReviewStateHash,
+        expectedReviewBasis.basisHash
+      ].join(':'))
+    ) {
+      throw new ConflictException('AI 映射输出生成后的审核基线已变化，请重新生成建议');
     }
     const expectedTemplateVersionId = `${task.templateId}:v${task.templateVersion}`;
     if (
@@ -141,6 +190,8 @@ export class ImportAiReviewService {
         aiTaskId,
         outputHash: latest.outputHash!,
         versionVectorHash: latest.versionVectorHash!,
+        reviewStateHash: currentReviewStateHash,
+        reviewBasisHash: expectedReviewBasis.basisHash,
         sourceRef: review.sourceRef,
         templateVersionId: expectedTemplateVersionId,
         suggestedTargetFieldId: suggestedField.id,
@@ -167,6 +218,8 @@ export class ImportAiReviewService {
       aiTaskId,
       outputHash: latest.outputHash,
       versionVectorHash: latest.versionVectorHash,
+      reviewStateHash: currentReviewStateHash,
+      reviewBasisHash: expectedReviewBasis.basisHash,
       reviewRevision: nextReviewRevision,
       decisionCounts
     };
@@ -200,6 +253,8 @@ export class ImportAiReviewService {
         aiTaskId: item.aiTaskId,
         outputHash: item.outputHash,
         versionVectorHash: item.versionVectorHash,
+        reviewStateHash: item.reviewStateHash,
+        reviewBasisHash: item.reviewBasisHash,
         sourceRef: item.sourceRef,
         templateVersionId: item.templateVersionId,
         suggested: {
@@ -222,8 +277,28 @@ export class ImportAiReviewService {
     };
   }
 
-  private validatedOutput(payload: Prisma.JsonValue | null) {
+  private async currentReviewStateHash(tx: Prisma.TransactionClient, taskId: string) {
+    const task = await tx.importTask.findUnique({
+      where: { id: taskId },
+      include: excelAiReviewTaskInclude
+    });
+    if (!task) throw new NotFoundException('导入任务不存在');
+    const links = await tx.projectTemplate.findMany({
+      where: { projectId: task.projectId, isActive: true },
+      include: { template: { include: excelAiCandidateTemplateInclude } },
+      orderBy: [{ template: { name: 'asc' } }, { templateId: 'asc' }],
+      take: EXCEL_AI_MAX_CANDIDATE_TEMPLATES + 1
+    });
+    return excelAiReviewStateHash(task, links.map(({ template }) => toExcelAiCandidate(template)));
+  }
+
+  private outputContainer(payload: Prisma.JsonValue | null) {
     const container = this.object(payload);
+    if (!container) throw new ConflictException('AI 映射输出缺少持久化结果');
+    return container;
+  }
+
+  private validatedOutput(container: Record<string, Prisma.JsonValue>) {
     const output = this.object(container?.validatedOutput);
     if (!output) throw new ConflictException('AI 映射输出缺少已验证结果');
     return output;

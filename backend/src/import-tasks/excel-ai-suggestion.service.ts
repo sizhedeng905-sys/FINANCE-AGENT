@@ -19,6 +19,17 @@ import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  EXCEL_AI_MAX_CANDIDATE_TEMPLATES,
+  EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+  ExcelAiCandidate,
+  ExcelAiCandidateTemplate,
+  ExcelAiReviewTask,
+  excelAiCandidateTemplateInclude,
+  excelAiReviewStateHash,
+  excelAiReviewTaskInclude,
+  toExcelAiCandidate
+} from './excel-ai-review-basis';
+import {
   IMPORT_TRANSFORM_KEYS,
   IMPORT_TRANSFORM_REGISTRY_VERSION,
   transformKeyForFieldType
@@ -34,31 +45,13 @@ export const EXCEL_AI_AUTHORIZATION_POLICY_VERSION = 'finance-import-ai-authz/1.
 
 const CLASSIFICATION_INPUT_MAX_BYTES = 20_000;
 const MAPPING_INPUT_MAX_BYTES = 28_000;
-const MAX_CANDIDATE_TEMPLATES = 64;
 const MAX_TEMPLATE_FIELDS = 128;
 const MAX_SOURCE_COLUMNS = 256;
 
-const candidateTemplateInclude = {
-  templateFields: {
-    where: { isVisible: true, field: { isActive: true } },
-    include: { field: true },
-    orderBy: { displayOrder: 'asc' as const }
-  }
-} satisfies Prisma.TemplateInclude;
-
-const taskInclude = {
-  project: { select: { status: true } },
-  rawFile: true,
-  mappingProfile: { include: { rules: true } },
-  sheets: { orderBy: { sheetIndex: 'asc' as const } },
-  columns: {
-    orderBy: { columnIndex: 'asc' as const },
-    include: { decision: { include: { targetField: true } } }
-  }
-} satisfies Prisma.ImportTaskInclude;
-
-type SuggestionTask = Prisma.ImportTaskGetPayload<{ include: typeof taskInclude }>;
-type CandidateTemplate = Prisma.TemplateGetPayload<{ include: typeof candidateTemplateInclude }>;
+const candidateTemplateInclude = excelAiCandidateTemplateInclude;
+const taskInclude = excelAiReviewTaskInclude;
+type SuggestionTask = ExcelAiReviewTask;
+type CandidateTemplate = ExcelAiCandidateTemplate;
 
 @Injectable()
 export class ExcelAiSuggestionService {
@@ -106,7 +99,7 @@ export class ExcelAiSuggestionService {
 
     const candidates = await this.loadCandidates(task.projectId);
     if (candidates.length === 0) return this.manual('NO_ENABLED_TEMPLATE', '项目没有可用于分类的启用模板');
-    if (candidates.length > MAX_CANDIDATE_TEMPLATES) {
+    if (candidates.length > EXCEL_AI_MAX_CANDIDATE_TEMPLATES) {
       return this.manual('CANDIDATE_BUDGET_EXCEEDED', '候选模板超过安全上限，必须人工选择模板');
     }
     if (task.columns.length === 0 || task.columns.length > MAX_SOURCE_COLUMNS) {
@@ -200,6 +193,7 @@ export class ExcelAiSuggestionService {
     const activeCandidateSetHash = canonicalJsonSha256(
       activeCandidates.map((candidate) => candidate.hashInput)
     );
+    const mappingReviewStateHash = this.suggestionStateHash(activeTask, activeCandidates);
     const activeEvidenceRefs = new Set(
       activeTask.columns.map((column) => this.sourceRef(column))
     );
@@ -274,6 +268,10 @@ export class ExcelAiSuggestionService {
       validationRuleVersion: EXCEL_AI_VALIDATION_RULE_VERSION,
       mappingProfileVersion: null,
       authorizationPolicyVersion: EXCEL_AI_AUTHORIZATION_POLICY_VERSION,
+      reviewState: {
+        schemaVersion: EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+        stateHash: mappingReviewStateHash
+      },
       mockOutput: mappingMock,
       validate: (text) => this.validator.mapping(text, {
         templateVersionIds: new Set([selected.versionId]),
@@ -287,6 +285,14 @@ export class ExcelAiSuggestionService {
     });
     if (mapping.status !== 'succeeded') {
       return this.manualFromExecution('MAPPING_UNAVAILABLE', mapping, classification);
+    }
+    const completedState = await this.loadSuggestionState(activeTask.id);
+    if (
+      !completedState
+      || this.suggestionBlockReason(completedState.task)
+      || this.suggestionStateHash(completedState.task, completedState.candidates) !== mappingReviewStateHash
+    ) {
+      return this.manualFromExecution('SUGGESTION_OUTPUT_STALE', mapping, classification);
     }
     const fieldByKey = new Map(selected.fields.map((field) => [field.fieldKey, field]));
     return {
@@ -338,6 +344,7 @@ export class ExcelAiSuggestionService {
         versionVectorHash: item.versionVectorHash,
         outputHash: item.outputHash,
         output: this.outputValue(item.outputPayload),
+        reviewBasis: this.reviewBasisValue(item.outputPayload),
         error: item.errorMessage ? 'AI 建议不可用，需人工处理' : undefined,
         attempt: item.attempts[0] ? {
           attemptNo: item.attempts[0].attemptNo,
@@ -365,7 +372,7 @@ export class ExcelAiSuggestionService {
         }
       },
       orderBy: [{ template: { name: 'asc' } }, { templateId: 'asc' }],
-      take: MAX_CANDIDATE_TEMPLATES + 1
+      take: EXCEL_AI_MAX_CANDIDATE_TEMPLATES + 1
     });
     return links.map(({ template }) => this.toCandidate(template));
   }
@@ -391,32 +398,7 @@ export class ExcelAiSuggestionService {
   }
 
   private toCandidate(template: CandidateTemplate) {
-    const fields = template.templateFields.map((item) => ({
-      id: item.field.id,
-      fieldKey: item.field.fieldKey,
-      fieldName: this.safeText(item.field.fieldName, 80),
-      fieldType: item.field.fieldType,
-      required: item.isRequired,
-      aliases: this.stringArray(item.field.aliases).slice(0, 16).map((alias) => this.safeText(alias, 80))
-    }));
-    const hashInput = {
-      templateId: template.id,
-      version: template.version,
-      recordType: template.recordType,
-      accountingDirection: template.accountingDirection,
-      dataLayer: template.dataLayer,
-      fields
-    };
-    return {
-      id: template.id,
-      version: template.version,
-      versionId: this.templateVersionId(template.id, template.version),
-      name: this.safeText(template.name, 80),
-      recordType: template.recordType,
-      fields,
-      hashInput,
-      contentHash: canonicalJsonSha256(hashInput)
-    };
+    return toExcelAiCandidate(template);
   }
 
   private isReusableProfile(
@@ -474,49 +456,9 @@ export class ExcelAiSuggestionService {
 
   private suggestionStateHash(
     task: SuggestionTask,
-    candidates: Awaited<ReturnType<ExcelAiSuggestionService['loadCandidates']>>
+    candidates: ExcelAiCandidate[]
   ) {
-    return canonicalJsonSha256({
-      schemaVersion: 'excel-ai-suggestion-state/1.0',
-      task: {
-        id: task.id,
-        projectId: task.projectId,
-        templateId: task.templateId,
-        templateVersion: task.templateVersion,
-        version: task.version,
-        status: task.status,
-        sourceSha256: task.sourceSha256,
-        parserInputSha256: task.parserInputSha256,
-        irSchemaVersion: task.irSchemaVersion,
-        parserVersion: task.parserVersion,
-        irHash: task.irHash,
-        rowEvidenceDigest: task.rowEvidenceDigest,
-        structureFingerprint: task.structureFingerprint,
-        fingerprintVersion: task.fingerprintVersion,
-        transformRegistryVersion: task.transformRegistryVersion,
-        mappingProfileId: task.mappingProfileId,
-        mappingProfileVersion: task.mappingProfileVersion,
-        mappingProfileSnapshotHash: task.mappingProfileSnapshotHash
-      },
-      projectStatus: task.project.status,
-      rawFile: {
-        id: task.rawFile.id,
-        sha256: task.rawFile.sha256,
-        status: task.rawFile.status,
-        scanStatus: task.rawFile.scanStatus,
-        isVoided: task.rawFile.isVoided,
-        relatedProjectId: task.rawFile.relatedProjectId
-      },
-      mappingDecisions: task.columns.map((column) => ({
-        sourceRef: this.sourceRef(column),
-        targetFieldId: column.decision?.targetFieldId ?? null,
-        ignored: column.decision?.ignored ?? null,
-        mappingType: column.decision?.mappingType ?? null,
-        updatedAt: column.decision?.updatedAt.toISOString() ?? null
-      })),
-      classificationInput: this.classificationInput(task, candidates, true),
-      candidateSetHash: canonicalJsonSha256(candidates.map((candidate) => candidate.hashInput))
-    });
+    return excelAiReviewStateHash(task, candidates);
   }
 
   private classificationInput(task: SuggestionTask, candidates: Awaited<ReturnType<ExcelAiSuggestionService['loadCandidates']>>, samples: boolean) {
@@ -725,5 +667,12 @@ export class ExcelAiSuggestionService {
       ? value as Record<string, Prisma.JsonValue>
       : undefined;
     return payload?.validatedOutput ?? undefined;
+  }
+
+  private reviewBasisValue(value: Prisma.JsonValue | null) {
+    const payload = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, Prisma.JsonValue>
+      : undefined;
+    return payload?.reviewBasis ?? undefined;
   }
 }

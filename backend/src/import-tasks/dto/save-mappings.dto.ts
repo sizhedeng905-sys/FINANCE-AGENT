@@ -39,6 +39,16 @@ export class AiMappingReviewDto {
 
   @ApiProperty()
   @IsString()
+  @Matches(/^[a-f0-9]{64}$/)
+  reviewStateHash!: string;
+
+  @ApiProperty()
+  @IsString()
+  @Matches(/^[a-f0-9]{64}$/)
+  reviewBasisHash!: string;
+
+  @ApiProperty()
+  @IsString()
   @IsNotEmpty()
   @MaxLength(200)
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)

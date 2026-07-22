@@ -323,11 +323,16 @@ export default function DataImportMappingPage() {
       const mappingExecution = aiSuggestion?.status === 'needs_finance_review'
         ? aiSuggestion.mapping
         : null;
-      const aiReview = !templateMismatch && aiMapping?.source === 'ai' && aiDecision && mappingExecution
+      const aiReview = !templateMismatch
+        && aiMapping?.source === 'ai'
+        && aiDecision
+        && mappingExecution?.reviewBasis
         ? {
             aiTaskId: mappingExecution.aiTaskId,
             outputHash: mappingExecution.outputHash,
             versionVectorHash: mappingExecution.versionVectorHash,
+            reviewStateHash: mappingExecution.reviewBasis.reviewState.stateHash,
+            reviewBasisHash: mappingExecution.reviewBasis.basisHash,
             sourceRef: aiMapping.sourceRef,
             decision: ({
               accepted: 'accept',

@@ -56,6 +56,10 @@ interface AiSuggestionDto {
     aiTaskId: string;
     outputHash: string;
     versionVectorHash: string;
+    reviewBasis: {
+      basisHash: string;
+      reviewState: { stateHash: string };
+    };
     output: { mappings: AiMappingDto[] };
   };
 }
@@ -65,6 +69,8 @@ interface AiReviewDecisionDto {
   aiTaskId: string;
   outputHash: string;
   versionVectorHash: string;
+  reviewStateHash: string;
+  reviewBasisHash: string;
   sourceRef: string;
   decision: 'accept' | 'edit' | 'reject' | 'ignore';
   reviewRevision: number;
@@ -140,6 +146,10 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
     mapping: {
       outputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       versionVectorHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      reviewBasis: {
+        basisHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        reviewState: { stateHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      },
     },
   });
   expect(suggestion.data.mapping.output.mappings.length).toBeGreaterThan(1);
@@ -149,6 +159,7 @@ test('API mode: Excel AI suggestions enter only the finance mapping draft', asyn
   await expect(page.getByText('AI 结果仅进入当前页面草稿，不会自动保存、生成复用规则或入账')).toBeVisible();
   await expect(page.getByText(suggestion.data.classification.aiTaskId)).toBeVisible();
   await expect(page.getByText(suggestion.data.mapping.versionVectorHash)).toBeVisible();
+  await expect(page.getByText(suggestion.data.mapping.reviewBasis.basisHash)).toBeVisible();
   await expect(page.getByText('历史 AI 调用 2 条')).toBeVisible();
   expect(aiHistoryReads).toBeGreaterThan(0);
 
@@ -222,6 +233,7 @@ test('API mode: a second finance user sees verified AI review evidence and appro
     mapping: {
       outputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       versionVectorHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      reviewBasis: { basisHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
     },
   });
   expect(suggestion.data.mapping.output.mappings.length).toBeGreaterThan(0);
@@ -258,6 +270,8 @@ test('API mode: a second finance user sees verified AI review evidence and appro
     item.aiTaskId === suggestion.data.mapping.aiTaskId
     && item.outputHash === suggestion.data.mapping.outputHash
     && item.versionVectorHash === suggestion.data.mapping.versionVectorHash
+    && item.reviewStateHash === suggestion.data.mapping.reviewBasis.reviewState.stateHash
+    && item.reviewBasisHash === suggestion.data.mapping.reviewBasis.basisHash
     && item.decision === 'accept'
     && item.actor.username === 'finance'
   ))).toBe(true);

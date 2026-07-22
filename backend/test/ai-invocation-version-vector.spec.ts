@@ -3,6 +3,7 @@ import { MockAiProviderService } from '../src/ai/mock-ai-provider.service';
 import { canonicalJsonSha256 } from '../src/common/utils/canonical-json';
 import {
   AiInvocationVersionVectorInput,
+  aiInvocationVersionVectorContent,
   buildAiInvocationVersionVector,
   completeAiInvocationVersionVector
 } from '../src/model-runtime/ai-invocation-version-vector';
@@ -53,6 +54,7 @@ function vectorInput(): AiInvocationVersionVectorInput {
     authorizationPolicyVersion: 'finance-ingestion-authz/1.0',
     featurePolicyVersion: 'ai-feature-policy/1.0',
     featurePolicySnapshotSha256: sha('policy'),
+    reviewStateSha256: sha('review-state'),
     inputSha256: sha('input')
   };
 }
@@ -73,6 +75,10 @@ describe('complete AI invocation version vector', () => {
     const changedRendering = vectorInput();
     changedRendering.prompt.executionSha256 = sha('different-rendered-user-prompt');
     expect(buildAiInvocationVersionVector(changedRendering).vectorSha256).not.toBe(first.vectorSha256);
+    const changedReviewState = vectorInput();
+    changedReviewState.reviewStateSha256 = sha('different-review-state');
+    expect(buildAiInvocationVersionVector(changedReviewState).vectorSha256).not.toBe(first.vectorSha256);
+    expect(canonicalJsonSha256(aiInvocationVersionVectorContent(first))).toBe(first.vectorSha256);
   });
 
   it('rejects incomplete hashes and creates a content-addressed completion', () => {

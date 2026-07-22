@@ -240,6 +240,14 @@ export default function ExcelAiSuggestionPanel({
                 <Descriptions.Item label="映射版本向量哈希">
                   <Typography.Text copyable>{suggestion.mapping?.versionVectorHash ?? '-'}</Typography.Text>
                 </Descriptions.Item>
+                <Descriptions.Item label="生成状态哈希">
+                  <Typography.Text copyable>
+                    {suggestion.mapping?.reviewBasis?.reviewState.stateHash ?? '-'}
+                  </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="审核基线哈希">
+                  <Typography.Text copyable>{suggestion.mapping?.reviewBasis?.basisHash ?? '-'}</Typography.Text>
+                </Descriptions.Item>
               </Descriptions>
               {suggestion.classification.output.warnings.map((warning) => (
                 <Alert key={`classification:${warning}`} type="warning" showIcon message={warning} />

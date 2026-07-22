@@ -1383,6 +1383,8 @@ export class ImportTasksService implements OnModuleInit, OnModuleDestroy {
         aiTaskId: aiReview.aiTaskId,
         aiOutputHash: aiReview.outputHash,
         aiVersionVectorHash: aiReview.versionVectorHash,
+        aiReviewStateHash: aiReview.reviewStateHash,
+        aiReviewBasisHash: aiReview.reviewBasisHash,
         aiDecisionCounts: aiReview.decisionCounts
       });
     });

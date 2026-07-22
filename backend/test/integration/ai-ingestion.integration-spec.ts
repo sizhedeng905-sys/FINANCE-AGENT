@@ -20,6 +20,7 @@ import request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
 import { AiProviderService } from '../../src/ai/ai-provider.service';
+import { buildAiReviewBasis } from '../../src/ai/ai-review-basis';
 import { AiStructuredSuggestionService } from '../../src/ai/ai-structured-suggestion.service';
 import {
   MAPPING_SUGGESTION_SCHEMA,
@@ -35,7 +36,18 @@ import {
   EXCEL_AI_AUTHORIZATION_POLICY_VERSION,
   EXCEL_AI_VALIDATION_RULE_VERSION
 } from '../../src/import-tasks/excel-ai-suggestion.service';
+import {
+  EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+  excelAiCandidateTemplateInclude,
+  excelAiReviewStateHash,
+  excelAiReviewTaskInclude,
+  toExcelAiCandidate
+} from '../../src/import-tasks/excel-ai-review-basis';
 import { IMPORT_TRANSFORM_REGISTRY_VERSION } from '../../src/import-tasks/import-transform-registry';
+import {
+  aiInvocationVersionVectorContent,
+  buildAiInvocationVersionVector
+} from '../../src/model-runtime/ai-invocation-version-vector';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(120_000);
@@ -265,10 +277,11 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           promptVersionId: expect.any(String)
         });
         expect(aiTask.versionVector).toMatchObject({
-          schemaVersion: 'ai-invocation-vector/1.1',
+          schemaVersion: 'ai-invocation-vector/1.2',
           prompt: { executionSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
           contracts: { outputSchemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
         });
+        expect(canonicalJsonSha256(aiTask.versionVector)).toBe(aiTask.versionVectorHash);
         expect(aiTask.inputPayload).toMatchObject({
           schemaVersion: 'ai-task-input-audit/1.0',
           promptExecutionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -286,6 +299,18 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         });
         expect(JSON.stringify(aiTask.inputPayload)).not.toContain(injectionText);
       }
+      const mappingTask = aiTasks.find((item) => item.taskType === 'excel_column_mapping')!;
+      expect(mappingTask.outputPayload).toMatchObject({
+        reviewBasis: {
+          schemaVersion: 'ai-review-basis/1.0',
+          aiTaskId: mappingTask.id,
+          reviewState: {
+            schemaVersion: EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+            stateHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+          },
+          basisHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }
+      });
       const callLogs = await prisma.aiCallLog.findMany({
         where: { correlationId: `${requestPrefix}-success` }
       });
@@ -686,6 +711,23 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         warnings: [label],
         decision: 'NEEDS_FINANCE_REVIEW'
       });
+      const loadReviewState = async () => {
+        const current = await prisma.importTask.findUniqueOrThrow({
+          where: { id: task.id },
+          include: excelAiReviewTaskInclude
+        });
+        const links = await prisma.projectTemplate.findMany({
+          where: { projectId: project.id, isActive: true },
+          include: { template: { include: excelAiCandidateTemplateInclude } },
+          orderBy: [{ template: { name: 'asc' } }, { templateId: 'asc' }]
+        });
+        const candidates = links.map(({ template: item }) => toExcelAiCandidate(item));
+        return {
+          current,
+          candidates,
+          stateHash: excelAiReviewStateHash(current, candidates)
+        };
+      };
       let createdOffset = 0;
       const createAiTask = async (
         label: string,
@@ -693,24 +735,89 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         resourceId = task.id
       ) => {
         createdOffset += 1;
+        const reviewState = await loadReviewState();
+        const selectedCandidate = reviewState.candidates.find((candidate) => candidate.id === template.id)!;
+        const inputHash = canonicalJsonSha256({ requestPrefix, label, kind: 'input' });
         const outputHash = canonicalJsonSha256(output);
-        const versionVectorHash = canonicalJsonSha256({ label, resourceId });
+        const versionVector = buildAiInvocationVersionVector({
+          source: {
+            kind: 'excel',
+            sourceId: task.id,
+            sourceSha256: rawFile.sha256,
+            irHash: task.irHash!,
+            irSchemaVersion: task.irSchemaVersion!,
+            processorVersion: task.parserVersion!
+          },
+          template: {
+            templateVersionId,
+            templateContentSha256: selectedCandidate.contentHash,
+            candidateSetSha256: canonicalJsonSha256(
+              reviewState.candidates.map((candidate) => candidate.hashInput)
+            )
+          },
+          prompt: {
+            promptKey: 'excel_column_mapping',
+            versionNo: 1,
+            contentSha256: canonicalJsonSha256({ label, kind: 'prompt' }),
+            bundleSha256: canonicalJsonSha256({ label, kind: 'bundle' }),
+            executionSha256: canonicalJsonSha256({ label, kind: 'execution' })
+          },
+          contracts: {
+            inputSchemaVersion: 'excel-mapping-input/1.0',
+            outputSchemaVersion: 'mapping/1.0',
+            outputSchemaSha256: canonicalJsonSha256({ label, kind: 'schema' })
+          },
+          provider: {
+            providerClass: 'mock',
+            provider: 'mock',
+            deploymentId: null,
+            modelConfigId: null,
+            modelName: 'integration-mock',
+            modelRevision: '1',
+            configSha256: canonicalJsonSha256({ label, kind: 'provider' })
+          },
+          transformRegistryVersion: IMPORT_TRANSFORM_REGISTRY_VERSION,
+          validationRuleVersion: EXCEL_AI_VALIDATION_RULE_VERSION,
+          mappingProfileVersion: null,
+          redactionPolicyVersion: 'integration-redaction/1.0',
+          authorizationPolicyVersion: EXCEL_AI_AUTHORIZATION_POLICY_VERSION,
+          featurePolicyVersion: 'integration-ai-policy/1.0',
+          featurePolicySnapshotSha256: canonicalJsonSha256({ label, kind: 'policy' }),
+          reviewStateSha256: reviewState.stateHash,
+          inputSha256: inputHash
+        });
         const createdAt = new Date(Date.now() + createdOffset * 1000);
+        const aiTaskId = randomUUID();
+        const reviewBasis = buildAiReviewBasis({
+          taskType: 'excel_column_mapping',
+          resourceType: 'import_task',
+          resourceId,
+          aiTaskId,
+          reviewState: {
+            schemaVersion: EXCEL_AI_REVIEW_STATE_SCHEMA_VERSION,
+            stateHash: reviewState.stateHash
+          },
+          inputHash,
+          outputHash,
+          versionVectorHash: versionVector.vectorSha256
+        });
         const aiTask = await prisma.aiTask.create({
           data: {
+            id: aiTaskId,
             taskType: 'excel_column_mapping',
             resourceType: 'import_task',
             resourceId,
             status: AiTaskStatus.succeeded,
             requestKey: canonicalJsonSha256({ requestPrefix, label, resourceId }),
-            inputHash: canonicalJsonSha256({ requestPrefix, label, kind: 'input' }),
-            versionVector: { label, resourceId },
-            versionVectorHash,
+            inputHash,
+            versionVector: aiInvocationVersionVectorContent(versionVector),
+            versionVectorHash: versionVector.vectorSha256,
             outputPayload: {
               schemaVersion: 'ai-structured-suggestion-result/1.0',
               validatedOutput: output,
               outputHash,
               completion: {},
+              reviewBasis: reviewBasis as unknown as Prisma.InputJsonValue,
               providerResponseHash: canonicalJsonSha256({ label, kind: 'provider' }),
               mock: true
             },
@@ -723,7 +830,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           }
         });
         aiTaskIds.push(aiTask.id);
-        return aiTask;
+        return { ...aiTask, reviewBasis };
       };
       const oldTask = await createAiTask('old', mappingOutput('old'));
       const currentTask = await createAiTask('current', mappingOutput('current'));
@@ -741,6 +848,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
               aiTaskId: aiTask.id,
               outputHash: aiTask.outputHash,
               versionVectorHash: aiTask.versionVectorHash,
+              reviewStateHash: aiTask.reviewBasis.reviewState.stateHash,
+              reviewBasisHash: aiTask.reviewBasis.basisHash,
               sourceRef: columns[0].sourceColumnId,
               decision: 'accept',
               reason: '财务采纳 AI 字段映射建议'
@@ -753,6 +862,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
               aiTaskId: aiTask.id,
               outputHash: aiTask.outputHash,
               versionVectorHash: aiTask.versionVectorHash,
+              reviewStateHash: aiTask.reviewBasis.reviewState.stateHash,
+              reviewBasisHash: aiTask.reviewBasis.basisHash,
               sourceRef: columns[1].sourceColumnId,
               decision: 'edit',
               reason: '财务将 AI 建议修改为其他人工映射'
@@ -765,6 +876,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
               aiTaskId: aiTask.id,
               outputHash: aiTask.outputHash,
               versionVectorHash: aiTask.versionVectorHash,
+              reviewStateHash: aiTask.reviewBasis.reviewState.stateHash,
+              reviewBasisHash: aiTask.reviewBasis.basisHash,
               sourceRef: columns[2].sourceColumnId,
               decision: 'reject',
               reason: '财务拒绝 AI 字段映射建议'
@@ -777,6 +890,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
               aiTaskId: aiTask.id,
               outputHash: aiTask.outputHash,
               versionVectorHash: aiTask.versionVectorHash,
+              reviewStateHash: aiTask.reviewBasis.reviewState.stateHash,
+              reviewBasisHash: aiTask.reviewBasis.basisHash,
               sourceRef: columns[3].sourceColumnId,
               decision: 'ignore',
               reason: '财务明确忽略该来源列'
@@ -821,6 +936,48 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       const tampered = reviewPayload(currentTask);
       tampered.mappings[0].aiReview.outputHash = 'f'.repeat(64);
       await putMappings(tampered).expect(409);
+      await prisma.aiTask.update({
+        where: { id: currentTask.id },
+        data: { versionVector: { schemaVersion: 'tampered-vector' } }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask)).expect(409);
+      } finally {
+        await prisma.aiTask.update({
+          where: { id: currentTask.id },
+          data: { versionVector: currentTask.versionVector as Prisma.InputJsonValue }
+        });
+      }
+      const bumpedTask = await prisma.importTask.update({
+        where: { id: task.id },
+        data: { version: { increment: 1 } }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask, {
+          expectedVersion: bumpedTask.version,
+          expectedReviewRevision: bumpedTask.reviewRevision
+        })).expect(409);
+      } finally {
+        await prisma.importTask.update({
+          where: { id: task.id },
+          data: { version: currentState.version }
+        });
+      }
+      await prisma.mappingDecision.create({
+        data: {
+          importTaskId: task.id,
+          importColumnId: columns[0].id,
+          targetFieldId: fields[0].id,
+          mappingType: 'manual',
+          confidence: new Prisma.Decimal(1),
+          confirmedBy: finance.id
+        }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask)).expect(409);
+      } finally {
+        await prisma.mappingDecision.deleteMany({ where: { importTaskId: task.id } });
+      }
       const tamperedAcceptedField = reviewPayload(currentTask);
       tamperedAcceptedField.mappings[0].targetFieldId = fields[3].id;
       await putMappings(tamperedAcceptedField).expect(400);
@@ -831,6 +988,19 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         ignore: true
       };
       await putMappings(editedToIgnore).expect(400);
+
+      await prisma.importSheet.update({
+        where: { id: sheet.id },
+        data: { selectedHeaderRows: [1, 2] }
+      });
+      try {
+        await putMappings(reviewPayload(currentTask)).expect(409);
+      } finally {
+        await prisma.importSheet.update({
+          where: { id: sheet.id },
+          data: { selectedHeaderRows: [] }
+        });
+      }
 
       const crossTemplateTask = await createAiTask(
         'cross-template',
@@ -854,6 +1024,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
         item.aiTaskId === approvedTask.id
         && item.outputHash === approvedTask.outputHash
         && item.versionVectorHash === approvedTask.versionVectorHash
+        && item.reviewStateHash === approvedTask.reviewBasis.reviewState.stateHash
+        && item.reviewBasisHash === approvedTask.reviewBasis.basisHash
         && item.reviewRevision === 1
         && item.actorId === finance.id
       ))).toBe(true);
@@ -884,6 +1056,8 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
           count: 4,
           aiTaskId: approvedTask.id,
           outputHash: approvedTask.outputHash,
+          reviewStateHash: approvedTask.reviewBasis.reviewState.stateHash,
+          reviewBasisHash: approvedTask.reviewBasis.basisHash,
           reviewRevision: 1,
           decisionCounts: { accept: 1, edit: 1, reject: 1, ignore: 1 }
         }
@@ -909,7 +1083,7 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
     }
   });
 
-  it('stops before mapping when the project template whitelist changes during classification', async () => {
+  it('rejects state changes during classification and after mapping generation', async () => {
     const suffix = randomUUID().slice(0, 8);
     const requestId = `m3-stale-${suffix}`;
     const originalMode = config.get('ai.ingestionMode');
@@ -1073,11 +1247,44 @@ describe('Excel AI suggestion PostgreSQL boundary', () => {
       })).toBe(0);
       expect(await prisma.mappingDecision.count({ where: { importTaskId: taskId } })).toBe(0);
       expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
+
+      await prisma.projectTemplate.update({
+        where: { id: binding.id },
+        data: { isActive: true }
+      });
+      providerSpy.mockImplementationOnce(async (providerRequest) => {
+        const result = await originalGenerate(providerRequest);
+        await prisma.importSheet.update({
+          where: { id: sheet.id },
+          data: { selectedHeaderRows: [1, 2] }
+        });
+        return result;
+      });
+      const postMappingResponse = await request(app.getHttpServer())
+        .post(`/api/import-tasks/${taskId}/ai-suggestions`)
+        .set('Authorization', `Bearer ${financeToken}`)
+        .set('X-Request-Id', `${requestId}-post-mapping`)
+        .expect(201);
+      expect(postMappingResponse.body.data).toMatchObject({
+        status: 'manual_required',
+        mode: 'manual',
+        reasonCode: 'SUGGESTION_OUTPUT_STALE',
+        classification: { status: 'succeeded' },
+        mapping: null,
+        execution: { status: 'succeeded', reviewBasis: { basisHash: expect.stringMatching(/^[a-f0-9]{64}$/) } },
+        businessRecordsCreated: 0
+      });
+      expect(providerSpy).toHaveBeenCalledTimes(2);
+      expect(await prisma.aiTask.count({
+        where: { resourceId: taskId, taskType: 'excel_column_mapping' }
+      })).toBe(1);
+      expect(await prisma.mappingDecision.count({ where: { importTaskId: taskId } })).toBe(0);
+      expect(await prisma.businessRecord.count({ where: { importTaskId: taskId } })).toBe(0);
     } finally {
       providerSpy?.mockRestore();
       config.set('ai.ingestionMode', originalMode);
       config.set('ai.globalKillSwitch', originalKillSwitch);
-      await prisma.aiCallLog.deleteMany({ where: { correlationId: requestId } });
+      await prisma.aiCallLog.deleteMany({ where: { correlationId: { startsWith: requestId } } });
       if (taskId) await prisma.aiTask.deleteMany({ where: { resourceId: taskId } });
       const resourceIds = [taskId, rawFileId, projectId, templateId]
         .filter((id): id is string => Boolean(id));

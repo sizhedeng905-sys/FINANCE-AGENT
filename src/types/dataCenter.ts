@@ -629,6 +629,8 @@ export interface ImportMappingInput {
     aiTaskId: string;
     outputHash: string;
     versionVectorHash: string;
+    reviewStateHash: string;
+    reviewBasisHash: string;
     sourceRef: string;
     decision: 'accept' | 'edit' | 'reject' | 'ignore';
     reason: string;
@@ -689,6 +691,21 @@ export interface ExcelAiExecution<T> {
   output: T;
   outputHash: string;
   versionVectorHash: string;
+  reviewBasis?: {
+    schemaVersion: 'ai-review-basis/1.0';
+    taskType: string;
+    resourceType: string;
+    resourceId: string;
+    aiTaskId: string;
+    reviewState: {
+      schemaVersion: string;
+      stateHash: string;
+    };
+    inputHash: string;
+    outputHash: string;
+    versionVectorHash: string;
+    basisHash: string;
+  };
 }
 
 export interface ExcelAiManualExecution {
@@ -763,6 +780,7 @@ export interface ExcelAiSuggestionHistoryItem {
   inputHash: string;
   versionVectorHash?: string;
   outputHash?: string;
+  reviewBasis?: ExcelAiExecution<unknown>['reviewBasis'];
   output?: ExcelAiClassificationOutput | ExcelAiMappingOutput;
   error?: string;
   attempt?: {
@@ -790,6 +808,8 @@ export interface ImportAiReviewDecision {
   aiTaskId: string;
   outputHash: string;
   versionVectorHash: string;
+  reviewStateHash?: string;
+  reviewBasisHash?: string;
   sourceRef: string;
   templateVersionId: string;
   suggested: {

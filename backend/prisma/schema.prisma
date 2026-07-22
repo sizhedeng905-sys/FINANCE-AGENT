@@ -895,6 +895,8 @@ model ImportAiReviewDecision {
   aiTaskId                String                     @map("ai_task_id")
   outputHash              String                     @map("output_hash") @db.VarChar(64)
   versionVectorHash       String                     @map("version_vector_hash") @db.VarChar(64)
+  reviewStateHash         String?                    @map("review_state_hash") @db.VarChar(64)
+  reviewBasisHash         String?                    @map("review_basis_hash") @db.VarChar(64)
   sourceRef               String                     @map("source_ref") @db.VarChar(200)
   templateVersionId       String                     @map("template_version_id") @db.VarChar(200)
   suggestedTargetFieldId  String?                    @map("suggested_target_field_id")
@@ -919,6 +921,7 @@ model ImportAiReviewDecision {
   @@index([importTaskId, createdAt])
   @@index([importColumnId])
   @@index([aiTaskId])
+  @@index([reviewBasisHash])
   @@index([actorId, createdAt])
   @@map("import_ai_review_decisions")
 }

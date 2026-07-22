@@ -1,6 +1,6 @@
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 
-export const AI_INVOCATION_VECTOR_VERSION = 'ai-invocation-vector/1.1';
+export const AI_INVOCATION_VECTOR_VERSION = 'ai-invocation-vector/1.2';
 
 export interface AiInvocationVersionVectorInput {
   source: {
@@ -44,6 +44,7 @@ export interface AiInvocationVersionVectorInput {
   authorizationPolicyVersion: string;
   featurePolicyVersion: string;
   featurePolicySnapshotSha256: string;
+  reviewStateSha256: string | null;
   inputSha256: string;
 }
 
@@ -59,6 +60,11 @@ export function buildAiInvocationVersionVector(input: AiInvocationVersionVectorI
     ...input
   };
   return { ...content, vectorSha256: canonicalJsonSha256(content) };
+}
+
+export function aiInvocationVersionVectorContent(vector: AiInvocationVersionVector) {
+  const { vectorSha256: _vectorSha256, ...content } = vector;
+  return content;
 }
 
 export function completeAiInvocationVersionVector(vector: AiInvocationVersionVector, outputSha256: string) {
@@ -107,6 +113,7 @@ function validateVersionVectorInput(input: AiInvocationVersionVectorInput) {
   assertVersion(input.authorizationPolicyVersion, 'authorizationPolicyVersion');
   assertVersion(input.featurePolicyVersion, 'featurePolicyVersion');
   assertSha256(input.featurePolicySnapshotSha256, 'featurePolicySnapshotSha256');
+  if (input.reviewStateSha256 !== null) assertSha256(input.reviewStateSha256, 'reviewStateSha256');
   assertSha256(input.inputSha256, 'inputSha256');
 }
 

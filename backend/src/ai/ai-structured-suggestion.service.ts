@@ -20,6 +20,7 @@ import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import {
   AiInvocationVersionVector,
   AiInvocationVersionVectorInput,
+  aiInvocationVersionVectorContent,
   buildAiInvocationVersionVector,
   completeAiInvocationVersionVector
 } from '../model-runtime/ai-invocation-version-vector';
@@ -33,6 +34,7 @@ import {
 } from '../model-runtime/model-deployment-config';
 import { ModelRuntimeService } from '../model-runtime/model-runtime.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiReviewBasis, AiReviewStateToken, buildAiReviewBasis } from './ai-review-basis';
 import { AiProviderService } from './ai-provider.service';
 import { AiProviderResult } from './ai.types';
 
@@ -59,6 +61,7 @@ export interface AiStructuredSuggestionInput<T> {
   validationRuleVersion: string;
   mappingProfileVersion: string | null;
   authorizationPolicyVersion: string;
+  reviewState?: AiReviewStateToken;
   mockOutput: T;
   validate: (text: string) => T;
 }
@@ -87,6 +90,7 @@ export type AiStructuredSuggestionResult<T> =
       output: T;
       outputHash: string;
       versionVectorHash: string;
+      reviewBasis?: AiReviewBasis;
     };
 
 type PromptBundle = Awaited<ReturnType<AiPromptRegistryService['resolveActive']>>;
@@ -118,6 +122,7 @@ interface SuccessfulAttemptContext<T> extends AttemptCompletionContext<T> {
   output: T;
   outputHash: string;
   completion: ReturnType<typeof completeAiInvocationVersionVector>;
+  reviewBasis?: AiReviewBasis;
 }
 
 interface FailedAttemptContext<T> extends AttemptCompletionContext<T> {
@@ -219,6 +224,7 @@ export class AiStructuredSuggestionService {
       authorizationPolicyVersion: input.authorizationPolicyVersion,
       featurePolicyVersion: AI_POLICY_VERSION,
       featurePolicySnapshotSha256: featurePolicySnapshotHash,
+      reviewStateSha256: input.reviewState?.stateHash ?? null,
       inputSha256: inputHash
     });
     const requestKey = canonicalJsonSha256({
@@ -317,6 +323,18 @@ export class AiStructuredSuggestionService {
       const output = input.validate(providerResult.text);
       const outputHash = canonicalJsonSha256(output);
       const completion = completeAiInvocationVersionVector(vector, outputHash);
+      const reviewBasis = input.reviewState
+        ? buildAiReviewBasis({
+            taskType: input.taskType,
+            resourceType: input.resourceType,
+            resourceId: input.resourceId,
+            aiTaskId: claim.taskId,
+            reviewState: input.reviewState,
+            inputHash,
+            outputHash,
+            versionVectorHash: vector.vectorSha256
+          })
+        : undefined;
       const latencyMs = Date.now() - startedAt;
       const persisted = await this.completeSuccess({
         input,
@@ -333,6 +351,7 @@ export class AiStructuredSuggestionService {
         output,
         outputHash,
         completion,
+        reviewBasis,
         latencyMs
       });
       if (!persisted) {
@@ -358,6 +377,7 @@ export class AiStructuredSuggestionService {
         output,
         outputHash,
         versionVectorHash: vector.vectorSha256,
+        reviewBasis,
         promptExecutionHash: promptExecution.executionSha256,
         outputSchemaHash: promptExecution.provenance.outputSchemaSha256
       };
@@ -483,6 +503,7 @@ export class AiStructuredSuggestionService {
       const inputPayload = this.json({
         schemaVersion: 'ai-task-input-audit/1.0',
         inputHash: args.inputHash,
+        reviewState: args.input.reviewState ?? null,
         inputAudit: args.input.inputAudit,
         policySnapshot: args.policySnapshot,
         promptExecution: args.promptExecution.provenance,
@@ -494,7 +515,7 @@ export class AiStructuredSuggestionService {
             data: {
               status: AiTaskStatus.running,
               inputHash: args.inputHash,
-              versionVector: this.json(args.vector),
+              versionVector: this.json(aiInvocationVersionVectorContent(args.vector)),
               versionVectorHash: args.vector.vectorSha256,
               leaseToken,
               leaseUntil,
@@ -515,7 +536,7 @@ export class AiStructuredSuggestionService {
               status: AiTaskStatus.running,
               requestKey: args.requestKey,
               inputHash: args.inputHash,
-              versionVector: this.json(args.vector),
+              versionVector: this.json(aiInvocationVersionVectorContent(args.vector)),
               versionVectorHash: args.vector.vectorSha256,
               leaseToken,
               leaseUntil,
@@ -577,7 +598,10 @@ export class AiStructuredSuggestionService {
       || !task.outputHash
       || task.inputHash !== expectedInputHash
       || task.versionVectorHash !== expectedVector.vectorSha256
-      || canonicalJsonSha256(task.versionVector) !== canonicalJsonSha256(expectedVector)
+      || canonicalJsonSha256(task.versionVector) !== task.versionVectorHash
+      || canonicalJsonSha256(task.versionVector) !== canonicalJsonSha256(
+        aiInvocationVersionVectorContent(expectedVector)
+      )
       || payload.outputHash !== task.outputHash
     ) {
       return {
@@ -601,6 +625,26 @@ export class AiStructuredSuggestionService {
       ) {
         throw new Error('completion hash mismatch');
       }
+      const reviewBasis = input.reviewState
+        ? buildAiReviewBasis({
+            taskType: input.taskType,
+            resourceType: input.resourceType,
+            resourceId: input.resourceId,
+            aiTaskId: task.id,
+            reviewState: input.reviewState,
+            inputHash: expectedInputHash,
+            outputHash: task.outputHash,
+            versionVectorHash: task.versionVectorHash
+          })
+        : undefined;
+      if (
+        reviewBasis
+          ? payload.reviewBasis === undefined
+            || canonicalJsonSha256(payload.reviewBasis) !== canonicalJsonSha256(reviewBasis)
+          : payload.reviewBasis !== undefined
+      ) {
+        throw new Error('review basis mismatch');
+      }
       return {
         status: 'succeeded',
         aiTaskId: task.id,
@@ -614,7 +658,8 @@ export class AiStructuredSuggestionService {
         outputSchemaHash: expectedVector.contracts.outputSchemaSha256,
         output,
         outputHash: task.outputHash,
-        versionVectorHash: task.versionVectorHash
+        versionVectorHash: task.versionVectorHash,
+        reviewBasis
       };
     } catch {
       return {
@@ -668,6 +713,7 @@ export class AiStructuredSuggestionService {
       validatedOutput: args.output,
       outputHash: args.outputHash,
       completion: args.completion,
+      ...(args.reviewBasis ? { reviewBasis: args.reviewBasis } : {}),
       providerResponseHash: responseHash,
       mock: args.providerClass === 'mock'
     });
@@ -721,7 +767,9 @@ export class AiStructuredSuggestionService {
           provider: args.deployment.provider,
           providerClass: args.providerClass,
           outputHash: args.outputHash,
-          versionVectorHash: args.vector.vectorSha256
+          versionVectorHash: args.vector.vectorSha256,
+          reviewStateHash: args.input.reviewState?.stateHash ?? null,
+          reviewBasisHash: args.reviewBasis?.basisHash ?? null
         },
         args.input.context
       );
@@ -846,7 +894,9 @@ export class AiStructuredSuggestionService {
         requestKey: args.requestKey,
         inputHash: args.vector.inputSha256,
         inputAudit: args.input.inputAudit,
-        versionVector: args.vector,
+        versionVector: aiInvocationVersionVectorContent(args.vector),
+        versionVectorHash: args.vector.vectorSha256,
+        reviewState: args.input.reviewState ?? null,
         policySnapshot: args.policySnapshot,
         promptExecution: args.promptExecution.provenance,
         promptExecutionHash: args.promptExecution.executionSha256
@@ -855,6 +905,7 @@ export class AiStructuredSuggestionService {
         schemaVersion: 'ai-structured-call-audit/1.0',
         responseHash,
         outputHash,
+        reviewBasisHash: 'reviewBasis' in args ? args.reviewBasis?.basisHash ?? null : null,
         validated: success,
         mock: args.providerClass === 'mock'
       }),
