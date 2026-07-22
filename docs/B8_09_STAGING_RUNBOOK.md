@@ -167,6 +167,23 @@ npm run staging:lock-images
 
 `npm run staging:image-integrity:test` 运行 17 个合成攻击用例。完整 release 会为每个锁定镜像生成 SPDX SBOM、Grype SARIF 和 Critical 修复门禁，并在部署前生成 `staging-release-plan/2.0`。本机证据使用 `local_identity`，只在同一 Docker 主机有效。发布到共享服务器前必须由 H13 指定受控 registry、签名身份和信任根，使用 `repository@sha256:...` 与已验证签名；当前 `pending_h13` 不得视为签名通过。
 
+target 的只读 registry 签名门禁使用现有 image lock/scan 链，不上传、复制、签名或删除镜像。目标环境必须把所有实际部署服务镜像镜像化到 `STAGING_REGISTRY_PREFIX` 下并使用 `repository@sha256:...`，在未跟踪的 `.secrets/cosign.pub` 提供经 H13 批准的 Cosign 公钥，并显式设置：
+
+```text
+STAGING_TARGET_SIGNATURE_POLICY=cosign_key_slsa_v1
+STAGING_TARGET_REGISTRY_AUTH_MODE=docker_config|credential_helper|workload_identity
+```
+
+准备完成后执行：
+
+```bash
+npm run staging:signature:check
+```
+
+命令逐个执行只读 `cosign verify` 与 `cosign verify-attestation --type slsaprovenance`，然后由程序再次核对签名 claim 和 attestation subject 均绑定目标 digest。输出只保留 registry/key/version/repository/output 哈希、digest、计数和状态，不保存 registry credential、签名正文、attestation 正文或 Cosign stderr。缺 target、受控 registry 镜像、公钥、认证模式或 Cosign 二进制时返回 `blocked_external`/退出码 2；签名、仓库、digest 或 SLSA subject 不匹配时返回 `failed`/退出码 1。
+
+`signed_registry` 的 supply-chain scan 复用同一 verifier，原先未经机器证据写入的 `operator_verified_h13` 已移除。Cosign 2xx/读取成功只证明本次 registry 读取和指定 key/claim 验证，不代表推送权限、密钥托管、审批流程或生产发布获批。第三方镜像若未镜像化并纳入同一受控签名政策，门禁保持阻断；本工具不会自动上传或重新签名。
+
 2026-07-18 本机完整门禁扫描 22 个镜像、生成 66 份证据并通过“无可修复 Critical”。扫描仍有 53 High、88 Medium、38 Low，必须继续升级和评估；详情见 `docs/汇报/R5_IMMUTABLE_IMAGE_ROLLBACK_REPORT_2026-07-18.md`。
 
 ## 5. 发布

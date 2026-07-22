@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,13 @@ import {
   verifyImageLock,
   writeSealedJson
 } from './image-integrity-lib.mjs';
+import {
+  collectLockSignatureTargets,
+  createCosignAdapter,
+  readPublicKeyFile,
+  RegistrySignatureError,
+  verifyRegistrySignatures,
+} from './registry-signature.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arguments_ = process.argv.slice(2);
@@ -27,7 +34,7 @@ const imageScanTimeoutMs = boundedInteger(
 const syftBinary = process.env.SYFT_BIN || 'syft';
 const imageEntries = lock.entries;
 const artifacts = [];
-const scannerVersion = capture(syftBinary, ['version']).slice(0, 2_000);
+const scannerVersion = captureVersion(syftBinary, ['version']).slice(0, 2_000);
 for (const entry of imageEntries) {
   const stem = `${safeStem(entry.requestedReference)}-${entry.imageId.slice(7, 19)}`;
   const sbomPath = join(outputRoot, `${stem}.spdx.json`);
@@ -55,7 +62,7 @@ for (const entry of imageEntries) {
 
 const identityPolicy = lock.metadata?.identityPolicy;
 const signatureEvidence = identityPolicy === 'signed_registry'
-  ? await verifySignedImages(imageEntries, outputRoot)
+  ? await verifySignedImages(imageEntries)
   : {
       status: 'pending_h13',
       reason: 'Local engineering identity uses digest/image ID checks; target registry, signer and public key require H13.'
@@ -82,7 +89,9 @@ const written = await writeSealedJson(indexPath, {
     sbomSource: 'syft_spdx_sealed'
   },
   signatures: signatureEvidence,
-  registryAuthorization: identityPolicy === 'signed_registry' ? 'operator_verified_h13' : 'pending_h13'
+  registryAuthorization: identityPolicy === 'signed_registry'
+    ? signatureEvidence.registryReadVerification
+    : 'pending_h13'
 });
 process.stdout.write(JSON.stringify({
   status: 'passed',
@@ -93,23 +102,20 @@ process.stdout.write(JSON.stringify({
   signatures: signatureEvidence.status
 }, null, 2) + '\n');
 
-async function verifySignedImages(entries, outputDirectory) {
+async function verifySignedImages(entries) {
   const publicKey = process.env.COSIGN_PUBLIC_KEY_FILE;
-  if (!publicKey) throw new Error('COSIGN_PUBLIC_KEY_FILE is required for signed_registry');
-  const results = [];
-  for (const entry of entries) {
-    if (!entry.repoDigest) throw new Error(`Signed image has no registry digest: ${entry.requestedReference}`);
-    const signaturePath = join(outputDirectory, `${safeStem(entry.requestedReference)}-${entry.imageId.slice(7, 19)}.cosign.json`);
-    const provenancePath = join(outputDirectory, `${safeStem(entry.requestedReference)}-${entry.imageId.slice(7, 19)}.provenance.json`);
-    const signature = capture('cosign', ['verify', '--key', publicKey, '--output', 'json', entry.repoDigest]);
-    const provenance = capture('cosign', [
-      'verify-attestation', '--key', publicKey, '--type', 'slsaprovenance', '--output', 'json', entry.repoDigest
-    ]);
-    await writeFile(signaturePath, signature, { mode: 0o600 });
-    await writeFile(provenancePath, provenance, { mode: 0o600 });
-    results.push({ imageId: entry.imageId, signatureSha256: sha256(signature), provenanceSha256: sha256(provenance) });
+  if (!publicKey) {
+    throw new RegistrySignatureError('SIGNATURE_PUBLIC_KEY_FILE_MISSING', 'blocked_external');
   }
-  return { status: 'passed', evidence: results };
+  return verifyRegistrySignatures({
+    targets: collectLockSignatureTargets(entries, lock.metadata?.registryPrefix),
+    registryPrefix: lock.metadata?.registryPrefix,
+    publicKey: await readPublicKeyFile(publicKey),
+    publicKeyPath: publicKey,
+    signaturePolicy: process.env.STAGING_TARGET_SIGNATURE_POLICY,
+    registryAuthMode: process.env.STAGING_TARGET_REGISTRY_AUTH_MODE,
+    adapter: createCosignAdapter(),
+  });
 }
 
 async function describeArtifact(path, kind, entry) {
@@ -153,14 +159,17 @@ function run(command, args, timeout = 300_000) {
   if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 2).join(' ')} failed with exit ${result.status}`);
 }
 
-function capture(command, args) {
+function captureVersion(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    timeout: 300_000
+    timeout: 120_000,
+    maxBuffer: 64_000,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 2).join(' ')} failed: ${String(result.stderr).trim()}`);
+  if (result.error || result.status !== 0) throw new Error('IMAGE_SCANNER_VERSION_CHECK_FAILED');
+  if (typeof result.stdout !== 'string' || result.stdout.length === 0) {
+    throw new Error('IMAGE_SCANNER_VERSION_OUTPUT_INVALID');
+  }
   return result.stdout;
 }

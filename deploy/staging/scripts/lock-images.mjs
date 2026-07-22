@@ -41,6 +41,7 @@ const modelCompose = scope === 'all'
   : null;
 const identityPolicy = stagingCompose.services?.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
 const sourceEnvironmentId = stagingCompose.services?.backup?.environment?.BACKUP_SOURCE_ENVIRONMENT_ID ?? '';
+const registryPrefix = String(environment.STAGING_REGISTRY_PREFIX ?? 'finance-agent');
 if (!['local_identity', 'signed_registry'].includes(identityPolicy)) {
   throw new Error('IMAGE_IDENTITY_POLICY must be local_identity or signed_registry');
 }
@@ -58,6 +59,7 @@ const lock = createImageLock({
   environmentBindings,
   metadata: {
     identityPolicy,
+    registryPrefix,
     imageScope: scope,
     sourceEnvironmentId,
     gitSha: expectedGitSha || null,
