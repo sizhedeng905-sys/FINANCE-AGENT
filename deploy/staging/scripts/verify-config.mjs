@@ -5,7 +5,14 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const fileEnvironment = parseEnvironmentSource(
+  await readFile(join(stagingRoot, '.env'), 'utf8'),
+  'staging environment',
+);
+const settings = resolveDeploymentEnvironment({ ...fileEnvironment, ...process.env });
 const requiredSecrets = [
   'postgres_superuser_password', 'migration_password', 'runtime_password', 'backup_password', 'restore_password',
   'migration_database_url', 'runtime_database_url', 'backup_database_url', 'restore_database_url', 'jwt_secret',
@@ -15,19 +22,19 @@ const requiredSecrets = [
 ];
 const requiredTls = ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
 const expectedCustomImages = {
-  'backend-api': 'finance-agent/backend:',
-  worker: 'finance-agent/backend:',
-  migrate: 'finance-agent/backend:',
-  frontend: 'finance-agent/frontend:',
-  backup: 'finance-agent/staging-backup:',
-  'minio-init': 'finance-agent/staging-backup:',
-  postgres: 'finance-agent/staging-postgres:',
-  minio: 'finance-agent/staging-minio:',
-  prometheus: 'finance-agent/staging-prometheus:',
-  alertmanager: 'finance-agent/staging-alertmanager:',
-  'node-exporter': 'finance-agent/staging-node-exporter:',
-  alloy: 'finance-agent/staging-alloy:',
-  tempo: 'finance-agent/staging-tempo:'
+  'backend-api': `${settings.registryPrefix}/backend:`,
+  worker: `${settings.registryPrefix}/backend:`,
+  migrate: `${settings.registryPrefix}/backend:`,
+  frontend: `${settings.registryPrefix}/frontend:`,
+  backup: `${settings.registryPrefix}/staging-backup:`,
+  'minio-init': `${settings.registryPrefix}/staging-backup:`,
+  postgres: `${settings.registryPrefix}/staging-postgres:`,
+  minio: `${settings.registryPrefix}/staging-minio:`,
+  prometheus: `${settings.registryPrefix}/staging-prometheus:`,
+  alertmanager: `${settings.registryPrefix}/staging-alertmanager:`,
+  'node-exporter': `${settings.registryPrefix}/staging-node-exporter:`,
+  alloy: `${settings.registryPrefix}/staging-alloy:`,
+  tempo: `${settings.registryPrefix}/staging-tempo:`
 };
 const digestPinnedRuntimeServices = ['redis', 'clamav', 'gateway', 'loki', 'grafana'];
 
@@ -40,6 +47,11 @@ run('openssl', ['x509', '-checkend', '604800', '-noout', '-in', '.runtime/tls/ga
 run('openssl', ['x509', '-checkend', '604800', '-noout', '-in', '.runtime/tls/postgres.crt']);
 const gatewayCertificate = new X509Certificate(await readFile(join(stagingRoot, '.runtime', 'tls', 'gateway.crt')));
 const postgresCertificate = new X509Certificate(await readFile(join(stagingRoot, '.runtime', 'tls', 'postgres.crt')));
+for (const domain of [settings.appDomain, settings.objectDomain]) {
+  if (!gatewayCertificate.checkHost(domain)) {
+    throw new Error(`Gateway certificate does not cover configured domain: ${domain}`);
+  }
+}
 const certificateMetrics = join(stagingRoot, '.runtime', 'metrics');
 await mkdir(certificateMetrics, { recursive: true, mode: 0o700 });
 await writeFile(join(certificateMetrics, 'finance_agent_tls.prom'), [
@@ -57,11 +69,38 @@ const sourceEnvironmentId = services.backup?.environment?.BACKUP_SOURCE_ENVIRONM
 const imageIdentityPolicy = services.backup?.environment?.IMAGE_IDENTITY_POLICY ?? '';
 const backupEnvironment = services.backup?.environment ?? {};
 const backupTmpfs = services.backup?.tmpfs ?? [];
+if (sourceEnvironmentId !== settings.environmentId) {
+  throw new Error('Rendered backup environment ID does not match STAGING_ENVIRONMENT_ID');
+}
 if (!['local_identity', 'signed_registry'].includes(imageIdentityPolicy)) {
   throw new Error('IMAGE_IDENTITY_POLICY must be local_identity or signed_registry');
 }
 if (imageIdentityPolicy === 'local_identity' && !sourceEnvironmentId.endsWith('-local')) {
   throw new Error('local_identity requires BACKUP_SOURCE_ENVIRONMENT_ID ending with -local');
+}
+for (const [actual, expected, label] of [
+  [services['backend-api']?.environment?.CORS_ORIGINS, settings.corsOrigins.join(','), 'CORS origins'],
+  [services['backend-api']?.environment?.TRUSTED_PROXIES, settings.trustedProxyCidrs.join(','), 'trusted proxies'],
+  [services['backend-api']?.environment?.S3_ENDPOINT, settings.objectBaseUrl, 'object endpoint'],
+  [services.minio?.environment?.MINIO_BROWSER_REDIRECT_URL, `${settings.objectBaseUrl}/console/`, 'object console URL'],
+  [services.grafana?.environment?.GF_SERVER_ROOT_URL, `${settings.appBaseUrl}/ops/grafana/`, 'Grafana root URL'],
+  [services.migrate?.environment?.STAGING_SYNTHETIC_SEED_ENABLED, String(settings.syntheticSeedEnabled), 'synthetic seed mode'],
+]) {
+  if (String(actual ?? '') !== expected) throw new Error(`Rendered ${label} does not match the deployment environment`);
+}
+const gatewayPorts = services.gateway?.ports ?? [];
+for (const [target, published] of [[8443, settings.webPort], [9443, settings.objectPort]]) {
+  const binding = gatewayPorts.find((candidate) => Number(candidate.target) === target);
+  if (
+    !binding
+    || Number(binding.published) !== published
+    || String(binding.host_ip ?? '') !== settings.gatewayBindAddress
+  ) {
+    throw new Error(`Gateway port ${target} does not match its configured bind address and published port`);
+  }
+}
+if (services.gateway?.networks?.app?.ipv4_address !== settings.gatewayInternalIp) {
+  throw new Error('Gateway internal address does not match STAGING_GATEWAY_INTERNAL_IP');
 }
 if (
   backupEnvironment.HOME !== '/tmp/backup-home'
@@ -135,6 +174,11 @@ const evidence = {
   serviceCount: Object.keys(services).length,
   imageReferences,
   checks: {
+    deploymentProfile: settings.profile,
+    certificateMode: settings.certificateMode,
+    environmentId: settings.environmentId,
+    registryPrefix: settings.registryPrefix,
+    parameterizedTopology: true,
     secretsPresent: requiredSecrets.length,
     certificatesVerified: true,
     fixedImageTags: true,

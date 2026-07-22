@@ -17,6 +17,7 @@ import {
   writeSealedDocument,
   writeSealedJson
 } from './image-integrity-lib.mjs';
+import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(stagingRoot, '../..');
@@ -24,6 +25,11 @@ const gitStatus = capture('git', ['status', '--porcelain', '--untracked-files=no
 if (gitStatus) throw new Error('Release requires a clean tracked Git worktree');
 const gitSha = capture('git', ['rev-parse', 'HEAD'], repoRoot).trim();
 const shortSha = gitSha.slice(0, 12);
+const fileEnvironment = parseEnvironmentSource(
+  await readFile(join(stagingRoot, '.env'), 'utf8'),
+  'staging environment',
+);
+const settings = resolveDeploymentEnvironment({ ...fileEnvironment, ...process.env });
 const releaseId = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}-${shortSha}`;
 const releaseRoot = join(stagingRoot, '.release');
 const releasesRoot = join(releaseRoot, 'releases');
@@ -31,18 +37,19 @@ const releaseEvidenceRoot = join(releasesRoot, `${releaseId}.supply-chain`);
 const imageLockPath = join(releasesRoot, `${releaseId}.images.lock.json`);
 await mkdir(releasesRoot, { recursive: true, mode: 0o700 });
 const runtimeEnv = {
+  ...fileEnvironment,
   ...process.env,
   BUILD_GIT_SHA: gitSha,
-  BACKEND_IMAGE: `finance-agent/backend:${shortSha}`,
-  FRONTEND_IMAGE: `finance-agent/frontend:${shortSha}`,
-  BACKUP_IMAGE: `finance-agent/staging-backup:${shortSha}`,
-  POSTGRES_IMAGE: `finance-agent/staging-postgres:${shortSha}`,
-  MINIO_IMAGE: `finance-agent/staging-minio:${shortSha}`,
-  PROMETHEUS_IMAGE: `finance-agent/staging-prometheus:${shortSha}`,
-  ALERTMANAGER_IMAGE: `finance-agent/staging-alertmanager:${shortSha}`,
-  NODE_EXPORTER_IMAGE: `finance-agent/staging-node-exporter:${shortSha}`,
-  ALLOY_IMAGE: `finance-agent/staging-alloy:${shortSha}`,
-  TEMPO_IMAGE: `finance-agent/staging-tempo:${shortSha}`
+  BACKEND_IMAGE: `${settings.registryPrefix}/backend:${shortSha}`,
+  FRONTEND_IMAGE: `${settings.registryPrefix}/frontend:${shortSha}`,
+  BACKUP_IMAGE: `${settings.registryPrefix}/staging-backup:${shortSha}`,
+  POSTGRES_IMAGE: `${settings.registryPrefix}/staging-postgres:${shortSha}`,
+  MINIO_IMAGE: `${settings.registryPrefix}/staging-minio:${shortSha}`,
+  PROMETHEUS_IMAGE: `${settings.registryPrefix}/staging-prometheus:${shortSha}`,
+  ALERTMANAGER_IMAGE: `${settings.registryPrefix}/staging-alertmanager:${shortSha}`,
+  NODE_EXPORTER_IMAGE: `${settings.registryPrefix}/staging-node-exporter:${shortSha}`,
+  ALLOY_IMAGE: `${settings.registryPrefix}/staging-alloy:${shortSha}`,
+  TEMPO_IMAGE: `${settings.registryPrefix}/staging-tempo:${shortSha}`
 };
 const composePrefix = ['compose', '--env-file', '.env', '-f', 'compose.yaml'];
 const runtimePullServices = ['redis', 'clamav', 'gateway', 'grafana', 'loki'];

@@ -38,6 +38,21 @@ npm run staging:init
 npm run staging:check
 ```
 
+`deploy/staging/.env.example` 现在明确区分本机演示参数与后续目标环境参数。默认值仍是原有 `local_demo`，因此既有周五演示入口不变。以下变量必须作为一个一致配置集修改，`staging:check` 会拒绝域名、URL、端口或证书不匹配：
+
+| 边界 | 变量 | 本机默认 |
+| --- | --- | --- |
+| 部署身份 | `STAGING_DEPLOYMENT_PROFILE`、`STAGING_ENVIRONMENT_ID` | `local_demo`、`finance-agent-staging-local` |
+| 应用入口 | `STAGING_APP_DOMAIN`、`STAGING_APP_BASE_URL`、`STAGING_WEB_PORT` | `staging.finance-agent.local`、`https://staging.finance-agent.local:8443`、`8443` |
+| 对象入口 | `STAGING_OBJECT_DOMAIN`、`STAGING_OBJECT_BASE_URL`、`STAGING_OBJECT_PORT` | `objects.finance-agent.local`、`https://objects.finance-agent.local:9443`、`9443` |
+| Web 安全 | `STAGING_CORS_ORIGINS`、`STAGING_TRUSTED_PROXY_CIDRS` | 仅本机演示 origin、固定 Compose gateway |
+| 网关 | `STAGING_GATEWAY_BIND_ADDRESS`、`STAGING_GATEWAY_PROBE_ADDRESS`、`STAGING_GATEWAY_INTERNAL_IP` | loopback bind/probe、固定私网地址 |
+| 证书 | `STAGING_CERTIFICATE_MODE` | `local_ca`；`provided` 只读取运维提供的 TLS 文件 |
+| 镜像 | `STAGING_REGISTRY_PREFIX`、各 `*_IMAGE`、`IMAGE_IDENTITY_POLICY` | 本机 `finance-agent`、`local_identity` |
+| 合成数据 | `STAGING_SYNTHETIC_SEED_ENABLED` | `true`，仅供本机演示 |
+
+`STAGING_APP_BASE_URL` 必须出现在 CORS 白名单中，应用和对象 URL 必须与各自域名、端口完全一致。registry 前缀只接受不带 tag/digest 的小写 OCI 路径。`provided` 模式不会生成或覆盖证书；缺少 CA、gateway 或 PostgreSQL TLS 文件时初始化立即失败。这里完成的是参数化底座，不代表目标环境已经通过：目标 profile 的更严格失败关闭门禁、真实 DNS/TLS/registry/secret 和预检证据仍受 H13/H14 约束。
+
 初始化脚本只创建缺失文件，不覆盖已有 secret。它会生成：
 
 - 随机数据库、JWT、Redis、MinIO、S3、Metrics、Grafana 和合成 UAT 密码；
@@ -54,7 +69,7 @@ staging.finance-agent.local
 objects.finance-agent.local
 ```
 
-正式 Staging 必须由 H-13 提供真实域名和受信任证书，不沿用本地 CA。
+正式 Staging 必须由 H-13 提供真实域名和受信任证书，使用 `provided`，不沿用本地 CA。
 
 ## 4. 镜像和供应链
 
@@ -74,7 +89,7 @@ npm run staging:lock-images
 
 ## 5. 发布
 
-发布脚本要求已跟踪工作树干净，并按 Git SHA 标记全部仓库自建镜像：
+发布脚本要求已跟踪工作树干净，并按 Git SHA 标记全部仓库自建镜像。镜像路径来自 `STAGING_REGISTRY_PREFIX`，不再硬编码本机仓库前缀：
 
 ```bash
 npm run staging:release

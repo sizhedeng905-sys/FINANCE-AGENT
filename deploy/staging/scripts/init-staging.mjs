@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
 import { synchronizeManagedEnvironment } from './managed-environment.mjs';
 
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,6 +33,10 @@ if (!existsSync(environmentPath)) {
     await writeFile(environmentPath, synchronized.content, { encoding: 'utf8' });
   }
 }
+const settings = resolveDeploymentEnvironment({
+  ...parseEnvironmentSource(await readFile(environmentPath, 'utf8'), 'staging environment'),
+  ...process.env,
+});
 
 const hex = (bytes = 48) => randomBytes(bytes).toString('hex');
 const secrets = {
@@ -89,12 +95,22 @@ secretFilesCreated += Number(await writeIfMissing(
 
 const tlsFiles = ['ca.crt', 'ca.key', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key'];
 const tlsFilesBefore = new Set(tlsFiles.filter((name) => existsSync(join(tlsRoot, name))));
-ensureCertificates();
+if (settings.certificateMode === 'local_ca') {
+  ensureCertificates(settings);
+} else {
+  for (const name of ['ca.crt', 'gateway.crt', 'gateway.key', 'postgres.crt', 'postgres.key']) {
+    if (!existsSync(join(tlsRoot, name))) {
+      throw new Error(`Provided certificate mode requires an operator-provisioned .runtime/tls/${name}`);
+    }
+  }
+}
 const tlsFilesCreated = tlsFiles.filter((name) => !tlsFilesBefore.has(name) && existsSync(join(tlsRoot, name))).length;
 
 await writeFile(join(stagingRoot, '.runtime', 'initialization.json'), JSON.stringify({
   schemaVersion: 1,
   initializedAt: new Date().toISOString(),
+  deploymentProfile: settings.profile,
+  certificateMode: settings.certificateMode,
   generatedFiles: [
     ...Object.keys(secrets).map((name) => `.secrets/${name}`),
     '.secrets/migration_database_url',
@@ -117,7 +133,7 @@ process.stdout.write(JSON.stringify({
   secretFilesCreated,
   tlsCreated: tlsFilesCreated > 0,
   tlsFilesCreated,
-  next: 'Add staging.finance-agent.local and objects.finance-agent.local to the local hosts file, then run verify-config.mjs.'
+  next: `Resolve ${settings.appDomain} and ${settings.objectDomain} to ${settings.gatewayProbeAddress}, then run verify-config.mjs.`
 }, null, 2) + '\n');
 
 async function writeIfMissing(path, value) {
@@ -126,7 +142,7 @@ async function writeIfMissing(path, value) {
   return true;
 }
 
-function ensureCertificates() {
+function ensureCertificates(deployment) {
   const caKey = join(tlsRoot, 'ca.key');
   const caCert = join(tlsRoot, 'ca.crt');
   const opensslConfig = join(tlsRoot, 'openssl.cnf');
@@ -155,12 +171,16 @@ function ensureCertificates() {
     ]);
   }
   if (!existsSync(join(tlsRoot, 'gateway.crt')) || !existsSync(join(tlsRoot, 'gateway.key'))) {
-    createLeaf('gateway', '/CN=staging.finance-agent.local', [
-      'DNS:staging.finance-agent.local',
-      'DNS:objects.finance-agent.local',
+    const probeName = isIP(deployment.gatewayProbeAddress) > 0
+      ? `IP:${deployment.gatewayProbeAddress}`
+      : `DNS:${deployment.gatewayProbeAddress}`;
+    createLeaf('gateway', `/CN=${deployment.appDomain}`, [...new Set([
+      `DNS:${deployment.appDomain}`,
+      `DNS:${deployment.objectDomain}`,
       'DNS:localhost',
-      'IP:127.0.0.1'
-    ], caKey, caCert);
+      'IP:127.0.0.1',
+      probeName,
+    ])], caKey, caCert);
   }
   if (!existsSync(join(tlsRoot, 'postgres.crt')) || !existsSync(join(tlsRoot, 'postgres.key'))) {
     createLeaf('postgres', '/CN=postgres', ['DNS:postgres'], caKey, caCert);

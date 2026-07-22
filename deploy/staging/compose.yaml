@@ -8,11 +8,11 @@ x-backend-environment: &backend-environment
   JWT_ISSUER: finance-agent-staging
   JWT_AUDIENCE: finance-agent-api
   JWT_ALGORITHM: HS256
-  CORS_ORIGINS: https://staging.finance-agent.local:${STAGING_WEB_PORT:-8443}
-  TRUSTED_PROXIES: 172.31.90.10
+  CORS_ORIGINS: ${STAGING_CORS_ORIGINS:-https://staging.finance-agent.local:8443}
+  TRUSTED_PROXIES: ${STAGING_TRUSTED_PROXY_CIDRS:-172.31.90.10}
   SWAGGER_ENABLED: "false"
   FILE_STORAGE_DRIVER: s3
-  S3_ENDPOINT: https://objects.finance-agent.local:9443
+  S3_ENDPOINT: ${STAGING_OBJECT_BASE_URL:-https://objects.finance-agent.local:9443}
   S3_REGION: us-east-1
   S3_BUCKET: finance-agent-raw
   S3_FORCE_PATH_STYLE: "true"
@@ -194,7 +194,7 @@ services:
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
-      MINIO_BROWSER_REDIRECT_URL: https://objects.finance-agent.local:${STAGING_OBJECT_PORT:-9443}/console/
+      MINIO_BROWSER_REDIRECT_URL: ${STAGING_OBJECT_BASE_URL:-https://objects.finance-agent.local:9443}/console/
       # Metrics remain anonymous only on the private app network; the gateway blocks these paths.
       MINIO_PROMETHEUS_AUTH_TYPE: public
     secrets:
@@ -270,8 +270,8 @@ services:
     entrypoint: ["nginx", "-g", "daemon off;"]
     read_only: true
     ports:
-      - 127.0.0.1:${STAGING_WEB_PORT:-8443}:8443
-      - 127.0.0.1:${STAGING_OBJECT_PORT:-9443}:9443
+      - ${STAGING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STAGING_WEB_PORT:-8443}:8443
+      - ${STAGING_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${STAGING_OBJECT_PORT:-9443}:9443
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./.runtime/tls/gateway.crt:/run/tls/gateway.crt:ro
@@ -294,10 +294,10 @@ services:
       retries: 20
     networks:
       app:
-        ipv4_address: 172.31.90.10
+        ipv4_address: ${STAGING_GATEWAY_INTERNAL_IP:-172.31.90.10}
         aliases:
-          - staging.finance-agent.local
-          - objects.finance-agent.local
+          - ${STAGING_APP_DOMAIN:-staging.finance-agent.local}
+          - ${STAGING_OBJECT_DOMAIN:-objects.finance-agent.local}
       observability: {}
       edge: {}
 
@@ -308,6 +308,7 @@ services:
       NODE_ENV: production
       AI_SYSTEM_REGISTRY_PROFILE: mock-safe-v1
       AI_SYSTEM_REGISTRY_STARTUP_MODE: verify
+      STAGING_SYNTHETIC_SEED_ENABLED: ${STAGING_SYNTHETIC_SEED_ENABLED:-true}
       DATABASE_URL_FILE: /run/secrets/migration_database_url
     secrets:
       - migration_database_url
@@ -315,7 +316,7 @@ services:
     command:
       - sh
       - -c
-      - ./node_modules/.bin/prisma migrate deploy && ./node_modules/.bin/prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && node dist/system-bootstrap.js && ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js
+      - ./node_modules/.bin/prisma migrate deploy && ./node_modules/.bin/prisma db execute --file prisma/runtime-grants.sql --schema prisma/schema.prisma && node dist/system-bootstrap.js && if [ "$$STAGING_SYNTHETIC_SEED_ENABLED" = "true" ]; then ALLOW_STAGING_SEED=true STAGING_SEED_PASSWORD_FILE=/run/secrets/staging_seed_password node dist/staging-seed.js; elif [ "$$STAGING_SYNTHETIC_SEED_ENABLED" != "false" ]; then echo "Invalid STAGING_SYNTHETIC_SEED_ENABLED" >&2; exit 1; fi
     depends_on:
       postgres:
         condition: service_healthy
@@ -407,7 +408,7 @@ services:
       MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
       RESTORE_DATABASE_URL_FILE: /run/secrets/restore_database_url
       MINIO_ENDPOINT: http://minio:9000
-      BACKUP_SOURCE_ENVIRONMENT_ID: ${BACKUP_SOURCE_ENVIRONMENT_ID:-finance-agent-staging-local}
+      BACKUP_SOURCE_ENVIRONMENT_ID: ${STAGING_ENVIRONMENT_ID:-finance-agent-staging-local}
       IMAGE_IDENTITY_POLICY: ${IMAGE_IDENTITY_POLICY:-local_identity}
       BACKUP_METRICS_FILE: /metrics/finance_agent_backup.prom
     secrets:
@@ -572,7 +573,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: staging-admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
-      GF_SERVER_ROOT_URL: https://staging.finance-agent.local:${STAGING_WEB_PORT:-8443}/ops/grafana/
+      GF_SERVER_ROOT_URL: ${STAGING_APP_BASE_URL:-https://staging.finance-agent.local:8443}/ops/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
     secrets:

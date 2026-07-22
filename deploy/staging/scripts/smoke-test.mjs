@@ -4,9 +4,15 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const env = parseEnv(await readFile(join(stagingRoot, '.env'), 'utf8'));
-const port = Number(process.env.STAGING_WEB_PORT ?? env.STAGING_WEB_PORT ?? '8443');
+const env = {
+  ...parseEnvironmentSource(await readFile(join(stagingRoot, '.env'), 'utf8'), 'staging environment'),
+  ...process.env,
+};
+const settings = resolveDeploymentEnvironment(env);
+const port = settings.webPort;
 const ca = await readFile(join(stagingRoot, '.runtime', 'tls', 'ca.crt'));
 const password = (await readFile(join(stagingRoot, '.secrets', 'staging_seed_password'), 'utf8')).trim();
 const checks = [];
@@ -50,7 +56,7 @@ checks.push({ name: 'metrics', status: 200 });
 const result = {
   status: 'passed',
   completedAt: new Date().toISOString(),
-  endpoint: `https://staging.finance-agent.local:${port}`,
+  endpoint: settings.appBaseUrl,
   checks
 };
 const evidenceRoot = join(stagingRoot, '.evidence');
@@ -62,14 +68,14 @@ function request(path, method = 'GET', payload) {
   const body = payload === undefined ? undefined : JSON.stringify(payload);
   return new Promise((resolvePromise, reject) => {
     const operation = httpsRequest({
-      hostname: '127.0.0.1',
+      hostname: settings.gatewayProbeAddress,
       port,
       path,
       method,
       ca,
-      servername: 'staging.finance-agent.local',
+      servername: settings.appDomain,
       headers: {
-        Host: `staging.finance-agent.local:${port}`,
+        Host: `${settings.appDomain}:${port}`,
         ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {})
       }
     }, (response) => {
@@ -96,11 +102,4 @@ function runCompose(args) {
 
 function assert(condition, name) {
   if (!condition) throw new Error(`Staging smoke check failed: ${name}`);
-}
-
-function parseEnv(value) {
-  return Object.fromEntries(value.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1)];
-  }));
 }

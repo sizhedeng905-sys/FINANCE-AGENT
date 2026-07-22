@@ -44,7 +44,7 @@
     "model:status": "node backend/scripts/model-services.mjs status",
     "model:stop": "node backend/scripts/model-services.mjs stop-all",
     "staging:init": "node deploy/staging/scripts/init-staging.mjs",
-    "staging:config:test": "node --test deploy/staging/scripts/managed-environment.test.mjs",
+    "staging:config:test": "node --test deploy/staging/scripts/managed-environment.test.mjs deploy/staging/scripts/deployment-environment.test.mjs",
     "staging:sbom:test": "node --test deploy/staging/scripts/generate-sbom.test.mjs",
     "staging:check": "node deploy/staging/scripts/verify-config.mjs",
     "staging:backup-integrity:test": "node deploy/staging/scripts/test-backup-integrity.mjs",

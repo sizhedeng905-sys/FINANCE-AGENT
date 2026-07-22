@@ -3,18 +3,23 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
+import { parseEnvironmentSource, resolveDeploymentEnvironment } from './deployment-environment.mjs';
+
 const stagingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const env = parseEnv(await readFile(join(stagingRoot, '.env'), 'utf8'));
-const port = Number(process.env.STAGING_WEB_PORT ?? env.STAGING_WEB_PORT ?? '8443');
+const env = {
+  ...parseEnvironmentSource(await readFile(join(stagingRoot, '.env'), 'utf8'), 'staging environment'),
+  ...process.env,
+};
+const settings = resolveDeploymentEnvironment(env);
 const password = (await readFile(join(stagingRoot, '.secrets', 'staging_seed_password'), 'utf8')).trim();
-const baseUrl = `https://staging.finance-agent.local:${port}`;
+const baseUrl = settings.appBaseUrl;
 const browserChannel = process.env.STAGING_BROWSER_CHANNEL ?? (process.platform === 'win32' ? 'msedge' : undefined);
 const browser = await chromium.launch({
   headless: true,
   ...(browserChannel ? { channel: browserChannel } : {}),
   args: [
     '--no-proxy-server',
-    '--host-resolver-rules=MAP staging.finance-agent.local 127.0.0.1',
+    `--host-resolver-rules=MAP ${settings.appDomain} ${settings.gatewayProbeAddress}`,
   ],
 });
 
@@ -209,13 +214,6 @@ function headerValues(headers, name) {
   const values = value.split(/[\r\n,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean);
   assert(values.length > 0, `${name} is missing`);
   return values;
-}
-
-function parseEnv(value) {
-  return Object.fromEntries(value.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
-    const index = line.indexOf('=');
-    return [line.slice(0, index), line.slice(index + 1)];
-  }));
 }
 
 function assert(condition, message) {
