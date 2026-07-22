@@ -310,6 +310,7 @@ model User {
   reportSnapshots      ReportSnapshot[]         @relation("ReportSnapshotCreator")
   reportNarratives     ReportNarrative[]        @relation("ReportNarrativeCreator")
   importAiReviews      ImportAiReviewDecision[] @relation("ImportAiReviewActor")
+  ocrAiReviews         OcrAiReviewDecision[]    @relation("OcrAiReviewActor")
 
   @@map("users")
 }
@@ -407,14 +408,17 @@ model FieldDefinition {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  templateFields      TemplateField[]
-  recordValues        RecordValue[]
-  mappingProfileRules MappingProfileRule[]
-  mappingDecisions    MappingDecision[]
-  mappedSuggestions   FieldSuggestion[]    @relation("SuggestionMappedField")
-  ocrCorrections      OcrCorrection[]
-  primaryAmountFor    Template[]           @relation("TemplatePrimaryAmountField")
-  primaryDateFor      Template[]           @relation("TemplatePrimaryDateField")
+  templateFields         TemplateField[]
+  recordValues           RecordValue[]
+  mappingProfileRules    MappingProfileRule[]
+  mappingDecisions       MappingDecision[]
+  mappedSuggestions      FieldSuggestion[]     @relation("SuggestionMappedField")
+  ocrCorrections         OcrCorrection[]
+  ocrAiReviewSources     OcrAiReviewDecision[] @relation("OcrAiReviewSourceField")
+  ocrAiReviewSuggestions OcrAiReviewDecision[] @relation("OcrAiReviewSuggestedField")
+  ocrAiReviewFinals      OcrAiReviewDecision[] @relation("OcrAiReviewFinalField")
+  primaryAmountFor       Template[]            @relation("TemplatePrimaryAmountField")
+  primaryDateFor         Template[]            @relation("TemplatePrimaryDateField")
 
   @@index([isActive])
   @@map("field_definitions")
@@ -1019,14 +1023,15 @@ model OcrTask {
   createdAt              DateTime      @default(now()) @map("created_at")
   updatedAt              DateTime      @updatedAt @map("updated_at")
 
-  rawFile         RawFile         @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
-  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  template        Template        @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  uploader        User            @relation("OcrTaskUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
-  confirmer       User?           @relation("OcrTaskConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
-  generatedRecord BusinessRecord? @relation("OcrGeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
-  attempts        OcrAttempt[]
-  corrections     OcrCorrection[]
+  rawFile           RawFile               @relation(fields: [rawFileId], references: [id], onDelete: Restrict)
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template          Template              @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  uploader          User                  @relation("OcrTaskUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  confirmer         User?                 @relation("OcrTaskConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  generatedRecord   BusinessRecord?       @relation("OcrGeneratedRecord", fields: [generatedRecordId], references: [id], onDelete: SetNull)
+  attempts          OcrAttempt[]
+  corrections       OcrCorrection[]
+  aiReviewDecisions OcrAiReviewDecision[]
 
   @@index([projectId, createdAt])
   @@index([templateId])
@@ -1096,6 +1101,51 @@ model OcrCorrection {
   @@index([fieldId])
   @@index([correctedBy])
   @@map("ocr_corrections")
+}
+
+model OcrAiReviewDecision {
+  id                      String                     @id @default(cuid())
+  ocrTaskId               String                     @map("ocr_task_id")
+  sourceFieldId           String                     @map("source_field_id")
+  aiTaskId                String                     @map("ai_task_id")
+  outputHash              String                     @map("output_hash") @db.VarChar(64)
+  versionVectorHash       String                     @map("version_vector_hash") @db.VarChar(64)
+  reviewStateHash         String                     @map("review_state_hash") @db.VarChar(64)
+  reviewBasisHash         String                     @map("review_basis_hash") @db.VarChar(64)
+  sourceRef               String                     @map("source_ref") @db.VarChar(200)
+  templateVersionId       String                     @map("template_version_id") @db.VarChar(200)
+  rawOcrValue             Json                       @map("raw_ocr_value_json")
+  rawEvidenceRefs         Json                       @default("[]") @map("raw_evidence_refs")
+  suggestedTargetFieldId  String?                    @map("suggested_target_field_id")
+  suggestedTargetFieldKey String?                    @map("suggested_target_field_key") @db.VarChar(200)
+  suggestedTransformKey   String?                    @map("suggested_transform_key") @db.VarChar(100)
+  suggestedConfidence     String?                    @map("suggested_confidence") @db.VarChar(32)
+  suggestedValue          Json?                      @map("suggested_value_json")
+  suggestedEvidenceRefs   Json                       @default("[]") @map("suggested_evidence_refs")
+  finalTargetFieldId      String?                    @map("final_target_field_id")
+  finalValue              Json?                      @map("final_value_json")
+  finalEvidenceRefs       Json                       @default("[]") @map("final_evidence_refs")
+  decision                ImportAiReviewDecisionType
+  reason                  String                     @db.VarChar(500)
+  reviewRevision          Int                        @map("review_revision")
+  actorId                 String                     @map("actor_id")
+  createdAt               DateTime                   @default(now()) @map("created_at")
+
+  ocrTask         OcrTask          @relation(fields: [ocrTaskId], references: [id], onDelete: Restrict)
+  sourceField     FieldDefinition  @relation("OcrAiReviewSourceField", fields: [sourceFieldId], references: [id], onDelete: Restrict)
+  aiTask          AiTask           @relation(fields: [aiTaskId], references: [id], onDelete: Restrict)
+  suggestedTarget FieldDefinition? @relation("OcrAiReviewSuggestedField", fields: [suggestedTargetFieldId], references: [id], onDelete: Restrict)
+  finalTarget     FieldDefinition? @relation("OcrAiReviewFinalField", fields: [finalTargetFieldId], references: [id], onDelete: Restrict)
+  actor           User             @relation("OcrAiReviewActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([ocrTaskId, reviewRevision, sourceRef])
+  @@unique([aiTaskId, sourceRef])
+  @@index([ocrTaskId, createdAt])
+  @@index([sourceFieldId])
+  @@index([aiTaskId])
+  @@index([reviewBasisHash])
+  @@index([actorId, createdAt])
+  @@map("ocr_ai_review_decisions")
 }
 
 model WorkOrderTimeline {
@@ -1371,6 +1421,7 @@ model AiTask {
   attempts         AiCallAttempt[]
   reportNarratives ReportNarrative[]
   importAiReviews  ImportAiReviewDecision[]
+  ocrAiReviews     OcrAiReviewDecision[]
 
   @@index([taskType, status])
   @@index([resourceType, resourceId])
