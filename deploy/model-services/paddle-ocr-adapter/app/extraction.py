@@ -203,7 +203,7 @@ def normalize_value(raw_value: str, field_type: str) -> Any:
 
 
 def _find_field_value(lines: list[dict[str, Any]], field: dict[str, Any]):
-    labels = [field["fieldName"], *field.get("aliases", [])]
+    labels = _field_labels(field)
     for label_index, label in enumerate(labels):
         escaped = re.escape(label)
         separator_pattern = re.compile(rf"^\s*{escaped}\s*[:：=]\s*(.+?)\s*$", re.IGNORECASE)
@@ -223,6 +223,18 @@ def _find_field_value(lines: list[dict[str, Any]], field: dict[str, Any]):
                     confidence = 0.66 if label_index == 0 else 0.60
                     return next_line["text"], label, next_line, confidence, "adjacent-line"
     return None
+
+
+def _field_labels(field: dict[str, Any]) -> list[str]:
+    labels = [field["fieldName"], *field.get("aliases", []), field["fieldKey"]]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        normalized = _normalized_text(label)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(label)
+    return unique
 
 
 def _result_payload(result: Any) -> dict[str, Any]:

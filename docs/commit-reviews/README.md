@@ -68,6 +68,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-054 | [CR-054_local-pilot-postgres-loopback-isolation.md](CR-054_local-pilot-postgres-loopback-isolation.md) | `docs: record loopback pilot database isolation` | P1 local security | LOCAL_ENGINEERING_VERIFIED / HOST_RESTART_PENDING | CR-053 |
 | CR-055 | [CR-055_boss-chat-claim-allowlist.md](CR-055_boss-chat-claim-allowlist.md) | `fix(ai): constrain boss chat claim allowlists` | P1 AI integrity | LOCAL_MODEL_VERIFIED / OWNER_UAT_PENDING | CR-054 |
 | CR-056 | [CR-056_boss-ai-evidence-disclosure.md](CR-056_boss-ai-evidence-disclosure.md) | `feat(ai): expose boss answer evidence` | P1 AI traceability | LOCAL_BROWSER_VERIFIED / OWNER_UAT_PENDING | CR-055 |
+| CR-057 | [CR-057_ocr-field-key-label-bridge.md](CR-057_ocr-field-key-label-bridge.md) | `fix(ocr): recognize stable field-key labels` | P1 OCR local-provider compatibility | LOCAL_MODEL_BROWSER_VERIFIED / REAL_SAMPLE_NEEDED | CR-056 |
 
 当前远端校准：CR-015 至 CR-046 的实现均已包含在运行时树 `5c16f3e`，该树的 Build and acceptance 与 CodeQL 已通过。CR-015 至 CR-038 行内保留的 `REMOTE_PUSH_BLOCKED_EXTERNAL` 是各审查文档提交时的历史状态，不代表当前分支仍未推送；真实样本、目标环境和 owner UAT 等业务门禁仍按各行原义保持开放。
 
