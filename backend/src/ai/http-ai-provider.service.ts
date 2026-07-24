@@ -8,6 +8,7 @@ import { AiProviderRequest, AiProviderResult } from './ai.types';
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_CONTEXT_CHARACTERS = 100_000;
 const MAX_OUTPUT_CHARACTERS = 20_000;
+const VLLM_UNSUPPORTED_SCHEMA_KEYS = new Set(['uniqueItems']);
 
 @Injectable()
 export class HttpAiProviderService {
@@ -79,7 +80,9 @@ export class HttpAiProviderService {
         json_schema: {
           name: 'finance_agent_structured_output',
           strict: true,
-          schema: request.outputSchema
+          schema: request.providerClass === 'local'
+            ? this.localGrammarSchema(request.outputSchema)
+            : request.outputSchema
         }
       };
     }
@@ -196,6 +199,16 @@ export class HttpAiProviderService {
       schema,
       '</required_output_schema_json>'
     ].join('\n');
+  }
+
+  private localGrammarSchema(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => this.localGrammarSchema(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !VLLM_UNSUPPORTED_SCHEMA_KEYS.has(key))
+        .map(([key, item]) => [key, this.localGrammarSchema(item)])
+    );
   }
 
   private async readLimitedJson(response: Response): Promise<any> {

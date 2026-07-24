@@ -1,5 +1,7 @@
 import { AiSuggestionValidatorService } from '../src/ai/ai-suggestion-validator.service';
+import { ExcelAiSuggestionService } from '../src/import-tasks/excel-ai-suggestion.service';
 import { StructuredOutputValidatorService } from '../src/model-runtime/structured-output-validator.service';
+import { OcrAiSuggestionService } from '../src/ocr/ocr-ai-suggestion.service';
 
 describe('AI suggestion output contracts', () => {
   const service = new AiSuggestionValidatorService(new StructuredOutputValidatorService());
@@ -296,5 +298,140 @@ describe('AI suggestion output contracts', () => {
     expect(service.reportFactCheck(factCheck, allowlist)).toMatchObject({ snapshotId: 'snapshot-1' });
     expect(() => service.reportFactCheck(factCheck, { ...allowlist, claimIds: new Set(['claim-2']) }))
       .toThrow('unauthorized claim');
+  });
+});
+
+describe('AI mapping input allowlists', () => {
+  const fields = [
+    {
+      fieldKey: 'amount',
+      fieldName: 'Amount',
+      fieldType: 'money',
+      required: true,
+      aliases: []
+    },
+    {
+      fieldKey: 'recordDate',
+      fieldName: 'Date',
+      fieldType: 'date',
+      required: true,
+      aliases: []
+    },
+    {
+      fieldKey: 'remark',
+      fieldName: 'Remark',
+      fieldType: 'textarea',
+      required: false,
+      aliases: []
+    }
+  ];
+  const expected = [
+    ['DECIMAL_CANONICAL_V1'],
+    ['DATE_ISO_WITH_LOCALE_V1'],
+    ['TRIM_TEXT_V1']
+  ];
+
+  it('supplies field-specific transform allowlists to Excel and OCR prompts', () => {
+    const candidate = { versionId: 'template-expense:v1', fields };
+    const excel = Object.create(ExcelAiSuggestionService.prototype) as any;
+    const ocr = Object.create(OcrAiSuggestionService.prototype) as any;
+
+    const excelInput = excel.mappingInput({ id: 'import-1', columns: [] }, candidate, true);
+    const ocrInput = ocr.mappingInput(
+      { id: 'ocr-1' },
+      candidate,
+      { sourceUnits: [] },
+      true
+    );
+
+    expect(excelInput.fields.map((field: any) => field.allowedTransformKeys)).toEqual(expected);
+    expect(excelInput.requiredFieldKeys).toEqual(['amount', 'recordDate']);
+    expect(excelInput.schemaVersion).toBe('excel-mapping-input/1.2');
+    expect(ocrInput.fields.map((field: any) => field.allowedTransformKeys)).toEqual(expected);
+    expect(ocrInput.allowedTransformKeys).toEqual(expect.arrayContaining([
+      'IDENTITY_V1',
+      'TRIM_TEXT_V1',
+      'DECIMAL_CANONICAL_V1',
+      'DATE_ISO_WITH_LOCALE_V1',
+      'ENUM_ALIAS_LOOKUP_V1'
+    ]));
+    for (const rule of [
+      'sourceAssignment',
+      'targetAssignment',
+      'transformAssignment',
+      'evidenceAssignment',
+      'decision'
+    ]) {
+      expect(excelInput.mappingRules[rule]).toBe(ocrInput.mappingRules[rule]);
+    }
+    expect(excelInput.mappingRules.unresolvedRequiredFields)
+      .toContain('exact set difference');
+    expect(ocrInput.mappingRules).toMatchObject({
+      sourceAssignment: expect.stringContaining('exactly one'),
+      targetAssignment: expect.stringContaining('at most one'),
+      decision: 'NEEDS_FINANCE_REVIEW'
+    });
+  });
+
+  it('separates Excel sheet identity from the exact classification evidence allowlist', () => {
+    const excel = Object.create(ExcelAiSuggestionService.prototype) as any;
+    const input = excel.classificationInput({
+      id: 'import-1',
+      sheets: [{
+        stableId: 'sheet0',
+        sheetIndex: 0,
+        sheetName: 'Synthetic sheet',
+        selectedHeaderRows: [1],
+        mergedRanges: [],
+        rowCount: 2
+      }],
+      columns: [{
+        sourceColumnId: 'sheet0:A',
+        columnIndex: 1,
+        sourceName: 'Date',
+        normalizedName: 'date',
+        inferredType: 'date',
+        statistics: {},
+        sampleValues: []
+      }]
+    }, [{
+      versionId: 'template-expense:v1',
+      name: 'Expense',
+      recordType: 'cost',
+      fields
+    }], true);
+
+    expect(input).toMatchObject({
+      schemaVersion: 'excel-classification-input/1.1',
+      allowedEvidenceRefs: ['sheet0:A'],
+      classificationRules: {
+        evidenceAssignment: expect.stringContaining('allowedEvidenceRefs'),
+        decision: 'NEEDS_FINANCE_REVIEW'
+      },
+      workbook: {
+        sheets: [{ sheetStableId: 'sheet0' }],
+        columns: [{ sourceRef: 'sheet0:A' }]
+      },
+      candidateTemplates: [{
+        fields: [
+          {
+            fieldKey: 'amount',
+            displayName: 'Amount',
+            aliases: []
+          },
+          {
+            fieldKey: 'recordDate',
+            displayName: 'Date',
+            aliases: []
+          },
+          {
+            fieldKey: 'remark',
+            displayName: 'Remark',
+            aliases: []
+          }
+        ]
+      }]
+    });
+    expect(input.workbook.sheets[0]).not.toHaveProperty('evidenceRef');
   });
 });

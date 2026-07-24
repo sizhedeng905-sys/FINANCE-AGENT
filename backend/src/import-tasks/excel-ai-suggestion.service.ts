@@ -462,12 +462,19 @@ export class ExcelAiSuggestionService {
   }
 
   private classificationInput(task: SuggestionTask, candidates: Awaited<ReturnType<ExcelAiSuggestionService['loadCandidates']>>, samples: boolean) {
+    const allowedEvidenceRefs = task.columns.map((column) => this.sourceRef(column));
     return {
-      schemaVersion: 'excel-classification-input/1.0',
+      schemaVersion: 'excel-classification-input/1.1',
       sourceId: task.id,
+      allowedEvidenceRefs,
+      classificationRules: {
+        evidenceAssignment: 'Copy evidenceRefs exactly from allowedEvidenceRefs; sheetStableId is context only.',
+        templateAssignment: 'Use only templateVersionId values from candidateTemplates.',
+        decision: 'NEEDS_FINANCE_REVIEW'
+      },
       workbook: {
         sheets: task.sheets.map((sheet) => ({
-          evidenceRef: sheet.stableId ?? `sheet${sheet.sheetIndex}`,
+          sheetStableId: sheet.stableId ?? `sheet${sheet.sheetIndex}`,
           name: this.safeText(sheet.sheetName, 80),
           index: sheet.sheetIndex,
           selectedHeaderRows: sheet.selectedHeaderRows,
@@ -482,8 +489,10 @@ export class ExcelAiSuggestionService {
         recordType: candidate.recordType,
         fields: candidate.fields.slice(0, 64).map((field) => ({
           fieldKey: field.fieldKey,
+          displayName: this.safeText(field.fieldName, 80),
           fieldType: field.fieldType,
-          required: field.required
+          required: field.required,
+          aliases: field.aliases.slice(0, 16).map((alias) => this.safeText(alias, 80))
         })),
         fieldListTruncated: candidate.fields.length > 64
       }))
@@ -492,7 +501,7 @@ export class ExcelAiSuggestionService {
 
   private mappingInput(task: SuggestionTask, candidate: Awaited<ReturnType<ExcelAiSuggestionService['loadCandidates']>>[number], samples: boolean) {
     return {
-      schemaVersion: 'excel-mapping-input/1.0',
+      schemaVersion: 'excel-mapping-input/1.2',
       sourceId: task.id,
       templateVersionId: candidate.versionId,
       columns: task.columns.map((column) => this.columnSummary(column, samples)),
@@ -501,9 +510,21 @@ export class ExcelAiSuggestionService {
         displayName: field.fieldName,
         fieldType: field.fieldType,
         required: field.required,
-        aliases: field.aliases
+        aliases: field.aliases,
+        allowedTransformKeys: [transformKeyForFieldType(field.fieldType)]
       })),
-      allowedTransformKeys: [...IMPORT_TRANSFORM_KEYS]
+      requiredFieldKeys: candidate.fields
+        .filter((field) => field.required)
+        .map((field) => field.fieldKey),
+      allowedTransformKeys: [...IMPORT_TRANSFORM_KEYS],
+      mappingRules: {
+        sourceAssignment: 'Each sourceRef must appear in exactly one of mappings or unmappedSourceRefs.',
+        targetAssignment: 'Each targetFieldKey may appear in at most one mapping.',
+        transformAssignment: 'Use only the target field allowedTransformKeys.',
+        evidenceAssignment: 'Each mapping evidenceRefs must be a non-empty subset of its source evidenceRefs.',
+        unresolvedRequiredFields: 'Use the exact set difference: requiredFieldKeys minus mapped targetFieldKey values.',
+        decision: 'NEEDS_FINANCE_REVIEW'
+      }
     };
   }
 

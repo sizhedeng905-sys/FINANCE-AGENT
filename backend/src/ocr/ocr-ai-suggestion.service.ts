@@ -18,6 +18,7 @@ import { AiSuggestionValidatorService } from '../ai/ai-suggestion-validator.serv
 import { CurrentUser, RequestContext } from '../common/types/current-user';
 import { canonicalJsonSha256 } from '../common/utils/canonical-json';
 import {
+  IMPORT_TRANSFORM_KEYS,
   IMPORT_TRANSFORM_REGISTRY_VERSION,
   transformKeyForFieldType
 } from '../import-tasks/import-transform-registry';
@@ -600,8 +601,18 @@ export class OcrAiSuggestionService {
         displayName: field.fieldName,
         fieldType: field.fieldType,
         required: field.required,
-        aliases: field.aliases
-      }))
+        aliases: field.aliases,
+        allowedTransformKeys: [transformKeyForFieldType(field.fieldType)]
+      })),
+      allowedTransformKeys: [...IMPORT_TRANSFORM_KEYS],
+      mappingRules: {
+        sourceAssignment: 'Each sourceRef must appear in exactly one of mappings or unmappedSourceRefs.',
+        targetAssignment: 'Each targetFieldKey may appear in at most one mapping.',
+        transformAssignment: 'Use only the target field allowedTransformKeys.',
+        evidenceAssignment: 'Each mapping evidenceRefs must be a non-empty subset of its source evidenceRefs.',
+        unresolvedRequiredFields: 'List only required target fields that are not present in mappings.',
+        decision: 'NEEDS_FINANCE_REVIEW'
+      }
     };
   }
 

@@ -324,9 +324,13 @@ export class ReportNarrativesService {
   }
 
   private providerInput(snapshot: CanonicalReportSnapshot) {
+    const allowedClaims = this.grounding.claimCatalog(snapshot);
+    const requiredSummary = this.summaryClaim(allowedClaims);
     return {
-      schemaVersion: 'report-narrative-input/1.0',
+      schemaVersion: 'report-narrative-input/1.2',
       snapshotId: snapshot.snapshotId,
+      title: this.reportTitle(snapshot.reportType),
+      requiredSummary: requiredSummary.text,
       reportType: snapshot.reportType,
       period: snapshot.period,
       scope: snapshot.scope,
@@ -336,7 +340,7 @@ export class ReportNarrativesService {
       queryVersion: snapshot.queryVersion,
       sourceDigest: snapshot.sourceDigest,
       snapshotHash: snapshot.snapshotHash,
-      allowedClaims: this.grounding.claimCatalog(snapshot),
+      allowedClaims,
       requiredWarningPaths: snapshot.warnings.map((_warning, index) => `/warnings/${index}`),
       decision: 'NEEDS_FINANCE_REVIEW'
     };
@@ -348,19 +352,28 @@ export class ReportNarrativesService {
       ['/metrics/recordCount', '/metrics/income', '/metrics/cost', '/metrics/profit'].includes(claim.sourcePath)
       || claim.claimType === 'WARNING'
     ));
-    const summary = claims.find((claim) => claim.sourcePath === '/metrics/recordCount');
-    if (!summary) throw new Error('报告 Claim 白名单缺少记录数');
+    const summary = this.summaryClaim(claims);
     return {
       schemaVersion: 'report-narrative/1.0',
       snapshotId: snapshot.snapshotId,
-      title: snapshot.reportType === 'WEEKLY'
-        ? '经营周报'
-        : snapshot.reportType === 'MONTHLY' ? '经营月报' : '经营日报',
+      title: this.reportTitle(snapshot.reportType),
       summary: summary.text,
       claims,
       warningPaths: snapshot.warnings.map((_warning, index) => `/warnings/${index}`),
       decision: 'NEEDS_FINANCE_REVIEW'
     };
+  }
+
+  private reportTitle(reportType: CanonicalReportSnapshot['reportType']) {
+    if (reportType === 'WEEKLY') return '经营周报';
+    if (reportType === 'MONTHLY') return '经营月报';
+    return '经营日报';
+  }
+
+  private summaryClaim(claims: ReportNarrativeOutput['claims']) {
+    const summary = claims.find((claim) => claim.sourcePath === '/metrics/recordCount');
+    if (!summary) throw new Error('报告 Claim 白名单缺少记录数');
+    return summary;
   }
 
   private present(narrative: StoredNarrative) {
