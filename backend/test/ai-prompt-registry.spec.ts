@@ -50,6 +50,36 @@ describe('versioned AI prompt registry', () => {
         }]);
       }
     }
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'excel_column_mapping'))
+      .toMatchObject({
+        versionNo: 3,
+        inputSchemaVersion: 'excel-mapping-input/1.2',
+        systemTemplate: expect.stringContaining('exact set difference')
+      });
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'ocr_field_mapping'))
+      .toMatchObject({
+        versionNo: 2,
+        inputSchemaVersion: 'ocr-mapping-input/1.1',
+        systemTemplate: expect.stringContaining('disjoint partition')
+      });
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'excel_template_classification'))
+      .toMatchObject({
+        versionNo: 3,
+        inputSchemaVersion: 'excel-classification-input/1.1',
+        systemTemplate: expect.stringContaining('use null only')
+      });
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'report_narrative'))
+      .toMatchObject({
+        versionNo: 5,
+        inputSchemaVersion: 'report-narrative-input/1.2',
+        systemTemplate: expect.stringContaining('requiredSummary byte for byte')
+      });
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'boss_chat'))
+      .toMatchObject({
+        versionNo: 3,
+        inputSchemaVersion: 'boss-chat-grounded-input/2.0',
+        systemTemplate: expect.stringContaining('return exactly {"claims":[]}')
+      });
   });
 
   it('changes the content hash when any executable contract changes', () => {
@@ -78,7 +108,7 @@ describe('versioned AI prompt registry', () => {
     expect(bundle.instructions).toContain('without paraphrasing or adding facts');
     expect(bundle.versionVector).toMatchObject({
       prompt: { contentSha256: prompt.contentSha256 },
-      inputSchemaVersion: 'report-narrative-input/1.0',
+      inputSchemaVersion: 'report-narrative-input/1.2',
       outputSchemaVersion: 'report-narrative/1.0',
       components: [{ contentSha256: FINANCE_CORE_GUARD.contentSha256 }]
     });

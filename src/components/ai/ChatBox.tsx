@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { SendOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { FileSearchOutlined, SendOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Alert, Avatar, Button, Input, Space, Tag, Typography } from 'antd';
 import { postAIChatApi } from '@/api/aiApi';
-import type { AiToolName, ChatMessage } from '@/types/ai';
+import type { AiFinancialClaim, AiToolName, ChatMessage } from '@/types/ai';
 
 interface ChatBoxProps {
   compact?: boolean;
@@ -27,6 +27,58 @@ const toolLabels: Record<AiToolName, string> = {
   get_anomalies: '异常记录',
   get_work_order_detail: '工单详情',
 };
+
+const metricLabels: Record<AiFinancialClaim['metric'], string> = {
+  income: '收入',
+  expense: '支出',
+  profit: '利润',
+  record_count: '经营记录',
+  risk: '异常',
+};
+
+function modelLabel(message: ChatMessage) {
+  if (message.provider === 'mock') return `Mock · ${message.model ?? '未标识模型'}`;
+  if (message.provider === 'openai_compatible') return `本地模型 · ${message.model ?? '未标识模型'}`;
+  return `${message.provider ?? '未标识 Provider'} · ${message.model ?? '未标识模型'}`;
+}
+
+function claimValue(claim: AiFinancialClaim) {
+  if (claim.unit === 'CNY') return `¥${claim.value}`;
+  return `${claim.value}${claim.metric === 'record_count' ? '条' : '项'}`;
+}
+
+function ChatEvidence({ message }: { message: ChatMessage }) {
+  if (message.role !== 'assistant' || !message.callLogId) return null;
+  return (
+    <details className="chat-evidence">
+      <summary>
+        <FileSearchOutlined />
+        <span>数据依据</span>
+      </summary>
+      <div className="chat-evidence-meta">
+        <span>调用记录</span>
+        <code>{message.callLogId}</code>
+        <span>执行模型</span>
+        <code>{modelLabel(message)}</code>
+      </div>
+      {message.claims?.length ? (
+        <ul className="chat-claim-list">
+          {message.claims.map((claim) => (
+            <li key={`${claim.sourceTool}:${claim.sourcePath}:${claim.metric}`}>
+              <strong>{metricLabels[claim.metric]} {claimValue(claim)}</strong>
+              <span>{claim.scopeType}:{claim.scopeId}</span>
+              <code>{toolLabels[claim.sourceTool]} · {claim.sourcePath}</code>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Typography.Text type="secondary">
+          本回答没有声明财务汇总 Claim，操作依据保留在上述只读工具和调用记录中。
+        </Typography.Text>
+      )}
+    </details>
+  );
+}
 
 function greeting(compact?: boolean): ChatMessage {
   return {
@@ -102,6 +154,10 @@ export default function ChatBox({ compact, quickQuestions = defaultQuickQuestion
           ...response.message,
           toolsUsed: response.toolsUsed,
           fallback: response.fallback,
+          callLogId: response.callLogId,
+          provider: response.provider,
+          model: response.model,
+          claims: response.claims,
         },
       ]);
     } catch (reason) {
@@ -136,6 +192,7 @@ export default function ChatBox({ compact, quickQuestions = defaultQuickQuestion
                   {item.fallback ? <Tag color="warning">需要人工确认</Tag> : null}
                 </Space>
               ) : null}
+              <ChatEvidence message={item} />
               <Typography.Text type="secondary">{displayTime(item.createdAt)}</Typography.Text>
             </div>
           </div>

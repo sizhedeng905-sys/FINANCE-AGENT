@@ -525,6 +525,57 @@ select {
   margin-bottom: 4px;
 }
 
+.chat-evidence {
+  margin: 6px 0 8px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 6px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.chat-evidence summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  cursor: pointer;
+  color: #1677ff;
+  font-weight: 600;
+}
+
+.chat-evidence-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 4px 0 8px;
+}
+
+.chat-evidence code,
+.chat-claim-list code {
+  overflow-wrap: anywhere;
+  color: #334155;
+}
+
+.chat-claim-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-claim-list li {
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+  gap: 2px 10px;
+  border-left: 2px solid #91caff;
+  padding-left: 8px;
+}
+
+.chat-claim-list code {
+  grid-column: 1 / -1;
+}
+
 .chat-error {
   margin-top: 12px;
 }

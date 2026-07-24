@@ -284,6 +284,7 @@ describe('model runtime safeguards', () => {
 
     await expect(provider.generate({
       provider: 'openai_compatible',
+      providerClass: 'local',
       model: 'Qwen/test',
       modelVersion: '0.23.0',
       deploymentId: 'deployment-1',
@@ -327,6 +328,7 @@ describe('model runtime safeguards', () => {
 
     await provider.generate({
       provider: 'openai_compatible',
+      providerClass: 'local',
       model: 'Qwen/test',
       baseUrl: 'http://127.0.0.1:18000/v1',
       apiKey: 'route-secret',
@@ -335,14 +337,26 @@ describe('model runtime safeguards', () => {
       history: [],
       contexts: [],
       structuredInput: { sourceId: 'source-1' },
-      outputSchema: { type: 'object', additionalProperties: false },
+      outputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          evidenceRefs: {
+            type: 'array',
+            uniqueItems: true,
+            items: { type: 'string' }
+          }
+        }
+      },
       renderedUserPrompt
     } as any);
 
     const body = JSON.parse(http.request.mock.calls[0][1].body);
     const userMessage = body.messages.at(-1).content as string;
     expect(userMessage).toContain(renderedUserPrompt);
+    expect(userMessage).toContain('"uniqueItems":true');
     expect(userMessage).not.toContain('<untrusted_structured_input_json>');
+    expect(body.response_format.json_schema.schema.properties.evidenceRefs).not.toHaveProperty('uniqueItems');
 
     await expect(provider.generate({
       provider: 'openai_compatible',
@@ -358,6 +372,40 @@ describe('model runtime safeguards', () => {
       maxInputCharacters: 200
     } as any)).rejects.toThrow('完整请求超过安全上限');
     expect(http.request).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the complete response schema for non-local compatible providers', async () => {
+    const http = {
+      request: jest.fn(async () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"values":[]}' } }]
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    } as any;
+    const gate = {
+      run: jest.fn(async (_key: string, _limit: number, operation: () => Promise<unknown>) => operation())
+    } as any;
+    const provider = new HttpAiProviderService(config({ 'ai.maxResponseBytes': 1024 }), http, gate);
+    const outputSchema = {
+      type: 'object',
+      properties: {
+        values: { type: 'array', uniqueItems: true, items: { type: 'string' } }
+      }
+    };
+
+    await provider.generate({
+      provider: 'openai_compatible',
+      providerClass: 'external',
+      model: 'compatible/test',
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'route-secret',
+      instructions: 'Return strict JSON.',
+      question: '',
+      history: [],
+      contexts: [],
+      outputSchema
+    } as any);
+
+    const body = JSON.parse(http.request.mock.calls[0][1].body);
+    expect(body.response_format.json_schema.schema).toEqual(outputSchema);
   });
 });
 

@@ -107,17 +107,25 @@ export class AiService {
     let raw: unknown = null;
     let errorMessage: string | null = null;
     let promptExecution: PreparedAiPromptExecution | null = null;
+    let runtimeOutputSchemaSha256: string | null = null;
+    let allowedClaimCount = 0;
     let validatedClaims: ReturnType<AiAnswerGroundingService['createExpectedEnvelope']>['claims'] = [];
 
     try {
       contexts = await this.tools.buildContext(dto.message, dto.workOrderId, actor);
       const claimCandidates = this.grounding.createExpectedEnvelope(contexts, dto.message).claims;
+      allowedClaimCount = claimCandidates.length;
       promptExecution = this.promptRegistry.prepareExecution(promptBundle, {
         schemaVersion: 'boss-chat-grounded-input/2.0',
         currentUserQuestion: dto.message,
         allowedFinancialClaims: claimCandidates,
         untrustedToolData: contexts
       });
+      const runtimeOutputSchema = this.constrainBossChatOutputSchema(
+        promptExecution.outputSchema,
+        allowedClaimCount
+      );
+      runtimeOutputSchemaSha256 = this.hashAuditValue(runtimeOutputSchema);
       const providerRequest = {
         provider: providerName,
         model,
@@ -141,7 +149,7 @@ export class AiService {
         contexts,
         claimCandidates,
         renderedUserPrompt: promptExecution.renderedUserPrompt,
-        outputSchema: promptExecution.outputSchema
+        outputSchema: runtimeOutputSchema
       };
       const result = await this.provider.generate(providerRequest);
       inputTokens = result.inputTokens;
@@ -181,7 +189,9 @@ export class AiService {
       inputHash,
       promptBundle.versionVector,
       promptBundle.bundleSha256,
-      promptExecution
+      promptExecution,
+      runtimeOutputSchemaSha256,
+      allowedClaimCount
     );
     const responseAudit = this.buildResponseAudit(raw, reply, validatedClaims.length, errorMessage !== null);
     const persisted = await this.prisma.$transaction(async (tx) => {
@@ -476,7 +486,9 @@ export class AiService {
     inputHash: string,
     promptVersionVector: unknown,
     promptBundleSha256: string,
-    promptExecution: PreparedAiPromptExecution | null
+    promptExecution: PreparedAiPromptExecution | null,
+    runtimeOutputSchemaSha256: string | null,
+    allowedClaimCount: number
   ) {
     return {
       schemaVersion: 'ai-call-audit/1.0',
@@ -485,6 +497,8 @@ export class AiService {
       promptVersionVector,
       promptExecution: promptExecution?.provenance ?? null,
       promptExecutionSha256: promptExecution?.executionSha256 ?? null,
+      runtimeOutputSchemaSha256,
+      allowedClaimCount,
       questionHash: this.hashAuditValue(dto.message),
       questionCharacters: dto.message.length,
       workOrderScoped: Boolean(dto.workOrderId),
@@ -521,6 +535,27 @@ export class AiService {
 
   private hashAuditValue(value: unknown) {
     return createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
+  }
+
+  private constrainBossChatOutputSchema(schema: Record<string, unknown>, allowedClaimCount: number) {
+    const properties = schema.properties;
+    const claims = properties && typeof properties === 'object' && !Array.isArray(properties)
+      ? (properties as Record<string, unknown>).claims
+      : undefined;
+    if (!claims || typeof claims !== 'object' || Array.isArray(claims)) {
+      throw new Error('Boss chat output schema is missing the claims array');
+    }
+    return {
+      ...schema,
+      properties: {
+        ...(properties as Record<string, unknown>),
+        claims: {
+          ...(claims as Record<string, unknown>),
+          minItems: allowedClaimCount,
+          maxItems: allowedClaimCount
+        }
+      }
+    };
   }
 
   private redactAuditValue(value: unknown, key = ''): unknown {

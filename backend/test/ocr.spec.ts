@@ -313,7 +313,30 @@ describe('OCR phase 10 providers and preprocessing', () => {
     const payload = {
       documentId: 'ocr-test',
       extractedText: '金额：100',
-      pages: [{ page: 1 }, { page: 2 }],
+      pages: [
+        {
+          page: 1,
+          width: 640,
+          height: 960,
+          preprocessing: {
+            rotationReserved: true,
+            compressionReserved: true,
+            scalingReserved: true,
+            renderingReserved: true
+          }
+        },
+        {
+          page: 2,
+          width: 1280,
+          height: 960,
+          preprocessing: {
+            rotationReserved: true,
+            compressionReserved: true,
+            scalingReserved: true,
+            renderingReserved: true
+          }
+        }
+      ],
       textBlocks: [{ page: 1, text: '首页' }],
       tables: [{ page: 2, text: '表格' }],
       fieldCandidates: [{
@@ -346,18 +369,28 @@ describe('OCR phase 10 providers and preprocessing', () => {
     const slicedInput = {
       ...input(),
       pages: [
-        { ...input().pages[0], page: 16 },
-        { ...input().pages[0], page: 17 }
+        { ...input().pages[0], page: 16, width: 320, height: 480 },
+        { ...input().pages[0], page: 17, width: 640, height: 480 }
       ]
     };
     const result = await provider.recognize(slicedInput);
 
-    expect(result.pages.map((page) => page.page)).toEqual([16, 17]);
+    expect(result.pages).toMatchObject([
+      { page: 16, width: 640, height: 960 },
+      { page: 17, width: 1280, height: 960 }
+    ]);
     expect(result.textBlocks[0].page).toBe(16);
     expect(result.tables[0].page).toBe(17);
     expect(result.fieldCandidates[0].page).toBe(17);
 
     payload.fieldCandidates[0].page = 3;
     await expect(provider.recognize(slicedInput)).rejects.toThrow('超出所选页段');
+
+    payload.fieldCandidates[0].page = 2;
+    payload.pages[1].width = 0;
+    await expect(provider.recognize(slicedInput)).rejects.toThrow('invalid page dimensions');
+
+    payload.pages = [payload.pages[0]];
+    await expect(provider.recognize(slicedInput)).rejects.toThrow('invalid page count');
   });
 });

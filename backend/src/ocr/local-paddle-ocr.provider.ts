@@ -86,10 +86,11 @@ export class LocalPaddleOcrProvider implements OcrProvider {
       await this.readLimitedJson(response)
     ) as OcrProviderResult;
     if (payload.documentId !== input.documentId) throw new BadGatewayException('本地 Paddle OCR 返回了错误的 documentId');
+    const pages = this.mapPages(payload.pages, input);
     return {
       documentId: input.documentId,
       extractedText: payload.extractedText,
-      pages: input.pages,
+      pages,
       textBlocks: this.mapRecordPages(Array.isArray(payload.textBlocks) ? payload.textBlocks : [], input),
       tables: this.mapRecordPages(Array.isArray(payload.tables) ? payload.tables : [], input),
       fieldCandidates: payload.fieldCandidates.map((candidate) => ({
@@ -101,6 +102,36 @@ export class LocalPaddleOcrProvider implements OcrProvider {
     };
   }
 
+  private mapPages(value: unknown, input: OcrProviderInput) {
+    if (!Array.isArray(value) || value.length !== input.pages.length) {
+      throw new BadGatewayException('Local Paddle OCR returned an invalid page count');
+    }
+    const mapped = new Map<number, OcrProviderResult['pages'][number]>();
+    for (const rawPage of value) {
+      if (!rawPage || typeof rawPage !== 'object' || Array.isArray(rawPage)) {
+        throw new BadGatewayException('Local Paddle OCR returned invalid page metadata');
+      }
+      const page = rawPage as Record<string, unknown>;
+      const ordinal = this.providerPageOrdinal(page.page, input);
+      if (mapped.has(ordinal)) {
+        throw new BadGatewayException('Local Paddle OCR returned duplicate page metadata');
+      }
+      const sourcePage = input.pages[ordinal - 1];
+      mapped.set(ordinal, {
+        ...sourcePage,
+        page: sourcePage.page,
+        width: this.pageDimension(page.width),
+        height: this.pageDimension(page.height),
+        preprocessing: { ...sourcePage.preprocessing }
+      });
+    }
+    return input.pages.map((_page, index) => {
+      const page = mapped.get(index + 1);
+      if (!page) throw new BadGatewayException('Local Paddle OCR omitted page metadata');
+      return page;
+    });
+  }
+
   private mapRecordPages(items: Array<Record<string, unknown>>, input: OcrProviderInput) {
     return items.map((item) => ({
       ...item,
@@ -109,10 +140,22 @@ export class LocalPaddleOcrProvider implements OcrProvider {
   }
 
   private mapPage(value: number, input: OcrProviderInput) {
-    if (!Number.isInteger(value) || value < 1 || value > input.pages.length) {
+    const ordinal = this.providerPageOrdinal(value, input);
+    return input.pages[ordinal - 1].page;
+  }
+
+  private providerPageOrdinal(value: unknown, input: OcrProviderInput) {
+    if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > input.pages.length) {
       throw new BadGatewayException('本地 Paddle OCR 返回了超出所选页段的页码');
     }
-    return input.pages[value - 1].page;
+    return Number(value);
+  }
+
+  private pageDimension(value: unknown) {
+    if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 200_000) {
+      throw new BadGatewayException('Local Paddle OCR returned invalid page dimensions');
+    }
+    return Number(value);
   }
 
   private async readLimitedJson(response: Response) {
@@ -147,7 +190,32 @@ const localPaddleResponseSchema = {
   properties: {
     documentId: { type: 'string', minLength: 1, maxLength: 100 },
     extractedText: { type: 'string', maxLength: 100000 },
-    pages: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: true }, nullable: true },
+    pages: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 200,
+      items: {
+        type: 'object',
+        properties: {
+          page: { type: 'integer', minimum: 1, maximum: 200 },
+          width: { type: 'integer', minimum: 1, maximum: 200000 },
+          height: { type: 'integer', minimum: 1, maximum: 200000 },
+          preprocessing: {
+            type: 'object',
+            properties: {
+              rotationReserved: { type: 'boolean' },
+              compressionReserved: { type: 'boolean' },
+              scalingReserved: { type: 'boolean' },
+              renderingReserved: { type: 'boolean' }
+            },
+            required: ['rotationReserved', 'compressionReserved', 'scalingReserved', 'renderingReserved'],
+            additionalProperties: false
+          }
+        },
+        required: ['page', 'width', 'height', 'preprocessing'],
+        additionalProperties: false
+      }
+    },
     textBlocks: { type: 'array', maxItems: 5000, items: { type: 'object', additionalProperties: true }, nullable: true },
     tables: { type: 'array', maxItems: 100, items: { type: 'object', additionalProperties: true }, nullable: true },
     fieldCandidates: {
@@ -173,6 +241,6 @@ const localPaddleResponseSchema = {
     rawResult: { type: 'object', additionalProperties: true, nullable: true },
     rawResultRef: { type: 'string', maxLength: 500, nullable: true }
   },
-  required: ['documentId', 'extractedText', 'fieldCandidates'],
+  required: ['documentId', 'extractedText', 'pages', 'fieldCandidates'],
   additionalProperties: false
 } as any;

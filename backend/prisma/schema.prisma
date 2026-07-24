@@ -534,6 +534,7 @@ model BusinessRecord {
   @@index([dataLayer, status, recordDate])
   @@index([recordDate])
   @@index([importTaskId])
+  @@index([importTaskId, id], map: "business_records_import_task_id_id_idx")
   @@map("business_records")
 }
 
@@ -827,6 +828,7 @@ model ImportRow {
   @@unique([sheetId, rowNumber])
   @@index([importTaskId, status])
   @@index([importTaskId, confirmationProcessedAt, rowNumber], map: "idx_import_rows_confirmation_queue")
+  @@index([importTaskId, rowNumber, id], map: "import_rows_import_task_id_row_number_id_idx")
   @@index([rowHash])
   @@index([evidenceHash])
   @@index([importTaskId, reviewDecision])

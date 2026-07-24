@@ -121,6 +121,10 @@ test('real Paddle provider completes queued UI flow without automatic posting', 
   );
   const alternateFinance = financeUsers.data.items.find((user) => user.username !== 'finance' && user.status === 'active');
   expect(alternateFinance, 'a second active finance account is required for separation of duties').toBeTruthy();
+  const alternateApiLogin = await readApiEnvelope<{ accessToken: string }>(await request.post(`${API_URL}/auth/login`, {
+    data: { username: alternateFinance!.username, password: '123456' }
+  }));
+  const alternateHeaders = { Authorization: `Bearer ${alternateApiLogin.data.accessToken}` };
 
   await logout(page);
   await login(page, alternateFinance!.username, '/finance/home', FRONTEND_URL);
@@ -135,6 +139,8 @@ test('real Paddle provider completes queued UI flow without automatic posting', 
   const confirmed = await readEnvelope<{ record: { id: string; sourceId: string; status: string } }>(await confirmResponse);
   expect(confirmed.data.record).toMatchObject({ sourceId: task.id, status: 'confirmed' });
 
-  const recordsAfter = await readApiEnvelope<{ total: number }>(await request.get(`${API_URL}/records?page=1&pageSize=1`, { headers }));
+  const recordsAfter = await readApiEnvelope<{ total: number }>(
+    await request.get(`${API_URL}/records?page=1&pageSize=1`, { headers: alternateHeaders })
+  );
   expect(recordsAfter.data.total - recordsBefore.data.total).toBe(1);
 });

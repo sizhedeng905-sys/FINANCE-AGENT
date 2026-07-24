@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
@@ -99,6 +100,8 @@ def build_ocr_response(
         tables.extend(block for block in normalized_blocks if _is_table(block.get("label", "")))
         pages.append({
             "page": page_number,
+            "width": _page_dimension(page_data.get("width"), "width"),
+            "height": _page_dimension(page_data.get("height"), "height"),
             "preprocessing": {
                 "rotationReserved": True,
                 "compressionReserved": True,
@@ -200,7 +203,7 @@ def normalize_value(raw_value: str, field_type: str) -> Any:
 
 
 def _find_field_value(lines: list[dict[str, Any]], field: dict[str, Any]):
-    labels = [field["fieldName"], *field.get("aliases", [])]
+    labels = _field_labels(field)
     for label_index, label in enumerate(labels):
         escaped = re.escape(label)
         separator_pattern = re.compile(rf"^\s*{escaped}\s*[:：=]\s*(.+?)\s*$", re.IGNORECASE)
@@ -220,6 +223,18 @@ def _find_field_value(lines: list[dict[str, Any]], field: dict[str, Any]):
                     confidence = 0.66 if label_index == 0 else 0.60
                     return next_line["text"], label, next_line, confidence, "adjacent-line"
     return None
+
+
+def _field_labels(field: dict[str, Any]) -> list[str]:
+    labels = [field["fieldName"], *field.get("aliases", []), field["fieldKey"]]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        normalized = _normalized_text(label)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(label)
+    return unique
 
 
 def _result_payload(result: Any) -> dict[str, Any]:
@@ -306,6 +321,15 @@ def _page_number(page_data: Mapping[str, Any], ordinal: int) -> int:
     if isinstance(value, int) and value > 0:
         return value
     return ordinal
+
+
+def _page_dimension(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"PaddleOCR page {label} is missing or invalid")
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0 or parsed > 200_000 or not parsed.is_integer():
+        raise ValueError(f"PaddleOCR page {label} is missing or invalid")
+    return int(parsed)
 
 
 def _integer(value: Any, fallback: int) -> int:

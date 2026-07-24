@@ -61,6 +61,16 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-047 | [CR-047_overnight-fact-sync.md](CR-047_overnight-fact-sync.md) | `docs: close overnight evidence and handoff` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED | CR-046 |
 | CR-048 | [CR-048_overnight-report-structure-closure.md](CR-048_overnight-report-structure-closure.md) | `docs: align overnight handoff structure` | P2 delivery status | DOCUMENTED / RUNTIME_UNCHANGED | CR-047 |
 | CR-049 | [CR-049_excel-ai-e2e-retry-isolation.md](CR-049_excel-ai-e2e-retry-isolation.md) | `test: isolate Excel AI evidence retries` | P0 CI regression | LOCAL_ENGINEERING_VERIFIED / REMOTE_CI_PENDING | CR-048 |
+| CR-050 | [CR-050_ocr-provider-raster-evidence.md](CR-050_ocr-provider-raster-evidence.md) | `fix(ocr): preserve provider raster evidence` | P1 OCR evidence integrity | LOCAL_ENGINEERING_VERIFIED / REAL_SAMPLE_NEEDED | CR-049 |
+| CR-051 | [CR-051_local-ai-structured-contracts.md](CR-051_local-ai-structured-contracts.md) | `fix(ai): align local structured suggestion contracts` | P1 AI integrity | LOCAL_ENGINEERING_VERIFIED / OWNER_UAT_PENDING | CR-050 |
+| CR-052 | [CR-052_import-confirmation-pagination-indexes.md](CR-052_import-confirmation-pagination-indexes.md) | `perf(import): index final integrity pagination` | P1 capacity | LOCAL_ENGINEERING_VERIFIED / TARGET_CAPACITY_PENDING | CR-051 |
+| CR-053 | [CR-053_local-full-stack-handoff.md](CR-053_local-full-stack-handoff.md) | `docs: hand off local full-stack pilot` | P2 delivery status | DOCUMENTED / RUNTIME_VERIFIED | CR-052 |
+| CR-054 | [CR-054_local-pilot-postgres-loopback-isolation.md](CR-054_local-pilot-postgres-loopback-isolation.md) | `docs: record loopback pilot database isolation` | P1 local security | LOCAL_ENGINEERING_VERIFIED / HOST_RESTART_PENDING | CR-053 |
+| CR-055 | [CR-055_boss-chat-claim-allowlist.md](CR-055_boss-chat-claim-allowlist.md) | `fix(ai): constrain boss chat claim allowlists` | P1 AI integrity | LOCAL_MODEL_VERIFIED / OWNER_UAT_PENDING | CR-054 |
+| CR-056 | [CR-056_boss-ai-evidence-disclosure.md](CR-056_boss-ai-evidence-disclosure.md) | `feat(ai): expose boss answer evidence` | P1 AI traceability | LOCAL_BROWSER_VERIFIED / OWNER_UAT_PENDING | CR-055 |
+| CR-057 | [CR-057_ocr-field-key-label-bridge.md](CR-057_ocr-field-key-label-bridge.md) | `fix(ocr): recognize stable field-key labels` | P1 OCR local-provider compatibility | LOCAL_MODEL_BROWSER_VERIFIED / REAL_SAMPLE_NEEDED | CR-056 |
+| CR-058 | [CR-058_ocr-real-e2e-session-isolation.md](CR-058_ocr-real-e2e-session-isolation.md) | `test(ocr): isolate second-finance API session` | P1 real-provider E2E reliability | LOCAL_REAL_PROVIDER_VERIFIED / REAL_SAMPLE_NEEDED | CR-057 |
+| CR-059 | [CR-059_local-pilot-uat-readiness.md](CR-059_local-pilot-uat-readiness.md) | `docs: close local pilot UAT handoff` | P1 local UAT readiness | LOCAL_SYNTHETIC_UAT_READY / OWNER_UAT_PENDING / PRODUCTION_NOT_AUTHORIZED | CR-058 |
 
 当前远端校准：CR-015 至 CR-046 的实现均已包含在运行时树 `5c16f3e`，该树的 Build and acceptance 与 CodeQL 已通过。CR-015 至 CR-038 行内保留的 `REMOTE_PUSH_BLOCKED_EXTERNAL` 是各审查文档提交时的历史状态，不代表当前分支仍未推送；真实样本、目标环境和 owner UAT 等业务门禁仍按各行原义保持开放。
 

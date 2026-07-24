@@ -6,7 +6,13 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from app.extraction import build_ocr_response, has_valid_file_signature, normalize_value, parse_template_fields
+from app.extraction import (
+    build_ocr_response,
+    extract_field_candidates,
+    has_valid_file_signature,
+    normalize_value,
+    parse_template_fields,
+)
 
 
 class ExtractionTests(unittest.TestCase):
@@ -68,6 +74,8 @@ class ExtractionTests(unittest.TestCase):
         fixture = {
             "res": {
                 "page_index": 0,
+                "width": 640,
+                "height": 960,
                 "parsing_res_list": [
                     {"block_id": 1, "block_label": "text", "block_bbox": [10, 20, 210, 50], "block_content": "日期：2026/07/14"},
                     {"block_id": 2, "block_label": "table", "block_bbox": [10, 60, 310, 160], "block_content": "费用金额: ￥1,280.50元"},
@@ -76,12 +84,57 @@ class ExtractionTests(unittest.TestCase):
         }
         response = build_ocr_response("doc-1", [fixture], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
         self.assertEqual(response["documentId"], "doc-1")
+        self.assertEqual(response["pages"][0]["width"], 640)
+        self.assertEqual(response["pages"][0]["height"], 960)
         self.assertIn("日期", response["extractedText"])
         self.assertEqual(len(response["tables"]), 1)
         self.assertEqual(response["fieldCandidates"][0]["normalizedValue"], "2026-07-14")
         self.assertEqual(response["fieldCandidates"][1]["normalizedValue"], "1280.50")
         self.assertTrue(all(item["confidence"] < 0.8 for item in response["fieldCandidates"]))
         self.assertEqual(response["fieldCandidates"][1]["boundingBox"]["width"], 300.0)
+
+    def test_matches_server_controlled_field_key_as_an_exact_label(self):
+        fields = [{
+            "fieldId": "f-amount",
+            "fieldKey": "amount",
+            "fieldName": "金额",
+            "fieldType": "money",
+            "semanticType": "amount",
+            "aliases": ["费用金额"],
+        }]
+        blocks = [{
+            "page": 1,
+            "text": "amount: 1280.50",
+            "boundingBox": {"x": 10, "y": 20, "width": 200, "height": 30},
+        }]
+
+        candidates = extract_field_candidates(blocks, fields)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["targetFieldId"], "f-amount")
+        self.assertEqual(candidates[0]["targetFieldKey"], "amount")
+        self.assertEqual(candidates[0]["normalizedValue"], "1280.50")
+        self.assertLess(candidates[0]["confidence"], 0.8)
+        self.assertEqual(extract_field_candidates(
+            [{**blocks[0], "text": "subtotal amount: 1280.50"}],
+            fields,
+        ), [])
+
+    def test_rejects_missing_or_invalid_page_dimensions(self):
+        missing = {"res": {"page_index": 0, "parsing_res_list": []}}
+        with self.assertRaisesRegex(ValueError, "page width"):
+            build_ocr_response("doc-1", [missing], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
+
+        invalid = {
+            "res": {
+                "page_index": 0,
+                "width": 0,
+                "height": 960,
+                "parsing_res_list": [],
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "page width"):
+            build_ocr_response("doc-1", [invalid], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
 
 
 if __name__ == "__main__":
