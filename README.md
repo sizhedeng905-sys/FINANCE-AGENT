@@ -49,7 +49,7 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 ### 2026-07-24 本地全功能试用
 
-- 在 `agent/local-full-stack-bringup`（基于稳定检查点 `b744325`）完成隔离本地栈：PostgreSQL `_test` 数据库、Redis、NestJS API、独立 Worker、Vite 前端、Qwen3-14B-AWQ 和 PaddleOCR-VL 均只绑定 `127.0.0.1`；Qwen3-VL、Embedding 和外部 Provider 按边界保持离线。
+- 在 `agent/local-full-stack-bringup`（基于稳定检查点 `b744325`）完成隔离本地栈：独立 PostgreSQL 17 容器使用 `_test` 数据库并绑定 `127.0.0.1:55432`，Redis、NestJS API、独立 Worker、Vite 前端、Qwen3-14B-AWQ 和 PaddleOCR-VL 也只发布到 `127.0.0.1`；Qwen3-VL、Embedding 和外部 Provider 按边界保持离线。
 - 修复 OCR Provider 栅格宽高与 bbox 证据坐标契约；修复本地 Qwen 对 Excel/OCR 严格映射和报告叙述契约的兼容；为最终导入完整性 keyset 扫描增加复合索引。Prisma test 基线更新为 52 migrations。
 - 本地合成闭环已生成两条正式记录：OCR `1280.50`、Excel `8765.43`，合计成本 `10045.93`；canonical ReportSnapshot 含 2 个来源，Qwen `report_narrative:v5` 的 11 个 claims 全部通过 grounding 并完成财务、老板两级接受，老板助手基于固定工具返回同一金额和 2 条记录。
 - 当前自动化证据：Paddle adapter 9/9，后端 52 suites、479/479，PostgreSQL/Redis 共 125 tests（111 passed、14 skipped、0 failed），前端 runtime 4/4，Playwright 22/22，前后端构建通过。

@@ -16,7 +16,7 @@ FINANCE-AGENT 已在本机隔离环境完成全功能技术试用。数据库名
 
 | 组件 | 本地地址/状态 |
 | --- | --- |
-| PostgreSQL | `127.0.0.1:5432`，隔离库 `finance_agent_pilot_test` |
+| PostgreSQL | `127.0.0.1:55432`，独立 PostgreSQL 17 容器，隔离库 `finance_agent_pilot_test` |
 | Redis | `127.0.0.1:6379` |
 | NestJS API | `http://127.0.0.1:3101/api` |
 | Readiness | `http://127.0.0.1:3101/api/health/ready` |
@@ -64,6 +64,8 @@ FINANCE-AGENT 已在本机隔离环境完成全功能技术试用。数据库名
 - Qwen-VL 和 Embedding 保持离线。
 - 模型只生成建议；财务批准前不创建正式记录。
 - 报告数字只来自 canonical ReportSnapshot，AI 不查库、不算账。
+
+宿主机原有 Windows PostgreSQL 17 服务不再承载本次试用。检查发现它仍使用旧的 `0.0.0.0:5432` 监听；其 `pg_hba.conf` 只允许 loopback，但监听本身仍不符合本轮硬边界。已将 `postgresql.conf` 收紧为 `127.0.0.1`，当前会话没有服务控制权限，因此需要负责人之后以管理员权限正常重启该服务或重启系统才能生效。不要强杀数据库进程；这不会影响当前 `55432` 容器试用环境。
 
 ## 6. 负责人体验入口
 
