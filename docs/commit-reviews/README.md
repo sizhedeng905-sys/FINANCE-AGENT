@@ -70,6 +70,7 @@ git log --follow --format="%H %s" -- docs/commit-reviews/CR-XXX_<short-slug>.md
 | CR-056 | [CR-056_boss-ai-evidence-disclosure.md](CR-056_boss-ai-evidence-disclosure.md) | `feat(ai): expose boss answer evidence` | P1 AI traceability | LOCAL_BROWSER_VERIFIED / OWNER_UAT_PENDING | CR-055 |
 | CR-057 | [CR-057_ocr-field-key-label-bridge.md](CR-057_ocr-field-key-label-bridge.md) | `fix(ocr): recognize stable field-key labels` | P1 OCR local-provider compatibility | LOCAL_MODEL_BROWSER_VERIFIED / REAL_SAMPLE_NEEDED | CR-056 |
 | CR-058 | [CR-058_ocr-real-e2e-session-isolation.md](CR-058_ocr-real-e2e-session-isolation.md) | `test(ocr): isolate second-finance API session` | P1 real-provider E2E reliability | LOCAL_REAL_PROVIDER_VERIFIED / REAL_SAMPLE_NEEDED | CR-057 |
+| CR-059 | [CR-059_local-pilot-uat-readiness.md](CR-059_local-pilot-uat-readiness.md) | `docs: close local pilot UAT handoff` | P1 local UAT readiness | LOCAL_SYNTHETIC_UAT_READY / OWNER_UAT_PENDING / PRODUCTION_NOT_AUTHORIZED | CR-058 |
 
 当前远端校准：CR-015 至 CR-046 的实现均已包含在运行时树 `5c16f3e`，该树的 Build and acceptance 与 CodeQL 已通过。CR-015 至 CR-038 行内保留的 `REMOTE_PUSH_BLOCKED_EXTERNAL` 是各审查文档提交时的历史状态，不代表当前分支仍未推送；真实样本、目标环境和 owner UAT 等业务门禁仍按各行原义保持开放。
 

@@ -51,8 +51,9 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 
 - 在 `agent/local-full-stack-bringup`（基于稳定检查点 `b744325`）完成隔离本地栈：独立 PostgreSQL 17 容器使用 `_test` 数据库并绑定 `127.0.0.1:55432`，Redis、NestJS API、独立 Worker、Vite 前端、Qwen3-14B-AWQ 和 PaddleOCR-VL 也只发布到 `127.0.0.1`；Qwen3-VL、Embedding 和外部 Provider 按边界保持离线。
 - 修复 OCR Provider 栅格宽高与 bbox 证据坐标契约；修复本地 Qwen 对 Excel/OCR 严格映射和报告叙述契约的兼容；为最终导入完整性 keyset 扫描增加复合索引。Prisma test 基线更新为 52 migrations。
-- 本地合成闭环已生成两条正式记录：OCR `1280.50`、Excel `8765.43`，合计成本 `10045.93`；canonical ReportSnapshot 含 2 个来源，Qwen `report_narrative:v5` 的 11 个 claims 全部通过 grounding 并完成财务、老板两级接受，老板助手基于固定工具返回同一金额和 2 条记录。
-- 当前自动化证据：Paddle adapter 9/9，后端 52 suites、479/479，PostgreSQL/Redis 共 125 tests（111 passed、14 skipped、0 failed），前端 runtime 4/4，Playwright 22/22，前后端构建通过。
+- 本地合成闭环验收曾生成两条正式记录：OCR `1280.50`、Excel `8765.43`，合计成本 `10045.93`；canonical ReportSnapshot 含 2 个来源，Qwen `report_narrative:v5` 的 11 个 claims 全部通过 grounding 并完成财务、老板两级接受，老板助手基于固定工具返回同一金额和 2 条记录。验收产物随后已 reset，当前 Pilot 库保持干净 seed 状态。
+- 当前自动化证据：Paddle adapter 共发现 10 项（7 passed、3 项因宿主缺少可选 FastAPI 依赖而 skipped；容器内真实 acceptance 另行通过），后端 52 suites、480/480，PostgreSQL/Redis 共 125 tests（111 passed、14 conditional skipped、0 failed），前端 runtime 4/4，Playwright 23/23，前后端构建通过。
+- 最终 reset 后，Pilot 启动器会对 Qwen/Paddle 执行带鉴权健康探测，再显式启用 `qwen3-14b-awq`、`paddleocr-vl` 并禁用 `mock-text`；readiness 只报告两个本地部署。两轮独立 Worker/OCR/老板问答健康闭环均记录 `local_paddle`、`openai_compatible`、`fallback=false`，且财务批准前正式记录增量为 0。
 - 49,999 行在完整集成 suite 中约 172.883 秒，低于 180 秒断言但余量有限；真实样本准确率、正式财务口径、目标 Staging、恢复演练和负责人 UAT 仍未完成，不能据此宣称 production-ready。
 - 完整交接与运行边界见 [`docs/汇报/LOCAL_FULL_STACK_BRINGUP_REPORT_2026-07-24.md`](docs/汇报/LOCAL_FULL_STACK_BRINGUP_REPORT_2026-07-24.md)。
 
