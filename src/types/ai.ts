@@ -17,6 +17,10 @@ export interface ChatMessage {
   createdAt: string;
   toolsUsed?: AiToolName[];
   fallback?: boolean;
+  callLogId?: string;
+  provider?: string;
+  model?: string;
+  claims?: AiFinancialClaim[];
 }
 
 export interface AIChatPayload {
