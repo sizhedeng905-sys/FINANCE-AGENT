@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-状态快照：2026-07-23
+状态快照：2026-07-24
 
 | 项目 | 当前状态 | 人工判断依据 |
 | --- | --- | --- |
@@ -46,6 +46,15 @@ R0 开始时实际核验的 HEAD：`fb557f1a678cd2b931ae7a4407eec6867c9380e4`
 - Demo 断言：另一财务账号批准后恰好生成 3 条正式记录，金额为 `1250.25`、`8765.43`、`3406.53`，合计 `13422.21`；Mock/合成身份明确，测试完成后清理业务产物。
 - 供应链：根目录和后端完整/生产 npm audit 均为 0 个已知漏洞；install script 必须精确版本批准或明确拒绝；后端镜像从独立 production dependency install 构建，runtime 仍无 npm/npx/corepack。
 - 真实目标 Staging、告警接收、registry 签名、异地恢复、OCR/AI 真值和人工 UAT 仍失败关闭；这些未完成项不能被本机或 CI 绿色替代。
+
+### 2026-07-24 本地全功能试用
+
+- 在 `agent/local-full-stack-bringup`（基于稳定检查点 `b744325`）完成隔离本地栈：PostgreSQL `_test` 数据库、Redis、NestJS API、独立 Worker、Vite 前端、Qwen3-14B-AWQ 和 PaddleOCR-VL 均只绑定 `127.0.0.1`；Qwen3-VL、Embedding 和外部 Provider 按边界保持离线。
+- 修复 OCR Provider 栅格宽高与 bbox 证据坐标契约；修复本地 Qwen 对 Excel/OCR 严格映射和报告叙述契约的兼容；为最终导入完整性 keyset 扫描增加复合索引。Prisma test 基线更新为 52 migrations。
+- 本地合成闭环已生成两条正式记录：OCR `1280.50`、Excel `8765.43`，合计成本 `10045.93`；canonical ReportSnapshot 含 2 个来源，Qwen `report_narrative:v5` 的 11 个 claims 全部通过 grounding 并完成财务、老板两级接受，老板助手基于固定工具返回同一金额和 2 条记录。
+- 当前自动化证据：Paddle adapter 9/9，后端 52 suites、479/479，PostgreSQL/Redis 共 125 tests（111 passed、14 skipped、0 failed），前端 runtime 4/4，Playwright 22/22，前后端构建通过。
+- 49,999 行在完整集成 suite 中约 172.883 秒，低于 180 秒断言但余量有限；真实样本准确率、正式财务口径、目标 Staging、恢复演练和负责人 UAT 仍未完成，不能据此宣称 production-ready。
+- 完整交接与运行边界见 [`docs/汇报/LOCAL_FULL_STACK_BRINGUP_REPORT_2026-07-24.md`](docs/汇报/LOCAL_FULL_STACK_BRINGUP_REPORT_2026-07-24.md)。
 
 ### R0-R8.9 重新审计进展
 
