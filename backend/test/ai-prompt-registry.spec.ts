@@ -74,6 +74,12 @@ describe('versioned AI prompt registry', () => {
         inputSchemaVersion: 'report-narrative-input/1.2',
         systemTemplate: expect.stringContaining('requiredSummary byte for byte')
       });
+    expect(AI_PROMPT_DEFINITIONS.find((item) => item.promptKey === 'boss_chat'))
+      .toMatchObject({
+        versionNo: 3,
+        inputSchemaVersion: 'boss-chat-grounded-input/2.0',
+        systemTemplate: expect.stringContaining('return exactly {"claims":[]}')
+      });
   });
 
   it('changes the content hash when any executable contract changes', () => {

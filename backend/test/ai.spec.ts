@@ -1,7 +1,10 @@
 import { AiMessageRole, UserRole, UserStatus } from '@prisma/client';
 
 import { AiProviderService } from '../src/ai/ai-provider.service';
-import { AiAnswerGroundingService } from '../src/ai/ai-answer-grounding.service';
+import {
+  AiAnswerGroundingService,
+  CLAIM_ENVELOPE_SCHEMA
+} from '../src/ai/ai-answer-grounding.service';
 import { AiService } from '../src/ai/ai.service';
 import { AiToolsService } from '../src/ai/ai-tools.service';
 import { MockAiProviderService } from '../src/ai/mock-ai-provider.service';
@@ -194,7 +197,7 @@ describe('phase 8 boss AI assistant', () => {
       })),
       prepareExecution: jest.fn(() => ({
         renderedUserPrompt: '<boss_chat_input_json>{"schemaVersion":"boss-chat-grounded-input/2.0"}</boss_chat_input_json>',
-        outputSchema: { type: 'object', additionalProperties: false },
+        outputSchema: CLAIM_ENVELOPE_SCHEMA,
         provenance: {
           schemaVersion: 'ai-prompt-execution/1.1',
           renderedUserPromptSha256: 'b'.repeat(64),
@@ -231,6 +234,8 @@ describe('phase 8 boss AI assistant', () => {
       schemaVersion: 'ai-call-audit/1.0',
       inputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       promptExecutionSha256: 'd'.repeat(64),
+      runtimeOutputSchemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      allowedClaimCount: 3,
       promptExecution: expect.objectContaining({
         schemaVersion: 'ai-prompt-execution/1.1',
         renderedUserPromptSha256: 'b'.repeat(64),
@@ -303,5 +308,26 @@ describe('phase 8 boss AI assistant', () => {
     }));
     expect(historyProvider.generate).toHaveBeenCalledTimes(1);
     expect(callLogs).toHaveLength(3);
+  });
+
+  it('pins the provider claim-array length to the deterministic allowlist', () => {
+    const service = Object.create(AiService.prototype) as {
+      constrainBossChatOutputSchema: (
+        schema: Record<string, unknown>,
+        allowedClaimCount: number
+      ) => Record<string, any>;
+    };
+    const empty = service.constrainBossChatOutputSchema(
+      CLAIM_ENVELOPE_SCHEMA as unknown as Record<string, unknown>,
+      0
+    );
+    const populated = service.constrainBossChatOutputSchema(
+      CLAIM_ENVELOPE_SCHEMA as unknown as Record<string, unknown>,
+      4
+    );
+
+    expect(empty.properties.claims).toMatchObject({ minItems: 0, maxItems: 0 });
+    expect(populated.properties.claims).toMatchObject({ minItems: 4, maxItems: 4 });
+    expect((CLAIM_ENVELOPE_SCHEMA.properties.claims as { minItems?: number }).minItems).toBeUndefined();
   });
 });

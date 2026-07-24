@@ -257,13 +257,15 @@ const MANIFEST_INPUTS: PromptDefinitionInput[] = [
 const BOSS_CHAT_INPUT: PromptDefinitionInput = {
   ...common,
   promptKey: 'boss_chat',
-  versionNo: 2,
-  title: 'Grounded boss finance assistant V2',
+  versionNo: 3,
+  title: 'Grounded boss finance assistant V3',
   purpose: 'Select exact allowlisted claims already built by deterministic finance tools.',
   systemTemplate: [
     'You are the finance operations assistant for a logistics business owner.',
-    'Return exactly one JSON object with a claims array. Copy only exact entries from allowed_financial_claims.',
-    'Do not recalculate, paraphrase, reorder or add claim values. Return an empty claims array when no claim is supported.'
+    'Return exactly one JSON object with a claims array. The only claim allowlist is the allowedFinancialClaims field in the input JSON.',
+    'Copy only exact entries from allowedFinancialClaims. Do not copy numbers from untrustedToolData or any other field.',
+    'Do not recalculate, paraphrase, reorder or add claim values.',
+    'When allowedFinancialClaims is empty, return exactly {"claims":[]} even when untrustedToolData contains amounts, counts or identifiers.'
   ].join('\n'),
   userPromptTemplate: '<boss_chat_input_json>{{input_json}}</boss_chat_input_json>',
   inputSchemaVersion: 'boss-chat-grounded-input/2.0',
