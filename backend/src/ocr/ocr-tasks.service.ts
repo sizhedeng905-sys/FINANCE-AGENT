@@ -585,7 +585,7 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         file.mimeType,
         this.pageSelection(prepared.task.providerOptions)
       );
-      const pages = document.pages;
+      const submittedPages = document.pages;
       const provider = this.providers.byName(executionConfig.provider);
       const result = await provider.recognize({
         documentId: id,
@@ -594,13 +594,14 @@ export class OcrTasksService implements OnModuleInit, OnModuleDestroy {
         mimeType: file.mimeType,
         sha256: file.sha256,
         buffer: document.buffer,
-        pages,
+        pages: submittedPages,
         fields: this.providerFields(prepared.task.template.templateFields),
         attemptNo: prepared.attempt.attemptNo,
         scenario: this.mockScenario(prepared.task.providerOptions)
       }, executionConfig);
       if (result.documentId !== id) throw new BadGatewayException('OCR Provider 返回了错误的 documentId');
       this.assertProviderResultLimits(result);
+      const pages = result.pages;
       const normalizedIr = normalizeOcrIr({
         sourceId: id,
         sourceSha256: file.sha256,

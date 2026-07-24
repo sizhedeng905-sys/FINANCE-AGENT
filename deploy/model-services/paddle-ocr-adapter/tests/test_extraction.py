@@ -68,6 +68,8 @@ class ExtractionTests(unittest.TestCase):
         fixture = {
             "res": {
                 "page_index": 0,
+                "width": 640,
+                "height": 960,
                 "parsing_res_list": [
                     {"block_id": 1, "block_label": "text", "block_bbox": [10, 20, 210, 50], "block_content": "日期：2026/07/14"},
                     {"block_id": 2, "block_label": "table", "block_bbox": [10, 60, 310, 160], "block_content": "费用金额: ￥1,280.50元"},
@@ -76,12 +78,30 @@ class ExtractionTests(unittest.TestCase):
         }
         response = build_ocr_response("doc-1", [fixture], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
         self.assertEqual(response["documentId"], "doc-1")
+        self.assertEqual(response["pages"][0]["width"], 640)
+        self.assertEqual(response["pages"][0]["height"], 960)
         self.assertIn("日期", response["extractedText"])
         self.assertEqual(len(response["tables"]), 1)
         self.assertEqual(response["fieldCandidates"][0]["normalizedValue"], "2026-07-14")
         self.assertEqual(response["fieldCandidates"][1]["normalizedValue"], "1280.50")
         self.assertTrue(all(item["confidence"] < 0.8 for item in response["fieldCandidates"]))
         self.assertEqual(response["fieldCandidates"][1]["boundingBox"]["width"], 300.0)
+
+    def test_rejects_missing_or_invalid_page_dimensions(self):
+        missing = {"res": {"page_index": 0, "parsing_res_list": []}}
+        with self.assertRaisesRegex(ValueError, "page width"):
+            build_ocr_response("doc-1", [missing], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
+
+        invalid = {
+            "res": {
+                "page_index": 0,
+                "width": 0,
+                "height": 960,
+                "parsing_res_list": [],
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "page width"):
+            build_ocr_response("doc-1", [invalid], self.fields, "PaddlePaddle/PaddleOCR-VL", "v1")
 
 
 if __name__ == "__main__":
